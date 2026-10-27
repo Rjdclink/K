@@ -127,6 +127,13 @@ async function ensureShardFunding(signal,event,market,account,desiredCents){
   }
   return false; // Transfers are asynchronous; the next scan checks actual shard cash.
 }
+async function reconcileFundingTransfers(){
+  const pending=await pool.query(`SELECT id FROM funding_transfers WHERE status IN ('pending','uncertain') AND updated_at<now()-interval '10 seconds' ORDER BY created_at DESC LIMIT 100`);
+  if(!pending.rowCount)return;
+  const history=await kalshi('/portfolio/intra_exchange_instance_transfers?limit=500',{auth:true});
+  const completed=new Map((history.transfers||[]).filter(t=>t.status==='complete').map(t=>[t.client_transfer_id,t.transfer_id]));
+  for(const row of pending.rows)if(completed.has(row.id))await pool.query(`UPDATE funding_transfers SET status='complete',transfer_id=$2,updated_at=now() WHERE id=$1`,[row.id,completed.get(row.id)]);
+}
 async function submit(signal,game,event,market,balance,bankroll,budgetCents=Infinity){
   const price=Number(market.yes_ask_dollars);const count=contractCount(balance,market,signal.fraction,bankroll,budgetCents,feeReserve(event,market));if(!count)return false;
   const id=await reserve(signal,game,event,market,count,price,balance);if(!id)return false;
@@ -174,6 +181,7 @@ async function scan(cachedMilestones){
   if(!lock.rows[0].acquired){await client.query('ROLLBACK');client.release();return {skipped:'scan in progress'}};
   let scanned=0,signals=0,submitted=0,ms;const executionErrors=[];
   try{
+    if(live()&&!cachedMilestones)try{await reconcileFundingTransfers()}catch(e){console.warn('Transfer history unavailable:',e.message)}
     ms=cachedMilestones||await milestones();const liveMap=await liveBatch(ms);
     const games=ms.map(m=>({milestone:m,state:gameState(m,liveMap.get(m.id))}));
     const active=games.filter(g=>g.state.verifiedLive && g.state.scoreKnown);
@@ -213,6 +221,12 @@ async function scan(cachedMilestones){
         // Refresh available cash before every order. If the account cannot afford one contract plus
         // the fee reserve, orderSize returns zero and no order is sent to Kalshi.
         const latest=await accountBalance();balance=Number(latest.balance);bankroll=balance+Number(latest.portfolio_value);
+        // The nested event quote may already be stale after the balance wait.
+        // Recheck the market and eligibility just before sizing an IOC order.
+        const quote=(await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market;
+        if(!quote||quote.ticker!==c.market.ticker||!hasAsk(quote))continue;
+        if(!(overSignal(state,quote)||leadSignal(state,quote)||tennisSignal(state,quote)))continue;
+        c.market=quote;
         const budget=c.signal.strategy==='over'?overRemaining:Infinity;
         const wanted=contractCount(balance,c.market,c.signal.fraction,bankroll,budget,feeReserve(c.event,c.market));
         if(!wanted)continue;
