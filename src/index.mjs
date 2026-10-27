@@ -27,15 +27,31 @@ async function kalshi(path,opts={}){
     return data;
   }
 }
-// Kalshi's balance endpoint has a separate one-request-per-second Basic tier bucket.
-let balanceQueue=Promise.resolve(), lastBalanceCall=0;
-function accountBalance(){
+// The balance endpoint's Basic tier bucket is shared by every function instance.
+// Serialize refreshes through Postgres and reuse a recent verified account snapshot.
+let balanceQueue=Promise.resolve();
+function accountBalance({fresh=false}={}){
   const job=balanceQueue.catch(()=>{}).then(async()=>{
-    const delay=1100-(Date.now()-lastBalanceCall);if(delay>0)await new Promise(resolve=>setTimeout(resolve,delay));
-    lastBalanceCall=Date.now();return kalshi('/portfolio/balance',{auth:true});
+    const client=await pool.connect();
+    try{
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(83027544)');
+      const {rows:[cached]}=await client.query('SELECT balance_json,updated_at,last_request_at FROM account_cache WHERE id=1 FOR UPDATE');
+      const elapsed=Date.now()-new Date(cached?.updated_at||0).getTime();
+      if(!fresh&&cached?.balance_json&&elapsed<2000){await client.query('COMMIT');return cached.balance_json}
+      const sinceRequest=Date.now()-new Date(cached?.last_request_at||0).getTime();
+      const delay=1250-sinceRequest;if(delay>0&&delay<1250)await new Promise(resolve=>setTimeout(resolve,delay));
+      await client.query('UPDATE account_cache SET last_request_at=clock_timestamp() WHERE id=1');
+      const value=await kalshi('/portfolio/balance',{auth:true});
+      await client.query('UPDATE account_cache SET balance_json=$1,updated_at=clock_timestamp() WHERE id=1',[JSON.stringify(value)]);
+      await client.query('COMMIT');
+      return value;
+    }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}
+    finally{client.release()}
   });
   balanceQueue=job.catch(()=>{});return job;
 }
+async function invalidateBalance(){await pool.query('UPDATE account_cache SET updated_at=to_timestamp(0) WHERE id=1')}
 async function allOpenPositions(){
   const market_positions=[];let cursor='';
   for(let page=0;page<100;page++){
@@ -159,6 +175,7 @@ async function submit(signal,game,event,market,balance,bankroll,budgetCents=Infi
     // IOC fills available contracts immediately without leaving an unfilled order resting.
     const result=await kalshi('/portfolio/events/orders',{method:'POST',auth:true,body:{ticker:market.ticker,client_order_id:id,side:'bid',count:count.toFixed(2),price:price.toFixed(4),time_in_force:'immediate_or_cancel',self_trade_prevention_type:'taker_at_cross',post_only:false}});
     await pool.query(`UPDATE trade_attempts SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE id=$1`,[id,Number(result.fill_count)>0?'filled':'unfilled',result.order_id||null,Number(result.fill_count||0)]);
+    if(Number(result.fill_count)>0)await invalidateBalance();
     return Number(result.fill_count)>0;
   }catch(e){const terminal=/^Kalshi (400|401|403|404|422) /.test(String(e.message));await pool.query(`UPDATE trade_attempts SET status=$2,error=$3,updated_at=now() WHERE id=$1`,[id,terminal?'rejected':'check_order',String(e.message).slice(0,250)]);console.error('Order needs reconciliation:',market.ticker,e.message);return false}
 }
@@ -234,6 +251,7 @@ async function exitComebacks(games,events,positions){
       try{
         const result=await kalshi('/portfolio/events/orders',{method:'POST',auth:true,body:{ticker:position.ticker,client_order_id:id,side:'ask',count:count.toFixed(2),price:bid.toFixed(4),time_in_force:'immediate_or_cancel',self_trade_prevention_type:'taker_at_cross',post_only:false,reduce_only:true}});
         await pool.query(`UPDATE exit_attempts SET status='unfilled',order_id=$2,filled_count=$3,updated_at=now() WHERE id=$1`,[id,result.order_id||null,Number(result.fill_count||0)]);
+        if(Number(result.fill_count)>0)await invalidateBalance();
       }catch(e){
         await pool.query(`UPDATE exit_attempts SET status=$2,error=$3,updated_at=now() WHERE id=$1`,[id,/^Kalshi (400|401|403|404|422) /.test(String(e.message))?'unfilled':'uncertain',String(e.message).slice(0,250)]);
         console.error('Exit order response:',position.ticker,e.message);
@@ -325,7 +343,7 @@ async function scan(cachedMilestones){
           continue;
         }
         if(await submit(c.signal,state,c.event,c.market,Math.min(balance,localCash),bankroll,budget,balance)||await recoverPending(c.signal,state,c.event,c.market,Math.min(balance,localCash),bankroll,budget,balance)){
-          submitted++;filled.add(signalKey(c));const before=balance;const account=await accountBalance();balance=Number(account.balance);bankroll=balance+Number(account.portfolio_value);
+          submitted++;filled.add(signalKey(c));const before=balance;const account=await accountBalance({fresh:true});balance=Number(account.balance);bankroll=balance+Number(account.portfolio_value);
           if(c.signal.strategy==='over')overRemaining=Math.max(0,overRemaining-Math.max(0,before-balance));
         }
       }catch(e){const message=`${c.market.ticker}: ${String(e.message).slice(0,170)}`;executionErrors.push(message);console.error('Candidate execution failed:',message)}

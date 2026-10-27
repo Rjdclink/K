@@ -61,6 +61,14 @@ CREATE TABLE IF NOT EXISTS funding_transfers (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS funding_transfers_market_created_idx ON funding_transfers(market_ticker,strategy,created_at DESC);
+CREATE TABLE IF NOT EXISTS account_cache (
+  id integer PRIMARY KEY CHECK (id=1),
+  balance_json jsonb,
+  updated_at timestamptz NOT NULL DEFAULT to_timestamp(0),
+  last_request_at timestamptz NOT NULL DEFAULT to_timestamp(0)
+);
+ALTER TABLE account_cache ADD COLUMN IF NOT EXISTS last_request_at timestamptz NOT NULL DEFAULT to_timestamp(0);
+INSERT INTO account_cache(id) VALUES(1) ON CONFLICT DO NOTHING;
 CREATE TABLE IF NOT EXISTS exit_attempts (
   id uuid PRIMARY KEY,
   market_ticker text NOT NULL UNIQUE,
