@@ -41,6 +41,11 @@ async function marketMap(tickers){
     const result=await kalshi('/events?'+q);for(const e of result.events||[])map.set(e.event_ticker,e);
   }return map;
 }
+function linkedEventTickers(m){
+  const original=m.related_event_tickers||[];
+  const totals=original.map(t=>t.replace(/^([A-Z0-9]+)GAME(-.+)$/,'$1TOTAL$2')).filter((t,i)=>t!==original[i]);
+  return [...new Set([...original,...totals])];
+}
 async function reserve(signal,game,event,market,count,price){const id=randomUUID();const {rowCount}=await pool.query(`INSERT INTO trade_attempts(id,market_ticker,event_ticker,game_id,sport,strategy,reason,fraction,count,limit_price) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(market_ticker,strategy) DO NOTHING`,[id,market.ticker,event.event_ticker,game.id,game.sport,signal.strategy,signal.reason,signal.fraction,count,price]);return rowCount?id:null}
 async function submit(signal,game,event,market,balance){
   const price=Number(market.yes_ask_dollars);const count=orderSize(balance,price,market.yes_ask_size_fp,signal.fraction,Number(process.env.MAX_YES_PRICE||0.98));if(!count)return false;
@@ -52,26 +57,26 @@ async function submit(signal,game,event,market,balance){
     return Number(result.fill_count)>0;
   }catch(e){await pool.query(`UPDATE trade_attempts SET status='check_order',error=$2,updated_at=now() WHERE id=$1`,[id,String(e.message).slice(0,250)]);console.error('Order needs reconciliation:',market.ticker,e.message);return false}
 }
-async function scan(){
+async function scan(cachedMilestones){
   // Postgres advisory lock prevents overlapping scheduled invocations from spending the same balance.
   const client=await pool.connect();const lock=await client.query('SELECT pg_try_advisory_lock(83027542) AS acquired');if(!lock.rows[0].acquired){client.release();return {skipped:'scan in progress'}};
   let scanned=0,signals=0,submitted=0;
   try{
-    const ms=await milestones();const liveMap=await liveBatch(ms);
+    const ms=cachedMilestones||await milestones();const liveMap=await liveBatch(ms);
     const games=ms.map(m=>({milestone:m,state:gameState(m,liveMap.get(m.id))}));
     const active=games.filter(g=>g.state.verifiedLive && g.state.scoreKnown);
-    const events=await marketMap(active.flatMap(g=>g.state.eventTickers));
+    const events=await marketMap(active.flatMap(g=>linkedEventTickers(g.milestone)));
     let balance=0;if(live()){const account=await kalshi('/portfolio/balance',{auth:true});balance=Number(account.balance||0)}
     for(const {milestone,state} of games){
       const candidates=[];
-      if(state.verifiedLive && state.scoreKnown)for(const ticker of state.eventTickers){const event=events.get(ticker);if(!event || event.category!=='Sports')continue;
+      if(state.verifiedLive && state.scoreKnown)for(const ticker of linkedEventTickers(milestone)){const event=events.get(ticker);if(!event || event.category!=='Sports')continue;
         for(const market of event.markets||[]){const signal=overSignal(state,market)||leadSignal(state,market);if(signal)candidates.push({signal,event,market})}}
       if(state.verifiedLive)scanned++;signals+=candidates.length;
       await client.query(`INSERT INTO game_snapshots(id,title,sport,home,away,status,progress,period,scanned_at,signals) VALUES($1,$2,$3,$4,$5,$6,$7,$8,now(),$9) ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,sport=EXCLUDED.sport,home=EXCLUDED.home,away=EXCLUDED.away,status=EXCLUDED.status,progress=EXCLUDED.progress,period=EXCLUDED.period,scanned_at=now(),signals=EXCLUDED.signals`,[state.id,state.title||'Sports game',state.sport,state.scoreKnown?state.home:null,state.scoreKnown?state.away:null,state.status,Number.isFinite(state.progress)?state.progress:null,String(state.period||''),JSON.stringify(candidates.map(c=>({strategy:c.signal.strategy,reason:c.signal.reason,ticker:c.market.ticker}))) ]);
       if(live())for(const c of candidates){if(await submit(c.signal,state,c.event,c.market,balance)){submitted++;balance=Number((await kalshi('/portfolio/balance',{auth:true})).balance||0)}}
     }
     await client.query('UPDATE scan_status SET last_scan=now(),last_error=NULL,scanned=$1,signals=$2,orders_submitted=orders_submitted+$3 WHERE id=1',[scanned,signals,submitted]);
-    return {scanned,signals,submitted};
+    return {scanned,signals,submitted,active:active.filter(g=>/football_game|basketball_game|baseball_game|hockey_match|soccer/.test(g.state.type)).length,next:games.filter(g=>g.state.verifiedLive || (new Date(g.milestone.start_date).getTime()>Date.now()-3600000 && new Date(g.milestone.start_date).getTime()<Date.now()+3600000)).map(g=>g.milestone)};
   }catch(e){console.error('Scan failed:',e);await client.query('UPDATE scan_status SET last_scan=now(),last_error=$1,scanned=$2,signals=$3 WHERE id=1',[String(e.message).slice(0,250),scanned,signals]);return {error:e.message,scanned,signals}}
   finally{await client.query('SELECT pg_advisory_unlock(83027542)');client.release()}
 }
@@ -88,7 +93,16 @@ async function state(){const [snap,stats,attempts]=await Promise.all([
 }
 export default {async fetch(req){const url=new URL(req.url);
   if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),credentials:configured()});
-  if(req.method==='POST'&&url.pathname==='/tick'){if(!req.headers.get('x-neon-trigger-invocation-id'))return json({error:'Forbidden'},403);return json(await scan())}
+  if(req.method==='POST'&&url.pathname==='/tick'){
+    if(!req.headers.get('x-neon-trigger-invocation-id'))return json({error:'Forbidden'},403);
+    const until=Date.now()+14*60000+30000;let cached=null,cycles=0,last={};
+    while(Date.now()<until){const begun=Date.now();last=await scan(cached);cycles++;
+      if(last.next)cached=last.next;if(last.error || !last.active)break;
+      const pause=Math.max(0,3000-(Date.now()-begun));if(Date.now()+pause>=until)break;
+      await new Promise(resolve=>setTimeout(resolve,pause));
+    }
+    const {next,...summary}=last;return json({...summary,cycles});
+  }
   if(!authorized(req))return new Response('Authentication required',{status:401,headers:{'www-authenticate':'Basic realm="K Trading"','cache-control':'no-store'}});
   try{if(req.method==='GET'&&url.pathname==='/api/state')return json(await state());if(req.method==='GET'&&url.pathname==='/')return new Response(page,{headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store','content-security-policy':"default-src 'self'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'",'x-content-type-options':'nosniff'}})}catch(e){console.error(e);return json({error:'Service unavailable'},503)}
   return json({error:'Not found'},404);

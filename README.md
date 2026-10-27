@@ -1,15 +1,15 @@
 # K — sports trading
 
-K is a Neon hosted Kalshi sports trading dashboard. It scans Kalshi Sports milestones and live game data every minute and evaluates two strategies:
+K is a Neon hosted Kalshi sports trading dashboard. It discovers Kalshi Sports milestones periodically and targets a fresh live-data scan every three seconds while eligible live games are present and evaluates two strategies:
 
 - **Whole game overs:** the verified current combined score is strictly above the market's greater-than total. A qualifying trade budgets up to 80% of the current available cash.
-- **Late commanding leads:** a verified live game has reached at least 75% of ordinary playing time, a sport-specific minimum lead, and an unambiguous match between the leading team and the YES winner contract. The budget rises with time and lead strength, to a maximum of 80%.
+- **Late commanding leads:** a verified live game has fewer than seven minutes remaining in its final regulation segment, or is in the ninth inning for baseball. The leading team has at least 3.5 times the opponent’s count (a 250% advantage). Use touchdowns in football, runs in baseball, goals in hockey, and points in basketball. An unambiguous match to the YES winner contract is required. Allocation ranges from 15–30%, 30–55%, then 55–80% as the remaining time falls or the ninth inning progresses; lead strength selects the value within each range. If a feed lacks touchdown counts or a reliable clock, that game cannot qualify.
 
-The scanner discovers every Sports milestone. It reports games from any competition, including NBA, NHL, MLB, NFL and CFB. A contract is traded only when its score, timing, market terms and quote can be interpreted safely. It does not infer a winner or total from a game title alone. A lead does not guarantee a win, and an exceeded score does not make every similarly named contract a whole-game over.
+The scanner discovers Sports milestones and also checks a matching whole-game TOTAL event ticker when Kalshi separates the total from the winner event. It reports games from any competition, including NBA, NHL, MLB, NFL and CFB. A contract is traded only when its score, timing, market terms and quote can be interpreted safely. It does not infer a winner or total from a game title alone. A lead does not guarantee a win, and an exceeded score does not make every similarly named contract a whole-game over.
 
 ## Deployment
 
-Neon project: `floral-wave-57267243`; branch: `br-tiny-hill-b5aiqeg7`; function slug: `k`. Neon injects `DATABASE_URL` from that branch. Apply [schema.sql](schema.sql) once, bundle the function with `npm run build`, zip `dist/index.mjs` at the archive root, then deploy the zip to Neon Functions. The scheduled trigger `k-sports-scan` invokes `/tick` every minute.
+Neon project: `floral-wave-57267243`; branch: `br-tiny-hill-b5aiqeg7`; function slug: `k`. Neon injects `DATABASE_URL` from that branch. Apply [schema.sql](schema.sql) once, bundle the function with `npm run build`, zip `dist/index.mjs` at the archive root, then deploy the zip to Neon Functions. The scheduled trigger `k-sports-scan` invokes `/tick` every fifteen minutes. An invocation runs repeated scans at a three-second target cadence while relevant live games are active; it stops when none are present. Slow API responses can extend an individual cycle beyond three seconds. Idle discovery can therefore lag by up to fifteen minutes. Neon free limits do not support uninterrupted three-second scanning around the clock.
 
 Required private Neon Function environment variables:
 

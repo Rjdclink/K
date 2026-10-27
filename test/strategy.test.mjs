@@ -11,10 +11,33 @@ test('over requires strict threshold exceeded and whole-game contract',()=>{
 });
 test('late lead requires verified live score, leader identity, and progress',()=>{
   const market={status:'active',title:'Will New York win?',yes_sub_title:'New York wins'};
-  assert.ok(leadSignal(gameState(milestone,live(114,84)),market));
-  assert.equal(leadSignal(gameState(milestone,live(112,84,2)),market),null);
-  assert.equal(leadSignal(gameState(milestone,{details:{...live(112,84).details,live_data_delayed:true}}),market),null);
-  assert.equal(leadSignal(gameState(milestone,live(112,84)),{...market,title:'Will Boston win?',yes_sub_title:'Boston wins'}),null);
+  assert.ok(leadSignal(gameState(milestone,live(140,30)),market));
+  assert.equal(leadSignal(gameState(milestone,live(140,30,2)),market),null);
+  assert.equal(leadSignal(gameState(milestone,{details:{...live(140,30).details,live_data_delayed:true}}),market),null);
+  assert.equal(leadSignal(gameState(milestone,live(140,30)),{...market,title:'Will Boston win?',yes_sub_title:'Boston wins'}),null);
+});
+test('commanding lead is only in final segment and scales across allocation tiers',()=>{
+  const m={...milestone,type:'baseball_game',details:{league:'MLB'}};
+  const market={status:'active',title:'New York wins',custom_strike:{baseball_team:'home'},yes_sub_title:'New York'};
+  const board=inning=>({details:{status:'inprogress',home_runs:11,away_runs:3,inning,inning_half:2,outs:1,home_team_name:'New York',away_team_name:'Boston'}});
+  assert.equal(leadSignal(gameState(m,board(8)),market),null);
+  const ninth=leadSignal(gameState(m,board(9)),market);assert.ok(ninth);assert.ok(ninth.fraction>=.3 && ninth.fraction<=.55);
+});
+test('250% advantage means 3.5x, and seven minutes is exclusive',()=>{
+  const market={status:'active',title:'New York wins',yes_sub_title:'New York'};
+  const at=(home,away,clock)=>({details:{...live(home,away).details,clock}});
+  assert.equal(leadSignal(gameState(milestone,at(34,10,'06:59')),market),null);
+  assert.ok(leadSignal(gameState(milestone,at(35,10,'06:59')),market));
+  assert.equal(leadSignal(gameState(milestone,at(35,10,'07:00')),market),null);
+  assert.equal(leadSignal(gameState(milestone,at(20,0,'01:30')),market),null);
+});
+test('football lead uses confirmed touchdowns, never points as a proxy',()=>{
+  const m={...milestone,type:'football_game',details:{league:'NFL'}};
+  const market={status:'active',title:'New York wins',yes_sub_title:'New York'};
+  const board={details:{...live(42,7).details,clock:'06:00'}};
+  assert.equal(leadSignal(gameState(m,board),market),null);
+  board.details.home_touchdowns=7;board.details.away_touchdowns=2;
+  assert.ok(leadSignal(gameState(m,board),market));
 });
 test('quantity respects 80% cash, price and displayed ask liquidity',()=>{
   assert.equal(orderSize(10000,'0.50','400',.8),160);
