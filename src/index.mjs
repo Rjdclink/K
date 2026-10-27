@@ -5,6 +5,10 @@ import { gameState, overSignal, leadSignal, tennisSignal, orderSize, estimatedCo
 import { reviewMiss } from './ai.mjs';
 import { kalshiSignature } from './auth.mjs';
 import { marketShard, shardCash, transferPlan } from './funding.mjs';
+import { icons } from './icons.mjs';
+import { manifest, worker } from './pwa.mjs';
+import { vapidIdentity, validateSubscription, deliverPush } from './push.mjs';
+import { favorableSettlement } from './settlements.mjs';
 
 const API='https://external-api.kalshi.com/trade-api/v2';
 const pool = new pg.Pool({connectionString:process.env.DATABASE_URL, max:4, idleTimeoutMillis:15000});
@@ -14,6 +18,8 @@ const configured=()=>Boolean((process.env.KALSHI_API_KEY||process.env.KALSHI_API
 const live=()=>configured() && process.env.LIVE_TRADING==='true';
 const credentials=()=>({key:process.env.KALSHI_API_KEY||process.env.KALSHI_API_KEY_ID,privateKey:process.env.KALSHI_PRIVATE_KEY});
 const safeEqual=(a,b)=>{const x=Buffer.from(a),y=Buffer.from(b);return x.length===y.length && timingSafeEqual(x,y)};
+const pushIdentity=()=>vapidIdentity(process.env.KALSHI_PRIVATE_KEY);
+const response=(body,type)=>new Response(body,{headers:{'content-type':type,'cache-control':'no-store','x-content-type-options':'nosniff'}});
 function authorized(req){const expected=process.env.DASHBOARD_PASSWORD;if(!expected)return false;const raw=req.headers.get('authorization')||'';if(!raw.startsWith('Basic '))return false;try{const [user,...password]=Buffer.from(raw.slice(6),'base64').toString('utf8').split(':');return user==='rjdc'&&safeEqual(password.join(':'),expected)}catch{return false}}
 async function kalshi(path,opts={}){
   const method=opts.method||'GET';const headers={'accept':'application/json'};
@@ -52,6 +58,40 @@ function accountBalance({fresh=false}={}){
   balanceQueue=job.catch(()=>{});return job;
 }
 async function invalidateBalance(){await pool.query('UPDATE account_cache SET updated_at=to_timestamp(0) WHERE id=1')}
+async function syncSettlementAlerts(){
+  if(!configured())return;
+  // A second scanner instance cannot poll and enqueue the same records simultaneously.
+  const claim=await pool.query(`UPDATE settlement_poll SET last_check=now() WHERE id=1 AND last_check<now()-interval '30 seconds' RETURNING id`);
+  if(!claim.rowCount)return;
+  try{
+    const held=await pool.query(`SELECT DISTINCT market_ticker FROM trade_attempts WHERE status='filled' AND created_at>now()-interval '14 days'`);
+    const tickers=new Set(held.rows.map(r=>r.market_ticker));
+    if(tickers.size){
+      let cursor='';const minTs=Math.floor(Date.now()/1000)-48*3600;
+      for(let pageNumber=0;pageNumber<5;pageNumber++){
+        const query=new URLSearchParams({limit:'1000',min_ts:String(minTs)});if(cursor)query.set('cursor',cursor);
+        const result=await kalshi('/portfolio/settlements?'+query,{auth:true});
+        for(const s of result.settlements||[]){
+          if(!tickers.has(s.ticker))continue;
+          const profit=favorableSettlement(s),settled=new Date(s.settled_time);
+          if(!profit||!Number.isFinite(settled.getTime()))continue;
+          const inserted=await pool.query(`INSERT INTO settlement_alerts(ticker,settled_time,profit_cents) VALUES($1,$2,$3) ON CONFLICT DO NOTHING RETURNING id`,[s.ticker,settled,profit]);
+          if(inserted.rows[0])await pool.query(`INSERT INTO push_deliveries(alert_id,endpoint) SELECT $1,endpoint FROM push_subscriptions WHERE created_at<=$2 ON CONFLICT DO NOTHING`,[inserted.rows[0].id,settled]);
+        }
+        cursor=result.cursor||'';if(!cursor)break;
+      }
+    }
+  }catch(e){console.error('Settlement polling failed:',e);await pool.query(`UPDATE settlement_poll SET last_check=to_timestamp(0) WHERE id=1`).catch(()=>{})}
+  const due=await pool.query(`SELECT d.alert_id,d.endpoint,s.subscription,a.ticker,a.profit_cents FROM push_deliveries d JOIN push_subscriptions s USING(endpoint) JOIN settlement_alerts a ON a.id=d.alert_id WHERE d.status='pending' AND d.next_attempt<=now() ORDER BY d.alert_id LIMIT 15`);
+  await Promise.all(due.rows.map(async row=>{
+    try{
+      const status=await deliverPush(row.subscription,{type:'profitable-settlement',id:row.alert_id,body:`${row.ticker} settled profitably · $${(row.profit_cents/100).toFixed(2)} net`},pushIdentity());
+      if(status===201||status===202)await pool.query(`UPDATE push_deliveries SET status='sent',attempts=attempts+1 WHERE alert_id=$1 AND endpoint=$2`,[row.alert_id,row.endpoint]);
+      else if(status===404||status===410)await pool.query('DELETE FROM push_subscriptions WHERE endpoint=$1',[row.endpoint]);
+      else throw Error(`Push provider returned ${status}`);
+    }catch(e){console.error('Push delivery failed:',String(e.message));await pool.query(`UPDATE push_deliveries SET attempts=attempts+1,next_attempt=now()+interval '1 minute'*LEAST(60,power(2,LEAST(attempts,6))) WHERE alert_id=$1 AND endpoint=$2`,[row.alert_id,row.endpoint]).catch(()=>{})}
+  }));
+}
 async function allOpenPositions(){
   const market_positions=[];let cursor='';
   for(let page=0;page<100;page++){
@@ -353,6 +393,7 @@ async function scan(cachedMilestones){
       }catch(e){const message=`${c.market.ticker}: ${String(e.message).slice(0,170)}`;executionErrors.push(message);console.error('Candidate execution failed:',message)}
     }
     await pool.query('UPDATE scan_status SET last_scan=$5,last_error=$4,scanned=$1,signals=$2,orders_submitted=orders_submitted+$3 WHERE id=1',[scanned,signals,submitted,executionErrors.length?executionErrors.slice(0,2).join('; ').slice(0,250):null,scanStarted]);
+    try{await syncSettlementAlerts()}catch(e){console.error('Settlement alert scan failed:',e)}
     return {scanned,signals,submitted,active:active.length,next:games.filter(g=>g.state.verifiedLive || (new Date(g.milestone.start_date).getTime()>Date.now()-3600000 && new Date(g.milestone.start_date).getTime()<Date.now()+3600000)).map(g=>g.milestone)};
   }catch(e){console.error('Scan failed:',e);await pool.query('UPDATE scan_status SET last_scan=now(),last_error=$1,scanned=$2,signals=$3 WHERE id=1',[String(e.message).slice(0,250),scanned,signals]);return {error:e.message,scanned,signals,next:ms}}
   finally{await client.query('ROLLBACK');client.release()}
@@ -383,7 +424,10 @@ async function state(){const [snap,stats,attempts]=await Promise.all([
   return {live:live(),credentials:configured(),aiConfigured:Boolean(process.env.AI_API_KEY),balance,accountError,positionsError,games:snap.rows,scan:stats.rows[0],orders};
 }
 export default {async fetch(req){const url=new URL(req.url);
-  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'live-filled-countdown-1'});
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'pwa-profitable-alerts-1'});
+  if(req.method==='GET'&&url.pathname==='/manifest.webmanifest')return response(manifest,'application/manifest+json');
+  if(req.method==='GET'&&url.pathname==='/sw.js')return new Response(worker,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','service-worker-allowed':'/','x-content-type-options':'nosniff'}});
+  if(req.method==='GET'&&/^\/icon-(192|512)\.png$/.test(url.pathname))return response(Buffer.from(icons[Number(url.pathname.match(/\d+/)[0])],'base64'),'image/png');
   if(req.method==='POST'&&url.pathname==='/tick'){
     if(!req.headers.get('x-neon-trigger-invocation-id'))return json({error:'Forbidden'},403);
     // Neon cron has minute resolution. Short invocations keep the three-second loop alive
@@ -397,6 +441,29 @@ export default {async fetch(req){const url=new URL(req.url);
     const {next,...summary}=last;return json({...summary,cycles});
   }
   if(!authorized(req))return new Response('Authentication required',{status:401,headers:{'www-authenticate':'Basic realm="K Trading"','cache-control':'no-store'}});
-  try{if(req.method==='GET'&&url.pathname==='/api/state')return json(await state());if(req.method==='GET'&&url.pathname==='/')return new Response(page,{headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store','content-security-policy':"default-src 'self'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'",'x-content-type-options':'nosniff'}})}catch(e){console.error(e);return json({error:'Service unavailable'},503)}
+  try{
+    if(req.method==='GET'&&url.pathname==='/api/push-key')return json({key:pushIdentity().publicBase64});
+    if(req.method==='GET'&&url.pathname==='/api/alerts'){
+      const since=Number(url.searchParams.get('since'))||0;
+      if(!Number.isFinite(since)||since<0)return json({error:'Invalid cursor'},400);
+      const alerts=await pool.query(`SELECT id,ticker,profit_cents,settled_time,created_at FROM settlement_alerts WHERE id>$1 AND created_at>now()-interval '2 days' ORDER BY id LIMIT 50`,[since]);
+      return json({alerts:alerts.rows});
+    }
+    if(req.method==='POST'&&url.pathname==='/api/push-subscription'){
+      if(req.headers.get('origin')!==url.origin||!req.headers.get('content-type')?.startsWith('application/json'))return json({error:'Forbidden'},403);
+      const raw=await req.text();if(raw.length>4096)return json({error:'Subscription too large'},413);
+      let subscription;try{subscription=validateSubscription(JSON.parse(raw))}catch{return json({error:'Invalid subscription'},400)}
+      await pool.query('INSERT INTO push_subscriptions(endpoint,subscription) VALUES($1,$2) ON CONFLICT(endpoint) DO UPDATE SET subscription=EXCLUDED.subscription',[subscription.endpoint,JSON.stringify(subscription)]);
+      return json({ok:true});
+    }
+    if(req.method==='DELETE'&&url.pathname==='/api/push-subscription'){
+      if(req.headers.get('origin')!==url.origin||!req.headers.get('content-type')?.startsWith('application/json'))return json({error:'Forbidden'},403);
+      const raw=await req.text();if(raw.length>4096)return json({error:'Subscription too large'},413);
+      let subscription;try{subscription=validateSubscription(JSON.parse(raw))}catch{return json({error:'Invalid subscription'},400)}
+      await pool.query('DELETE FROM push_subscriptions WHERE endpoint=$1',[subscription.endpoint]);return json({ok:true});
+    }
+    if(req.method==='GET'&&url.pathname==='/api/state')return json(await state());
+    if(req.method==='GET'&&url.pathname==='/')return new Response(page,{headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store','content-security-policy':"default-src 'self'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self'; manifest-src 'self'; base-uri 'none'; frame-ancestors 'none'",'x-content-type-options':'nosniff'}})
+  }catch(e){console.error(e);return json({error:'Service unavailable'},503)}
   return json({error:'Not found'},404);
 }};

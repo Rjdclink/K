@@ -5,7 +5,7 @@ import {page} from '../src/ui.mjs';
 
 test('filled order timer is bright red, advances each second and reanchors to live score',()=>{
   const intervals=[],elements=[];
-  const refresh={classList:{add(){},remove(){}},addEventListener(){}};
+  const refresh={classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){}};
   const document={
     getElementById:()=>refresh,
     querySelectorAll:()=>elements,
@@ -13,7 +13,8 @@ test('filled order timer is bright red, advances each second and reanchors to li
   };
   const script=page.match(/<script>([\s\S]*?)<\/script>/)?.[1];
   assert.ok(script);
-  const context=vm.createContext({document,fetch:()=>new Promise(()=>{}),AbortSignal,setInterval:(fn,ms)=>intervals.push({fn,ms})});
+  const localStorage={getItem(){return null},setItem(){}};
+  const context=vm.createContext({document,window:{addEventListener(){}},navigator:{},localStorage,fetch:()=>new Promise(()=>{}),AbortSignal,setInterval:(fn,ms)=>intervals.push({fn,ms})});
   vm.runInContext(script,context);
   const clock=vm.runInContext('clockDisplay',context),order=vm.runInContext('order',context);
   const start=1_000_000,base={market_ticker:'GAME',allocated_cents:100,potential_profit_cents:25,clock_seconds:278,clock_observed_at:new Date(start).toISOString(),game_status:'live',clock_label:'Quarter 4 left'};

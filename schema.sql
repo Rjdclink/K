@@ -88,3 +88,29 @@ CREATE TABLE IF NOT EXISTS exit_attempts (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS settlement_alerts (
+  id bigserial PRIMARY KEY,
+  ticker text NOT NULL,
+  settled_time timestamptz NOT NULL,
+  profit_cents integer NOT NULL CHECK (profit_cents > 0),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(ticker,settled_time)
+);
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  endpoint text PRIMARY KEY,
+  subscription jsonb NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS push_deliveries (
+  alert_id bigint NOT NULL REFERENCES settlement_alerts(id),
+  endpoint text NOT NULL REFERENCES push_subscriptions(endpoint) ON DELETE CASCADE,
+  status text NOT NULL DEFAULT 'pending',
+  attempts integer NOT NULL DEFAULT 0,
+  next_attempt timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY(alert_id,endpoint)
+);
+CREATE TABLE IF NOT EXISTS settlement_poll (
+  id integer PRIMARY KEY CHECK (id=1),
+  last_check timestamptz NOT NULL DEFAULT to_timestamp(0)
+);
+INSERT INTO settlement_poll(id) VALUES(1) ON CONFLICT DO NOTHING;
