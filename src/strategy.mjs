@@ -2,6 +2,7 @@ const N = v => v === null || v === undefined || v === '' ? NaN : Number(v);
 const pick = (obj, names) => names.map(k => obj?.[k]).find(v => Number.isFinite(N(v)));
 export function sportName(m) {
   const s = `${m.details?.competition || ''} ${m.details?.league || ''} ${m.type || ''}`.toLowerCase();
+  if (/table_tennis/.test(s)) return 'Table tennis';
   if (/college.*football|cfb/.test(s)) return 'CFB';
   if (/college.*basketball|ncaab|ncaam|ncaaw/.test(s)) return 'NCAAB';
   if (/wnba/.test(s)) return 'WNBA';
@@ -20,7 +21,7 @@ export function sportName(m) {
 export function gameState(m, live) {
   const d = live?.details || {};
   const sport = sportName(m);
-  const tennis=/tennis/.test(String(m.type||''));
+  const tennis=/^tennis_/.test(String(m.type||''));
   const one=tennis?d.competitor1_round_scores?.at(-1):null,two=tennis?d.competitor2_round_scores?.at(-1):null;
   const firstIsHome=d.competitor1_is_home!==false;
   const home = N(tennis?(firstIsHome?one?.score:two?.score):pick(d, ['home_score','homeScore','home_points','home_runs','home_goals','home_same_game_score']) ?? d.home?.score ?? d.home_team?.score);
@@ -40,7 +41,7 @@ export function gameState(m, live) {
   // matching Kalshi totals and winner markets settle on regulation only.
   const soccerExtraTime=/soccer/.test(family) &&
     (/^(?:aet|et|extra.?time|overtime|penalties)$/i.test(String(d.match_status||'')) ||
-      (d.period_scores||[]).some(p=>/overtime|extra/i.test(String(p.type||''))) ||
+      (Array.isArray(d.period_scores)?d.period_scores:[]).some(p=>/overtime|extra/i.test(String(p.type||''))) ||
       Number.isFinite(soccerMinute) && soccerMinute>=90);
   const segmentSeconds=/hockey/.test(family)||sport==='NCAAB'?1200:/basketball/.test(family)?sport==='WNBA'?600:720:900;
   const clockFraction = parts ? Math.min(1, (Number(parts[1])*60+Number(parts[2])) / segmentSeconds) : NaN;
@@ -61,6 +62,8 @@ export function gameState(m, live) {
 const wholeGame = s => !/1st|2nd|3rd|4th|first half|second half|quarter|period|inning|halftime|regulation only|first to score|team total|player|individual|series total/i.test(s);
 export function overSignal(game, market) {
   if (!game.verifiedLive || !game.scoreKnown || game.home+game.away<=0 || market.status!=='active' && market.status!=='open') return null;
+  // Scores from these feeds are not comparable to a whole-game contract line.
+  if (!/basketball|baseball|football|hockey|soccer/.test(game.type) || /esports|table_tennis/.test(game.type)) return null;
   if (game.soccerExtraTime || /soccer/.test(game.type) && !Number.isFinite(game.soccerMinute)) return null;
   // A nearly free YES after an apparently crossed line means the feed and
   // contract disagree. Never treat this as a guaranteed arbitrage.
@@ -76,6 +79,7 @@ export function overSignal(game, market) {
 const norm = s => String(s||'').toLowerCase().replace(/[^a-z0-9]/g,'');
 export function leadSignal(game, market) {
   if(game.soccerExtraTime)return null;
+  if(!/basketball|baseball|football|hockey|soccer/.test(game.type)||/esports|table_tennis/.test(game.type))return null;
   const basketball=/basketball/.test(game.type);
   const football=/football/.test(game.type);
   const hockey=/hockey/.test(game.type);
@@ -113,8 +117,8 @@ export function tennisSignal(game,market){
   const t=game.tennis;
   if(!game.verifiedLive||!game.scoreKnown||!t||!['active','open'].includes(market.status)||market.event_ticker!==t.mainEvent||!/(?:wins?|winner).*match|wins?\b/i.test(`${market.title||''} ${market.rules_primary||''}`))return null;
   if(![3,5].includes(t.bestOf)||!t.firstId||!t.secondId||!t.server||!t.mainEvent||t.firstRound!=='ongoing'||t.secondRound!=='ongoing')return null;
-  const first=t.firstGames===5 && t.firstGames-t.secondGames>=2 && t.firstSets===(t.bestOf-1)/2;
-  const second=t.secondGames===5 && t.secondGames-t.firstGames>=2 && t.secondSets===(t.bestOf-1)/2;
+  const first=t.firstGames===5 && t.secondGames<=2 && t.firstSets===(t.bestOf-1)/2;
+  const second=t.secondGames===5 && t.firstGames<=2 && t.secondSets===(t.bestOf-1)/2;
   if(first===second)return null;
   const leaderId=first?t.firstId:t.secondId,opponentId=first?t.secondId:t.firstId;
   if(market.custom_strike?.tennis_competitor!==leaderId||t.server!==leaderId)return null;

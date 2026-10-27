@@ -18,6 +18,17 @@ test('Kalshi whole-game over wording is recognized after the line is crossed',()
   assert.equal(overSignal(g,{...market,title:'Over 11.5 runs scored?',floor_strike:11.5}),null);
   assert.equal(orderSize(5097,'1.0000','0.00',.8),0);
 });
+test('scanner refuses unsupported score formats and delayed live data',()=>{
+  const total={status:'active',title:'Combined total points over 8',floor_strike:8,strike_type:'greater',yes_ask_dollars:'0.95'};
+  const winner={status:'active',title:'Home wins',yes_sub_title:'Home wins'};
+  for(const type of ['table_tennis_match','esports_soccer_game','cricket_match']){
+    const game=gameState({id:type,type,title:'Away at Home'},live(9,1));
+    assert.equal(overSignal(game,total),null,type);
+    assert.equal(leadSignal(game,winner),null,type);
+  }
+  const delayed=gameState(milestone,{details:{...live(210,5).details,last_updated_ts:Math.floor(Date.now()/1000)-300}});
+  assert.equal(overSignal(delayed,total),null);
+});
 test('late lead requires verified live score, leader identity, and progress',()=>{
   const market={status:'active',title:'Will New York win?',yes_sub_title:'New York wins'};
   assert.ok(leadSignal(gameState(milestone,live(140,30)),market));
@@ -77,11 +88,13 @@ test('tennis match winner requires clinching set, two-game lead, server and poin
   const m={id:'tennis',title:'Hurkacz vs Bergs',type:'tennis_tournament_singles',details:{best_of:'3',first_competitor_id:'H',second_competitor_id:'B',main_game_event_ticker:'KXATPMATCH-26OCT26HURBER'}};
   const market={status:'active',event_ticker:'KXATPMATCH-26OCT26HURBER',title:'Hubert Hurkacz wins',rules_primary:'If Hubert Hurkacz wins the tennis match after a ball has been played, Yes.',custom_strike:{tennis_competitor:'H'}};
   const live=(games=3,sets=1,server='H',p1=30,p2=15,best='3')=>gameState({...m,details:{...m.details,best_of:best}},{details:{status:'live',competitor1_is_home:true,competitor1_round_scores:[{outcome:'winner',score:6},{outcome:'ongoing',score:5}],competitor2_round_scores:[{outcome:'loser',score:3},{outcome:'ongoing',score:games}],competitor1_overall_score:sets,competitor2_overall_score:0,competitor1_current_round_score:p1,competitor2_current_round_score:p2,server,advantage:''}});
-  assert.equal(tennisSignal(live(),market)?.fraction,.25);
+  assert.equal(tennisSignal(live(),market),null);
   assert.equal(tennisSignal(live(2),market)?.fraction,.30);
+  assert.equal(tennisSignal(live(1),market)?.fraction,.35);
   assert.equal(tennisSignal(live(4),market),null);
   assert.equal(tennisSignal(live(3,0),market),null);
-  assert.equal(tennisSignal(live(3,2,'H',30,15,'5'),market)?.fraction,.25);
+  assert.equal(tennisSignal(live(3,2,'H',30,15,'5'),market),null);
+  assert.equal(tennisSignal(live(2,2,'H',30,15,'5'),market)?.fraction,.30);
   assert.equal(tennisSignal(live(3,1,'H',30,15,'5'),market),null);
   assert.equal(tennisSignal(live(3,1,'B',30,40),market),null);
   assert.equal(tennisSignal(live(3,1,'H',15,40),market),null);
