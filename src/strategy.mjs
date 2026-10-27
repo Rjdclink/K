@@ -114,7 +114,11 @@ export function tennisSignal(game,market){
   const leaderGames=first?t.firstGames:t.secondGames,opponentGames=first?t.secondGames:t.firstGames;
   return {strategy:'lead',reason:`Tennis match-clinching set ${leaderGames}–${opponentGames}; leader serves, points ${leaderPoints}–${opponentPoints}${t.advantage===leaderId?' advantage':''}`,fraction:opponentGames<=1||leaderPoints===40?.35:opponentGames===2?.30:.25};
 }
-export function minimumProfitCents(strategy,availableCents){
+export function minimumProfitCents(strategy,availableCents,sportType='',remainingSeconds=NaN){
+  if(strategy==='lead' && /basketball/.test(sportType)){
+    if(!Number.isFinite(remainingSeconds)||remainingSeconds<=0||remainingSeconds>=300)return Infinity;
+    return remainingSeconds<=30?25:remainingSeconds<=180?50:100;
+  }
   const hundreds=Math.floor(Math.max(0,Number(availableCents))/10000);
   return strategy==='over'?Math.max(50,hundreds*100):Math.max(25,hundreds*50);
 }
@@ -122,10 +126,9 @@ export function netSettlementProfitCents(count,price,feeMultiplier=2){
   if(!Number.isFinite(count)||count<=0||!Number.isFinite(price)||price<=0||price>=1)return 0;
   return Math.floor(count*(1-price)*100+1e-8)-Math.ceil(7*count*price*(1-price)*feeMultiplier-1e-8);
 }
-export function profitableCount(count,price,feeMultiplier,strategy,availableCents,sportType=''){
+export function profitableCount(count,price,feeMultiplier,strategy,availableCents,sportType='',remainingSeconds=NaN){
   const profit=netSettlementProfitCents(count,price,feeMultiplier);
-  // Basketball has no dollar profit floor, but a trade must still earn more than its estimated fee.
-  return (strategy==='lead'&&/basketball/.test(sportType)?profit>0:profit>=minimumProfitCents(strategy,availableCents))?count:0;
+  return profit>0&&profit>=minimumProfitCents(strategy,availableCents,sportType,remainingSeconds)?count:0;
 }
 export function comeback(game,market,strategy){
   if(!game?.verifiedLive||!game.scoreKnown)return false;
