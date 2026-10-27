@@ -27,11 +27,13 @@ test('filled order timer is bright red, advances each second and reanchors to li
   assert.equal(clock({...base,clock_seconds:11,time_left:'00:11 remaining'},start+12000),'Clock updating');
   assert.equal(clock({game_status:'live',clock_seconds:null,clock_label:'Stoppage time'}),'Stoppage time · live');
   assert.equal(clock({game_status:'live',clock_seconds:null,clock_label:'Inning progress',time_left:'Inning 9 · 2 outs'}),'Inning 9 · 2 outs');
+  assert.equal(clock({...base,game_status:'final'},start+12000),'Final · awaiting settlement');
   assert.equal(scoreDisplay(base,start),'Away 71 · Home 79');
   assert.equal(scoreDisplay({...base,home_score:0,away_score:0},start),'Away 0 · Home 0');
   assert.equal(scoreDisplay({...base,sport:'Tennis',home_score:5,away_score:3},start),'Away 3 · Home 5 games');
   assert.equal(scoreDisplay({...base,home_score:null},start),'Score updating');
   assert.equal(scoreDisplay({...base,game_status:'inactive'},start),'Score updating');
+  assert.equal(scoreDisplay({...base,game_status:'final'},start+91000),'Final · Away 71 · Home 79');
   assert.equal(scoreDisplay(base,start+91000),'Score updating');
   const row=order({...base,clock_observed_at:new Date(Date.now()).toISOString(),score_scanned_at:new Date(Date.now()).toISOString()});
   const timer=row.children[3].children[0],score=row.children[3].children[1];
@@ -46,6 +48,7 @@ test('filled order timer is bright red, advances each second and reanchors to li
   assert.equal(score.textContent,'Away 71 · Home 81');
   assert.match(page,/\.live-timer\{[^}]*color:#ff465c/);
   assert.match(page,/\.score-timer\{[^}]*display:flex/);
+  assert.match(page,/Tennis: <strong>5–2 or better<\/strong>/);
 });
 
 test('filled position names describe the sport, matchup and current over margin without showing ticker codes',()=>{
