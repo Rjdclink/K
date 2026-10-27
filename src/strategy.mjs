@@ -1,7 +1,7 @@
 const N = v => v === null || v === undefined || v === '' ? NaN : Number(v);
 const pick = (obj, names) => names.map(k => obj?.[k]).find(v => Number.isFinite(N(v)));
 export function sportName(m) {
-  const s = `${m.details?.competition || ''} ${m.type || ''} ${m.title || ''}`.toLowerCase();
+  const s = `${m.details?.competition || ''} ${m.details?.league || ''} ${m.type || ''}`.toLowerCase();
   if (/college.*football|cfb/.test(s)) return 'CFB';
   if (/college.*basketball|ncaab/.test(s)) return 'NCAAB';
   if (/wnba/.test(s)) return 'WNBA';
@@ -10,7 +10,11 @@ export function sportName(m) {
   if (/mlb|pro baseball/.test(s)) return 'MLB';
   if (/nhl|pro hockey/.test(s)) return 'NHL';
   if (/soccer|football match/.test(s)) return 'Soccer';
-  return m.details?.competition || m.type || 'Sports';
+  if (/basketball/.test(s)) return m.details?.league || 'Basketball';
+  if (/baseball/.test(s)) return m.details?.league || 'Baseball';
+  if (/hockey/.test(s)) return m.details?.league || 'Hockey';
+  if (/football/.test(s)) return m.details?.league || 'Football';
+  return m.details?.league || m.details?.competition || m.type || 'Sports';
 }
 export function gameState(m, live) {
   const d = live?.details || {};
@@ -20,17 +24,20 @@ export function gameState(m, live) {
   const status = String(d.status || '').toLowerCase();
   const period = N(pick(d, ['period','period_number','quarter','current_period','inning','current_inning']) ?? d.game?.period);
   const periodText = String(d.period_display || d.period_name || d.clock?.period || d.inning_half || '').toLowerCase();
-  const clock = String(d.clock?.display || d.clock || d.time_remaining || '').trim();
+  const clock = String(d.period_remaining_time || d.clock?.display || d.clock || d.time_remaining || '').trim();
   const parts = clock.match(/^(\d{1,2}):(\d{2})$/);
   const clockFraction = parts ? Math.min(1, (Number(parts[1])*60+Number(parts[2])) / (sport==='NBA'||sport==='WNBA'||sport==='NCAAB'?720:900)) : NaN;
   let progress = NaN;
-  if (['NFL','CFB','NBA','WNBA'].includes(sport) && Number.isFinite(period) && period>=1) progress = Math.min(0.99,(period-1 + (Number.isFinite(clockFraction)?1-clockFraction:0))/4);
+  const family=String(m.type||'').toLowerCase();
+  if ((['NFL','CFB','NBA','WNBA'].includes(sport)||/football_game|basketball_game/.test(family)) && Number.isFinite(period) && period>=1) progress = Math.min(0.99,(period-1 + (Number.isFinite(clockFraction)?1-clockFraction:0))/4);
   if (sport==='NCAAB' && Number.isFinite(period) && period>=1) progress = Math.min(0.99,(period-1 + (Number.isFinite(clockFraction)?1-clockFraction:0))/2);
-  if (sport==='NHL' && Number.isFinite(period) && period>=1) progress = Math.min(0.99,(period-1 + (Number.isFinite(clockFraction)?1-clockFraction:0))/3);
-  if (sport==='MLB' && Number.isFinite(period) && period>=1) progress = Math.min(0.99,(period-1 + (/bottom/.test(periodText)?0.5:0))/9);
+  if ((sport==='NHL'||/hockey_match/.test(family)) && Number.isFinite(period) && period>=1) progress = Math.min(0.99,(period-1 + (Number.isFinite(clockFraction)?1-clockFraction:0))/3);
+  if ((sport==='MLB'||/baseball_game/.test(family)) && Number.isFinite(period) && period>=1) progress = Math.min(0.99,(period-1 + (/bottom/.test(periodText)?0.5:0))/9);
   if (sport==='Soccer' && Number.isFinite(period) && period>=1) progress = Math.min(0.99,(period-1)/2);
-  const verifiedLive = ['live','in_progress','in progress','playing','inprogress'].includes(status) && !d.live_data_delayed;
-  return {id:m.id, title:m.title, sport, status, home, away, period, clock, progress, verifiedLive, scoreKnown:Number.isFinite(home)&&Number.isFinite(away), homeName:String(d.home_team?.name||d.home_team_name||d.home?.name||''), awayName:String(d.away_team?.name||d.away_team_name||d.away?.name||''), eventTickers:m.related_event_tickers||[]};
+  const updated=N(d.last_updated_ts);const fresh=Number.isFinite(updated) && Math.abs(Date.now()-updated*1000)<120000;
+  const verifiedLive = ['live','in_progress','in progress','playing','inprogress'].includes(status) && !d.live_data_delayed && fresh;
+  const names=String(m.title||'').split(/\s+at\s+/i);
+  return {id:m.id, title:m.title, sport, status, home, away, period, clock, progress, verifiedLive, scoreKnown:Number.isFinite(home)&&Number.isFinite(away), homeName:String(d.home_team?.name||d.home_team_name||d.home?.name||(names.length===2?names[1]:'')), awayName:String(d.away_team?.name||d.away_team_name||d.away?.name||(names.length===2?names[0]:'')),homeTeamId:m.details?.home_team_id,awayTeamId:m.details?.away_team_id,eventTickers:m.related_event_tickers||[]};
 }
 const wholeGame = s => !/1st|2nd|3rd|4th|first half|second half|quarter|period|inning|halftime|regulation only|first to score|team total|player|individual|series total/i.test(s);
 export function overSignal(game, market) {
@@ -49,10 +56,12 @@ export function leadSignal(game, market) {
   const leader = game.home>game.away ? game.homeName : game.awayName;
   const trailer = game.home>game.away ? game.awayName : game.homeName;
   const description = `${market.title||''} ${market.yes_sub_title||''}`;
-  if (!/win|winner|victory/i.test(description) || !norm(description).includes(norm(leader)) || norm(description).includes(norm(trailer))) return null;
+  const teamId=Object.entries(market.custom_strike||{}).find(([k,v])=>/_team$/.test(k)&&typeof v==='string')?.[1];
+  const expectedId=game.home>game.away?game.homeTeamId:game.awayTeamId;
+  if (!/win|winner|victory/i.test(description) || (teamId && expectedId ? teamId!==expectedId : !norm(description).includes(norm(leader)) || norm(description).includes(norm(trailer)))) return null;
   const margin = Math.abs(game.home-game.away);
   const relative = margin / Math.max(1,Math.min(game.home,game.away));
-  const minMargin = ['NFL','CFB'].includes(game.sport)?17:['NBA','WNBA','NCAAB'].includes(game.sport)?15:['MLB','NHL','Soccer'].includes(game.sport)?3:Infinity;
+  const s=game.sport.toLowerCase();const minMargin = ['NFL','CFB'].includes(game.sport)||/football/.test(s)?17:['NBA','WNBA','NCAAB'].includes(game.sport)||/basketball|kbl|cba/.test(s)?15:['MLB','NHL','Soccer'].includes(game.sport)||/baseball|hockey|kbo/.test(s)?3:Infinity;
   if (margin<minMargin || relative<0.35) return null;
   const fraction = Math.min(0.8,0.12+0.42*game.progress+0.18*Math.min(1,relative));
   return {strategy:'lead', reason:`${leader} leads ${game.home}–${game.away}; ${Math.round(game.progress*100)}% elapsed`, fraction};

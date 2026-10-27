@@ -66,7 +66,7 @@ async function scan(){
       const candidates=[];
       if(state.verifiedLive && state.scoreKnown)for(const ticker of state.eventTickers){const event=events.get(ticker);if(!event || event.category!=='Sports')continue;
         for(const market of event.markets||[]){const signal=overSignal(state,market)||leadSignal(state,market);if(signal)candidates.push({signal,event,market})}}
-      scanned++;signals+=candidates.length;
+      if(state.verifiedLive)scanned++;signals+=candidates.length;
       await client.query(`INSERT INTO game_snapshots(id,title,sport,home,away,status,progress,period,scanned_at,signals) VALUES($1,$2,$3,$4,$5,$6,$7,$8,now(),$9) ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,sport=EXCLUDED.sport,home=EXCLUDED.home,away=EXCLUDED.away,status=EXCLUDED.status,progress=EXCLUDED.progress,period=EXCLUDED.period,scanned_at=now(),signals=EXCLUDED.signals`,[state.id,state.title||'Sports game',state.sport,state.scoreKnown?state.home:null,state.scoreKnown?state.away:null,state.status,Number.isFinite(state.progress)?state.progress:null,String(state.period||''),JSON.stringify(candidates.map(c=>({strategy:c.signal.strategy,reason:c.signal.reason,ticker:c.market.ticker}))) ]);
       if(live())for(const c of candidates){if(await submit(c.signal,state,c.event,c.market,balance)){submitted++;balance=Number((await kalshi('/portfolio/balance',{auth:true})).balance||0)}}
     }
@@ -76,7 +76,7 @@ async function scan(){
   finally{await client.query('SELECT pg_advisory_unlock(83027542)');client.release()}
 }
 async function state(){const [snap,stats,attempts]=await Promise.all([
-  pool.query(`SELECT id,title,sport,home,away,status,signals FROM game_snapshots WHERE scanned_at>(SELECT COALESCE(last_scan,now()-interval '1 minute')-interval '5 seconds' FROM scan_status WHERE id=1) ORDER BY jsonb_array_length(signals) DESC,title LIMIT 100`),
+  pool.query(`SELECT id,title,sport,home,away,status,signals FROM game_snapshots WHERE status IN ('live','inprogress','started') AND scanned_at>(SELECT COALESCE(last_scan,now()-interval '1 minute')-interval '5 seconds' FROM scan_status WHERE id=1) ORDER BY jsonb_array_length(signals) DESC,title LIMIT 100`),
   pool.query('SELECT * FROM scan_status WHERE id=1'),
   pool.query(`SELECT market_ticker,sport,strategy,reason,fill_count FROM trade_attempts WHERE status='filled' ORDER BY created_at DESC LIMIT 100`)
 ]);
