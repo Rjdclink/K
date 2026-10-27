@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {gameState,overSignal,leadSignal,orderSize,estimatedCostCents,overBudget} from '../src/strategy.mjs';
+import {gameState,overSignal,leadSignal,tennisSignal,orderSize,estimatedCostCents,overBudget} from '../src/strategy.mjs';
 
 const milestone={id:'game-1',title:'Boston at New York',type:'basketball_game',details:{competition:'Pro Basketball (M)'},related_event_tickers:['GAME']};
 const live=(home,away,quarter=4)=>({details:{status:'live',last_updated_ts:Math.floor(Date.now()/1000),home_score:home,away_score:away,quarter,clock:'05:00',home_team_name:'New York',away_team_name:'Boston'}});
@@ -41,6 +41,40 @@ test('baseball accepts a two-run shutout lead',()=>{
   assert.equal(leadSignal(gameState(baseball,at(2,0,9)),market)?.fraction,.2);
   assert.equal(leadSignal(gameState(baseball,at(3,0,9)),market)?.fraction,.3);
   assert.equal(leadSignal(gameState(baseball,at(2,0,8)),market),null);
+});
+test('spread contracts are not game winner contracts',()=>{
+  const m={...milestone,type:'baseball_game',details:{league:'KBO',home_team_id:'home-id',away_team_id:'away-id'}};
+  const g=gameState(m,{details:{status:'inprogress',home_points:8,away_points:3,inning:9,home_team_name:'Samsung Lions',away_team_name:'Kia Tigers'}});
+  const spread={status:'active',event_ticker:'KXKBOSPREAD-26OCT260530KIASAM',title:'Samsung Lions wins by over 1.5 runs',yes_sub_title:'Samsung Lions wins by over 1.5 runs',custom_strike:{baseball_team:'home-id'}};
+  assert.equal(leadSignal(g,spread),null);
+  assert.equal(leadSignal(g,{...spread,event_ticker:'KXKBOGAME-26OCT260530KIASAM',title:'Samsung Lions wins',yes_sub_title:'Samsung Lions'} )?.fraction,.3);
+});
+test('soccer starts at 83:00 in second half and includes stoppage, excluding extra-time contracts',()=>{
+  const m={id:'soccer',title:'Abha vs Al-Faisaly',type:'soccer_tournament_multi_leg',details:{league:'Saudi Pro League',home_team_id:'abha',away_team_id:'faisaly'}};
+  const board=(home,away,time,half='2nd')=>gameState(m,{details:{status:'live',home_same_game_score:home,away_same_game_score:away,time,half}});
+  const market={status:'active',event_ticker:'KXSAUDIPLGAME-26OCT27ABHFAI',title:'Abha wins',yes_sub_title:'Abha',custom_strike:{soccer_team:'abha'},rules_primary:'If Abha wins after 90 minutes plus stoppage time (does not include extra time or penalties), then Yes.'};
+  assert.equal(leadSignal(board(2,0,"82'"),market),null);
+  assert.equal(leadSignal(board(2,0,"83'"),market)?.fraction,.2);
+  assert.equal(leadSignal(board(3,0,"83'"),market)?.fraction,.3);
+  assert.equal(leadSignal(board(3,1,"90+4'"),market)?.fraction,.2);
+  assert.equal(leadSignal(board(2,0,"90+4'",'extra time'),market),null);
+  assert.equal(leadSignal(board(2,0,"83'",'1st'),market),null);
+  assert.equal(leadSignal(board(2,0,"83'"),{...market,rules_primary:'Includes extra time and penalty shootouts.'}),null);
+});
+test('tennis match winner requires clinching set, two-game lead, server and point score',()=>{
+  const m={id:'tennis',title:'Hurkacz vs Bergs',type:'tennis_tournament_singles',details:{best_of:'3',first_competitor_id:'H',second_competitor_id:'B',main_game_event_ticker:'KXATPMATCH-26OCT26HURBER'}};
+  const market={status:'active',event_ticker:'KXATPMATCH-26OCT26HURBER',title:'Hubert Hurkacz wins',rules_primary:'If Hubert Hurkacz wins the tennis match after a ball has been played, Yes.',custom_strike:{tennis_competitor:'H'}};
+  const live=(games=3,sets=1,server='H',p1=30,p2=15,best='3')=>gameState({...m,details:{...m.details,best_of:best}},{details:{status:'live',competitor1_is_home:true,competitor1_round_scores:[{outcome:'winner',score:6},{outcome:'ongoing',score:5}],competitor2_round_scores:[{outcome:'loser',score:3},{outcome:'ongoing',score:games}],competitor1_overall_score:sets,competitor2_overall_score:0,competitor1_current_round_score:p1,competitor2_current_round_score:p2,server,advantage:''}});
+  assert.equal(tennisSignal(live(),market)?.fraction,.2);
+  assert.equal(tennisSignal(live(2),market)?.fraction,.3);
+  assert.equal(tennisSignal(live(4),market),null);
+  assert.equal(tennisSignal(live(3,0),market),null);
+  assert.equal(tennisSignal(live(3,2,'H',30,15,'5'),market)?.fraction,.2);
+  assert.equal(tennisSignal(live(3,1,'H',30,15,'5'),market),null);
+  assert.equal(tennisSignal(live(3,1,'B',30,40),market),null);
+  assert.equal(tennisSignal(live(3,1,'H',15,40),market),null);
+  assert.equal(tennisSignal(live(3,1,'unknown'),market),null);
+  assert.equal(tennisSignal(live(),{...market,event_ticker:'KXATPSETWINNER-2'}),null);
 });
 test('hockey needs a two-goal lead in third period under seven minutes',()=>{
   const hockey={...milestone,type:'hockey_match',details:{league:'NHL'}};

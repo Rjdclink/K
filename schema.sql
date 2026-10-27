@@ -44,3 +44,17 @@ CREATE TABLE IF NOT EXISTS scan_status (
   orders_submitted integer NOT NULL DEFAULT 0
 );
 INSERT INTO scan_status(id) VALUES(1) ON CONFLICT DO NOTHING;
+CREATE TABLE IF NOT EXISTS funding_transfers (
+  id uuid PRIMARY KEY,
+  market_ticker text NOT NULL,
+  strategy text NOT NULL,
+  source_shard integer NOT NULL,
+  destination_shard integer NOT NULL,
+  amount_centicents bigint NOT NULL,
+  status text NOT NULL DEFAULT 'pending',
+  transfer_id text,
+  error text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS funding_transfers_market_created_idx ON funding_transfers(market_ticker,strategy,created_at DESC);
