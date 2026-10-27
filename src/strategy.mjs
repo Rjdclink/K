@@ -15,7 +15,7 @@ export function touchdownsFromPbp(pbp,homeScore,awayScore){
 export function sportName(m) {
   const s = `${m.details?.competition || ''} ${m.details?.league || ''} ${m.type || ''}`.toLowerCase();
   if (/college.*football|cfb/.test(s)) return 'CFB';
-  if (/college.*basketball|ncaab/.test(s)) return 'NCAAB';
+  if (/college.*basketball|ncaab|ncaam|ncaaw/.test(s)) return 'NCAAB';
   if (/wnba/.test(s)) return 'WNBA';
   if (/nba|pro basketball/.test(s)) return 'NBA';
   if (/nfl|pro football/.test(s)) return 'NFL';
@@ -40,7 +40,7 @@ export function gameState(m, live) {
   const parts = clock.match(/^(\d{1,2}):(\d{2})$/);
   const remainingSeconds=parts?Number(parts[1])*60+Number(parts[2]):NaN;
   const family=String(m.type||'').toLowerCase();
-  const segmentSeconds=/hockey/.test(family)?1200:/basketball/.test(family)?720:900;
+  const segmentSeconds=/hockey/.test(family)||sport==='NCAAB'?1200:/basketball/.test(family)?sport==='WNBA'?600:720:900;
   const clockFraction = parts ? Math.min(1, (Number(parts[1])*60+Number(parts[2])) / segmentSeconds) : NaN;
   let progress = NaN;
   if ((['NFL','CFB','NBA','WNBA'].includes(sport)||/football_game|basketball_game/.test(family)) && Number.isFinite(period) && period>=1) progress = Math.min(0.99,(period-1 + (Number.isFinite(clockFraction)?1-clockFraction:0))/4);
@@ -69,12 +69,15 @@ export function overSignal(game, market) {
 }
 const norm = s => String(s||'').toLowerCase().replace(/[^a-z0-9]/g,'');
 export function leadSignal(game, market) {
-  const segments=/baseball/.test(game.type)?9:/hockey/.test(game.type)?3:/soccer/.test(game.type)?2:/basketball/.test(game.type)&&game.sport==='NCAAB'?2:/basketball|football/.test(game.type)?4:Infinity;
+  const basketball=/basketball/.test(game.type);
+  const segments=/baseball/.test(game.type)?9:/hockey/.test(game.type)?3:/soccer/.test(game.type)?2:basketball&&game.sport==='NCAAB'?2:/basketball|football/.test(game.type)?4:Infinity;
   const baseball=/baseball/.test(game.type);
   const finalTime=baseball?game.period===9:game.period===segments && Number.isFinite(game.remainingSeconds) && game.remainingSeconds>0 && game.remainingSeconds<420;
   if (!game.verifiedLive || !game.scoreKnown || !finalTime || market.status!=='active' && market.status!=='open') return null;
   const h=game.homeUnits,a=game.awayUnits;
-  if (!Number.isFinite(h)||!Number.isFinite(a)||Math.min(h,a)<=0||Math.max(h,a)<3.5*Math.min(h,a)) return null;
+  if (!Number.isFinite(h)||!Number.isFinite(a)) return null;
+  const margin=Math.abs(h-a),trailerScore=Math.min(h,a);
+  if (basketball ? margin<5 : trailerScore<=0||Math.max(h,a)<3.5*trailerScore) return null;
   const leader = h>a ? game.homeName : game.awayName;
   const trailer = h>a ? game.awayName : game.homeName;
   const description = `${market.title||''} ${market.yes_sub_title||''}`;
@@ -82,11 +85,12 @@ export function leadSignal(game, market) {
   const expectedId=h>a?game.homeTeamId:game.awayTeamId;
   const identityMatches=teamId&&expectedId?teamId===expectedId:Boolean(leader&&trailer&&norm(description).includes(norm(leader))&&!norm(description).includes(norm(trailer)));
   if (!/win|winner|victory/i.test(description) || !identityMatches) return null;
-  const ratio=Math.max(h,a)/Math.min(h,a);
+  const ratio=trailerScore>0?Math.max(h,a)/trailerScore:Infinity;
   const phase=baseball?(game.inningHalf===2&&game.outs>=2?2:game.inningHalf===2||game.outs>=2?1:0):(game.remainingSeconds<120?2:game.remainingSeconds<300?1:0);
   const [low,high]=[[0.15,0.30],[0.30,0.55],[0.55,0.80]][phase];
-  const fraction=Math.round((low+(high-low)*Math.min(1,(ratio-3.5)/2.5))*100)/100;
-  return {strategy:'lead', reason:`${leader||market.yes_sub_title} leads ${h}–${a} ${game.unit} (${Math.round((ratio-1)*100)}% advantage); ${baseball?'9th inning':game.clock+' remaining'}`, fraction};
+  const strength=basketball?(margin-5)/15:(ratio-3.5)/2.5;
+  const fraction=Math.round((low+(high-low)*Math.min(1,strength))*100)/100;
+  return {strategy:'lead', reason:`${leader||market.yes_sub_title} leads ${h}–${a} ${game.unit} (${basketball?margin+' point lead':Math.round((ratio-1)*100)+'% advantage'}); ${baseball?'9th inning':game.clock+' remaining'}`, fraction};
 }
 export function orderSize(balanceCents, askDollars, askSize, fraction, cap=0.98) {
   const price = N(askDollars), size = N(askSize);

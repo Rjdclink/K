@@ -23,13 +23,29 @@ test('commanding lead is only in final segment and scales across allocation tier
   assert.equal(leadSignal(gameState(m,board(8)),market),null);
   const ninth=leadSignal(gameState(m,board(9)),market);assert.ok(ninth);assert.ok(ninth.fraction>=.3 && ninth.fraction<=.55);
 });
-test('250% advantage means 3.5x, and seven minutes is exclusive',()=>{
+test('250% advantage means 3.5x for non-basketball sports',()=>{
+  const hockey={...milestone,type:'hockey_match',details:{league:'NHL'}};
   const market={status:'active',title:'New York wins',yes_sub_title:'New York'};
-  const at=(home,away,clock)=>({details:{...live(home,away).details,clock}});
-  assert.equal(leadSignal(gameState(milestone,at(34,10,'06:59')),market),null);
-  assert.ok(leadSignal(gameState(milestone,at(35,10,'06:59')),market));
-  assert.equal(leadSignal(gameState(milestone,at(35,10,'07:00')),market),null);
-  assert.equal(leadSignal(gameState(milestone,at(20,0,'01:30')),market),null);
+  const at=(home,away,clock)=>({details:{...live(home,away,3).details,clock}});
+  assert.equal(leadSignal(gameState(hockey,at(34,10,'06:59')),market),null);
+  assert.ok(leadSignal(gameState(hockey,at(35,10,'06:59')),market));
+  assert.equal(leadSignal(gameState(hockey,at(35,10,'07:00')),market),null);
+  assert.equal(leadSignal(gameState(hockey,at(20,0,'01:30')),market),null);
+});
+test('basketball requires five points and under seven minutes in final quarter or half',()=>{
+  const market={status:'active',title:'New York wins',yes_sub_title:'New York'};
+  for(const league of ['NBA','WNBA','Basketball']){
+    const m={...milestone,details:{league}};
+    const at=(home,away,quarter,clock)=>({details:{...live(home,away,quarter).details,clock}});
+    assert.equal(leadSignal(gameState(m,at(104,100,4,'06:59')),market),null);
+    assert.ok(leadSignal(gameState(m,at(105,100,4,'06:59')),market));
+    assert.equal(leadSignal(gameState(m,at(105,100,4,'07:00')),market),null);
+    assert.equal(leadSignal(gameState(m,at(105,100,3,'03:00')),market),null);
+    assert.ok(leadSignal(gameState(m,at(5,0,4,'01:59')),market));
+  }
+  const college={...milestone,details:{league:'NCAAMB'}};
+  assert.ok(leadSignal(gameState(college,{details:{...live(72,67,2).details,clock:'06:00'}}),market));
+  assert.equal(leadSignal(gameState(college,{details:{...live(72,67,1).details,clock:'01:00'}}),market),null);
 });
 test('football lead uses confirmed touchdowns, never points as a proxy',()=>{
   const m={...milestone,type:'football_game',details:{league:'NFL'}};
