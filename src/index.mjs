@@ -81,7 +81,8 @@ async function liveBatch(ms){
       console.warn('Live batch unsupported; using bounded individual requests:',e.message);
       for(const m of group){try{const result=await kalshi('/live_data/milestone/'+encodeURIComponent(m.id));if(result.live_data)list.push(result.live_data)}catch(error){if(/Kalshi 429 /.test(String(error.message)))throw error}}
     }
-    list.forEach(d=>map.set(d.milestone_id,d));}
+    const observedAt=new Date().toISOString();
+    list.forEach(d=>map.set(d.milestone_id,{...d,_observed_at:observedAt}));}
   return map;
 }
 async function marketMap(tickers){
@@ -296,8 +297,11 @@ async function scan(cachedMilestones){
       if(state.verifiedLive && state.scoreKnown)for(const ticker of linkedEventTickers(milestone)){const event=events.get(ticker);if(!event || event.category!=='Sports')continue;
         for(const market of event.markets||[]){const signal=overSignal(state,market)||leadSignal(state,market)||tennisSignal(state,market);if(signal&&!filled.has(`${market.ticker}:${signal.strategy}`))candidates.push({signal,event,market,state,milestone})}}
       if(state.verifiedLive)scanned++;signals+=candidates.length;opportunities.push(...candidates);
-      const timeLeft=/baseball/.test(state.type)?`9th inning${Number.isFinite(state.outs)?` · ${state.outs} out(s)`:''}`:/tennis/.test(state.type)?`Deciding set · ${state.tennis?.firstGames ?? '?'}–${state.tennis?.secondGames ?? '?'} games`:/soccer/.test(state.type)?Number.isFinite(state.soccerMinute)?`${state.soccerMinute}' elapsed`:'Clock pending':state.clock?state.clock+' remaining':'Clock pending';
-      await pool.query(`INSERT INTO game_snapshots(id,title,sport,home,away,status,progress,period,time_left,scanned_at,signals) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,sport=EXCLUDED.sport,home=EXCLUDED.home,away=EXCLUDED.away,status=EXCLUDED.status,progress=EXCLUDED.progress,period=EXCLUDED.period,time_left=EXCLUDED.time_left,scanned_at=EXCLUDED.scanned_at,signals=EXCLUDED.signals`,[state.id,state.title||'Sports game',state.sport,state.scoreKnown?state.home:null,state.scoreKnown?state.away:null,state.verifiedLive?'live':'inactive',Number.isFinite(state.progress)?state.progress:null,String(state.period||''),timeLeft,scanStarted,JSON.stringify(candidates.map(c=>({strategy:c.signal.strategy,reason:c.signal.reason,ticker:c.market.ticker,execution:signalExecution(c,filled,account,balance,bankroll,overRemaining)}))) ]);
+      const baseball=/baseball/.test(state.type),tennis=/tennis/.test(state.type),soccer=/soccer/.test(state.type);
+      const timeLeft=baseball?`Inning ${state.period||'?'}${Number.isFinite(state.outs)?` · ${state.outs} out(s)`:''}`:tennis?`Set · ${state.tennis?.firstGames ?? '?'}–${state.tennis?.secondGames ?? '?'} games`:soccer?Number.isFinite(state.soccerMinute)?`${state.soccerMinute}' elapsed`:'Clock pending':state.clock?state.clock+' remaining':'Clock pending';
+      const clockSeconds=state.verifiedLive?(soccer&&Number.isFinite(state.soccerMinute)&&state.soccerMinute<90?Math.max(0,Math.ceil((90-state.soccerMinute)*60)):!baseball&&!tennis&&!soccer&&Number.isFinite(state.remainingSeconds)?state.remainingSeconds:null):null;
+      const clockLabel=soccer?state.soccerMinute>=90?'Stoppage time':'Regulation left':baseball?'Inning progress':tennis?'Set progress':state.sport==='NCAAB'? `Half ${state.period||'?'} left`:/hockey/.test(state.type)?`Period ${state.period||'?'} left`:/football|basketball/.test(state.type)?`Quarter ${state.period||'?'} left`:'Game clock';
+      await pool.query(`INSERT INTO game_snapshots(id,title,sport,home,away,status,progress,period,time_left,clock_seconds,clock_label,clock_observed_at,scanned_at,signals) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,sport=EXCLUDED.sport,home=EXCLUDED.home,away=EXCLUDED.away,status=EXCLUDED.status,progress=EXCLUDED.progress,period=EXCLUDED.period,time_left=EXCLUDED.time_left,clock_seconds=EXCLUDED.clock_seconds,clock_label=EXCLUDED.clock_label,clock_observed_at=EXCLUDED.clock_observed_at,scanned_at=EXCLUDED.scanned_at,signals=EXCLUDED.signals`,[state.id,state.title||'Sports game',state.sport,state.scoreKnown?state.home:null,state.scoreKnown?state.away:null,state.verifiedLive?'live':'inactive',Number.isFinite(state.progress)?state.progress:null,String(state.period||''),timeLeft,clockSeconds,clockLabel,liveMap.get(milestone.id)?._observed_at||null,scanStarted,JSON.stringify(candidates.map(c=>({strategy:c.signal.strategy,reason:c.signal.reason,ticker:c.market.ticker,execution:signalExecution(c,filled,account,balance,bankroll,overRemaining)}))) ]);
     }
     opportunities.sort((a,b)=>{
       if(a.signal.strategy!==b.signal.strategy)return a.signal.strategy==='over'?-1:1;
@@ -356,7 +360,7 @@ async function scan(cachedMilestones){
 async function state(){const [snap,stats,attempts]=await Promise.all([
   pool.query(`SELECT id,title,sport,home,away,status,time_left,signals FROM game_snapshots WHERE status IN ('live','inprogress','started') AND scanned_at>=(SELECT COALESCE(last_scan,now()-interval '1 minute') FROM scan_status WHERE id=1) ORDER BY jsonb_array_length(signals) DESC,title`),
   pool.query('SELECT * FROM scan_status WHERE id=1'),
-  pool.query(`SELECT market_ticker,game_id,sport,strategy,reason,fill_count,limit_price FROM trade_attempts WHERE status='filled' ORDER BY created_at DESC`)
+  pool.query(`SELECT a.market_ticker,a.game_id,a.sport,a.strategy,a.reason,a.fill_count,a.limit_price,g.status AS game_status,g.clock_seconds,g.clock_label,g.clock_observed_at,g.time_left FROM trade_attempts a LEFT JOIN game_snapshots g ON g.id=a.game_id WHERE a.status='filled' ORDER BY a.created_at DESC`)
 ]);
   let balance=null,positions=null,accountError=null,positionsError=null;
   if(configured()){
@@ -379,7 +383,7 @@ async function state(){const [snap,stats,attempts]=await Promise.all([
   return {live:live(),credentials:configured(),aiConfigured:Boolean(process.env.AI_API_KEY),balance,accountError,positionsError,games:snap.rows,scan:stats.rows[0],orders};
 }
 export default {async fetch(req){const url=new URL(req.url);
-  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'basketball-time-tiers-1'});
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'live-filled-countdown-1'});
   if(req.method==='POST'&&url.pathname==='/tick'){
     if(!req.headers.get('x-neon-trigger-invocation-id'))return json({error:'Forbidden'},403);
     // Neon cron has minute resolution. Short invocations keep the three-second loop alive

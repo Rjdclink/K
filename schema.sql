@@ -8,10 +8,16 @@ CREATE TABLE IF NOT EXISTS game_snapshots (
   progress numeric,
   period text,
   time_left text,
+  clock_seconds integer,
+  clock_label text,
+  clock_observed_at timestamptz,
   scanned_at timestamptz NOT NULL DEFAULT now(),
   signals jsonb NOT NULL DEFAULT '[]'::jsonb
 );
 ALTER TABLE game_snapshots ADD COLUMN IF NOT EXISTS time_left text;
+ALTER TABLE game_snapshots ADD COLUMN IF NOT EXISTS clock_seconds integer;
+ALTER TABLE game_snapshots ADD COLUMN IF NOT EXISTS clock_label text;
+ALTER TABLE game_snapshots ADD COLUMN IF NOT EXISTS clock_observed_at timestamptz;
 CREATE TABLE IF NOT EXISTS trade_attempts (
   id uuid PRIMARY KEY,
   market_ticker text NOT NULL,
