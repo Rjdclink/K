@@ -121,7 +121,7 @@ function contractCount(balance,market,fraction,bankroll,budget,fees){
 function executableCount(c,balance,bankroll,overRemaining){
   const fees=feeReserve(c.event,c.market),price=Number(c.market.yes_ask_dollars);
   const count=contractCount(balance,c.market,c.signal.fraction,bankroll,c.signal.strategy==='over'?overRemaining:Infinity,fees);
-  return profitableCount(count,price,fees,c.signal.strategy,balance);
+  return profitableCount(count,price,fees,c.signal.strategy,balance,c.state.type);
 }
 const signalKey=c=>`${c.market.ticker}:${c.signal.strategy}`;
 function signalExecution(c,filled,account,balance,bankroll,overRemaining){
@@ -130,7 +130,7 @@ function signalExecution(c,filled,account,balance,bankroll,overRemaining){
   const price=Number(c.market.yes_ask_dollars),fees=feeReserve(c.event,c.market);
   const raw=contractCount(balance,c.market,c.signal.fraction,bankroll,c.signal.strategy==='over'?overRemaining:Infinity,fees);
   if(!raw)return 'Insufficient budget or price above cap';
-  if(!profitableCount(raw,price,fees,c.signal.strategy,balance))return 'Below minimum net profit after fees';
+  if(!profitableCount(raw,price,fees,c.signal.strategy,balance,c.state.type))return 'Below minimum net profit after fees';
   const local=shardCash(account,marketShard(c.event,c.market));
   if(local===null)return 'Shard balance unavailable';
   return local<estimatedCostCents(minimumCount(c.market),price,fees)?'Awaiting shard funding':'Eligible for submission';
@@ -169,7 +169,7 @@ async function reconcileFundingTransfers(){
     if(match)await pool.query(`UPDATE funding_transfers SET status='complete',transfer_id=$2,updated_at=now() WHERE id=$1`,[row.id,match.transfer_id]);}
 }
 async function submit(signal,game,event,market,balance,bankroll,budgetCents=Infinity,availableCents=balance){
-  const price=Number(market.yes_ask_dollars);const count=profitableCount(contractCount(balance,market,signal.fraction,bankroll,budgetCents,feeReserve(event,market)),price,feeReserve(event,market),signal.strategy,availableCents);if(!count)return false;
+  const price=Number(market.yes_ask_dollars);const count=profitableCount(contractCount(balance,market,signal.fraction,bankroll,budgetCents,feeReserve(event,market)),price,feeReserve(event,market),signal.strategy,availableCents,game.type);if(!count)return false;
   const id=await reserve(signal,game,event,market,count,price,balance);if(!id)return false;
   try{
     // IOC fills available contracts immediately without leaving an unfilled order resting.
@@ -202,7 +202,7 @@ async function recoverPending(signal,game,event,market,balance,bankroll,budgetCe
   let review;try{review=await reviewMiss({signal,game,market,error:row.error})}catch(e){review={available:false,retry:true,reason:'AI unavailable: '+e.message}}
   if(!review.retry){await pool.query(`UPDATE trade_attempts SET status='needs_review',ai_review=$2,updated_at=now() WHERE id=$1`,[row.id,review.reason]);return false}
   if(Number(row.count)>contractCount(balance,{...market,yes_ask_dollars:row.limit_price},signal.fraction,bankroll,budgetCents,feeReserve(event,market))||
-    !profitableCount(Number(row.count),Number(row.limit_price),feeReserve(event,market),signal.strategy,availableCents))return false;
+    !profitableCount(Number(row.count),Number(row.limit_price),feeReserve(event,market),signal.strategy,availableCents,game.type))return false;
   const claim=await pool.query(`UPDATE trade_attempts SET retries=1,status='retrying',ai_review=$2,updated_at=now() WHERE id=$1 AND status IN ('check_order','reserved') AND retries=0 RETURNING id`,[row.id,review.reason]);
   if(!claim.rowCount)return false;
   try{const result=await kalshi('/portfolio/events/orders',{method:'POST',auth:true,body:{ticker:row.market_ticker,client_order_id:row.id,side:'bid',count:Number(row.count).toFixed(2),price:Number(row.limit_price).toFixed(4),time_in_force:'immediate_or_cancel',self_trade_prevention_type:'taker_at_cross',post_only:false}});
@@ -379,7 +379,7 @@ async function state(){const [snap,stats,attempts]=await Promise.all([
   return {live:live(),credentials:configured(),aiConfigured:Boolean(process.env.AI_API_KEY),balance,accountError,positionsError,games:snap.rows,scan:stats.rows[0],orders};
 }
 export default {async fetch(req){const url=new URL(req.url);
-  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'comeback-profit-priority-1'});
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'basketball-time-tiers-1'});
   if(req.method==='POST'&&url.pathname==='/tick'){
     if(!req.headers.get('x-neon-trigger-invocation-id'))return json({error:'Forbidden'},403);
     // Neon cron has minute resolution. Short invocations keep the three-second loop alive

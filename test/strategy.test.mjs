@@ -87,21 +87,26 @@ test('hockey needs a two-goal lead in third period under five minutes',()=>{
   assert.equal(leadSignal(gameState(hockey,at(3,1,2,'04:59')),market),null);
   assert.equal(leadSignal(gameState(hockey,at(3,1,3,'05:00')),market),null);
 });
-test('basketball requires six points and under five minutes in final quarter or half',()=>{
+test('basketball lead tiers use strict five minute, three minute and twenty second boundaries',()=>{
   const market={status:'active',title:'New York wins',yes_sub_title:'New York'};
-  for(const league of ['NBA','WNBA','Basketball']){
+  for(const league of ['NBA','WNBA','Basketball','NCAAMB','NCAAW']){
     const m={...milestone,details:{league}};
-    const at=(home,away,quarter,clock)=>({details:{...live(home,away,quarter).details,clock}});
-    assert.equal(leadSignal(gameState(m,at(104,100,4,'04:59')),market),null);
-    assert.equal(leadSignal(gameState(m,at(105,100,4,'04:59')),market),null);
-    assert.equal(leadSignal(gameState(m,at(106,100,4,'04:59')),market)?.fraction,.25);
-    assert.equal(leadSignal(gameState(m,at(106,100,4,'05:00')),market),null);
-    assert.equal(leadSignal(gameState(m,at(105,100,3,'03:00')),market),null);
-    assert.ok(leadSignal(gameState(m,at(6,0,4,'01:59')),market));
+    const last=/NCAA/.test(league)?2:4;
+    const at=(lead,clock,period=last)=>gameState(m,{details:{...live(100+lead,100,period).details,clock}});
+    assert.equal(leadSignal(at(8,'05:00'),market),null);
+    assert.equal(leadSignal(at(7,'04:59'),market),null);
+    assert.equal(leadSignal(at(8,'04:59'),market)?.fraction,.25);
+    assert.equal(leadSignal(at(5,'03:00'),market),null);
+    assert.ok(leadSignal(at(8,'03:00'),market));
+    assert.equal(leadSignal(at(4,'02:59'),market),null);
+    assert.ok(leadSignal(at(5,'02:59'),market));
+    assert.equal(leadSignal(at(3,'00:20'),market),null);
+    assert.ok(leadSignal(at(5,'00:20'),market));
+    assert.equal(leadSignal(at(2,'00:19'),market),null);
+    assert.ok(leadSignal(at(3,'00:19'),market));
+    assert.equal(leadSignal(at(8,'00:00'),market),null);
+    assert.equal(leadSignal(at(8,'00:19',last-1),market),null);
   }
-  const college={...milestone,details:{league:'NCAAMB'}};
-  assert.ok(leadSignal(gameState(college,{details:{...live(72,66,2).details,clock:'04:00'}}),market));
-  assert.equal(leadSignal(gameState(college,{details:{...live(72,67,1).details,clock:'01:00'}}),market),null);
 });
 test('football needs a ten point lead, independent of percentage, in final five minutes',()=>{
   const m={...milestone,type:'football_game',details:{league:'NFL'}};
@@ -159,6 +164,9 @@ test('zero score never creates an over and net profit tiers include conservative
   assert.equal(profitableCount(100,.99,2,'over',9900),100);
   assert.ok(netSettlementProfitCents(100,.99,2)>0);
   assert.equal(profitableCount(1,1,2,'lead',100),0);
+  assert.equal(profitableCount(1,.90,2,'lead',20000,'basketball_game'),1);
+  assert.equal(profitableCount(1,.90,2,'lead',20000,'football_game'),0);
+  assert.equal(profitableCount(1,.99,2,'lead',20000,'basketball_game'),0);
 });
 test('late lead reaches 35 percent at 2:30 and comeback detects a tie or reversal',()=>{
   const m={...milestone,type:'football_game',details:{league:'NFL',home_team_id:'NY',away_team_id:'BOS'}};

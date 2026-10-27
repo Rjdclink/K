@@ -75,7 +75,7 @@ export function leadSignal(game, market) {
   const h=game.homeUnits,a=game.awayUnits;
   if (!Number.isFinite(h)||!Number.isFinite(a)) return null;
   const margin=Math.abs(h-a),trailerScore=Math.min(h,a);
-  const minimum=basketball?6:football?10:hockey||baseball||soccer?2:null;
+  const minimum=basketball?(game.remainingSeconds<20?3:game.remainingSeconds<180?5:8):football?10:hockey||baseball||soccer?2:null;
   const ratio=trailerScore>0?Math.max(h,a)/trailerScore:Infinity;
   if (minimum===null ? trailerScore<=0||ratio<3.5 : margin<minimum) return null;
   const leader = h>a ? game.homeName : game.awayName;
@@ -122,8 +122,10 @@ export function netSettlementProfitCents(count,price,feeMultiplier=2){
   if(!Number.isFinite(count)||count<=0||!Number.isFinite(price)||price<=0||price>=1)return 0;
   return Math.floor(count*(1-price)*100+1e-8)-Math.ceil(7*count*price*(1-price)*feeMultiplier-1e-8);
 }
-export function profitableCount(count,price,feeMultiplier,strategy,availableCents){
-  return netSettlementProfitCents(count,price,feeMultiplier)>=minimumProfitCents(strategy,availableCents)?count:0;
+export function profitableCount(count,price,feeMultiplier,strategy,availableCents,sportType=''){
+  const profit=netSettlementProfitCents(count,price,feeMultiplier);
+  // Basketball has no dollar profit floor, but a trade must still earn more than its estimated fee.
+  return (strategy==='lead'&&/basketball/.test(sportType)?profit>0:profit>=minimumProfitCents(strategy,availableCents))?count:0;
 }
 export function comeback(game,market,strategy){
   if(!game?.verifiedLive||!game.scoreKnown)return false;
