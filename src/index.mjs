@@ -87,8 +87,11 @@ async function recoverPending(signal,game,market,balance,budgetCents=Infinity){
   }catch(e){await pool.query(`UPDATE trade_attempts SET status='check_order',error=$2,updated_at=now() WHERE id=$1`,[row.id,'Recovery response uncertain: '+String(e.message).slice(0,200)]);return false}
 }
 async function scan(cachedMilestones){
-  // Postgres advisory lock prevents overlapping scheduled invocations from spending the same balance.
-  const client=await pool.connect();const lock=await client.query('SELECT pg_try_advisory_lock(83027542) AS acquired');if(!lock.rows[0].acquired){client.release();return {skipped:'scan in progress'}};
+  // A transaction-scoped lock is released by Postgres even if an invocation is terminated.
+  // Snapshot writes use other pool connections so the dashboard sees each completed cycle.
+  const client=await pool.connect();await client.query('BEGIN');
+  const lock=await client.query('SELECT pg_try_advisory_xact_lock(83027543) AS acquired');
+  if(!lock.rows[0].acquired){await client.query('ROLLBACK');client.release();return {skipped:'scan in progress'}};
   let scanned=0,signals=0,submitted=0;
   try{
     const ms=cachedMilestones||await milestones();const liveMap=await liveBatch(ms);
@@ -118,7 +121,7 @@ async function scan(cachedMilestones){
       if(state.verifiedLive && state.scoreKnown)for(const ticker of linkedEventTickers(milestone)){const event=events.get(ticker);if(!event || event.category!=='Sports')continue;
         for(const market of event.markets||[]){const signal=overSignal(state,market)||leadSignal(state,market);if(signal)candidates.push({signal,event,market})}}
       if(state.verifiedLive)scanned++;signals+=candidates.length;
-      await client.query(`INSERT INTO game_snapshots(id,title,sport,home,away,status,progress,period,scanned_at,signals) VALUES($1,$2,$3,$4,$5,$6,$7,$8,now(),$9) ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,sport=EXCLUDED.sport,home=EXCLUDED.home,away=EXCLUDED.away,status=EXCLUDED.status,progress=EXCLUDED.progress,period=EXCLUDED.period,scanned_at=now(),signals=EXCLUDED.signals`,[state.id,state.title||'Sports game',state.sport,state.scoreKnown?state.home:null,state.scoreKnown?state.away:null,state.verifiedLive?'live':'inactive',Number.isFinite(state.progress)?state.progress:null,String(state.period||''),JSON.stringify(candidates.map(c=>({strategy:c.signal.strategy,reason:c.signal.reason,ticker:c.market.ticker}))) ]);
+      await pool.query(`INSERT INTO game_snapshots(id,title,sport,home,away,status,progress,period,scanned_at,signals) VALUES($1,$2,$3,$4,$5,$6,$7,$8,now(),$9) ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,sport=EXCLUDED.sport,home=EXCLUDED.home,away=EXCLUDED.away,status=EXCLUDED.status,progress=EXCLUDED.progress,period=EXCLUDED.period,scanned_at=now(),signals=EXCLUDED.signals`,[state.id,state.title||'Sports game',state.sport,state.scoreKnown?state.home:null,state.scoreKnown?state.away:null,state.verifiedLive?'live':'inactive',Number.isFinite(state.progress)?state.progress:null,String(state.period||''),JSON.stringify(candidates.map(c=>({strategy:c.signal.strategy,reason:c.signal.reason,ticker:c.market.ticker}))) ]);
       if(live())for(const c of candidates){const budget=c.signal.strategy==='over'?overRemaining:Infinity;
         if(await submit(c.signal,state,c.event,c.market,balance,budget)||await recoverPending(c.signal,state,c.market,balance,budget)){
           submitted++;const before=balance;balance=Number((await accountBalance()).balance);
@@ -126,10 +129,10 @@ async function scan(cachedMilestones){
         }
       }
     }
-    await client.query('UPDATE scan_status SET last_scan=now(),last_error=NULL,scanned=$1,signals=$2,orders_submitted=orders_submitted+$3 WHERE id=1',[scanned,signals,submitted]);
+    await pool.query('UPDATE scan_status SET last_scan=now(),last_error=NULL,scanned=$1,signals=$2,orders_submitted=orders_submitted+$3 WHERE id=1',[scanned,signals,submitted]);
     return {scanned,signals,submitted,active:active.filter(g=>/football_game|basketball_game|baseball_game|hockey_match|soccer/.test(g.state.type)).length,next:games.filter(g=>g.state.verifiedLive || (new Date(g.milestone.start_date).getTime()>Date.now()-3600000 && new Date(g.milestone.start_date).getTime()<Date.now()+3600000)).map(g=>g.milestone)};
-  }catch(e){console.error('Scan failed:',e);await client.query('UPDATE scan_status SET last_scan=now(),last_error=$1,scanned=$2,signals=$3 WHERE id=1',[String(e.message).slice(0,250),scanned,signals]);return {error:e.message,scanned,signals}}
-  finally{await client.query('SELECT pg_advisory_unlock(83027542)');client.release()}
+  }catch(e){console.error('Scan failed:',e);await pool.query('UPDATE scan_status SET last_scan=now(),last_error=$1,scanned=$2,signals=$3 WHERE id=1',[String(e.message).slice(0,250),scanned,signals]);return {error:e.message,scanned,signals}}
+  finally{await client.query('ROLLBACK');client.release()}
 }
 async function state(){const [snap,stats,attempts]=await Promise.all([
   pool.query(`SELECT id,title,sport,home,away,status,signals FROM game_snapshots WHERE status IN ('live','inprogress','started') AND scanned_at>(SELECT COALESCE(last_scan,now()-interval '1 minute')-interval '5 seconds' FROM scan_status WHERE id=1) ORDER BY jsonb_array_length(signals) DESC,title LIMIT 100`),
