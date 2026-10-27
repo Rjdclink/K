@@ -11,6 +11,8 @@ The scanner discovers Sports milestones and also checks a matching whole-game TO
 
 Neon project: `floral-wave-57267243`; branch: `br-tiny-hill-b5aiqeg7`; function slug: `k`. Neon injects `DATABASE_URL` from that branch. Apply [schema.sql](schema.sql) once, bundle the function with `npm run build`, zip `dist/index.mjs` at the archive root, then deploy the zip to Neon Functions. The scheduled trigger `k-sports-scan` invokes `/tick` every minute. An invocation runs repeated scans at a three-second target cadence while relevant live games are active; it stops when none are present. Slow API responses can extend an individual cycle beyond three seconds. Idle discovery can therefore lag by up to one minute. Neon free limits do not support uninterrupted three-second scanning around the clock.
 
+The dashboard includes an Android install button, opt-in push notifications, and an opt-in synthesized cha-ching sound. Settlement alerts are generated only from Kalshi settlement records where the YES outcome has positive net revenue after recorded cost and fees. Push delivery uses the browser's Push API and the system notification sound when the app is closed; a custom cha-ching sound requires an open, sound-enabled app and can be paused by mobile background limits. The PWA service worker never caches account or trade responses. Push subscriptions and retryable deliveries are stored in Neon, while the VAPID identity is derived from the existing Kalshi private key (rotating that key requires resubscribing).
+
 Required private Neon Function environment variables:
 
 | Name | Purpose |
