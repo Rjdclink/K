@@ -7,9 +7,11 @@ CREATE TABLE IF NOT EXISTS game_snapshots (
   status text NOT NULL,
   progress numeric,
   period text,
+  time_left text,
   scanned_at timestamptz NOT NULL DEFAULT now(),
   signals jsonb NOT NULL DEFAULT '[]'::jsonb
 );
+ALTER TABLE game_snapshots ADD COLUMN IF NOT EXISTS time_left text;
 CREATE TABLE IF NOT EXISTS trade_attempts (
   id uuid PRIMARY KEY,
   market_ticker text NOT NULL,
@@ -59,3 +61,16 @@ CREATE TABLE IF NOT EXISTS funding_transfers (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS funding_transfers_market_created_idx ON funding_transfers(market_ticker,strategy,created_at DESC);
+CREATE TABLE IF NOT EXISTS exit_attempts (
+  id uuid PRIMARY KEY,
+  market_ticker text NOT NULL UNIQUE,
+  game_id text NOT NULL,
+  requested_count numeric(12,2) NOT NULL,
+  filled_count numeric(12,2) NOT NULL DEFAULT 0,
+  limit_price numeric NOT NULL,
+  status text NOT NULL DEFAULT 'pending',
+  order_id text,
+  error text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
