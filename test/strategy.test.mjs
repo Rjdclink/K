@@ -9,6 +9,14 @@ test('over requires strict threshold exceeded and whole-game contract',()=>{
   assert.equal(overSignal(g,market),null);assert.equal(overSignal(gameState(milestone,live(103,101)),market)?.fraction,.8);
   assert.equal(overSignal(gameState(milestone,live(103,101)),{...market,title:'First half total points'}),null);
 });
+test('Kalshi whole-game over wording is recognized after the line is crossed',()=>{
+  const m={id:'kbo-game',title:'Kia Tigers vs Samsung Lions',type:'baseball_game',details:{league:'Korea KBO'}};
+  const g=gameState(m,{details:{status:'inprogress',away_points:3,home_points:8,inning:9}});
+  const market={status:'active',title:'Over 9.5 runs scored?',yes_sub_title:'Over 9.5 runs scored',rules_primary:'If the teams collectively score more than 9.5 runs in the KBO game, the market resolves to Yes.',strike_type:'greater',floor_strike:9.5};
+  assert.equal(overSignal(g,market)?.fraction,.8);
+  assert.equal(overSignal(g,{...market,title:'Over 11.5 runs scored?',floor_strike:11.5}),null);
+  assert.equal(orderSize(5097,'1.0000','0.00',.8),0);
+});
 test('late lead requires verified live score, leader identity, and progress',()=>{
   const market={status:'active',title:'Will New York win?',yes_sub_title:'New York wins'};
   assert.ok(leadSignal(gameState(milestone,live(140,30)),market));

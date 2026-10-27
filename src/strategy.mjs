@@ -47,7 +47,7 @@ const wholeGame = s => !/1st|2nd|3rd|4th|first half|second half|quarter|period|i
 export function overSignal(game, market) {
   if (!game.verifiedLive || !game.scoreKnown || market.status!=='active' && market.status!=='open') return null;
   const text = `${market.title||''} ${market.yes_sub_title||''} ${market.rules_primary||''}`;
-  if (!wholeGame(text) || !/total (points|runs|goals|score)|combined (points|runs|goals|score)|combined score/i.test(text)) return null;
+  if (!wholeGame(text) || !/total (points|runs|goals|score)|combined (points|runs|goals|score)|combined score|\bover\s+\d+(?:\.\d+)?\s+(?:points|runs|goals)\s+scored\b/i.test(text)) return null;
   if (market.strike_type && !['greater','greater_than'].includes(market.strike_type)) return null;
   const strike = N(market.floor_strike);
   if (!Number.isFinite(strike) || game.home+game.away <= strike) return null;

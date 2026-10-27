@@ -1,21 +1,22 @@
-import { createPrivateKey, sign, constants, timingSafeEqual, randomUUID } from 'node:crypto';
+import { timingSafeEqual, randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { page } from './ui.mjs';
 import { gameState, overSignal, leadSignal, orderSize, overBudget } from './strategy.mjs';
 import { reviewMiss } from './ai.mjs';
+import { kalshiSignature } from './auth.mjs';
 
 const API='https://external-api.kalshi.com/trade-api/v2';
 const pool = new pg.Pool({connectionString:process.env.DATABASE_URL, max:4, idleTimeoutMillis:15000});
 pool.on('error', e=>console.error('Idle database connection:',e.message));
 const json=(body,status=200)=>new Response(JSON.stringify(body),{status,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'}});
-const configured=()=>Boolean(process.env.KALSHI_API_KEY && process.env.KALSHI_PRIVATE_KEY);
+const configured=()=>Boolean((process.env.KALSHI_API_KEY||process.env.KALSHI_API_KEY_ID) && process.env.KALSHI_PRIVATE_KEY);
 const live=()=>configured() && process.env.LIVE_TRADING==='true';
-const credentials=()=>({key:process.env.KALSHI_API_KEY,privateKey:process.env.KALSHI_PRIVATE_KEY?.replace(/\\n/g,'\n')});
+const credentials=()=>({key:process.env.KALSHI_API_KEY||process.env.KALSHI_API_KEY_ID,privateKey:process.env.KALSHI_PRIVATE_KEY});
 const safeEqual=(a,b)=>{const x=Buffer.from(a),y=Buffer.from(b);return x.length===y.length && timingSafeEqual(x,y)};
 function authorized(req){const expected=process.env.DASHBOARD_PASSWORD;if(!expected)return false;const raw=req.headers.get('authorization')||'';if(!raw.startsWith('Basic '))return false;try{const [user,...password]=Buffer.from(raw.slice(6),'base64').toString('utf8').split(':');return user==='rjdc'&&safeEqual(password.join(':'),expected)}catch{return false}}
 async function kalshi(path,opts={}){
   const method=opts.method||'GET';const headers={'accept':'application/json'};
-  if(opts.auth){const {key,privateKey}=credentials();if(!key||!privateKey)throw Error('Kalshi credentials unavailable');const timestamp=String(Date.now());const unsignedPath='/trade-api/v2'+path.split('?')[0];const signature=sign('sha256',Buffer.from(timestamp+method+unsignedPath),{key:createPrivateKey(privateKey),padding:constants.RSA_PKCS1_PSS_PADDING,saltLength:constants.RSA_PSS_SALTLEN_DIGEST}).toString('base64');Object.assign(headers,{'KALSHI-ACCESS-KEY':key,'KALSHI-ACCESS-TIMESTAMP':timestamp,'KALSHI-ACCESS-SIGNATURE':signature})}
+  if(opts.auth){const {key,privateKey}=credentials();if(!key||!privateKey)throw Error('Kalshi credentials unavailable');const timestamp=String(Date.now());const unsignedPath='/trade-api/v2'+path.split('?')[0];const signature=kalshiSignature(privateKey,timestamp,method,unsignedPath);Object.assign(headers,{'KALSHI-ACCESS-KEY':key,'KALSHI-ACCESS-TIMESTAMP':timestamp,'KALSHI-ACCESS-SIGNATURE':signature})}
   if(opts.body)headers['content-type']='application/json';
   const response=await fetch(API+path,{method,headers,body:opts.body?JSON.stringify(opts.body):undefined,signal:AbortSignal.timeout(12000)});
   const data=await response.json().catch(()=>({}));
@@ -143,7 +144,7 @@ async function scan(cachedMilestones){
       if(state.verifiedLive && state.scoreKnown)for(const ticker of linkedEventTickers(milestone)){const event=events.get(ticker);if(!event || event.category!=='Sports')continue;
         for(const market of event.markets||[]){const signal=overSignal(state,market)||leadSignal(state,market);if(signal)candidates.push({signal,event,market})}}
       if(state.verifiedLive)scanned++;signals+=candidates.length;
-      await pool.query(`INSERT INTO game_snapshots(id,title,sport,home,away,status,progress,period,scanned_at,signals) VALUES($1,$2,$3,$4,$5,$6,$7,$8,now(),$9) ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,sport=EXCLUDED.sport,home=EXCLUDED.home,away=EXCLUDED.away,status=EXCLUDED.status,progress=EXCLUDED.progress,period=EXCLUDED.period,scanned_at=now(),signals=EXCLUDED.signals`,[state.id,state.title||'Sports game',state.sport,state.scoreKnown?state.home:null,state.scoreKnown?state.away:null,state.verifiedLive?'live':'inactive',Number.isFinite(state.progress)?state.progress:null,String(state.period||''),JSON.stringify(candidates.map(c=>({strategy:c.signal.strategy,reason:c.signal.reason,ticker:c.market.ticker}))) ]);
+      await pool.query(`INSERT INTO game_snapshots(id,title,sport,home,away,status,progress,period,scanned_at,signals) VALUES($1,$2,$3,$4,$5,$6,$7,$8,now(),$9) ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,sport=EXCLUDED.sport,home=EXCLUDED.home,away=EXCLUDED.away,status=EXCLUDED.status,progress=EXCLUDED.progress,period=EXCLUDED.period,scanned_at=now(),signals=EXCLUDED.signals`,[state.id,state.title||'Sports game',state.sport,state.scoreKnown?state.home:null,state.scoreKnown?state.away:null,state.verifiedLive?'live':'inactive',Number.isFinite(state.progress)?state.progress:null,String(state.period||''),JSON.stringify(candidates.map(c=>({strategy:c.signal.strategy,reason:c.signal.reason,ticker:c.market.ticker,execution:Number(c.market.yes_ask_size_fp)<1?'No ask liquidity':orderSize(balance,c.market.yes_ask_dollars,c.market.yes_ask_size_fp,c.signal.fraction,Number(process.env.MAX_YES_PRICE||1),c.signal.strategy==='lead'?bankroll:balance,c.signal.strategy==='over'?overRemaining:Infinity,feeReserve(c.event,c.market))<1?'Insufficient budget or price above cap':'Eligible for submission'}))) ]);
       if(live())for(const c of candidates)try{
         // Refresh available cash before every order. If the account cannot afford one contract plus
         // the fee reserve, orderSize returns zero and no order is sent to Kalshi.
@@ -183,10 +184,12 @@ async function state(){const [snap,stats,attempts]=await Promise.all([
   return {live:live(),credentials:configured(),aiConfigured:Boolean(process.env.AI_API_KEY),balance,accountError,positionsError,games:snap.rows,scan:stats.rows[0],orders};
 }
 export default {async fetch(req){const url=new URL(req.url);
-  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),credentials:configured()});
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'ed25519-balance-1'});
   if(req.method==='POST'&&url.pathname==='/tick'){
     if(!req.headers.get('x-neon-trigger-invocation-id'))return json({error:'Forbidden'},403);
-    const now=Date.now();const until=Math.min(now+14*60000+30000,(Math.floor(now/900000)+1)*900000-10000);let cached=null,cycles=0,last={};
+    // Neon cron has minute resolution. Short invocations keep the three-second loop alive
+    // without relying on one function instance surviving for a full quarter hour.
+    const now=Date.now();const until=Math.min(now+55000,(Math.floor(now/60000)+1)*60000-2000);let cached=null,cycles=0,last={};
     while(Date.now()<until){const begun=Date.now();last=await scan(cached);cycles++;
       if(last.next)cached=last.next;if(last.error || !last.active)break;
       const pause=Math.max(0,3000-(Date.now()-begun));if(Date.now()+pause>=until)break;

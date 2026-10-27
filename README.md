@@ -9,7 +9,7 @@ The scanner discovers Sports milestones and also checks a matching whole-game TO
 
 ## Deployment
 
-Neon project: `floral-wave-57267243`; branch: `br-tiny-hill-b5aiqeg7`; function slug: `k`. Neon injects `DATABASE_URL` from that branch. Apply [schema.sql](schema.sql) once, bundle the function with `npm run build`, zip `dist/index.mjs` at the archive root, then deploy the zip to Neon Functions. The scheduled trigger `k-sports-scan` invokes `/tick` every fifteen minutes. An invocation runs repeated scans at a three-second target cadence while relevant live games are active; it stops when none are present. Slow API responses can extend an individual cycle beyond three seconds. Idle discovery can therefore lag by up to fifteen minutes. Neon free limits do not support uninterrupted three-second scanning around the clock.
+Neon project: `floral-wave-57267243`; branch: `br-tiny-hill-b5aiqeg7`; function slug: `k`. Neon injects `DATABASE_URL` from that branch. Apply [schema.sql](schema.sql) once, bundle the function with `npm run build`, zip `dist/index.mjs` at the archive root, then deploy the zip to Neon Functions. The scheduled trigger `k-sports-scan` invokes `/tick` every minute. An invocation runs repeated scans at a three-second target cadence while relevant live games are active; it stops when none are present. Slow API responses can extend an individual cycle beyond three seconds. Idle discovery can therefore lag by up to one minute. Neon free limits do not support uninterrupted three-second scanning around the clock.
 
 Required private Neon Function environment variables:
 
@@ -17,14 +17,14 @@ Required private Neon Function environment variables:
 | --- | --- |
 | `DASHBOARD_PASSWORD` | Basic authentication password for the dashboard (`rjdc` username). |
 | `KALSHI_API_KEY` | Kalshi API key ID. |
-| `KALSHI_PRIVATE_KEY` | Full RSA PEM private key, with real newlines or escaped `\\n`. |
+| `KALSHI_PRIVATE_KEY` | Kalshi private key as RSA PEM, Ed25519 PEM, or base64-encoded PKCS#8 DER. PEM accepts real newlines or escaped `\\n`. |
 | `LIVE_TRADING` | `true` to allow real orders; otherwise scanner and dashboard remain read-only. |
 | `MAX_YES_PRICE` | Optional price ceiling, default `1.00`. |
 | `FEE_MULTIPLIER_RESERVE` | Optional affordability buffer, default twice the standard Kalshi taker fee estimate. |
 | `AI_API_KEY` | Optional Vireonix AI key for the redundant order recovery monitor; the A+ protocol omits Authorization if absent. |
 | `AI_BASE_URL`, `AI_MODEL` | Optional Vireonix overrides; defaults match A+ (`https://vireonix.ai/v1/chat/completions`, `auto`). |
 
-GitHub repository secrets are not readable after creation and are not automatically transferred to a Neon Function. Configure the two Kalshi values in Neon's private function environment. Never commit them to this public repository or expose them to the browser.
+GitHub repository secrets are not readable after creation and are not automatically transferred to a Neon Function. Existing readable GitHub variables can be securely copied during a Neon deployment; the values must not be committed. Never commit them to this public repository or expose them to the browser.
 
 The dashboard is available at `https://br-tiny-hill-b5aiqeg7-k.compute.c-7.us-east-2.aws.neon.tech/`. Its bankroll card shows Kalshi available cash plus portfolio value, with both components shown separately. The balance and positions are fetched independently so a positions failure cannot blank a valid balance; neither is estimated from the local ledger. Filled open positions appear in the orders card; settled positions drop out of that card while Kalshi's current account balance reflects their settlement. Uncertain submissions and interrupted reservations are checked against Kalshi order history before a single idempotent recovery attempt with the same client order ID. Vireonix reviews missing submissions when configured; if it is unavailable, deterministic recovery remains active. Explicit exchange rejections remain visible in the attempt record; a rejected order is retried only after a relevant quote or available-balance change. An Immediate or Cancel order with no fill can be attempted again on a later scan while the signal still qualifies. Earlier attempt details are retained in `attempt_history`. Orders use a unique client ID and a database uniqueness constraint. A preflight sizes each order within available cash and its allocation, including a conservative fee estimate; the exchange can still reject an order if its fee schedule or account state changes.
 
