@@ -1,0 +1,95 @@
+import { createPrivateKey, sign, constants, timingSafeEqual, randomUUID } from 'node:crypto';
+import pg from 'pg';
+import { page } from './ui.mjs';
+import { gameState, overSignal, leadSignal, orderSize } from './strategy.mjs';
+
+const API='https://external-api.kalshi.com/trade-api/v2';
+const pool = new pg.Pool({connectionString:process.env.DATABASE_URL, max:4, idleTimeoutMillis:15000});
+pool.on('error', e=>console.error('Idle database connection:',e.message));
+const json=(body,status=200)=>new Response(JSON.stringify(body),{status,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'}});
+const configured=()=>Boolean(process.env.KALSHI_API_KEY && process.env.KALSHI_PRIVATE_KEY);
+const live=()=>configured() && process.env.LIVE_TRADING==='true';
+const credentials=()=>({key:process.env.KALSHI_API_KEY,privateKey:process.env.KALSHI_PRIVATE_KEY?.replace(/\\n/g,'\n')});
+const safeEqual=(a,b)=>{const x=Buffer.from(a),y=Buffer.from(b);return x.length===y.length && timingSafeEqual(x,y)};
+function authorized(req){const expected=process.env.DASHBOARD_PASSWORD;if(!expected)return false;const raw=req.headers.get('authorization')||'';if(!raw.startsWith('Basic '))return false;try{const [user,...password]=Buffer.from(raw.slice(6),'base64').toString('utf8').split(':');return user==='admin'&&safeEqual(password.join(':'),expected)}catch{return false}}
+async function kalshi(path,opts={}){
+  const method=opts.method||'GET';const headers={'accept':'application/json'};
+  if(opts.auth){const {key,privateKey}=credentials();if(!key||!privateKey)throw Error('Kalshi credentials unavailable');const timestamp=String(Date.now());const unsignedPath='/trade-api/v2'+path.split('?')[0];const signature=sign('sha256',Buffer.from(timestamp+method+unsignedPath),{key:createPrivateKey(privateKey),padding:constants.RSA_PKCS1_PSS_PADDING,saltLength:constants.RSA_PSS_SALTLEN_DIGEST}).toString('base64');Object.assign(headers,{'KALSHI-ACCESS-KEY':key,'KALSHI-ACCESS-TIMESTAMP':timestamp,'KALSHI-ACCESS-SIGNATURE':signature})}
+  if(opts.body)headers['content-type']='application/json';
+  const response=await fetch(API+path,{method,headers,body:opts.body?JSON.stringify(opts.body):undefined,signal:AbortSignal.timeout(12000)});
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok)throw Error(`Kalshi ${response.status}: ${String(data.message||data.error||data.code||'request failed').slice(0,180)}`);
+  return data;
+}
+async function milestones(){
+  const found=[];let cursor='';const min=new Date(Date.now()-36*3600000).toISOString();
+  for(let i=0;i<5;i++){
+    const q=new URLSearchParams({category:'Sports',limit:'500',minimum_start_date:min});if(cursor)q.set('cursor',cursor);
+    const x=await kalshi('/milestones?'+q);found.push(...(x.milestones||[]));cursor=x.cursor;if(!cursor)break;
+  }
+  const now=Date.now();return found.filter(m=>m.id && new Date(m.start_date).getTime()<now+3600000 && (!m.end_date||new Date(m.end_date).getTime()>now-3600000));
+}
+async function liveBatch(ms){
+  const map=new Map();for(let i=0;i<ms.length;i+=80){const group=ms.slice(i,i+80);const q=new URLSearchParams();group.forEach(m=>q.append('milestone_ids',m.id));
+    let list=[];try{list=(await kalshi('/live_data/batch?'+q)).live_datas||[]}catch(e){console.warn('Live batch fallback:',e.message);const results=await Promise.allSettled(group.map(m=>kalshi('/live_data/milestone/'+encodeURIComponent(m.id))));list=results.filter(r=>r.status==='fulfilled').map(r=>r.value.live_data).filter(Boolean)}
+    list.forEach(d=>map.set(d.milestone_id,d));}
+  return map;
+}
+async function marketMap(tickers){
+  const map=new Map();const list=[...new Set(tickers)].filter(Boolean);
+  for(let i=0;i<list.length;i+=35){const q=new URLSearchParams({tickers:list.slice(i,i+35).join(','),with_nested_markets:'true',limit:'200',status:'open'});
+    const result=await kalshi('/events?'+q);for(const e of result.events||[])map.set(e.event_ticker,e);
+  }return map;
+}
+async function reserve(signal,game,event,market,count,price){const id=randomUUID();const {rowCount}=await pool.query(`INSERT INTO trade_attempts(id,market_ticker,event_ticker,game_id,sport,strategy,reason,fraction,count,limit_price) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(market_ticker,strategy) DO NOTHING`,[id,market.ticker,event.event_ticker,game.id,game.sport,signal.strategy,signal.reason,signal.fraction,count,price]);return rowCount?id:null}
+async function submit(signal,game,event,market,balance){
+  const price=Number(market.yes_ask_dollars);const count=orderSize(balance,price,market.yes_ask_size_fp,signal.fraction,Number(process.env.MAX_YES_PRICE||0.98));if(!count)return false;
+  const id=await reserve(signal,game,event,market,count,price);if(!id)return false;
+  try{
+    // FOK leaves no unfilled orders resting. The UUID is reused for reconciliation after an uncertain response.
+    const result=await kalshi('/portfolio/events/orders',{method:'POST',auth:true,body:{ticker:market.ticker,client_order_id:id,side:'bid',count:count.toFixed(2),price:price.toFixed(4),time_in_force:'fill_or_kill',self_trade_prevention_type:'taker_at_cross',post_only:false}});
+    await pool.query(`UPDATE trade_attempts SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE id=$1`,[id,Number(result.fill_count)>0?'filled':'unfilled',result.order_id||null,Number(result.fill_count||0)]);
+    return Number(result.fill_count)>0;
+  }catch(e){await pool.query(`UPDATE trade_attempts SET status='check_order',error=$2,updated_at=now() WHERE id=$1`,[id,String(e.message).slice(0,250)]);console.error('Order needs reconciliation:',market.ticker,e.message);return false}
+}
+async function scan(){
+  // Postgres advisory lock prevents overlapping scheduled invocations from spending the same balance.
+  const client=await pool.connect();const lock=await client.query('SELECT pg_try_advisory_lock(83027542) AS acquired');if(!lock.rows[0].acquired){client.release();return {skipped:'scan in progress'}};
+  let scanned=0,signals=0,submitted=0;
+  try{
+    const ms=await milestones();const liveMap=await liveBatch(ms);
+    const games=ms.map(m=>({milestone:m,state:gameState(m,liveMap.get(m.id))}));
+    const active=games.filter(g=>g.state.verifiedLive && g.state.scoreKnown);
+    const events=await marketMap(active.flatMap(g=>g.state.eventTickers));
+    let balance=0;if(live()){const account=await kalshi('/portfolio/balance',{auth:true});balance=Number(account.balance||0)}
+    for(const {milestone,state} of games){
+      const candidates=[];
+      if(state.verifiedLive && state.scoreKnown)for(const ticker of state.eventTickers){const event=events.get(ticker);if(!event || event.category!=='Sports')continue;
+        for(const market of event.markets||[]){const signal=overSignal(state,market)||leadSignal(state,market);if(signal)candidates.push({signal,event,market})}}
+      scanned++;signals+=candidates.length;
+      await client.query(`INSERT INTO game_snapshots(id,title,sport,home,away,status,progress,period,scanned_at,signals) VALUES($1,$2,$3,$4,$5,$6,$7,$8,now(),$9) ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,sport=EXCLUDED.sport,home=EXCLUDED.home,away=EXCLUDED.away,status=EXCLUDED.status,progress=EXCLUDED.progress,period=EXCLUDED.period,scanned_at=now(),signals=EXCLUDED.signals`,[state.id,state.title||'Sports game',state.sport,state.scoreKnown?state.home:null,state.scoreKnown?state.away:null,state.status,Number.isFinite(state.progress)?state.progress:null,String(state.period||''),JSON.stringify(candidates.map(c=>({strategy:c.signal.strategy,reason:c.signal.reason,ticker:c.market.ticker}))) ]);
+      if(live())for(const c of candidates){if(await submit(c.signal,state,c.event,c.market,balance)){submitted++;balance=Number((await kalshi('/portfolio/balance',{auth:true})).balance||0)}}
+    }
+    await client.query('UPDATE scan_status SET last_scan=now(),last_error=NULL,scanned=$1,signals=$2,orders_submitted=orders_submitted+$3 WHERE id=1',[scanned,signals,submitted]);
+    return {scanned,signals,submitted};
+  }catch(e){console.error('Scan failed:',e);await client.query('UPDATE scan_status SET last_scan=now(),last_error=$1,scanned=$2,signals=$3 WHERE id=1',[String(e.message).slice(0,250),scanned,signals]);return {error:e.message,scanned,signals}}
+  finally{await client.query('SELECT pg_advisory_unlock(83027542)');client.release()}
+}
+async function state(){const [snap,stats,attempts]=await Promise.all([
+  pool.query(`SELECT id,title,sport,home,away,status,signals FROM game_snapshots WHERE scanned_at>(SELECT COALESCE(last_scan,now()-interval '1 minute')-interval '5 seconds' FROM scan_status WHERE id=1) ORDER BY jsonb_array_length(signals) DESC,title LIMIT 100`),
+  pool.query('SELECT * FROM scan_status WHERE id=1'),
+  pool.query(`SELECT market_ticker,sport,strategy,reason,fill_count FROM trade_attempts WHERE status='filled' ORDER BY created_at DESC LIMIT 100`)
+]);
+  let balance=null,positions=null,accountError=null;
+  if(configured())try{[balance,positions]=await Promise.all([kalshi('/portfolio/balance',{auth:true}),kalshi('/portfolio/positions?settlement_status=unsettled&count_filter=position&limit=500',{auth:true})])}catch(e){accountError=e.message}
+  const open=new Set((positions?.market_positions||[]).filter(p=>Number(p.position_fp??p.position??0)!==0).map(p=>p.ticker));
+  const orders=positions?attempts.rows.filter(o=>open.has(o.market_ticker)):[];
+  return {live:live(),balance,accountError,games:snap.rows,scan:stats.rows[0],orders};
+}
+export default {async fetch(req){const url=new URL(req.url);
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),credentials:configured()});
+  if(req.method==='POST'&&url.pathname==='/tick'){if(!req.headers.get('x-neon-trigger-invocation-id'))return json({error:'Forbidden'},403);return json(await scan())}
+  if(!authorized(req))return new Response('Authentication required',{status:401,headers:{'www-authenticate':'Basic realm="K Trading"','cache-control':'no-store'}});
+  try{if(req.method==='GET'&&url.pathname==='/api/state')return json(await state());if(req.method==='GET'&&url.pathname==='/')return new Response(page,{headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store','content-security-policy':"default-src 'self'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'",'x-content-type-options':'nosniff'}})}catch(e){console.error(e);return json({error:'Service unavailable'},503)}
+  return json({error:'Not found'},404);
+}};
