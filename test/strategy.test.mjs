@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {gameState,overSignal,leadSignal,orderSize,overBudget,touchdownsFromPbp} from '../src/strategy.mjs';
+import {gameState,overSignal,leadSignal,orderSize,overBudget} from '../src/strategy.mjs';
 
 const milestone={id:'game-1',title:'Boston at New York',type:'basketball_game',details:{competition:'Pro Basketball (M)'},related_event_tickers:['GAME']};
 const live=(home,away,quarter=4)=>({details:{status:'live',last_updated_ts:Math.floor(Date.now()/1000),home_score:home,away_score:away,quarter,clock:'05:00',home_team_name:'New York',away_team_name:'Boston'}});
@@ -24,13 +24,24 @@ test('commanding lead is only in final segment and scales across allocation tier
   const ninth=leadSignal(gameState(m,board(9)),market);assert.ok(ninth);assert.ok(ninth.fraction>=.3 && ninth.fraction<=.55);
 });
 test('250% advantage means 3.5x for non-basketball sports',()=>{
+  const baseball={...milestone,type:'baseball_game',details:{league:'MLB'}};
+  const market={status:'active',title:'New York wins',yes_sub_title:'New York'};
+  const at=(home,away,inning)=>({details:{status:'live',last_updated_ts:Math.floor(Date.now()/1000),home_runs:home,away_runs:away,inning,inning_half:2,home_team_name:'New York',away_team_name:'Boston'}});
+  assert.equal(leadSignal(gameState(baseball,at(34,10,9)),market),null);
+  assert.ok(leadSignal(gameState(baseball,at(35,10,9)),market));
+  assert.equal(leadSignal(gameState(baseball,at(35,10,8)),market),null);
+  assert.equal(leadSignal(gameState(baseball,at(20,0,9)),market),null);
+});
+test('hockey needs at least three to one goals in third period under seven minutes',()=>{
   const hockey={...milestone,type:'hockey_match',details:{league:'NHL'}};
   const market={status:'active',title:'New York wins',yes_sub_title:'New York'};
-  const at=(home,away,clock)=>({details:{...live(home,away,3).details,clock}});
-  assert.equal(leadSignal(gameState(hockey,at(34,10,'06:59')),market),null);
-  assert.ok(leadSignal(gameState(hockey,at(35,10,'06:59')),market));
-  assert.equal(leadSignal(gameState(hockey,at(35,10,'07:00')),market),null);
-  assert.equal(leadSignal(gameState(hockey,at(20,0,'01:30')),market),null);
+  const at=(home,away,period,clock)=>({details:{...live(home,away,period).details,clock}});
+  assert.ok(leadSignal(gameState(hockey,at(3,1,3,'06:59')),market));
+  assert.ok(leadSignal(gameState(hockey,at(6,2,3,'06:59')),market));
+  assert.ok(leadSignal(gameState(hockey,at(3,0,3,'06:59')),market));
+  assert.equal(leadSignal(gameState(hockey,at(2,1,3,'06:59')),market),null);
+  assert.equal(leadSignal(gameState(hockey,at(3,1,2,'06:59')),market),null);
+  assert.equal(leadSignal(gameState(hockey,at(3,1,3,'07:00')),market),null);
 });
 test('basketball requires five points and under seven minutes in final quarter or half',()=>{
   const market={status:'active',title:'New York wins',yes_sub_title:'New York'};
@@ -47,23 +58,15 @@ test('basketball requires five points and under seven minutes in final quarter o
   assert.ok(leadSignal(gameState(college,{details:{...live(72,67,2).details,clock:'06:00'}}),market));
   assert.equal(leadSignal(gameState(college,{details:{...live(72,67,1).details,clock:'01:00'}}),market),null);
 });
-test('football lead uses confirmed touchdowns, never points as a proxy',()=>{
+test('football 24–14 point lead meets 71.4% advantage in final quarter',()=>{
   const m={...milestone,type:'football_game',details:{league:'NFL'}};
   const market={status:'active',title:'New York wins',yes_sub_title:'New York'};
-  const board={details:{...live(42,7).details,clock:'06:00'}};
-  assert.equal(leadSignal(gameState(m,board),market),null);
-  board.details.home_touchdowns=7;board.details.away_touchdowns=2;
+  const board={details:{...live(24,14).details,clock:'06:00'}};
   assert.ok(leadSignal(gameState(m,board),market));
-});
-test('football play-by-play counts touchdown scoring plays once and requires score parity',()=>{
-  const pbp={periods:[{events:[{plays:[
-    {play_id:'p2',sequence:2,home_points:7,away_points:0,description:'Extra point is good'},
-    {play_id:'p1',sequence:1,home_points:6,away_points:0,description:'Touchdown on a rush'},
-    {play_id:'p3',sequence:3,home_points:7,away_points:6,description:'Interception return TOUCHDOWN'},
-    {play_id:'p3',sequence:3,home_points:7,away_points:6,description:'Interception return TOUCHDOWN'}
-  ]}]}]};
-  assert.deepEqual(touchdownsFromPbp(pbp,7,6),{home:1,away:1});
-  assert.equal(touchdownsFromPbp(pbp,14,6),null);
+  board.details.home_score=23;
+  assert.equal(leadSignal(gameState(m,board),market),null);
+  board.details.home_score=24;board.details.clock='07:00';
+  assert.equal(leadSignal(gameState(m,board),market),null);
 });
 test('quantity respects 80% cash, price and displayed ask liquidity',()=>{
   assert.equal(orderSize(10000,'0.50','400',.8),160);

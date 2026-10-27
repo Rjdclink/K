@@ -1,7 +1,7 @@
 import { createPrivateKey, sign, constants, timingSafeEqual, randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { page } from './ui.mjs';
-import { gameState, overSignal, leadSignal, orderSize, overBudget, touchdownsFromPbp } from './strategy.mjs';
+import { gameState, overSignal, leadSignal, orderSize, overBudget } from './strategy.mjs';
 import { reviewMiss } from './ai.mjs';
 
 const API='https://external-api.kalshi.com/trade-api/v2';
@@ -96,11 +96,6 @@ async function scan(cachedMilestones){
   try{
     const ms=cachedMilestones||await milestones();const liveMap=await liveBatch(ms);
     const games=ms.map(m=>({milestone:m,state:gameState(m,liveMap.get(m.id))}));
-    for(const game of games){const s=game.state;
-      if(s.verifiedLive && /football_game/.test(s.type) && s.period===4 && Number.isFinite(s.remainingSeconds) && s.remainingSeconds>0 && s.remainingSeconds<420){
-        try{const stats=await kalshi('/live_data/milestone/'+encodeURIComponent(s.id)+'/game_stats');const td=touchdownsFromPbp(stats.pbp,s.home,s.away);if(td){s.homeUnits=td.home;s.awayUnits=td.away}}catch(e){console.warn('Touchdown feed unavailable:',s.id,e.message)}
-      }
-    }
     const active=games.filter(g=>g.state.verifiedLive && g.state.scoreKnown);
     const events=await marketMap(active.flatMap(g=>linkedEventTickers(g.milestone)));
     let balance=0,overRemaining=0;
