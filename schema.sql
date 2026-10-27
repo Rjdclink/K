@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS trade_attempts (
   strategy text NOT NULL,
   reason text NOT NULL,
   fraction numeric NOT NULL,
-  count integer NOT NULL,
+  count numeric(12,2) NOT NULL,
   limit_price numeric NOT NULL,
   available_cents integer NOT NULL DEFAULT 0,
   status text NOT NULL DEFAULT 'reserved',
@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS trade_attempts (
 );
 ALTER TABLE trade_attempts ADD COLUMN IF NOT EXISTS available_cents integer NOT NULL DEFAULT 0;
 ALTER TABLE trade_attempts ADD COLUMN IF NOT EXISTS attempt_history jsonb NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE trade_attempts ALTER COLUMN count TYPE numeric(12,2) USING count::numeric;
 CREATE TABLE IF NOT EXISTS scan_status (
   id integer PRIMARY KEY CHECK (id = 1),
   last_scan timestamptz,

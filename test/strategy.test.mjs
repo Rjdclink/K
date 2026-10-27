@@ -122,24 +122,22 @@ test('football needs a ten point lead, independent of percentage, in final seven
   assert.equal(leadSignal(gameState(m,board),market),null);
 });
 test('quantity preflights cash, allocation, fees, price and displayed liquidity',()=>{
-  assert.equal(orderSize(10000,'0.50','400',.8),149);
-  assert.equal(orderSize(10000,'0.50','10',.8),10);
-  assert.equal(orderSize(10000,'0.99','400',.8),80);
-  assert.equal(orderSize(10000,'0.50',undefined,.8),0);
-  assert.equal(orderSize(10000,'0.50','400',.2,1,20000),74);
-  assert.equal(orderSize(10000,'0.50','400',.3,1,20000),112);
-  assert.equal(orderSize(2000,'0.50','400',.3,1,20000),37);
-  assert.equal(orderSize(100,'0.99','10',1),1);
-  assert.equal(orderSize(99,'0.99','10',1),0);
-  assert.equal(orderSize(54,'0.50','10',1),1);
-  assert.equal(orderSize(53,'0.50','10',1),0);
-  assert.equal(orderSize(54,'0.50','10',1,1,54,Infinity,4),0);
-  assert.equal(orderSize(10000,'0.50','400',.8,1,10000,1000),18);
-  assert.equal(orderSize(10000,'0.50','400',.8,.98),149);
-  assert.equal(orderSize(10000,'0.99','400',.8,.98),0);
   const count=orderSize(10000,'0.50','400',.8);
+  assert.ok(count>149&&count<150);
+  assert.equal(orderSize(10000,'0.50','10',.8),10);
+  assert.ok(orderSize(10000,'0.99','400',.8)>=80);
+  assert.equal(orderSize(10000,'0.50',undefined,.8),0);
+  assert.ok(orderSize(10000,'0.50','400',.2,1,20000)<orderSize(10000,'0.50','400',.3,1,20000));
+  assert.ok(orderSize(2000,'0.50','400',.3,1,20000)<orderSize(10000,'0.50','400',.3,1,20000));
+  assert.equal(orderSize(10000,'0.50','0.37',.8),.37);
+  assert.equal(orderSize(1,'0.50','0.37',1),0);
+  assert.ok(orderSize(99,'0.99','10',1)>0);
+  assert.equal(orderSize(54,'0.50','10',1,1,54,Infinity,4),0.94);
+  assert.ok(orderSize(10000,'0.50','400',.8,1,10000,1000)<count);
+  assert.equal(orderSize(10000,'0.50','400',.8,.98),count);
+  assert.equal(orderSize(10000,'0.99','400',.8,.98),0);
   assert.ok(estimatedCostCents(count,.5)<=8000);
-  assert.ok(estimatedCostCents(count+1,.5)>8000);
+  assert.ok(estimatedCostCents(count+.01,.5)>8000);
 });
 test('over allocation is capped across existing unsettled over positions',()=>{
   assert.equal(overBudget(10000,0,0),8000);

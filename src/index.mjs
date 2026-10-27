@@ -37,12 +37,15 @@ function accountBalance(){
   balanceQueue=job.catch(()=>{});return job;
 }
 async function milestones(){
-  const found=[];let cursor='';const min=new Date(Date.now()-36*3600000).toISOString();
-  for(let i=0;i<5;i++){
+  const found=[];let cursor='';const now=Date.now(),min=new Date(now-36*3600000).toISOString();
+  for(let i=0;i<20;i++){
     const q=new URLSearchParams({category:'Sports',limit:'500',minimum_start_date:min});if(cursor)q.set('cursor',cursor);
-    const x=await kalshi('/milestones?'+q);found.push(...(x.milestones||[]));cursor=x.cursor;if(!cursor)break;
+    const x=await kalshi('/milestones?'+q),page=x.milestones||[];found.push(...page);cursor=x.cursor;
+    // Milestones are returned by start time. Stop once the next page is future-only.
+    if(!cursor||page.length&&new Date(page.at(-1).start_date).getTime()>now+3600000)break;
+    if(i===19)throw Error('Sports milestones exceed the pagination safety limit before current games');
   }
-  const now=Date.now();return found.filter(m=>m.id && new Date(m.start_date).getTime()<now+3600000 && (!m.end_date||new Date(m.end_date).getTime()>now-3600000));
+  return found.filter(m=>m.id && new Date(m.start_date).getTime()<now+3600000 && (!m.end_date||new Date(m.end_date).getTime()>now-3600000));
 }
 async function liveBatch(ms){
   const map=new Map();for(let i=0;i<ms.length;i+=20){const group=ms.slice(i,i+20);const q=new URLSearchParams();group.forEach(m=>q.append('milestone_ids',m.id));
@@ -82,6 +85,23 @@ async function reserve(signal,game,event,market,count,price,balance){
   return rowCount?id:null;
 }
 function feeReserve(event,market){return Math.max(2,Number(process.env.FEE_MULTIPLIER_RESERVE)||2,Number(event?.fee_multiplier_override)||0,Number(market?.fee_multiplier_override)||0)}
+const minimumCount=market=>market.fractional_trading_enabled===false?1:0.01;
+const hasAsk=market=>Number.isFinite(Number(market.yes_ask_size_fp))&&Number(market.yes_ask_size_fp)>=minimumCount(market);
+function contractCount(balance,market,fraction,bankroll,budget,fees){
+  const count=orderSize(balance,market.yes_ask_dollars,market.yes_ask_size_fp,fraction,Number(process.env.MAX_YES_PRICE||1),bankroll,budget,fees);
+  return market.fractional_trading_enabled===false?Math.floor(count):count;
+}
+const signalKey=c=>`${c.market.ticker}:${c.signal.strategy}`;
+function signalExecution(c,filled,account,balance,bankroll,overRemaining){
+  if(filled.has(signalKey(c)))return 'Already filled';
+  if(!hasAsk(c.market))return 'No ask liquidity';
+  const price=Number(c.market.yes_ask_dollars),fees=feeReserve(c.event,c.market);
+  const count=contractCount(balance,c.market,c.signal.fraction,bankroll,c.signal.strategy==='over'?overRemaining:Infinity,fees);
+  if(!count)return 'Insufficient budget or price above cap';
+  const local=shardCash(account,marketShard(c.event,c.market));
+  if(local===null)return 'Shard balance unavailable';
+  return local<estimatedCostCents(minimumCount(c.market),price,fees)?'Awaiting shard funding':'Eligible for submission';
+}
 async function ensureShardFunding(signal,event,market,account,desiredCents){
   const destination=marketShard(event,market);
   const plan=transferPlan(account,destination,desiredCents);
@@ -108,7 +128,7 @@ async function ensureShardFunding(signal,event,market,account,desiredCents){
   return false; // Transfers are asynchronous; the next scan checks actual shard cash.
 }
 async function submit(signal,game,event,market,balance,bankroll,budgetCents=Infinity){
-  const price=Number(market.yes_ask_dollars);const count=orderSize(balance,price,market.yes_ask_size_fp,signal.fraction,Number(process.env.MAX_YES_PRICE||1),bankroll,budgetCents,feeReserve(event,market));if(!count)return false;
+  const price=Number(market.yes_ask_dollars);const count=contractCount(balance,market,signal.fraction,bankroll,budgetCents,feeReserve(event,market));if(!count)return false;
   const id=await reserve(signal,game,event,market,count,price,balance);if(!id)return false;
   try{
     // IOC fills available contracts immediately without leaving an unfilled order resting.
@@ -139,7 +159,7 @@ async function recoverPending(signal,game,event,market,balance,bankroll,budgetCe
   // The supervisor reviews a missing submission. An unavailable model falls back to one bounded deterministic retry.
   let review;try{review=await reviewMiss({signal,game,market,error:row.error})}catch(e){review={available:false,retry:true,reason:'AI unavailable: '+e.message}}
   if(!review.retry){await pool.query(`UPDATE trade_attempts SET status='needs_review',ai_review=$2,updated_at=now() WHERE id=$1`,[row.id,review.reason]);return false}
-  if(Number(row.count)>orderSize(balance,row.limit_price,market.yes_ask_size_fp,signal.fraction,Number(process.env.MAX_YES_PRICE||1),bankroll,budgetCents,feeReserve(event,market)))return false;
+  if(Number(row.count)>contractCount(balance,{...market,yes_ask_dollars:row.limit_price},signal.fraction,bankroll,budgetCents,feeReserve(event,market)))return false;
   const claim=await pool.query(`UPDATE trade_attempts SET retries=1,status='retrying',ai_review=$2,updated_at=now() WHERE id=$1 AND status IN ('check_order','reserved') AND retries=0 RETURNING id`,[row.id,review.reason]);
   if(!claim.rowCount)return false;
   try{const result=await kalshi('/portfolio/events/orders',{method:'POST',auth:true,body:{ticker:row.market_ticker,client_order_id:row.id,side:'bid',count:Number(row.count).toFixed(2),price:Number(row.limit_price).toFixed(4),time_in_force:'immediate_or_cancel',self_trade_prevention_type:'taker_at_cross',post_only:false}});
@@ -158,13 +178,15 @@ async function scan(cachedMilestones){
     const games=ms.map(m=>({milestone:m,state:gameState(m,liveMap.get(m.id))}));
     const active=games.filter(g=>g.state.verifiedLive && g.state.scoreKnown);
     const events=await marketMap(active.flatMap(g=>linkedEventTickers(g.milestone)));
-    let balance=0,bankroll=0,overRemaining=0,account=null;
+    let balance=0,bankroll=0,overRemaining=0,account=null;let filled=new Set();
     if(live()){
-      const [currentAccount,positions,attempts]=await Promise.all([
+      const [currentAccount,positions,attempts,existingFills]=await Promise.all([
         accountBalance(),
         kalshi('/portfolio/positions?settlement_status=unsettled&count_filter=position&limit=1000',{auth:true}),
-        pool.query(`SELECT market_ticker,fill_count,limit_price FROM trade_attempts WHERE strategy='over' AND status='filled'`)
+        pool.query(`SELECT market_ticker,fill_count,limit_price FROM trade_attempts WHERE strategy='over' AND status='filled'`),
+        pool.query(`SELECT market_ticker,strategy FROM trade_attempts WHERE status='filled'`)
       ]);
+      filled=new Set(existingFills.rows.map(r=>`${r.market_ticker}:${r.strategy}`));
       if(positions.cursor)throw Error('Over exposure cannot be bounded: positions exceed one page');
       account=currentAccount;balance=Number(account.balance);
       bankroll=balance+Number(account.portfolio_value);
@@ -177,13 +199,14 @@ async function scan(cachedMilestones){
       if(state.verifiedLive && state.scoreKnown)for(const ticker of linkedEventTickers(milestone)){const event=events.get(ticker);if(!event || event.category!=='Sports')continue;
         for(const market of event.markets||[]){const signal=overSignal(state,market)||leadSignal(state,market)||tennisSignal(state,market);if(signal)candidates.push({signal,event,market})}}
       if(state.verifiedLive)scanned++;signals+=candidates.length;
-      await pool.query(`INSERT INTO game_snapshots(id,title,sport,home,away,status,progress,period,scanned_at,signals) VALUES($1,$2,$3,$4,$5,$6,$7,$8,now(),$9) ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,sport=EXCLUDED.sport,home=EXCLUDED.home,away=EXCLUDED.away,status=EXCLUDED.status,progress=EXCLUDED.progress,period=EXCLUDED.period,scanned_at=now(),signals=EXCLUDED.signals`,[state.id,state.title||'Sports game',state.sport,state.scoreKnown?state.home:null,state.scoreKnown?state.away:null,state.verifiedLive?'live':'inactive',Number.isFinite(state.progress)?state.progress:null,String(state.period||''),JSON.stringify(candidates.map(c=>({strategy:c.signal.strategy,reason:c.signal.reason,ticker:c.market.ticker,execution:Number(c.market.yes_ask_size_fp)<1?'No ask liquidity':orderSize(balance,c.market.yes_ask_dollars,c.market.yes_ask_size_fp,c.signal.fraction,Number(process.env.MAX_YES_PRICE||1),bankroll,c.signal.strategy==='over'?overRemaining:Infinity,feeReserve(c.event,c.market))<1?'Insufficient budget or price above cap':shardCash(account,marketShard(c.event,c.market))===null?'Shard balance unavailable':shardCash(account,marketShard(c.event,c.market))<estimatedCostCents(1,Number(c.market.yes_ask_dollars),feeReserve(c.event,c.market))?'Awaiting shard funding':'Eligible for submission'}))) ]);
+      await pool.query(`INSERT INTO game_snapshots(id,title,sport,home,away,status,progress,period,scanned_at,signals) VALUES($1,$2,$3,$4,$5,$6,$7,$8,now(),$9) ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,sport=EXCLUDED.sport,home=EXCLUDED.home,away=EXCLUDED.away,status=EXCLUDED.status,progress=EXCLUDED.progress,period=EXCLUDED.period,scanned_at=now(),signals=EXCLUDED.signals`,[state.id,state.title||'Sports game',state.sport,state.scoreKnown?state.home:null,state.scoreKnown?state.away:null,state.verifiedLive?'live':'inactive',Number.isFinite(state.progress)?state.progress:null,String(state.period||''),JSON.stringify(candidates.map(c=>({strategy:c.signal.strategy,reason:c.signal.reason,ticker:c.market.ticker,execution:signalExecution(c,filled,account,balance,bankroll,overRemaining)}))) ]);
       if(live())for(const c of candidates)try{
+        if(filled.has(signalKey(c)))continue;
         // A confirmed fill is final for this market and strategy. Check before moving
         // cash between shards, not only inside the order reservation.
         const prior=await pool.query(`SELECT status FROM trade_attempts WHERE market_ticker=$1 AND strategy=$2`,[c.market.ticker,c.signal.strategy]);
         if(prior.rows[0]?.status==='filled')continue;
-        if(Number(c.market.yes_ask_size_fp)<1){
+        if(!hasAsk(c.market)){
           if(['check_order','reserved'].includes(prior.rows[0]?.status))await recoverPending(c.signal,state,c.event,c.market,0,0,0);
           continue;
         }
@@ -191,7 +214,7 @@ async function scan(cachedMilestones){
         // the fee reserve, orderSize returns zero and no order is sent to Kalshi.
         const latest=await accountBalance();balance=Number(latest.balance);bankroll=balance+Number(latest.portfolio_value);
         const budget=c.signal.strategy==='over'?overRemaining:Infinity;
-        const wanted=orderSize(balance,c.market.yes_ask_dollars,c.market.yes_ask_size_fp,c.signal.fraction,Number(process.env.MAX_YES_PRICE||1),bankroll,budget,feeReserve(c.event,c.market));
+        const wanted=contractCount(balance,c.market,c.signal.fraction,bankroll,budget,feeReserve(c.event,c.market));
         if(!wanted)continue;
         const shard=marketShard(c.event,c.market),localCash=shardCash(latest,shard);
         if(localCash===null){executionErrors.push(`${c.market.ticker}: Kalshi shard balance unavailable`);continue}
@@ -200,18 +223,18 @@ async function scan(cachedMilestones){
           continue;
         }
         if(prior.rows[0]?.status==='needs_review')continue;
-        if(localCash<estimatedCostCents(1,Number(c.market.yes_ask_dollars),feeReserve(c.event,c.market))){
+        if(localCash<estimatedCostCents(minimumCount(c.market),Number(c.market.yes_ask_dollars),feeReserve(c.event,c.market))){
           await ensureShardFunding(c.signal,c.event,c.market,latest,estimatedCostCents(wanted,Number(c.market.yes_ask_dollars),feeReserve(c.event,c.market)));
           continue;
         }
         if(await submit(c.signal,state,c.event,c.market,Math.min(balance,localCash),bankroll,budget)||await recoverPending(c.signal,state,c.event,c.market,Math.min(balance,localCash),bankroll,budget)){
-          submitted++;const before=balance;const account=await accountBalance();balance=Number(account.balance);bankroll=balance+Number(account.portfolio_value);
+          submitted++;filled.add(signalKey(c));const before=balance;const account=await accountBalance();balance=Number(account.balance);bankroll=balance+Number(account.portfolio_value);
           if(c.signal.strategy==='over')overRemaining=Math.max(0,overRemaining-Math.max(0,before-balance));
         }
       }catch(e){const message=`${c.market.ticker}: ${String(e.message).slice(0,170)}`;executionErrors.push(message);console.error('Candidate execution failed:',message)}
     }
     await pool.query('UPDATE scan_status SET last_scan=now(),last_error=$4,scanned=$1,signals=$2,orders_submitted=orders_submitted+$3 WHERE id=1',[scanned,signals,submitted,executionErrors.length?executionErrors.slice(0,2).join('; ').slice(0,250):null]);
-    return {scanned,signals,submitted,active:active.filter(g=>/football_game|basketball_game|baseball_game|hockey_match|soccer/.test(g.state.type)).length,next:games.filter(g=>g.state.verifiedLive || (new Date(g.milestone.start_date).getTime()>Date.now()-3600000 && new Date(g.milestone.start_date).getTime()<Date.now()+3600000)).map(g=>g.milestone)};
+    return {scanned,signals,submitted,active:active.length,next:games.filter(g=>g.state.verifiedLive || (new Date(g.milestone.start_date).getTime()>Date.now()-3600000 && new Date(g.milestone.start_date).getTime()<Date.now()+3600000)).map(g=>g.milestone)};
   }catch(e){console.error('Scan failed:',e);await pool.query('UPDATE scan_status SET last_scan=now(),last_error=$1,scanned=$2,signals=$3 WHERE id=1',[String(e.message).slice(0,250),scanned,signals]);return {error:e.message,scanned,signals,next:ms}}
   finally{await client.query('ROLLBACK');client.release()}
 }
