@@ -401,7 +401,7 @@ async function scan(cachedMilestones){
 async function state(){const [snap,stats,attempts]=await Promise.all([
   pool.query(`SELECT id,title,sport,home,away,status,time_left,signals FROM game_snapshots WHERE status IN ('live','inprogress','started') AND scanned_at>=(SELECT COALESCE(last_scan,now()-interval '1 minute') FROM scan_status WHERE id=1) ORDER BY jsonb_array_length(signals) DESC,title`),
   pool.query('SELECT * FROM scan_status WHERE id=1'),
-  pool.query(`SELECT a.market_ticker,a.game_id,a.sport,a.strategy,a.reason,a.fill_count,a.limit_price,g.status AS game_status,g.clock_seconds,g.clock_label,g.clock_observed_at,g.time_left FROM trade_attempts a LEFT JOIN game_snapshots g ON g.id=a.game_id WHERE a.status='filled' ORDER BY a.created_at DESC`)
+  pool.query(`SELECT a.market_ticker,a.game_id,a.sport,a.strategy,a.reason,a.fill_count,a.limit_price,g.status AS game_status,g.title AS game_title,g.home AS home_score,g.away AS away_score,g.scanned_at AS score_scanned_at,g.clock_seconds,g.clock_label,g.clock_observed_at,g.time_left FROM trade_attempts a LEFT JOIN game_snapshots g ON g.id=a.game_id WHERE a.status='filled' ORDER BY a.created_at DESC`)
 ]);
   let balance=null,positions=null,accountError=null,positionsError=null;
   if(configured()){
@@ -424,7 +424,7 @@ async function state(){const [snap,stats,attempts]=await Promise.all([
   return {live:live(),credentials:configured(),aiConfigured:Boolean(process.env.AI_API_KEY),balance,accountError,positionsError,games:snap.rows,scan:stats.rows[0],orders};
 }
 export default {async fetch(req){const url=new URL(req.url);
-  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'pwa-profitable-alerts-1'});
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'filled-live-score-1'});
   if(req.method==='GET'&&url.pathname==='/manifest.webmanifest')return response(manifest,'application/manifest+json');
   if(req.method==='GET'&&url.pathname==='/sw.js')return new Response(worker,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','service-worker-allowed':'/','x-content-type-options':'nosniff'}});
   if(req.method==='GET'&&/^\/icon-(192|512)\.png$/.test(url.pathname))return response(Buffer.from(icons[Number(url.pathname.match(/\d+/)[0])],'base64'),'image/png');
