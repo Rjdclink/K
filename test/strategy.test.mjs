@@ -58,14 +58,20 @@ test('basketball requires five points and under seven minutes in final quarter o
   assert.ok(leadSignal(gameState(college,{details:{...live(72,67,2).details,clock:'06:00'}}),market));
   assert.equal(leadSignal(gameState(college,{details:{...live(72,67,1).details,clock:'01:00'}}),market),null);
 });
-test('football 24–14 point lead meets 71.4% advantage in final quarter',()=>{
+test('football needs a ten point lead, independent of percentage, in final seven minutes',()=>{
   const m={...milestone,type:'football_game',details:{league:'NFL'}};
   const market={status:'active',title:'New York wins',yes_sub_title:'New York'};
   const board={details:{...live(24,14).details,clock:'06:00'}};
   assert.ok(leadSignal(gameState(m,board),market));
-  board.details.home_score=23;
+  board.details.home_score=24;board.details.away_score=15;
   assert.equal(leadSignal(gameState(m,board),market),null);
-  board.details.home_score=24;board.details.clock='07:00';
+  board.details.home_score=100;board.details.away_score=90;
+  assert.ok(leadSignal(gameState(m,board),market));
+  board.details.home_score=10;board.details.away_score=0;
+  assert.ok(leadSignal(gameState(m,board),market));
+  board.details.home_score=24;board.details.away_score=14;board.details.clock='07:00';
+  assert.equal(leadSignal(gameState(m,board),market),null);
+  board.details.clock='06:00';board.details.quarter=3;
   assert.equal(leadSignal(gameState(m,board),market),null);
 });
 test('quantity respects 80% cash, price and displayed ask liquidity',()=>{
