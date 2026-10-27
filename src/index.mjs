@@ -179,7 +179,14 @@ async function scan(cachedMilestones){
       if(state.verifiedLive)scanned++;signals+=candidates.length;
       await pool.query(`INSERT INTO game_snapshots(id,title,sport,home,away,status,progress,period,scanned_at,signals) VALUES($1,$2,$3,$4,$5,$6,$7,$8,now(),$9) ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,sport=EXCLUDED.sport,home=EXCLUDED.home,away=EXCLUDED.away,status=EXCLUDED.status,progress=EXCLUDED.progress,period=EXCLUDED.period,scanned_at=now(),signals=EXCLUDED.signals`,[state.id,state.title||'Sports game',state.sport,state.scoreKnown?state.home:null,state.scoreKnown?state.away:null,state.verifiedLive?'live':'inactive',Number.isFinite(state.progress)?state.progress:null,String(state.period||''),JSON.stringify(candidates.map(c=>({strategy:c.signal.strategy,reason:c.signal.reason,ticker:c.market.ticker,execution:Number(c.market.yes_ask_size_fp)<1?'No ask liquidity':orderSize(balance,c.market.yes_ask_dollars,c.market.yes_ask_size_fp,c.signal.fraction,Number(process.env.MAX_YES_PRICE||1),bankroll,c.signal.strategy==='over'?overRemaining:Infinity,feeReserve(c.event,c.market))<1?'Insufficient budget or price above cap':shardCash(account,marketShard(c.event,c.market))===null?'Shard balance unavailable':shardCash(account,marketShard(c.event,c.market))<estimatedCostCents(1,Number(c.market.yes_ask_dollars),feeReserve(c.event,c.market))?'Awaiting shard funding':'Eligible for submission'}))) ]);
       if(live())for(const c of candidates)try{
-        if(Number(c.market.yes_ask_size_fp)<1)continue;
+        // A confirmed fill is final for this market and strategy. Check before moving
+        // cash between shards, not only inside the order reservation.
+        const prior=await pool.query(`SELECT status FROM trade_attempts WHERE market_ticker=$1 AND strategy=$2`,[c.market.ticker,c.signal.strategy]);
+        if(prior.rows[0]?.status==='filled')continue;
+        if(Number(c.market.yes_ask_size_fp)<1){
+          if(['check_order','reserved'].includes(prior.rows[0]?.status))await recoverPending(c.signal,state,c.event,c.market,0,0,0);
+          continue;
+        }
         // Refresh available cash before every order. If the account cannot afford one contract plus
         // the fee reserve, orderSize returns zero and no order is sent to Kalshi.
         const latest=await accountBalance();balance=Number(latest.balance);bankroll=balance+Number(latest.portfolio_value);
@@ -188,6 +195,11 @@ async function scan(cachedMilestones){
         if(!wanted)continue;
         const shard=marketShard(c.event,c.market),localCash=shardCash(latest,shard);
         if(localCash===null){executionErrors.push(`${c.market.ticker}: Kalshi shard balance unavailable`);continue}
+        if(['check_order','reserved','retrying'].includes(prior.rows[0]?.status)){
+          await recoverPending(c.signal,state,c.event,c.market,Math.min(balance,localCash),bankroll,budget);
+          continue;
+        }
+        if(prior.rows[0]?.status==='needs_review')continue;
         if(localCash<estimatedCostCents(1,Number(c.market.yes_ask_dollars),feeReserve(c.event,c.market))){
           await ensureShardFunding(c.signal,c.event,c.market,latest,estimatedCostCents(wanted,Number(c.market.yes_ask_dollars),feeReserve(c.event,c.market)));
           continue;
