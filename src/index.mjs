@@ -262,6 +262,8 @@ async function exitComebacks(games,events,positions){
     const original=ownership.get(position.ticker),gameId=original?.game_id||marketGames.get(position.ticker),state=byGame.get(gameId),nested=markets.get(position.ticker);
     if(!state?.verifiedLive||!nested)continue;
     const strategy=original?.strategy||(/total|over/i.test(nested.title||'')?'over':'lead');
+    // Whole-game overs are never eligible for automated comeback exits.
+    if(strategy==='over')continue;
     if(!comeback(state,nested,strategy))continue;
     try{
       const market=(await kalshi('/markets/'+encodeURIComponent(position.ticker))).market;
