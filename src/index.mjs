@@ -1,7 +1,8 @@
 import { createPrivateKey, sign, constants, timingSafeEqual, randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { page } from './ui.mjs';
-import { gameState, overSignal, leadSignal, orderSize } from './strategy.mjs';
+import { gameState, overSignal, leadSignal, orderSize, touchdownsFromPbp } from './strategy.mjs';
+import { reviewMiss } from './ai.mjs';
 
 const API='https://external-api.kalshi.com/trade-api/v2';
 const pool = new pg.Pool({connectionString:process.env.DATABASE_URL, max:4, idleTimeoutMillis:15000});
@@ -55,7 +56,26 @@ async function submit(signal,game,event,market,balance){
     const result=await kalshi('/portfolio/events/orders',{method:'POST',auth:true,body:{ticker:market.ticker,client_order_id:id,side:'bid',count:count.toFixed(2),price:price.toFixed(4),time_in_force:'fill_or_kill',self_trade_prevention_type:'taker_at_cross',post_only:false}});
     await pool.query(`UPDATE trade_attempts SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE id=$1`,[id,Number(result.fill_count)>0?'filled':'unfilled',result.order_id||null,Number(result.fill_count||0)]);
     return Number(result.fill_count)>0;
-  }catch(e){await pool.query(`UPDATE trade_attempts SET status='check_order',error=$2,updated_at=now() WHERE id=$1`,[id,String(e.message).slice(0,250)]);console.error('Order needs reconciliation:',market.ticker,e.message);return false}
+  }catch(e){const terminal=/^Kalshi (400|401|403|422):/.test(String(e.message));await pool.query(`UPDATE trade_attempts SET status=$2,error=$3,updated_at=now() WHERE id=$1`,[id,terminal?'rejected':'check_order',String(e.message).slice(0,250)]);console.error('Order needs reconciliation:',market.ticker,e.message);return false}
+}
+async function recoverPending(signal,game,market,balance){
+  const {rows:[row]}=await pool.query(`SELECT * FROM trade_attempts WHERE market_ticker=$1 AND strategy=$2 AND status IN ('check_order','reserved')`,[market.ticker,signal.strategy]);
+  if(!row)return false;
+  // Never send a second order until the exchange has been queried for the original client ID.
+  try{const orders=await kalshi('/portfolio/orders?'+new URLSearchParams({ticker:market.ticker,limit:'1000'}),{auth:true});
+    const matched=(orders.orders||[]).find(o=>o.client_order_id===row.id);
+    if(matched){const filled=Number(matched.fill_count_fp??matched.fill_count??0);await pool.query(`UPDATE trade_attempts SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE id=$1`,[row.id,filled>0?'filled':'unfilled',matched.order_id||null,filled]);return filled>0}
+  }catch(e){console.warn('Order history unavailable; retry deferred:',e.message);return false}
+  if(row.retries || Date.now()-new Date(row.updated_at).getTime()<15000)return false;
+  // The supervisor reviews a missing submission. An unavailable model falls back to one bounded deterministic retry.
+  let review;try{review=await reviewMiss({signal,game,market,error:row.error})}catch(e){review={available:false,retry:true,reason:'AI unavailable: '+e.message}}
+  if(!review.retry){await pool.query(`UPDATE trade_attempts SET status='needs_review',ai_review=$2,updated_at=now() WHERE id=$1`,[row.id,review.reason]);return false}
+  if(Number(row.count)>orderSize(balance,row.limit_price,market.yes_ask_size_fp,signal.fraction,Number(process.env.MAX_YES_PRICE||0.98)))return false;
+  const claim=await pool.query(`UPDATE trade_attempts SET retries=1,status='retrying',ai_review=$2,updated_at=now() WHERE id=$1 AND status IN ('check_order','reserved') AND retries=0 RETURNING id`,[row.id,review.reason]);
+  if(!claim.rowCount)return false;
+  try{const result=await kalshi('/portfolio/events/orders',{method:'POST',auth:true,body:{ticker:row.market_ticker,client_order_id:row.id,side:'bid',count:Number(row.count).toFixed(2),price:Number(row.limit_price).toFixed(4),time_in_force:'fill_or_kill',self_trade_prevention_type:'taker_at_cross',post_only:false}});
+    const filled=Number(result.fill_count||0);await pool.query(`UPDATE trade_attempts SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE id=$1`,[row.id,filled>0?'filled':'unfilled',result.order_id||null,filled]);return filled>0
+  }catch(e){await pool.query(`UPDATE trade_attempts SET status='check_order',error=$2,updated_at=now() WHERE id=$1`,[row.id,'Recovery response uncertain: '+String(e.message).slice(0,200)]);return false}
 }
 async function scan(cachedMilestones){
   // Postgres advisory lock prevents overlapping scheduled invocations from spending the same balance.
@@ -64,6 +84,11 @@ async function scan(cachedMilestones){
   try{
     const ms=cachedMilestones||await milestones();const liveMap=await liveBatch(ms);
     const games=ms.map(m=>({milestone:m,state:gameState(m,liveMap.get(m.id))}));
+    for(const game of games){const s=game.state;
+      if(s.verifiedLive && /football_game/.test(s.type) && s.period===4 && Number.isFinite(s.remainingSeconds) && s.remainingSeconds>0 && s.remainingSeconds<420){
+        try{const stats=await kalshi('/live_data/milestone/'+encodeURIComponent(s.id)+'/game_stats');const td=touchdownsFromPbp(stats.pbp,s.home,s.away);if(td){s.homeUnits=td.home;s.awayUnits=td.away}}catch(e){console.warn('Touchdown feed unavailable:',s.id,e.message)}
+      }
+    }
     const active=games.filter(g=>g.state.verifiedLive && g.state.scoreKnown);
     const events=await marketMap(active.flatMap(g=>linkedEventTickers(g.milestone)));
     let balance=0;if(live()){const account=await kalshi('/portfolio/balance',{auth:true});balance=Number(account.balance||0)}
@@ -73,7 +98,7 @@ async function scan(cachedMilestones){
         for(const market of event.markets||[]){const signal=overSignal(state,market)||leadSignal(state,market);if(signal)candidates.push({signal,event,market})}}
       if(state.verifiedLive)scanned++;signals+=candidates.length;
       await client.query(`INSERT INTO game_snapshots(id,title,sport,home,away,status,progress,period,scanned_at,signals) VALUES($1,$2,$3,$4,$5,$6,$7,$8,now(),$9) ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,sport=EXCLUDED.sport,home=EXCLUDED.home,away=EXCLUDED.away,status=EXCLUDED.status,progress=EXCLUDED.progress,period=EXCLUDED.period,scanned_at=now(),signals=EXCLUDED.signals`,[state.id,state.title||'Sports game',state.sport,state.scoreKnown?state.home:null,state.scoreKnown?state.away:null,state.status,Number.isFinite(state.progress)?state.progress:null,String(state.period||''),JSON.stringify(candidates.map(c=>({strategy:c.signal.strategy,reason:c.signal.reason,ticker:c.market.ticker}))) ]);
-      if(live())for(const c of candidates){if(await submit(c.signal,state,c.event,c.market,balance)){submitted++;balance=Number((await kalshi('/portfolio/balance',{auth:true})).balance||0)}}
+      if(live())for(const c of candidates){if(await submit(c.signal,state,c.event,c.market,balance)||await recoverPending(c.signal,state,c.market,balance)){submitted++;balance=Number((await kalshi('/portfolio/balance',{auth:true})).balance||0)}}
     }
     await client.query('UPDATE scan_status SET last_scan=now(),last_error=NULL,scanned=$1,signals=$2,orders_submitted=orders_submitted+$3 WHERE id=1',[scanned,signals,submitted]);
     return {scanned,signals,submitted,active:active.filter(g=>/football_game|basketball_game|baseball_game|hockey_match|soccer/.test(g.state.type)).length,next:games.filter(g=>g.state.verifiedLive || (new Date(g.milestone.start_date).getTime()>Date.now()-3600000 && new Date(g.milestone.start_date).getTime()<Date.now()+3600000)).map(g=>g.milestone)};
@@ -89,13 +114,13 @@ async function state(){const [snap,stats,attempts]=await Promise.all([
   if(configured())try{[balance,positions]=await Promise.all([kalshi('/portfolio/balance',{auth:true}),kalshi('/portfolio/positions?settlement_status=unsettled&count_filter=position&limit=500',{auth:true})])}catch(e){accountError=e.message}
   const open=new Set((positions?.market_positions||[]).filter(p=>Number(p.position_fp??p.position??0)!==0).map(p=>p.ticker));
   const orders=positions?attempts.rows.filter(o=>open.has(o.market_ticker)):[];
-  return {live:live(),balance,accountError,games:snap.rows,scan:stats.rows[0],orders};
+  return {live:live(),aiConfigured:Boolean(process.env.AI_API_KEY),balance,accountError,games:snap.rows,scan:stats.rows[0],orders};
 }
 export default {async fetch(req){const url=new URL(req.url);
   if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),credentials:configured()});
   if(req.method==='POST'&&url.pathname==='/tick'){
     if(!req.headers.get('x-neon-trigger-invocation-id'))return json({error:'Forbidden'},403);
-    const until=Date.now()+14*60000+30000;let cached=null,cycles=0,last={};
+    const now=Date.now();const until=Math.min(now+14*60000+30000,(Math.floor(now/900000)+1)*900000-10000);let cached=null,cycles=0,last={};
     while(Date.now()<until){const begun=Date.now();last=await scan(cached);cycles++;
       if(last.next)cached=last.next;if(last.error || !last.active)break;
       const pause=Math.max(0,3000-(Date.now()-begun));if(Date.now()+pause>=until)break;

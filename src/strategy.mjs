@@ -1,5 +1,17 @@
 const N = v => v === null || v === undefined || v === '' ? NaN : Number(v);
 const pick = (obj, names) => names.map(k => obj?.[k]).find(v => Number.isFinite(N(v)));
+export function touchdownsFromPbp(pbp,homeScore,awayScore){
+  const all=(pbp?.periods||[]).flatMap(period=>(period.events||[]).flatMap(event=>event.plays||[]));
+  const seen=new Set();const plays=all.filter(p=>{const key=p.play_id;if(!key||seen.has(key))return false;seen.add(key);return true}).sort((a,b)=>Number(a.sequence)-Number(b.sequence));
+  if(!plays.length)return null;
+  let priorHome=0,priorAway=0,home=0,away=0;
+  for(const p of plays){const h=N(p.home_points),a=N(p.away_points);if(!Number.isFinite(h)||!Number.isFinite(a))continue;
+    if(/touchdown/i.test(String(p.description||''))){if(h-priorHome>=6 && a===priorAway)home++;else if(a-priorAway>=6 && h===priorHome)away++}
+    priorHome=h;priorAway=a;
+  }
+  if(priorHome!==homeScore || priorAway!==awayScore)return null;
+  return {home,away};
+}
 export function sportName(m) {
   const s = `${m.details?.competition || ''} ${m.details?.league || ''} ${m.type || ''}`.toLowerCase();
   if (/college.*football|cfb/.test(s)) return 'CFB';
@@ -62,18 +74,19 @@ export function leadSignal(game, market) {
   const finalTime=baseball?game.period===9:game.period===segments && Number.isFinite(game.remainingSeconds) && game.remainingSeconds>0 && game.remainingSeconds<420;
   if (!game.verifiedLive || !game.scoreKnown || !finalTime || market.status!=='active' && market.status!=='open') return null;
   const h=game.homeUnits,a=game.awayUnits;
-  if (!Number.isFinite(h)||!Number.isFinite(a)||Math.min(h,a)<=0||Math.max(h,a)<3.5*Math.min(h,a)||!game.homeName||!game.awayName) return null;
+  if (!Number.isFinite(h)||!Number.isFinite(a)||Math.min(h,a)<=0||Math.max(h,a)<3.5*Math.min(h,a)) return null;
   const leader = h>a ? game.homeName : game.awayName;
   const trailer = h>a ? game.awayName : game.homeName;
   const description = `${market.title||''} ${market.yes_sub_title||''}`;
   const teamId=Object.entries(market.custom_strike||{}).find(([k,v])=>/_team$/.test(k)&&typeof v==='string')?.[1];
   const expectedId=h>a?game.homeTeamId:game.awayTeamId;
-  if (!/win|winner|victory/i.test(description) || (teamId && expectedId ? teamId!==expectedId : !norm(description).includes(norm(leader)) || norm(description).includes(norm(trailer)))) return null;
+  const identityMatches=teamId&&expectedId?teamId===expectedId:Boolean(leader&&trailer&&norm(description).includes(norm(leader))&&!norm(description).includes(norm(trailer)));
+  if (!/win|winner|victory/i.test(description) || !identityMatches) return null;
   const ratio=Math.max(h,a)/Math.min(h,a);
   const phase=baseball?(game.inningHalf===2&&game.outs>=2?2:game.inningHalf===2||game.outs>=2?1:0):(game.remainingSeconds<120?2:game.remainingSeconds<300?1:0);
   const [low,high]=[[0.15,0.30],[0.30,0.55],[0.55,0.80]][phase];
   const fraction=Math.round((low+(high-low)*Math.min(1,(ratio-3.5)/2.5))*100)/100;
-  return {strategy:'lead', reason:`${leader} leads ${h}–${a} ${game.unit} (${Math.round((ratio-1)*100)}% advantage); ${baseball?'9th inning':game.clock+' remaining'}`, fraction};
+  return {strategy:'lead', reason:`${leader||market.yes_sub_title} leads ${h}–${a} ${game.unit} (${Math.round((ratio-1)*100)}% advantage); ${baseball?'9th inning':game.clock+' remaining'}`, fraction};
 }
 export function orderSize(balanceCents, askDollars, askSize, fraction, cap=0.98) {
   const price = N(askDollars), size = N(askSize);

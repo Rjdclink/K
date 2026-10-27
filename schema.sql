@@ -24,6 +24,8 @@ CREATE TABLE IF NOT EXISTS trade_attempts (
   status text NOT NULL DEFAULT 'reserved',
   order_id text,
   fill_count numeric NOT NULL DEFAULT 0,
+  retries integer NOT NULL DEFAULT 0,
+  ai_review text,
   error text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
