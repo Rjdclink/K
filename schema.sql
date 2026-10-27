@@ -2,6 +2,7 @@ CREATE TABLE IF NOT EXISTS game_snapshots (
   id text PRIMARY KEY,
   title text NOT NULL,
   sport text NOT NULL,
+  sport_family text,
   home integer,
   away integer,
   status text NOT NULL,
@@ -15,6 +16,7 @@ CREATE TABLE IF NOT EXISTS game_snapshots (
   signals jsonb NOT NULL DEFAULT '[]'::jsonb
 );
 ALTER TABLE game_snapshots ADD COLUMN IF NOT EXISTS time_left text;
+ALTER TABLE game_snapshots ADD COLUMN IF NOT EXISTS sport_family text;
 ALTER TABLE game_snapshots ADD COLUMN IF NOT EXISTS clock_seconds integer;
 ALTER TABLE game_snapshots ADD COLUMN IF NOT EXISTS clock_label text;
 ALTER TABLE game_snapshots ADD COLUMN IF NOT EXISTS clock_observed_at timestamptz;
