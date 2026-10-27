@@ -75,7 +75,7 @@ export function leadSignal(game, market) {
   const h=game.homeUnits,a=game.awayUnits;
   if (!Number.isFinite(h)||!Number.isFinite(a)) return null;
   const margin=Math.abs(h-a),trailerScore=Math.min(h,a);
-  const minimum=basketball?5:football?10:hockey||baseball||soccer?2:null;
+  const minimum=basketball?6:football?10:hockey||baseball||soccer?2:null;
   const ratio=trailerScore>0?Math.max(h,a)/trailerScore:Infinity;
   if (minimum===null ? trailerScore<=0||ratio<3.5 : margin<minimum) return null;
   const leader = h>a ? game.homeName : game.awayName;
