@@ -15,7 +15,7 @@ Required private Neon Function environment variables:
 
 | Name | Purpose |
 | --- | --- |
-| `DASHBOARD_PASSWORD` | Basic authentication password for the dashboard (`admin` username). |
+| `DASHBOARD_PASSWORD` | Basic authentication password for the dashboard (`rjdc` username). |
 | `KALSHI_API_KEY` | Kalshi API key ID. |
 | `KALSHI_PRIVATE_KEY` | Full RSA PEM private key, with real newlines or escaped `\\n`. |
 | `LIVE_TRADING` | `true` to allow real orders; otherwise scanner and dashboard remain read-only. |

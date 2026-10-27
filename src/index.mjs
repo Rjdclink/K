@@ -12,7 +12,7 @@ const configured=()=>Boolean(process.env.KALSHI_API_KEY && process.env.KALSHI_PR
 const live=()=>configured() && process.env.LIVE_TRADING==='true';
 const credentials=()=>({key:process.env.KALSHI_API_KEY,privateKey:process.env.KALSHI_PRIVATE_KEY?.replace(/\\n/g,'\n')});
 const safeEqual=(a,b)=>{const x=Buffer.from(a),y=Buffer.from(b);return x.length===y.length && timingSafeEqual(x,y)};
-function authorized(req){const expected=process.env.DASHBOARD_PASSWORD;if(!expected)return false;const raw=req.headers.get('authorization')||'';if(!raw.startsWith('Basic '))return false;try{const [user,...password]=Buffer.from(raw.slice(6),'base64').toString('utf8').split(':');return user==='admin'&&safeEqual(password.join(':'),expected)}catch{return false}}
+function authorized(req){const expected=process.env.DASHBOARD_PASSWORD;if(!expected)return false;const raw=req.headers.get('authorization')||'';if(!raw.startsWith('Basic '))return false;try{const [user,...password]=Buffer.from(raw.slice(6),'base64').toString('utf8').split(':');return user==='rjdc'&&safeEqual(password.join(':'),expected)}catch{return false}}
 async function kalshi(path,opts={}){
   const method=opts.method||'GET';const headers={'accept':'application/json'};
   if(opts.auth){const {key,privateKey}=credentials();if(!key||!privateKey)throw Error('Kalshi credentials unavailable');const timestamp=String(Date.now());const unsignedPath='/trade-api/v2'+path.split('?')[0];const signature=sign('sha256',Buffer.from(timestamp+method+unsignedPath),{key:createPrivateKey(privateKey),padding:constants.RSA_PKCS1_PSS_PADDING,saltLength:constants.RSA_PSS_SALTLEN_DIGEST}).toString('base64');Object.assign(headers,{'KALSHI-ACCESS-KEY':key,'KALSHI-ACCESS-TIMESTAMP':timestamp,'KALSHI-ACCESS-SIGNATURE':signature})}
