@@ -18,10 +18,13 @@ async function kalshi(path,opts={}){
   const method=opts.method||'GET';const headers={'accept':'application/json'};
   if(opts.auth){const {key,privateKey}=credentials();if(!key||!privateKey)throw Error('Kalshi credentials unavailable');const timestamp=String(Date.now());const unsignedPath='/trade-api/v2'+path.split('?')[0];const signature=kalshiSignature(privateKey,timestamp,method,unsignedPath);Object.assign(headers,{'KALSHI-ACCESS-KEY':key,'KALSHI-ACCESS-TIMESTAMP':timestamp,'KALSHI-ACCESS-SIGNATURE':signature})}
   if(opts.body)headers['content-type']='application/json';
-  const response=await fetch(API+path,{method,headers,body:opts.body?JSON.stringify(opts.body):undefined,signal:AbortSignal.timeout(12000)});
-  const data=await response.json().catch(()=>({}));
-  if(!response.ok)throw Error(`Kalshi ${response.status}: ${String(data.message||data.error||data.code||'request failed').slice(0,180)}`);
-  return data;
+  for(let attempt=0;;attempt++){
+    const response=await fetch(API+path,{method,headers,body:opts.body?JSON.stringify(opts.body):undefined,signal:AbortSignal.timeout(12000)});
+    const data=await response.json().catch(()=>({}));
+    if(response.status===429 && method==='GET' && attempt<4){await new Promise(resolve=>setTimeout(resolve,500*2**attempt));continue}
+    if(!response.ok){const detail=data.message||data.error?.message||data.error?.code||data.error||data.code||'request failed';throw Error(`Kalshi ${response.status} ${method} ${path.split('?')[0]}: ${String(typeof detail==='object'?JSON.stringify(detail):detail).slice(0,140)}`)}
+    return data;
+  }
 }
 // Kalshi's balance endpoint has a separate one-request-per-second Basic tier bucket.
 let balanceQueue=Promise.resolve(), lastBalanceCall=0;
@@ -41,8 +44,12 @@ async function milestones(){
   const now=Date.now();return found.filter(m=>m.id && new Date(m.start_date).getTime()<now+3600000 && (!m.end_date||new Date(m.end_date).getTime()>now-3600000));
 }
 async function liveBatch(ms){
-  const map=new Map();for(let i=0;i<ms.length;i+=80){const group=ms.slice(i,i+80);const q=new URLSearchParams();group.forEach(m=>q.append('milestone_ids',m.id));
-    let list=[];try{list=(await kalshi('/live_data/batch?'+q)).live_datas||[]}catch(e){console.warn('Live batch fallback:',e.message);const results=await Promise.allSettled(group.map(m=>kalshi('/live_data/milestone/'+encodeURIComponent(m.id))));list=results.filter(r=>r.status==='fulfilled').map(r=>r.value.live_data).filter(Boolean)}
+  const map=new Map();for(let i=0;i<ms.length;i+=20){const group=ms.slice(i,i+20);const q=new URLSearchParams();group.forEach(m=>q.append('milestone_ids',m.id));
+    let list=[];try{list=(await kalshi('/live_data/batch?'+q)).live_datas||[]}catch(e){
+      if(!/^Kalshi (400|404|405) /.test(String(e.message)))throw e;
+      console.warn('Live batch unsupported; using bounded individual requests:',e.message);
+      for(const m of group){try{const result=await kalshi('/live_data/milestone/'+encodeURIComponent(m.id));if(result.live_data)list.push(result.live_data)}catch(error){if(/Kalshi 429 /.test(String(error.message)))throw error}}
+    }
     list.forEach(d=>map.set(d.milestone_id,d));}
   return map;
 }
@@ -119,9 +126,9 @@ async function scan(cachedMilestones){
   const client=await pool.connect();await client.query('BEGIN');
   const lock=await client.query('SELECT pg_try_advisory_xact_lock(83027543) AS acquired');
   if(!lock.rows[0].acquired){await client.query('ROLLBACK');client.release();return {skipped:'scan in progress'}};
-  let scanned=0,signals=0,submitted=0;const executionErrors=[];
+  let scanned=0,signals=0,submitted=0,ms;const executionErrors=[];
   try{
-    const ms=cachedMilestones||await milestones();const liveMap=await liveBatch(ms);
+    ms=cachedMilestones||await milestones();const liveMap=await liveBatch(ms);
     const games=ms.map(m=>({milestone:m,state:gameState(m,liveMap.get(m.id))}));
     const active=games.filter(g=>g.state.verifiedLive && g.state.scoreKnown);
     const events=await marketMap(active.flatMap(g=>linkedEventTickers(g.milestone)));
@@ -158,7 +165,7 @@ async function scan(cachedMilestones){
     }
     await pool.query('UPDATE scan_status SET last_scan=now(),last_error=$4,scanned=$1,signals=$2,orders_submitted=orders_submitted+$3 WHERE id=1',[scanned,signals,submitted,executionErrors.length?executionErrors.slice(0,2).join('; ').slice(0,250):null]);
     return {scanned,signals,submitted,active:active.filter(g=>/football_game|basketball_game|baseball_game|hockey_match|soccer/.test(g.state.type)).length,next:games.filter(g=>g.state.verifiedLive || (new Date(g.milestone.start_date).getTime()>Date.now()-3600000 && new Date(g.milestone.start_date).getTime()<Date.now()+3600000)).map(g=>g.milestone)};
-  }catch(e){console.error('Scan failed:',e);await pool.query('UPDATE scan_status SET last_scan=now(),last_error=$1,scanned=$2,signals=$3 WHERE id=1',[String(e.message).slice(0,250),scanned,signals]);return {error:e.message,scanned,signals}}
+  }catch(e){console.error('Scan failed:',e);await pool.query('UPDATE scan_status SET last_scan=now(),last_error=$1,scanned=$2,signals=$3 WHERE id=1',[String(e.message).slice(0,250),scanned,signals]);return {error:e.message,scanned,signals,next:ms}}
   finally{await client.query('ROLLBACK');client.release()}
 }
 async function state(){const [snap,stats,attempts]=await Promise.all([
@@ -191,7 +198,7 @@ export default {async fetch(req){const url=new URL(req.url);
     // without relying on one function instance surviving for a full quarter hour.
     const now=Date.now();const until=Math.min(now+55000,(Math.floor(now/60000)+1)*60000-2000);let cached=null,cycles=0,last={};
     while(Date.now()<until){const begun=Date.now();last=await scan(cached);cycles++;
-      if(last.next)cached=last.next;if(last.error || !last.active)break;
+      if(last.next)cached=last.next;if(last.error && !/Kalshi 429 /.test(last.error) || !last.error && !last.active)break;
       const pause=Math.max(0,3000-(Date.now()-begun));if(Date.now()+pause>=until)break;
       await new Promise(resolve=>setTimeout(resolve,pause));
     }
