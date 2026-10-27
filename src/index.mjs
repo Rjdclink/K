@@ -56,33 +56,59 @@ function linkedEventTickers(m){
   const totals=original.map(t=>t.replace(/^([A-Z0-9]+)GAME(-.+)$/,'$1TOTAL$2')).filter((t,i)=>t!==original[i]);
   return [...new Set([...original,...totals])];
 }
-async function reserve(signal,game,event,market,count,price){const id=randomUUID();const {rowCount}=await pool.query(`INSERT INTO trade_attempts(id,market_ticker,event_ticker,game_id,sport,strategy,reason,fraction,count,limit_price) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(market_ticker,strategy) DO NOTHING`,[id,market.ticker,event.event_ticker,game.id,game.sport,signal.strategy,signal.reason,signal.fraction,count,price]);return rowCount?id:null}
+async function reserve(signal,game,event,market,count,price,balance){
+  const id=randomUUID();
+  const {rowCount}=await pool.query(`INSERT INTO trade_attempts(id,market_ticker,event_ticker,game_id,sport,strategy,reason,fraction,count,limit_price,available_cents)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+    ON CONFLICT(market_ticker,strategy) DO UPDATE SET
+      id=EXCLUDED.id,event_ticker=EXCLUDED.event_ticker,game_id=EXCLUDED.game_id,sport=EXCLUDED.sport,
+      reason=EXCLUDED.reason,fraction=EXCLUDED.fraction,count=EXCLUDED.count,limit_price=EXCLUDED.limit_price,available_cents=EXCLUDED.available_cents,
+      status='reserved',order_id=NULL,fill_count=0,retries=0,ai_review=NULL,error=NULL,created_at=now(),updated_at=now(),
+      attempt_history=trade_attempts.attempt_history||jsonb_build_array(jsonb_build_object('id',trade_attempts.id,'status',trade_attempts.status,'order_id',trade_attempts.order_id,'error',trade_attempts.error,'count',trade_attempts.count,'fill_count',trade_attempts.fill_count,'created_at',trade_attempts.created_at))
+    WHERE (trade_attempts.status='unfilled' AND trade_attempts.updated_at<now()-interval '2 seconds')
+       OR (trade_attempts.status='rejected' AND trade_attempts.updated_at<now()-interval '15 seconds'
+           AND ((trade_attempts.error ILIKE '%insufficient%' AND EXCLUDED.available_cents>trade_attempts.available_cents)
+                OR (trade_attempts.error ILIKE '%price%' AND EXCLUDED.limit_price<>trade_attempts.limit_price)))`,
+    [id,market.ticker,event.event_ticker,game.id,game.sport,signal.strategy,signal.reason,signal.fraction,count,price,Math.floor(balance)]);
+  return rowCount?id:null;
+}
+function feeReserve(event,market){return Math.max(2,Number(process.env.FEE_MULTIPLIER_RESERVE)||2,Number(event?.fee_multiplier_override)||0,Number(market?.fee_multiplier_override)||0)}
 async function submit(signal,game,event,market,balance,bankroll,budgetCents=Infinity){
-  const price=Number(market.yes_ask_dollars);const count=Math.min(orderSize(balance,price,market.yes_ask_size_fp,signal.fraction,Number(process.env.MAX_YES_PRICE||0.98),signal.strategy==='lead'?bankroll:balance),Math.floor(budgetCents/(price*100)));if(!count)return false;
-  const id=await reserve(signal,game,event,market,count,price);if(!id)return false;
+  const price=Number(market.yes_ask_dollars);const count=orderSize(balance,price,market.yes_ask_size_fp,signal.fraction,Number(process.env.MAX_YES_PRICE||1),signal.strategy==='lead'?bankroll:balance,budgetCents,feeReserve(event,market));if(!count)return false;
+  const id=await reserve(signal,game,event,market,count,price,balance);if(!id)return false;
   try{
-    // FOK leaves no unfilled orders resting. The UUID is reused for reconciliation after an uncertain response.
-    const result=await kalshi('/portfolio/events/orders',{method:'POST',auth:true,body:{ticker:market.ticker,client_order_id:id,side:'bid',count:count.toFixed(2),price:price.toFixed(4),time_in_force:'fill_or_kill',self_trade_prevention_type:'taker_at_cross',post_only:false}});
+    // IOC fills available contracts immediately without leaving an unfilled order resting.
+    const result=await kalshi('/portfolio/events/orders',{method:'POST',auth:true,body:{ticker:market.ticker,client_order_id:id,side:'bid',count:count.toFixed(2),price:price.toFixed(4),time_in_force:'immediate_or_cancel',self_trade_prevention_type:'taker_at_cross',post_only:false}});
     await pool.query(`UPDATE trade_attempts SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE id=$1`,[id,Number(result.fill_count)>0?'filled':'unfilled',result.order_id||null,Number(result.fill_count||0)]);
     return Number(result.fill_count)>0;
   }catch(e){const terminal=/^Kalshi (400|401|403|422):/.test(String(e.message));await pool.query(`UPDATE trade_attempts SET status=$2,error=$3,updated_at=now() WHERE id=$1`,[id,terminal?'rejected':'check_order',String(e.message).slice(0,250)]);console.error('Order needs reconciliation:',market.ticker,e.message);return false}
 }
-async function recoverPending(signal,game,market,balance,bankroll,budgetCents=Infinity){
+async function recoverPending(signal,game,event,market,balance,bankroll,budgetCents=Infinity){
   const {rows:[row]}=await pool.query(`SELECT * FROM trade_attempts WHERE market_ticker=$1 AND strategy=$2 AND status IN ('check_order','reserved')`,[market.ticker,signal.strategy]);
   if(!row)return false;
   // Never send a second order until the exchange has been queried for the original client ID.
-  try{const orders=await kalshi('/portfolio/orders?'+new URLSearchParams({ticker:market.ticker,limit:'1000'}),{auth:true});
-    const matched=(orders.orders||[]).find(o=>o.client_order_id===row.id);
+  try{
+    let cursor='',matched,complete=false;
+    for(let page=0;page<5;page++){
+      const query=new URLSearchParams({ticker:market.ticker,min_ts:String(Math.floor(new Date(row.created_at).getTime()/1000)-60),limit:'1000'});
+      if(cursor)query.set('cursor',cursor);
+      const orders=await kalshi('/portfolio/orders?'+query,{auth:true});
+      matched=(orders.orders||[]).find(o=>o.client_order_id===row.id);
+      if(matched){complete=true;break}
+      cursor=orders.cursor||'';
+      if(!cursor){complete=true;break}
+    }
+    if(!complete){console.warn('Order history still paginated; retry deferred:',market.ticker);return false}
     if(matched){const filled=Number(matched.fill_count_fp??matched.fill_count??0);await pool.query(`UPDATE trade_attempts SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE id=$1`,[row.id,filled>0?'filled':'unfilled',matched.order_id||null,filled]);return filled>0}
   }catch(e){console.warn('Order history unavailable; retry deferred:',e.message);return false}
   if(row.retries || Date.now()-new Date(row.updated_at).getTime()<15000)return false;
   // The supervisor reviews a missing submission. An unavailable model falls back to one bounded deterministic retry.
   let review;try{review=await reviewMiss({signal,game,market,error:row.error})}catch(e){review={available:false,retry:true,reason:'AI unavailable: '+e.message}}
   if(!review.retry){await pool.query(`UPDATE trade_attempts SET status='needs_review',ai_review=$2,updated_at=now() WHERE id=$1`,[row.id,review.reason]);return false}
-  if(Number(row.count)>Math.min(orderSize(balance,row.limit_price,market.yes_ask_size_fp,signal.fraction,Number(process.env.MAX_YES_PRICE||0.98),signal.strategy==='lead'?bankroll:balance),Math.floor(budgetCents/(Number(row.limit_price)*100))))return false;
+  if(Number(row.count)>orderSize(balance,row.limit_price,market.yes_ask_size_fp,signal.fraction,Number(process.env.MAX_YES_PRICE||1),signal.strategy==='lead'?bankroll:balance,budgetCents,feeReserve(event,market)))return false;
   const claim=await pool.query(`UPDATE trade_attempts SET retries=1,status='retrying',ai_review=$2,updated_at=now() WHERE id=$1 AND status IN ('check_order','reserved') AND retries=0 RETURNING id`,[row.id,review.reason]);
   if(!claim.rowCount)return false;
-  try{const result=await kalshi('/portfolio/events/orders',{method:'POST',auth:true,body:{ticker:row.market_ticker,client_order_id:row.id,side:'bid',count:Number(row.count).toFixed(2),price:Number(row.limit_price).toFixed(4),time_in_force:'fill_or_kill',self_trade_prevention_type:'taker_at_cross',post_only:false}});
+  try{const result=await kalshi('/portfolio/events/orders',{method:'POST',auth:true,body:{ticker:row.market_ticker,client_order_id:row.id,side:'bid',count:Number(row.count).toFixed(2),price:Number(row.limit_price).toFixed(4),time_in_force:'immediate_or_cancel',self_trade_prevention_type:'taker_at_cross',post_only:false}});
     const filled=Number(result.fill_count||0);await pool.query(`UPDATE trade_attempts SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE id=$1`,[row.id,filled>0?'filled':'unfilled',result.order_id||null,filled]);return filled>0
   }catch(e){await pool.query(`UPDATE trade_attempts SET status='check_order',error=$2,updated_at=now() WHERE id=$1`,[row.id,'Recovery response uncertain: '+String(e.message).slice(0,200)]);return false}
 }
@@ -92,7 +118,7 @@ async function scan(cachedMilestones){
   const client=await pool.connect();await client.query('BEGIN');
   const lock=await client.query('SELECT pg_try_advisory_xact_lock(83027543) AS acquired');
   if(!lock.rows[0].acquired){await client.query('ROLLBACK');client.release();return {skipped:'scan in progress'}};
-  let scanned=0,signals=0,submitted=0;
+  let scanned=0,signals=0,submitted=0;const executionErrors=[];
   try{
     const ms=cachedMilestones||await milestones();const liveMap=await liveBatch(ms);
     const games=ms.map(m=>({milestone:m,state:gameState(m,liveMap.get(m.id))}));
@@ -118,14 +144,18 @@ async function scan(cachedMilestones){
         for(const market of event.markets||[]){const signal=overSignal(state,market)||leadSignal(state,market);if(signal)candidates.push({signal,event,market})}}
       if(state.verifiedLive)scanned++;signals+=candidates.length;
       await pool.query(`INSERT INTO game_snapshots(id,title,sport,home,away,status,progress,period,scanned_at,signals) VALUES($1,$2,$3,$4,$5,$6,$7,$8,now(),$9) ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,sport=EXCLUDED.sport,home=EXCLUDED.home,away=EXCLUDED.away,status=EXCLUDED.status,progress=EXCLUDED.progress,period=EXCLUDED.period,scanned_at=now(),signals=EXCLUDED.signals`,[state.id,state.title||'Sports game',state.sport,state.scoreKnown?state.home:null,state.scoreKnown?state.away:null,state.verifiedLive?'live':'inactive',Number.isFinite(state.progress)?state.progress:null,String(state.period||''),JSON.stringify(candidates.map(c=>({strategy:c.signal.strategy,reason:c.signal.reason,ticker:c.market.ticker}))) ]);
-      if(live())for(const c of candidates){const budget=c.signal.strategy==='over'?overRemaining:Infinity;
-        if(await submit(c.signal,state,c.event,c.market,balance,bankroll,budget)||await recoverPending(c.signal,state,c.market,balance,bankroll,budget)){
+      if(live())for(const c of candidates)try{
+        // Refresh available cash before every order. If the account cannot afford one contract plus
+        // the fee reserve, orderSize returns zero and no order is sent to Kalshi.
+        const latest=await accountBalance();balance=Number(latest.balance);bankroll=balance+Number(latest.portfolio_value);
+        const budget=c.signal.strategy==='over'?overRemaining:Infinity;
+        if(await submit(c.signal,state,c.event,c.market,balance,bankroll,budget)||await recoverPending(c.signal,state,c.event,c.market,balance,bankroll,budget)){
           submitted++;const before=balance;const account=await accountBalance();balance=Number(account.balance);bankroll=balance+Number(account.portfolio_value);
           if(c.signal.strategy==='over')overRemaining=Math.max(0,overRemaining-Math.max(0,before-balance));
         }
-      }
+      }catch(e){const message=`${c.market.ticker}: ${String(e.message).slice(0,170)}`;executionErrors.push(message);console.error('Candidate execution failed:',message)}
     }
-    await pool.query('UPDATE scan_status SET last_scan=now(),last_error=NULL,scanned=$1,signals=$2,orders_submitted=orders_submitted+$3 WHERE id=1',[scanned,signals,submitted]);
+    await pool.query('UPDATE scan_status SET last_scan=now(),last_error=$4,scanned=$1,signals=$2,orders_submitted=orders_submitted+$3 WHERE id=1',[scanned,signals,submitted,executionErrors.length?executionErrors.slice(0,2).join('; ').slice(0,250):null]);
     return {scanned,signals,submitted,active:active.filter(g=>/football_game|basketball_game|baseball_game|hockey_match|soccer/.test(g.state.type)).length,next:games.filter(g=>g.state.verifiedLive || (new Date(g.milestone.start_date).getTime()>Date.now()-3600000 && new Date(g.milestone.start_date).getTime()<Date.now()+3600000)).map(g=>g.milestone)};
   }catch(e){console.error('Scan failed:',e);await pool.query('UPDATE scan_status SET last_scan=now(),last_error=$1,scanned=$2,signals=$3 WHERE id=1',[String(e.message).slice(0,250),scanned,signals]);return {error:e.message,scanned,signals}}
   finally{await client.query('ROLLBACK');client.release()}

@@ -78,11 +78,18 @@ export function leadSignal(game, market) {
   const fraction=minimum===null?(ratio>3.5?0.3:0.2):(margin>minimum?0.3:0.2);
   return {strategy:'lead', reason:`${leader||market.yes_sub_title} leads ${h}–${a} ${game.unit} (${margin} ${game.unit} ahead); ${baseball?'9th inning':game.clock+' remaining'}`, fraction};
 }
-export function orderSize(balanceCents, askDollars, askSize, fraction, cap=0.98, bankrollCents=balanceCents) {
-  const price = N(askDollars), size = N(askSize),cash=N(balanceCents),bankroll=N(bankrollCents);
-  if (!Number.isFinite(price) || price<=0 || price>cap || !Number.isFinite(size) || size<1 || !Number.isFinite(cash) || cash<100 || !Number.isFinite(bankroll) || bankroll<0) return 0;
-  const budget = Math.min(Math.floor(cash),Math.floor(bankroll * fraction));
-  return Math.max(0,Math.min(Math.floor(budget/(price*100)),Math.floor(size)));
+// Reserve twice the standard taker fee estimate when checking available cash.
+// The exchange remains authoritative if a market has an exceptional fee schedule.
+export function estimatedCostCents(count,price,feeMultiplier=2) {
+  return Math.ceil(count*price*100-1e-8)+Math.ceil(7*count*price*(1-price)*feeMultiplier-1e-8);
+}
+export function orderSize(balanceCents, askDollars, askSize, fraction, cap=1, bankrollCents=balanceCents, maxSpendCents=Infinity, feeMultiplier=2) {
+  const price=N(askDollars),size=N(askSize),cash=N(balanceCents),bankroll=N(bankrollCents),limit=N(maxSpendCents);
+  if (!Number.isFinite(price)||price<=0||!Number.isFinite(cap)||cap<=0||price>Math.min(1,cap)||!Number.isFinite(size)||size<1||!Number.isFinite(cash)||cash<=0||!Number.isFinite(bankroll)||bankroll<0||!Number.isFinite(fraction)||fraction<=0||fraction>1||!(Number.isFinite(limit)||limit===Infinity)||limit<0||!Number.isFinite(feeMultiplier)||feeMultiplier<1) return 0;
+  const budget=Math.min(Math.floor(cash),Math.floor(bankroll*fraction),Math.floor(limit));
+  let low=0,high=Math.floor(size);
+  while(low<high){const mid=Math.ceil((low+high)/2);if(estimatedCostCents(mid,price,feeMultiplier)<=budget)low=mid;else high=mid-1}
+  return low;
 }
 export function overBudget(balanceCents, portfolioValueCents, openOverExposureCents) {
   const cash=N(balanceCents), value=N(portfolioValueCents), exposure=N(openOverExposureCents);

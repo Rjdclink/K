@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {gameState,overSignal,leadSignal,orderSize,overBudget} from '../src/strategy.mjs';
+import {gameState,overSignal,leadSignal,orderSize,estimatedCostCents,overBudget} from '../src/strategy.mjs';
 
 const milestone={id:'game-1',title:'Boston at New York',type:'basketball_game',details:{competition:'Pro Basketball (M)'},related_event_tickers:['GAME']};
 const live=(home,away,quarter=4)=>({details:{status:'live',last_updated_ts:Math.floor(Date.now()/1000),home_score:home,away_score:away,quarter,clock:'05:00',home_team_name:'New York',away_team_name:'Boston'}});
@@ -79,14 +79,25 @@ test('football needs a ten point lead, independent of percentage, in final seven
   board.details.clock='06:00';board.details.quarter=3;
   assert.equal(leadSignal(gameState(m,board),market),null);
 });
-test('quantity respects 80% cash, price and displayed ask liquidity',()=>{
-  assert.equal(orderSize(10000,'0.50','400',.8),160);
+test('quantity preflights cash, allocation, fees, price and displayed liquidity',()=>{
+  assert.equal(orderSize(10000,'0.50','400',.8),149);
   assert.equal(orderSize(10000,'0.50','10',.8),10);
-  assert.equal(orderSize(10000,'0.99','400',.8),0);
+  assert.equal(orderSize(10000,'0.99','400',.8),80);
   assert.equal(orderSize(10000,'0.50',undefined,.8),0);
-  assert.equal(orderSize(10000,'0.50','400',.2,.98,20000),80);
-  assert.equal(orderSize(10000,'0.50','400',.3,.98,20000),120);
-  assert.equal(orderSize(2000,'0.50','400',.3,.98,20000),40);
+  assert.equal(orderSize(10000,'0.50','400',.2,1,20000),74);
+  assert.equal(orderSize(10000,'0.50','400',.3,1,20000),112);
+  assert.equal(orderSize(2000,'0.50','400',.3,1,20000),37);
+  assert.equal(orderSize(100,'0.99','10',1),1);
+  assert.equal(orderSize(99,'0.99','10',1),0);
+  assert.equal(orderSize(54,'0.50','10',1),1);
+  assert.equal(orderSize(53,'0.50','10',1),0);
+  assert.equal(orderSize(54,'0.50','10',1,1,54,Infinity,4),0);
+  assert.equal(orderSize(10000,'0.50','400',.8,1,10000,1000),18);
+  assert.equal(orderSize(10000,'0.50','400',.8,.98),149);
+  assert.equal(orderSize(10000,'0.99','400',.8,.98),0);
+  const count=orderSize(10000,'0.50','400',.8);
+  assert.ok(estimatedCostCents(count,.5)<=8000);
+  assert.ok(estimatedCostCents(count+1,.5)>8000);
 });
 test('over allocation is capped across existing unsettled over positions',()=>{
   assert.equal(overBudget(10000,0,0),8000);

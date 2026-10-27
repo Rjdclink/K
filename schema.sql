@@ -21,16 +21,20 @@ CREATE TABLE IF NOT EXISTS trade_attempts (
   fraction numeric NOT NULL,
   count integer NOT NULL,
   limit_price numeric NOT NULL,
+  available_cents integer NOT NULL DEFAULT 0,
   status text NOT NULL DEFAULT 'reserved',
   order_id text,
   fill_count numeric NOT NULL DEFAULT 0,
   retries integer NOT NULL DEFAULT 0,
+  attempt_history jsonb NOT NULL DEFAULT '[]'::jsonb,
   ai_review text,
   error text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (market_ticker, strategy)
 );
+ALTER TABLE trade_attempts ADD COLUMN IF NOT EXISTS available_cents integer NOT NULL DEFAULT 0;
+ALTER TABLE trade_attempts ADD COLUMN IF NOT EXISTS attempt_history jsonb NOT NULL DEFAULT '[]'::jsonb;
 CREATE TABLE IF NOT EXISTS scan_status (
   id integer PRIMARY KEY CHECK (id = 1),
   last_scan timestamptz,

@@ -19,13 +19,14 @@ Required private Neon Function environment variables:
 | `KALSHI_API_KEY` | Kalshi API key ID. |
 | `KALSHI_PRIVATE_KEY` | Full RSA PEM private key, with real newlines or escaped `\\n`. |
 | `LIVE_TRADING` | `true` to allow real orders; otherwise scanner and dashboard remain read-only. |
-| `MAX_YES_PRICE` | Optional price ceiling, default `0.98`. |
+| `MAX_YES_PRICE` | Optional price ceiling, default `1.00`. |
+| `FEE_MULTIPLIER_RESERVE` | Optional affordability buffer, default twice the standard Kalshi taker fee estimate. |
 | `AI_API_KEY` | Optional Vireonix AI key for the redundant order recovery monitor; the A+ protocol omits Authorization if absent. |
 | `AI_BASE_URL`, `AI_MODEL` | Optional Vireonix overrides; defaults match A+ (`https://vireonix.ai/v1/chat/completions`, `auto`). |
 
 GitHub repository secrets are not readable after creation and are not automatically transferred to a Neon Function. Configure the two Kalshi values in Neon's private function environment. Never commit them to this public repository or expose them to the browser.
 
-The dashboard is available at `https://br-tiny-hill-b5aiqeg7-k.compute.c-7.us-east-2.aws.neon.tech/`. Its balance and positions are read from Kalshi, not estimated from the local ledger. Filled open positions appear in the orders card; settled positions drop out of that card while Kalshi's current account balance reflects their settlement. Uncertain submissions and interrupted reservations are checked against Kalshi order history before a single idempotent recovery attempt with the same client order ID. Vireonix reviews missing submissions when configured; if it is unavailable, deterministic recovery remains active. Explicit exchange rejections and unfilled Fill or Kill orders are retained for review and do not cause blind repeat orders. Orders use Fill or Kill, a unique client ID, and a database uniqueness constraint.
+The dashboard is available at `https://br-tiny-hill-b5aiqeg7-k.compute.c-7.us-east-2.aws.neon.tech/`. Its balance and positions are read from Kalshi, not estimated from the local ledger. Filled open positions appear in the orders card; settled positions drop out of that card while Kalshi's current account balance reflects their settlement. Uncertain submissions and interrupted reservations are checked against Kalshi order history before a single idempotent recovery attempt with the same client order ID. Vireonix reviews missing submissions when configured; if it is unavailable, deterministic recovery remains active. Explicit exchange rejections remain visible in the attempt record; a rejected order is retried only after a relevant quote or available-balance change. An Immediate or Cancel order with no fill can be attempted again on a later scan while the signal still qualifies. Earlier attempt details are retained in `attempt_history`. Orders use a unique client ID and a database uniqueness constraint. A preflight sizes each order within available cash and its allocation, including a conservative fee estimate; the exchange can still reject an order if its fee schedule or account state changes.
 
 ## Local checks
 
