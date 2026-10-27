@@ -165,11 +165,22 @@ async function state(){const [snap,stats,attempts]=await Promise.all([
   pool.query('SELECT * FROM scan_status WHERE id=1'),
   pool.query(`SELECT market_ticker,sport,strategy,reason,fill_count FROM trade_attempts WHERE status='filled' ORDER BY created_at DESC LIMIT 100`)
 ]);
-  let balance=null,positions=null,accountError=null;
-  if(configured())try{[balance,positions]=await Promise.all([accountBalance(),kalshi('/portfolio/positions?settlement_status=unsettled&count_filter=position&limit=500',{auth:true})])}catch(e){accountError=e.message}
+  let balance=null,positions=null,accountError=null,positionsError=null;
+  if(configured()){
+    const [balanceResult,positionsResult]=await Promise.allSettled([
+      accountBalance(),kalshi('/portfolio/positions?settlement_status=unsettled&count_filter=position&limit=500',{auth:true})
+    ]);
+    if(balanceResult.status==='fulfilled'){
+      const value=balanceResult.value;
+      if(Number.isFinite(Number(value.balance))&&Number.isFinite(Number(value.portfolio_value)))balance=value;
+      else accountError='Kalshi returned an incomplete balance response';
+    }else accountError=String(balanceResult.reason?.message||balanceResult.reason);
+    if(positionsResult.status==='fulfilled')positions=positionsResult.value;
+    else positionsError=String(positionsResult.reason?.message||positionsResult.reason);
+  }else accountError='Kalshi credentials are missing from the Neon function environment';
   const open=new Set((positions?.market_positions||[]).filter(p=>Number(p.position_fp??p.position??0)!==0).map(p=>p.ticker));
   const orders=positions?attempts.rows.filter(o=>open.has(o.market_ticker)):[];
-  return {live:live(),aiConfigured:Boolean(process.env.AI_API_KEY),balance,accountError,games:snap.rows,scan:stats.rows[0],orders};
+  return {live:live(),credentials:configured(),aiConfigured:Boolean(process.env.AI_API_KEY),balance,accountError,positionsError,games:snap.rows,scan:stats.rows[0],orders};
 }
 export default {async fetch(req){const url=new URL(req.url);
   if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),credentials:configured()});
