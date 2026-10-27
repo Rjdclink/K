@@ -164,9 +164,29 @@ test('zero score never creates an over and net profit tiers include conservative
   assert.equal(profitableCount(100,.99,2,'over',9900),100);
   assert.ok(netSettlementProfitCents(100,.99,2)>0);
   assert.equal(profitableCount(1,1,2,'lead',100),0);
-  assert.equal(profitableCount(1,.90,2,'lead',20000,'basketball_game'),1);
+  assert.equal(profitableCount(1,.90,2,'lead',20000,'basketball_game',299),0);
   assert.equal(profitableCount(1,.90,2,'lead',20000,'football_game'),0);
-  assert.equal(profitableCount(1,.99,2,'lead',20000,'basketball_game'),0);
+  assert.equal(profitableCount(1,.99,2,'lead',20000,'basketball_game',20),0);
+});
+test('basketball net profit minimum steps down at three minutes and thirty seconds',()=>{
+  for(const type of ['basketball_game','college_basketball_game']){
+    assert.equal(minimumProfitCents('lead',20000,type,300),Infinity);
+    assert.equal(minimumProfitCents('lead',20000,type,299),100);
+    assert.equal(minimumProfitCents('lead',20000,type,181),100);
+    assert.equal(minimumProfitCents('lead',20000,type,180),50);
+    assert.equal(minimumProfitCents('lead',20000,type,31),50);
+    assert.equal(minimumProfitCents('lead',20000,type,30),25);
+    assert.equal(minimumProfitCents('lead',20000,type,1),25);
+    assert.equal(minimumProfitCents('lead',20000,type,0),Infinity);
+    assert.equal(profitableCount(12,.90,2,'lead',20000,type,299),12);
+    assert.equal(profitableCount(6,.90,2,'lead',20000,type,181),0);
+    assert.equal(profitableCount(6,.90,2,'lead',20000,type,180),6);
+    assert.equal(profitableCount(3,.90,2,'lead',20000,type,31),0);
+    assert.equal(profitableCount(3,.90,2,'lead',20000,type,30),3);
+    assert.equal(profitableCount(3,.99,2,'lead',20000,type,20),0);
+  }
+  assert.equal(minimumProfitCents('lead',20000,'football_game',30),100);
+  assert.equal(minimumProfitCents('over',20000,'basketball_game',30),200);
 });
 test('late lead reaches 35 percent at 2:30 and comeback detects a tie or reversal',()=>{
   const m={...milestone,type:'football_game',details:{league:'NFL',home_team_id:'NY',away_team_id:'BOS'}};
