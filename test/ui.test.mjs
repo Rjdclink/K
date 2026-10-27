@@ -23,7 +23,8 @@ test('filled order timer is bright red, advances each second and reanchors to li
   assert.equal(clock(base,start+2000),'04:36');
   assert.equal(clock({...base,clock_seconds:276,clock_observed_at:new Date(start+2000).toISOString()},start+2000),'04:36');
   assert.equal(clock({...base,clock_seconds:2},start+6000),'00:00');
-  assert.equal(clock({...base,time_left:'04:38 remaining'},start+31000),'04:38 remaining');
+  assert.equal(clock({...base,time_left:'04:38 remaining'},start+31000),'Clock updating');
+  assert.equal(clock({...base,clock_seconds:11,time_left:'00:11 remaining'},start+12000),'Clock updating');
   assert.equal(clock({game_status:'live',clock_seconds:null,clock_label:'Stoppage time'}),'Stoppage time · live');
   assert.equal(clock({game_status:'live',clock_seconds:null,clock_label:'Inning progress',time_left:'Inning 9 · 2 outs'}),'Inning 9 · 2 outs');
   assert.equal(scoreDisplay(base,start),'Away 71 · Home 79');

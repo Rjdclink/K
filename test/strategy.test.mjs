@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
 import {gameState,overSignal,leadSignal,tennisSignal,orderSize,estimatedCostCents,overBudget,minimumProfitCents,netSettlementProfitCents,profitableCount,comeback} from '../src/strategy.mjs';
 
 const milestone={id:'game-1',title:'Boston at New York',type:'basketball_game',details:{competition:'Pro Basketball (M)'},related_event_tickers:['GAME']};
@@ -49,17 +50,28 @@ test('spread contracts are not game winner contracts',()=>{
   assert.equal(leadSignal(g,spread),null);
   assert.equal(leadSignal(g,{...spread,event_ticker:'KXKBOGAME-26OCT260530KIASAM',title:'Samsung Lions wins',yes_sub_title:'Samsung Lions'} )?.fraction,.30);
 });
-test('soccer starts at 85:00 in second half and includes stoppage, excluding extra-time contracts',()=>{
+test('soccer starts at 85:00 and excludes extra time or ambiguous stoppage scores',()=>{
   const m={id:'soccer',title:'Abha vs Al-Faisaly',type:'soccer_tournament_multi_leg',details:{league:'Saudi Pro League',home_team_id:'abha',away_team_id:'faisaly'}};
   const board=(home,away,time,half='2nd')=>gameState(m,{details:{status:'live',home_same_game_score:home,away_same_game_score:away,time,half}});
   const market={status:'active',event_ticker:'KXSAUDIPLGAME-26OCT27ABHFAI',title:'Abha wins',yes_sub_title:'Abha',custom_strike:{soccer_team:'abha'},rules_primary:'If Abha wins after 90 minutes plus stoppage time (does not include extra time or penalties), then Yes.'};
   assert.equal(leadSignal(board(2,0,"84'"),market),null);
   assert.equal(leadSignal(board(2,0,"85'"),market)?.fraction,.25);
   assert.equal(leadSignal(board(3,0,"85'"),market)?.fraction,.30);
-  assert.equal(leadSignal(board(3,1,"90+4'"),market)?.fraction,.35);
+  assert.equal(leadSignal(board(3,1,"90+4'"),market),null);
   assert.equal(leadSignal(board(2,0,"90+4'",'extra time'),market),null);
   assert.equal(leadSignal(board(2,0,"85'",'1st'),market),null);
   assert.equal(leadSignal(board(2,0,"85'"),{...market,rules_primary:'Includes extra time and penalty shootouts.'}),null);
+});
+test('regulation soccer totals reject extra-time goals even when live feed says in progress',()=>{
+  const m={id:'cup',title:'Castellonense vs Almeria',type:'soccer_tournament_multi_leg'};
+  const market={status:'active',title:'Will over 1.5 goals be scored?',yes_sub_title:'Reg Time: Over 1.5 goals scored',rules_primary:'If over 1.5 goals are scored after 90 minutes plus stoppage time (does not include extra time or penalties), then Yes.',floor_strike:1.5,strike_type:'greater',yes_ask_dollars:'0.0100'};
+  const game=(time,match_status,price=market.yes_ask_dollars)=>gameState(m,{details:{status:'inprogress',time,half:'2nd',match_status,home_same_game_score:1,away_same_game_score:2,home_regulation_score:0,away_regulation_score:0,period_scores:[{type:match_status==='aet'?'overtime':'regular_period'}]}});
+  assert.equal(overSignal(game("110'",'aet'),market),null);
+  assert.equal(overSignal(game("89'",'aet'),{...market,yes_ask_dollars:'0.98'}),null);
+  assert.equal(overSignal(game("90+4'",'live'),{...market,yes_ask_dollars:'0.98'}),null);
+  assert.equal(overSignal(game("88'",'live'),market),null);
+  assert.equal(overSignal(game("88'",'live'),{...market,yes_ask_dollars:'0.98'})?.fraction,.8);
+  assert.equal(overSignal(game("88'",'live'),{...market,yes_ask_dollars:'0.98',result:'no'}),null);
 });
 test('tennis match winner requires clinching set, two-game lead, server and point score',()=>{
   const m={id:'tennis',title:'Hurkacz vs Bergs',type:'tennis_tournament_singles',details:{best_of:'3',first_competitor_id:'H',second_competitor_id:'B',main_game_event_ticker:'KXATPMATCH-26OCT26HURBER'}};
@@ -157,6 +169,11 @@ test('over allocation is capped across existing unsettled over positions',()=>{
   assert.equal(overBudget(6000,4000,3000),5000);
   assert.equal(overBudget(10000,0,9000),0);
 });
+test('entry submissions and recovery use full fills while exits cannot target overs',()=>{
+  const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
+  assert.equal((source.match(/side:'bid'[^\n]+time_in_force:'fill_or_kill'/g)||[]).length,2);
+  assert.match(source,/if\(original\?\.strategy!=='lead'\|\|\/TOTAL\/i\.test\(position\.ticker\)\)continue/);
+});
 test('zero score never creates an over and net profit tiers include conservative fees',()=>{
   const market={status:'active',title:'Total goals over 0',rules_primary:'Combined total goals scored in the game',strike_type:'greater',floor_strike:-0.5};
   const soccer={...milestone,type:'soccer_tournament_multi_leg'};
@@ -203,6 +220,7 @@ test('late lead reaches 35 percent at 2:30 and comeback detects a tie or reversa
   assert.equal(comeback(at(24,14,'02:30'),market,'lead'),false);
   assert.equal(comeback(at(24,24,'02:00'),market,'lead'),true);
   assert.equal(comeback(at(24,25,'01:00'),market,'lead'),true);
+  assert.equal(comeback(at(24,25,'01:00'),{floor_strike:20},'over'),false);
   const tennis={...milestone,type:'tennis_tournament_singles',details:{best_of:3,first_competitor_id:'A',second_competitor_id:'B'}};
   const tennisState=(a,b)=>gameState(tennis,{details:{status:'live',competitor1_round_scores:[{score:a}],competitor2_round_scores:[{score:b}]}});
   assert.equal(comeback(tennisState(5,5),{custom_strike:{tennis_competitor:'A'}},'lead'),true);
