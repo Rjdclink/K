@@ -65,7 +65,9 @@ export function leadSignal(game, market) {
   const h=game.homeUnits,a=game.awayUnits;
   if (!Number.isFinite(h)||!Number.isFinite(a)) return null;
   const margin=Math.abs(h-a),trailerScore=Math.min(h,a);
-  if (basketball ? margin<5 : football ? margin<10 : hockey ? Math.max(h,a)<3 || (trailerScore>0 && Math.max(h,a)<3*trailerScore) : trailerScore<=0||Math.max(h,a)<3.5*trailerScore) return null;
+  const minimum=basketball?5:football?10:hockey||baseball?2:null;
+  const ratio=trailerScore>0?Math.max(h,a)/trailerScore:Infinity;
+  if (minimum===null ? trailerScore<=0||ratio<3.5 : margin<minimum) return null;
   const leader = h>a ? game.homeName : game.awayName;
   const trailer = h>a ? game.awayName : game.homeName;
   const description = `${market.title||''} ${market.yes_sub_title||''}`;
@@ -73,17 +75,13 @@ export function leadSignal(game, market) {
   const expectedId=h>a?game.homeTeamId:game.awayTeamId;
   const identityMatches=teamId&&expectedId?teamId===expectedId:Boolean(leader&&trailer&&norm(description).includes(norm(leader))&&!norm(description).includes(norm(trailer)));
   if (!/win|winner|victory/i.test(description) || !identityMatches) return null;
-  const ratio=trailerScore>0?Math.max(h,a)/trailerScore:Infinity;
-  const phase=baseball?(game.inningHalf===2&&game.outs>=2?2:game.inningHalf===2||game.outs>=2?1:0):(game.remainingSeconds<120?2:game.remainingSeconds<300?1:0);
-  const [low,high]=[[0.15,0.30],[0.30,0.55],[0.55,0.80]][phase];
-  const strength=basketball?(margin-5)/15:football?(margin-10)/20:hockey?(ratio-3)/2:(ratio-3.5)/2.5;
-  const fraction=Math.round((low+(high-low)*Math.min(1,strength))*100)/100;
-  return {strategy:'lead', reason:`${leader||market.yes_sub_title} leads ${h}–${a} ${game.unit} (${basketball||football?margin+' point lead':Number.isFinite(ratio)?Math.round((ratio-1)*100)+'% advantage':'shutout'}); ${baseball?'9th inning':game.clock+' remaining'}`, fraction};
+  const fraction=minimum===null?(ratio>3.5?0.3:0.2):(margin>minimum?0.3:0.2);
+  return {strategy:'lead', reason:`${leader||market.yes_sub_title} leads ${h}–${a} ${game.unit} (${margin} ${game.unit} ahead); ${baseball?'9th inning':game.clock+' remaining'}`, fraction};
 }
-export function orderSize(balanceCents, askDollars, askSize, fraction, cap=0.98) {
-  const price = N(askDollars), size = N(askSize);
-  if (!Number.isFinite(price) || price<=0 || price>cap || !Number.isFinite(size) || size<1 || !Number.isFinite(balanceCents) || balanceCents<100) return 0;
-  const budget = Math.floor(balanceCents * fraction);
+export function orderSize(balanceCents, askDollars, askSize, fraction, cap=0.98, bankrollCents=balanceCents) {
+  const price = N(askDollars), size = N(askSize),cash=N(balanceCents),bankroll=N(bankrollCents);
+  if (!Number.isFinite(price) || price<=0 || price>cap || !Number.isFinite(size) || size<1 || !Number.isFinite(cash) || cash<100 || !Number.isFinite(bankroll) || bankroll<0) return 0;
+  const budget = Math.min(Math.floor(cash),Math.floor(bankroll * fraction));
   return Math.max(0,Math.min(Math.floor(budget/(price*100)),Math.floor(size)));
 }
 export function overBudget(balanceCents, portfolioValueCents, openOverExposureCents) {

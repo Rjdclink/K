@@ -57,8 +57,8 @@ function linkedEventTickers(m){
   return [...new Set([...original,...totals])];
 }
 async function reserve(signal,game,event,market,count,price){const id=randomUUID();const {rowCount}=await pool.query(`INSERT INTO trade_attempts(id,market_ticker,event_ticker,game_id,sport,strategy,reason,fraction,count,limit_price) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(market_ticker,strategy) DO NOTHING`,[id,market.ticker,event.event_ticker,game.id,game.sport,signal.strategy,signal.reason,signal.fraction,count,price]);return rowCount?id:null}
-async function submit(signal,game,event,market,balance,budgetCents=Infinity){
-  const price=Number(market.yes_ask_dollars);const count=Math.min(orderSize(balance,price,market.yes_ask_size_fp,signal.fraction,Number(process.env.MAX_YES_PRICE||0.98)),Math.floor(budgetCents/(price*100)));if(!count)return false;
+async function submit(signal,game,event,market,balance,bankroll,budgetCents=Infinity){
+  const price=Number(market.yes_ask_dollars);const count=Math.min(orderSize(balance,price,market.yes_ask_size_fp,signal.fraction,Number(process.env.MAX_YES_PRICE||0.98),signal.strategy==='lead'?bankroll:balance),Math.floor(budgetCents/(price*100)));if(!count)return false;
   const id=await reserve(signal,game,event,market,count,price);if(!id)return false;
   try{
     // FOK leaves no unfilled orders resting. The UUID is reused for reconciliation after an uncertain response.
@@ -67,7 +67,7 @@ async function submit(signal,game,event,market,balance,budgetCents=Infinity){
     return Number(result.fill_count)>0;
   }catch(e){const terminal=/^Kalshi (400|401|403|422):/.test(String(e.message));await pool.query(`UPDATE trade_attempts SET status=$2,error=$3,updated_at=now() WHERE id=$1`,[id,terminal?'rejected':'check_order',String(e.message).slice(0,250)]);console.error('Order needs reconciliation:',market.ticker,e.message);return false}
 }
-async function recoverPending(signal,game,market,balance,budgetCents=Infinity){
+async function recoverPending(signal,game,market,balance,bankroll,budgetCents=Infinity){
   const {rows:[row]}=await pool.query(`SELECT * FROM trade_attempts WHERE market_ticker=$1 AND strategy=$2 AND status IN ('check_order','reserved')`,[market.ticker,signal.strategy]);
   if(!row)return false;
   // Never send a second order until the exchange has been queried for the original client ID.
@@ -79,7 +79,7 @@ async function recoverPending(signal,game,market,balance,budgetCents=Infinity){
   // The supervisor reviews a missing submission. An unavailable model falls back to one bounded deterministic retry.
   let review;try{review=await reviewMiss({signal,game,market,error:row.error})}catch(e){review={available:false,retry:true,reason:'AI unavailable: '+e.message}}
   if(!review.retry){await pool.query(`UPDATE trade_attempts SET status='needs_review',ai_review=$2,updated_at=now() WHERE id=$1`,[row.id,review.reason]);return false}
-  if(Number(row.count)>Math.min(orderSize(balance,row.limit_price,market.yes_ask_size_fp,signal.fraction,Number(process.env.MAX_YES_PRICE||0.98)),Math.floor(budgetCents/(Number(row.limit_price)*100))))return false;
+  if(Number(row.count)>Math.min(orderSize(balance,row.limit_price,market.yes_ask_size_fp,signal.fraction,Number(process.env.MAX_YES_PRICE||0.98),signal.strategy==='lead'?bankroll:balance),Math.floor(budgetCents/(Number(row.limit_price)*100))))return false;
   const claim=await pool.query(`UPDATE trade_attempts SET retries=1,status='retrying',ai_review=$2,updated_at=now() WHERE id=$1 AND status IN ('check_order','reserved') AND retries=0 RETURNING id`,[row.id,review.reason]);
   if(!claim.rowCount)return false;
   try{const result=await kalshi('/portfolio/events/orders',{method:'POST',auth:true,body:{ticker:row.market_ticker,client_order_id:row.id,side:'bid',count:Number(row.count).toFixed(2),price:Number(row.limit_price).toFixed(4),time_in_force:'fill_or_kill',self_trade_prevention_type:'taker_at_cross',post_only:false}});
@@ -98,7 +98,7 @@ async function scan(cachedMilestones){
     const games=ms.map(m=>({milestone:m,state:gameState(m,liveMap.get(m.id))}));
     const active=games.filter(g=>g.state.verifiedLive && g.state.scoreKnown);
     const events=await marketMap(active.flatMap(g=>linkedEventTickers(g.milestone)));
-    let balance=0,overRemaining=0;
+    let balance=0,bankroll=0,overRemaining=0;
     if(live()){
       const [account,positions,attempts]=await Promise.all([
         accountBalance(),
@@ -107,6 +107,7 @@ async function scan(cachedMilestones){
       ]);
       if(positions.cursor)throw Error('Over exposure cannot be bounded: positions exceed one page');
       balance=Number(account.balance);
+      bankroll=balance+Number(account.portfolio_value);
       const open=new Set((positions.market_positions||[]).filter(p=>Number(p.position_fp??p.position??0)!==0).map(p=>p.ticker));
       const exposure=attempts.rows.reduce((sum,r)=>sum+(open.has(r.market_ticker)?Number(r.fill_count)*Number(r.limit_price)*100:0),0);
       overRemaining=overBudget(balance,account.portfolio_value,exposure);
@@ -118,8 +119,8 @@ async function scan(cachedMilestones){
       if(state.verifiedLive)scanned++;signals+=candidates.length;
       await pool.query(`INSERT INTO game_snapshots(id,title,sport,home,away,status,progress,period,scanned_at,signals) VALUES($1,$2,$3,$4,$5,$6,$7,$8,now(),$9) ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,sport=EXCLUDED.sport,home=EXCLUDED.home,away=EXCLUDED.away,status=EXCLUDED.status,progress=EXCLUDED.progress,period=EXCLUDED.period,scanned_at=now(),signals=EXCLUDED.signals`,[state.id,state.title||'Sports game',state.sport,state.scoreKnown?state.home:null,state.scoreKnown?state.away:null,state.verifiedLive?'live':'inactive',Number.isFinite(state.progress)?state.progress:null,String(state.period||''),JSON.stringify(candidates.map(c=>({strategy:c.signal.strategy,reason:c.signal.reason,ticker:c.market.ticker}))) ]);
       if(live())for(const c of candidates){const budget=c.signal.strategy==='over'?overRemaining:Infinity;
-        if(await submit(c.signal,state,c.event,c.market,balance,budget)||await recoverPending(c.signal,state,c.market,balance,budget)){
-          submitted++;const before=balance;balance=Number((await accountBalance()).balance);
+        if(await submit(c.signal,state,c.event,c.market,balance,bankroll,budget)||await recoverPending(c.signal,state,c.market,balance,bankroll,budget)){
+          submitted++;const before=balance;const account=await accountBalance();balance=Number(account.balance);bankroll=balance+Number(account.portfolio_value);
           if(c.signal.strategy==='over')overRemaining=Math.max(0,overRemaining-Math.max(0,before-balance));
         }
       }

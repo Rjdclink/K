@@ -16,29 +16,31 @@ test('late lead requires verified live score, leader identity, and progress',()=
   assert.equal(leadSignal(gameState(milestone,{details:{...live(140,30).details,live_data_delayed:true}}),market),null);
   assert.equal(leadSignal(gameState(milestone,live(140,30)),{...market,title:'Will Boston win?',yes_sub_title:'Boston wins'}),null);
 });
-test('commanding lead is only in final segment and scales across allocation tiers',()=>{
+test('baseball needs two runs in the ninth and allocates 20 or 30 percent',()=>{
   const m={...milestone,type:'baseball_game',details:{league:'MLB'}};
   const market={status:'active',title:'New York wins',custom_strike:{baseball_team:'home'},yes_sub_title:'New York'};
-  const board=inning=>({details:{status:'inprogress',home_runs:11,away_runs:3,inning,inning_half:2,outs:1,home_team_name:'New York',away_team_name:'Boston'}});
+  const board=(inning,home=5)=>({details:{status:'inprogress',home_runs:home,away_runs:3,inning,inning_half:2,outs:1,home_team_name:'New York',away_team_name:'Boston'}});
   assert.equal(leadSignal(gameState(m,board(8)),market),null);
-  const ninth=leadSignal(gameState(m,board(9)),market);assert.ok(ninth);assert.ok(ninth.fraction>=.3 && ninth.fraction<=.55);
+  assert.equal(leadSignal(gameState(m,board(9,4)),market),null);
+  assert.equal(leadSignal(gameState(m,board(9)),market)?.fraction,.2);
+  assert.equal(leadSignal(gameState(m,board(9,6)),market)?.fraction,.3);
 });
-test('250% advantage means 3.5x for non-basketball sports',()=>{
+test('baseball accepts a two-run shutout lead',()=>{
   const baseball={...milestone,type:'baseball_game',details:{league:'MLB'}};
   const market={status:'active',title:'New York wins',yes_sub_title:'New York'};
   const at=(home,away,inning)=>({details:{status:'live',last_updated_ts:Math.floor(Date.now()/1000),home_runs:home,away_runs:away,inning,inning_half:2,home_team_name:'New York',away_team_name:'Boston'}});
-  assert.equal(leadSignal(gameState(baseball,at(34,10,9)),market),null);
-  assert.ok(leadSignal(gameState(baseball,at(35,10,9)),market));
-  assert.equal(leadSignal(gameState(baseball,at(35,10,8)),market),null);
-  assert.equal(leadSignal(gameState(baseball,at(20,0,9)),market),null);
+  assert.equal(leadSignal(gameState(baseball,at(1,0,9)),market),null);
+  assert.equal(leadSignal(gameState(baseball,at(2,0,9)),market)?.fraction,.2);
+  assert.equal(leadSignal(gameState(baseball,at(3,0,9)),market)?.fraction,.3);
+  assert.equal(leadSignal(gameState(baseball,at(2,0,8)),market),null);
 });
-test('hockey needs at least three to one goals in third period under seven minutes',()=>{
+test('hockey needs a two-goal lead in third period under seven minutes',()=>{
   const hockey={...milestone,type:'hockey_match',details:{league:'NHL'}};
   const market={status:'active',title:'New York wins',yes_sub_title:'New York'};
   const at=(home,away,period,clock)=>({details:{...live(home,away,period).details,clock}});
-  assert.ok(leadSignal(gameState(hockey,at(3,1,3,'06:59')),market));
-  assert.ok(leadSignal(gameState(hockey,at(6,2,3,'06:59')),market));
-  assert.ok(leadSignal(gameState(hockey,at(3,0,3,'06:59')),market));
+  assert.equal(leadSignal(gameState(hockey,at(3,1,3,'06:59')),market)?.fraction,.2);
+  assert.equal(leadSignal(gameState(hockey,at(4,1,3,'06:59')),market)?.fraction,.3);
+  assert.equal(leadSignal(gameState(hockey,at(2,0,3,'06:59')),market)?.fraction,.2);
   assert.equal(leadSignal(gameState(hockey,at(2,1,3,'06:59')),market),null);
   assert.equal(leadSignal(gameState(hockey,at(3,1,2,'06:59')),market),null);
   assert.equal(leadSignal(gameState(hockey,at(3,1,3,'07:00')),market),null);
@@ -49,7 +51,8 @@ test('basketball requires five points and under seven minutes in final quarter o
     const m={...milestone,details:{league}};
     const at=(home,away,quarter,clock)=>({details:{...live(home,away,quarter).details,clock}});
     assert.equal(leadSignal(gameState(m,at(104,100,4,'06:59')),market),null);
-    assert.ok(leadSignal(gameState(m,at(105,100,4,'06:59')),market));
+    assert.equal(leadSignal(gameState(m,at(105,100,4,'06:59')),market)?.fraction,.2);
+    assert.equal(leadSignal(gameState(m,at(106,100,4,'06:59')),market)?.fraction,.3);
     assert.equal(leadSignal(gameState(m,at(105,100,4,'07:00')),market),null);
     assert.equal(leadSignal(gameState(m,at(105,100,3,'03:00')),market),null);
     assert.ok(leadSignal(gameState(m,at(5,0,4,'01:59')),market));
@@ -62,13 +65,15 @@ test('football needs a ten point lead, independent of percentage, in final seven
   const m={...milestone,type:'football_game',details:{league:'NFL'}};
   const market={status:'active',title:'New York wins',yes_sub_title:'New York'};
   const board={details:{...live(24,14).details,clock:'06:00'}};
-  assert.ok(leadSignal(gameState(m,board),market));
+  assert.equal(leadSignal(gameState(m,board),market)?.fraction,.2);
   board.details.home_score=24;board.details.away_score=15;
   assert.equal(leadSignal(gameState(m,board),market),null);
+  board.details.home_score=25;board.details.away_score=14;
+  assert.equal(leadSignal(gameState(m,board),market)?.fraction,.3);
   board.details.home_score=100;board.details.away_score=90;
-  assert.ok(leadSignal(gameState(m,board),market));
+  assert.equal(leadSignal(gameState(m,board),market)?.fraction,.2);
   board.details.home_score=10;board.details.away_score=0;
-  assert.ok(leadSignal(gameState(m,board),market));
+  assert.equal(leadSignal(gameState(m,board),market)?.fraction,.2);
   board.details.home_score=24;board.details.away_score=14;board.details.clock='07:00';
   assert.equal(leadSignal(gameState(m,board),market),null);
   board.details.clock='06:00';board.details.quarter=3;
@@ -79,6 +84,9 @@ test('quantity respects 80% cash, price and displayed ask liquidity',()=>{
   assert.equal(orderSize(10000,'0.50','10',.8),10);
   assert.equal(orderSize(10000,'0.99','400',.8),0);
   assert.equal(orderSize(10000,'0.50',undefined,.8),0);
+  assert.equal(orderSize(10000,'0.50','400',.2,.98,20000),80);
+  assert.equal(orderSize(10000,'0.50','400',.3,.98,20000),120);
+  assert.equal(orderSize(2000,'0.50','400',.3,.98,20000),40);
 });
 test('over allocation is capped across existing unsettled over positions',()=>{
   assert.equal(overBudget(10000,0,0),8000);
