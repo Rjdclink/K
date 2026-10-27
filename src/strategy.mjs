@@ -94,3 +94,8 @@ export function orderSize(balanceCents, askDollars, askSize, fraction, cap=0.98)
   const budget = Math.floor(balanceCents * fraction);
   return Math.max(0,Math.min(Math.floor(budget/(price*100)),Math.floor(size)));
 }
+export function overBudget(balanceCents, portfolioValueCents, openOverExposureCents) {
+  const cash=N(balanceCents), value=N(portfolioValueCents), exposure=N(openOverExposureCents);
+  if (![cash,value,exposure].every(Number.isFinite) || Math.min(cash,value,exposure)<0) return 0;
+  return Math.max(0,Math.floor((cash+value)*0.8)-Math.ceil(exposure));
+}
