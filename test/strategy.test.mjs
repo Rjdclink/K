@@ -218,27 +218,29 @@ test('hockey requires three goals at 6:30 or less in final period',()=>{
   assert.equal(leadSignal(gameState(hockey,at(3,1,2,'04:59')),market),null);
   assert.equal(leadSignal(gameState(hockey,at(3,1,3,'05:00')),market),null);
 });
-test('basketball accepts eleven points under seven minutes thirty seconds, final segment only, capped at fifteen percent',()=>{
+test('basketball lead tiers are strict at five, three, and twenty-second boundaries and capped at ten percent',()=>{
   const market={status:'active',title:'New York wins',yes_sub_title:'New York'};
   for(const league of ['NBA','WNBA','Basketball','NCAAMB','NCAAW']){
     const m={...milestone,details:{league}};
     const last=/NCAA/.test(league)?2:4;
     const at=(lead,clock,period=last)=>gameState(m,{details:{...live(100+lead,100,period).details,clock}});
-    assert.equal(leadSignal(at(11,'07:30'),market),null);
-    assert.equal(leadSignal(at(11,'07:29'),market)?.fraction,.15);
-    assert.equal(leadSignal(at(10,'07:29'),market),null);
-    assert.equal(leadSignal(at(15,'04:59'),market)?.fraction,.15);
-    assert.equal(leadSignal(at(20,'02:30'),market)?.fraction,.15);
+    assert.equal(leadSignal(at(11,'07:29'),market),null);
+    assert.equal(leadSignal(at(10,'05:00'),market),null);
+    assert.equal(leadSignal(at(9,'04:59'),market),null);
+    assert.equal(leadSignal(at(10,'04:59'),market)?.fraction,.10);
+    assert.equal(leadSignal(at(11,'03:00'),market)?.fraction,.10);
+    assert.equal(leadSignal(at(9,'03:00'),market),null);
+    assert.equal(leadSignal(at(9,'02:59'),market)?.fraction,.10);
+    assert.equal(leadSignal(at(8,'02:59'),market),null);
     assert.equal(leadSignal(at(30,'08:22',last-1),market),null);
-    assert.equal(leadSignal(at(8,'03:00'),market),null);
     assert.equal(leadSignal(at(8,'01:01'),market),null);
-    assert.equal(leadSignal(at(4,'01:00'),market),null);
-    assert.equal(leadSignal(at(5,'01:00'),market),null);
-    assert.equal(leadSignal(at(20,'00:59'),market)?.fraction,.15);
-    assert.equal(leadSignal(at(20,'00:29'),market)?.fraction,.15);
+    assert.equal(leadSignal(at(5,'00:20'),market),null);
+    assert.equal(leadSignal(at(9,'00:20'),market)?.fraction,.10);
+    assert.equal(leadSignal(at(4,'00:19'),market),null);
+    assert.equal(leadSignal(at(5,'00:19'),market)?.fraction,.10);
+    assert.equal(leadSignal(at(20,'00:19'),market)?.fraction,.10);
     assert.equal(leadSignal(at(3,'00:19'),market),null);
-    assert.equal(leadSignal(at(5,'00:19'),market),null);
-    assert.equal(leadSignal(at(8,'00:00'),market),null);
+    assert.equal(leadSignal(at(20,'00:00'),market),null);
     assert.equal(leadSignal(at(8,'00:19',last-1),market),null);
     const conflicting=gameState(m,{details:{...live(108,100,last).details,clock:'00:17',period_display:`Q${last-1}`}});
     assert.equal(conflicting.periodConsistent,false);
@@ -276,6 +278,7 @@ test('quantity preflights cash, allocation, fees, price and displayed liquidity'
   assert.ok(count>149&&count<150);
   assert.equal(orderSize(10000,'0.50','10',.8),10);
   assert.ok(orderSize(10000,'0.99','400',.8)>=80);
+  assert.ok(estimatedCostCents(orderSize(10000,'0.90','400',.10,1,10000),.90)<=1000);
   assert.equal(orderSize(10000,'0.50',undefined,.8),0);
   assert.ok(orderSize(10000,'0.50','400',.2,1,20000)<orderSize(10000,'0.50','400',.3,1,20000));
   assert.ok(orderSize(2000,'0.50','400',.3,1,20000)<orderSize(10000,'0.50','400',.3,1,20000));
