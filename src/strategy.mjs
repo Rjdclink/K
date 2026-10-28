@@ -139,11 +139,13 @@ export function leadSignal(game, market) {
   return {strategy:'lead', reason:`${leader||market.yes_sub_title} leads ${h}–${a} ${game.unit} (${margin} ${game.unit} ahead); ${timing}`, fraction};
 }
 export function leadFraction(game,margin,minimum){
-  const veryLate=/baseball/.test(game.type)?game.period===9 && game.outs>=2:
-    /soccer/.test(game.type)?game.soccerMinute>=88:
-    Number.isFinite(game.remainingSeconds)&&game.remainingSeconds<=30;
   const veryCommanding=margin>=Math.ceil(minimum*1.5);
-  return veryLate&&veryCommanding?.25:.15;
+  if(!veryCommanding)return .15;
+  if(/baseball/.test(game.type))return game.period===9&&game.outs>=2?.25:game.period===9&&game.outs>=1?.20:.15;
+  if(/soccer/.test(game.type))return game.soccerMinute>=89?.25:game.soccerMinute>=88?.20:.15;
+  if(Number.isFinite(game.remainingSeconds)&&game.remainingSeconds<=30)return .25;
+  if(Number.isFinite(game.remainingSeconds)&&game.remainingSeconds<=150)return .20;
+  return .15;
 }
 export function tennisSignal(game,market){
   const t=game.tennis;
@@ -160,7 +162,7 @@ export function tennisSignal(game,market){
   if(opponentPoints===40 && leaderPoints<40 || leaderPoints===40 && opponentPoints===40 && t.advantage===opponentId)return null;
   if(t.advantage && !['',leaderId,opponentId].includes(t.advantage))return null;
   const leaderGames=first?t.firstGames:t.secondGames,opponentGames=first?t.secondGames:t.firstGames;
-  return {strategy:'lead',reason:`Tennis match-clinching set ${leaderGames}–${opponentGames}; leader serves, points ${leaderPoints}–${opponentPoints}${t.advantage===leaderId?' advantage':''}`,fraction:opponentGames<=1&&leaderPoints===40?.25:.15};
+  return {strategy:'lead',reason:`Tennis match-clinching set ${leaderGames}–${opponentGames}; leader serves, points ${leaderPoints}–${opponentPoints}${t.advantage===leaderId?' advantage':''}`,fraction:opponentGames<=1&&leaderPoints===40?.25:opponentGames<=1?.20:.15};
 }
 export function minimumProfitCents(strategy,availableCents,sportType='',remainingSeconds=NaN){
   if(strategy==='lead' && /basketball/.test(sportType)){
