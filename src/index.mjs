@@ -165,20 +165,22 @@ async function milestones(){
   return found.filter(m=>m.id && new Date(m.start_date).getTime()<now+3600000 && (!m.end_date||new Date(m.end_date).getTime()>now-3600000));
 }
 async function liveBatch(ms){
-  const map=new Map();for(let i=0;i<ms.length;i+=20){const group=ms.slice(i,i+20);const q=new URLSearchParams();group.forEach(m=>q.append('milestone_ids',m.id));
+  const map=new Map();for(let i=0;i<ms.length;i+=40){const groups=[ms.slice(i,i+20),ms.slice(i+20,i+40)].filter(g=>g.length);
+    const results=await Promise.all(groups.map(async group=>{const q=new URLSearchParams();group.forEach(m=>q.append('milestone_ids',m.id));
     let list=[];try{list=(await kalshi('/live_data/batch?'+q)).live_datas||[]}catch(e){
       if(!/^Kalshi (400|404|405) /.test(String(e.message)))throw e;
       console.warn('Live batch unsupported; using bounded individual requests:',e.message);
       for(const m of group){try{const result=await kalshi('/live_data/milestone/'+encodeURIComponent(m.id));if(result.live_data)list.push(result.live_data)}catch(error){if(/Kalshi 429 /.test(String(error.message)))throw error}}
     }
-    const observedAt=new Date().toISOString();
-    list.forEach(d=>map.set(d.milestone_id,{...d,_observed_at:observedAt}));}
+    return {list,observedAt:new Date().toISOString()};}));
+    results.forEach(({list,observedAt})=>list.forEach(d=>map.set(d.milestone_id,{...d,_observed_at:observedAt})));}
   return map;
 }
 async function marketMap(tickers){
   const map=new Map();const list=[...new Set(tickers)].filter(Boolean);
-  for(let i=0;i<list.length;i+=35){const q=new URLSearchParams({tickers:list.slice(i,i+35).join(','),with_nested_markets:'true',limit:'200',status:'open'});
-    const result=await kalshi('/events?'+q);for(const e of result.events||[])map.set(e.event_ticker,e);
+  for(let i=0;i<list.length;i+=70){const chunks=[list.slice(i,i+35),list.slice(i+35,i+70)].filter(c=>c.length);
+    const results=await Promise.all(chunks.map(chunk=>kalshi('/events?'+new URLSearchParams({tickers:chunk.join(','),with_nested_markets:'true',limit:'200',status:'open'}))));
+    for(const result of results)for(const e of result.events||[])map.set(e.event_ticker,e);
   }return map;
 }
 async function reserve(signal,game,event,market,count,price,balance){
