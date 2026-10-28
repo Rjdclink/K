@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { page } from './ui.mjs';
+import { historyPage } from './history_ui.mjs';
+import { completedTrade } from './history.mjs';
 import { gameState, overSignal, leadSignal, tennisSignal, orderSize, estimatedCostCents, overBudget, profitableCount, netSettlementProfitCents, comeback } from './strategy.mjs';
 import { reviewMiss } from './ai.mjs';
 import { kalshiSignature } from './auth.mjs';
@@ -59,12 +61,56 @@ function accountBalance({fresh=false}={}){
   balanceQueue=job.catch(()=>{});return job;
 }
 async function invalidateBalance(){await pool.query('UPDATE account_cache SET updated_at=to_timestamp(0) WHERE id=1')}
+async function syncTradeHistory(settlements){
+  const {rows:[config]}=await pool.query('SELECT started_at FROM trade_history_config WHERE id=1');
+  if(!config)return;
+  const {rows:pending}=await pool.query(`SELECT a.id,a.market_ticker,a.sport,a.order_id,a.fill_count,a.created_at,
+      g.sport_family,COALESCE(g.title,'Sports game') AS teams
+    FROM trade_attempts a LEFT JOIN game_snapshots g ON g.id=a.game_id
+    WHERE a.created_at>=$1 AND a.status='filled' AND NOT EXISTS (SELECT 1 FROM trade_history h WHERE h.id=a.id)
+    ORDER BY a.created_at DESC LIMIT 500`,[config.started_at]);
+  if(!pending.length)return;
+  const settled=new Map(settlements.map(item=>[item.ticker,item]));
+  const aged=pending.filter(item=>!settled.has(item.market_ticker)&&Date.now()-new Date(item.created_at).getTime()>47*3600000);
+  if(aged.length){const start=(Math.floor(Date.now()/30000)*5)%aged.length;
+    for(let i=0;i<Math.min(5,aged.length);i++){
+      const ticker=aged[(start+i)%aged.length].market_ticker;
+      const result=await kalshi('/portfolio/settlements?'+new URLSearchParams({ticker,limit:'100'}),{auth:true});
+      const match=(result.settlements||[]).find(item=>item.ticker===ticker);
+      if(match)settled.set(ticker,match);
+    }
+  }
+  const allFills=[];
+  const uniqueTickers=[...new Set(pending.map(item=>item.market_ticker))];
+  for(let i=0;i<uniqueTickers.length;i+=100){
+    const tickers=uniqueTickers.slice(i,i+100);
+    let cursor='',complete=false;
+    for(let pageNumber=0;pageNumber<10;pageNumber++){
+      const query=new URLSearchParams({ticker:tickers.join(','),min_ts:String(Math.floor(new Date(config.started_at).getTime()/1000)),limit:'1000'});
+      if(cursor)query.set('cursor',cursor);
+      const result=await kalshi('/portfolio/fills?'+query,{auth:true});
+      allFills.push(...result.fills||[]);cursor=result.cursor||'';
+      if(!cursor){complete=true;break}
+    }
+    if(!complete)throw Error('Trade history fills exceed pagination safety limit');
+  }
+  for(const entry of pending){
+    const completed=completedTrade(entry,allFills,settled.get(entry.market_ticker));
+    if(!completed)continue;
+    const sport=([['basketball','Basketball'],['hockey','Hockey'],['football','Football'],['baseball','Baseball'],['soccer','Soccer'],['tennis','Tennis']]
+      .find(([family])=>String(entry.sport_family||'').includes(family))||[])[1]||entry.sport;
+    await pool.query(`INSERT INTO trade_history(id,market_ticker,sport,teams,occurred_at,profit_cents,outcome)
+      VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(id) DO NOTHING`,
+      [entry.id,entry.market_ticker,sport,entry.teams,completed.occurredAt,completed.profitCents,completed.outcome]);
+  }
+}
 async function syncSettlementAlerts(){
   if(!configured())return;
   // A second scanner instance cannot poll and enqueue the same records simultaneously.
   const claim=await pool.query(`UPDATE settlement_poll SET last_check=now() WHERE id=1 AND last_check<now()-interval '30 seconds' RETURNING id`);
   if(!claim.rowCount)return;
   try{
+    const observedSettlements=[];
     const held=await pool.query(`SELECT DISTINCT market_ticker FROM trade_attempts WHERE status='filled' AND created_at>now()-interval '14 days'`);
     const tickers=new Set(held.rows.map(r=>r.market_ticker));
     if(tickers.size){
@@ -72,6 +118,7 @@ async function syncSettlementAlerts(){
       for(let pageNumber=0;pageNumber<5;pageNumber++){
         const query=new URLSearchParams({limit:'1000',min_ts:String(minTs)});if(cursor)query.set('cursor',cursor);
         const result=await kalshi('/portfolio/settlements?'+query,{auth:true});
+        observedSettlements.push(...result.settlements||[]);
         for(const s of result.settlements||[]){
           if(!tickers.has(s.ticker))continue;
           const profit=favorableSettlement(s),settled=new Date(s.settled_time);
@@ -82,6 +129,7 @@ async function syncSettlementAlerts(){
         cursor=result.cursor||'';if(!cursor)break;
       }
     }
+    try{await syncTradeHistory(observedSettlements)}catch(e){console.error('Trade history reconciliation deferred:',e)}
   }catch(e){console.error('Settlement polling failed:',e);await pool.query(`UPDATE settlement_poll SET last_check=to_timestamp(0) WHERE id=1`).catch(()=>{})}
   const due=await pool.query(`SELECT d.alert_id,d.endpoint,s.subscription,a.ticker,a.profit_cents FROM push_deliveries d JOIN push_subscriptions s USING(endpoint) JOIN settlement_alerts a ON a.id=d.alert_id WHERE d.status='pending' AND d.next_attempt<=now() ORDER BY d.alert_id LIMIT 15`);
   await Promise.all(due.rows.map(async row=>{
@@ -464,7 +512,7 @@ export default {async fetch(req){const url=new URL(req.url);
     if(!checkCredentials(form.get('username'),form.get('password'),process.env.DASHBOARD_PASSWORD))return new Response(loginPage(true),{status:401,headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'}});
     return new Response(null,{status:303,headers:{location:'/', 'set-cookie':sessionCookie(process.env.DASHBOARD_PASSWORD,Date.now(),url.protocol==='https:'),'cache-control':'no-store'}});
   }
-  if(!dashboardAuth(req))return url.pathname==='/'?new Response(null,{status:303,headers:{location:'/login','cache-control':'no-store'}}):json({error:'Sign in required'},401);
+  if(!dashboardAuth(req))return ['/', '/history'].includes(url.pathname)?new Response(null,{status:303,headers:{location:'/login','cache-control':'no-store'}}):json({error:'Sign in required'},401);
   try{
     if(req.method==='GET'&&url.pathname==='/api/push-key')return json({key:pushIdentity().publicBase64});
     if(req.method==='GET'&&url.pathname==='/api/alerts'){
@@ -487,6 +535,16 @@ export default {async fetch(req){const url=new URL(req.url);
       await pool.query('DELETE FROM push_subscriptions WHERE endpoint=$1',[subscription.endpoint]);return json({ok:true});
     }
     if(req.method==='GET'&&url.pathname==='/api/state')return json(await state());
+    if(req.method==='GET'&&url.pathname==='/api/history'){
+      const beforeTime=url.searchParams.get('before_time'),beforeId=url.searchParams.get('before_id');
+      if(Boolean(beforeTime)!==Boolean(beforeId)||beforeTime&&(!Number.isFinite(new Date(beforeTime).getTime())||!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(beforeId)))return json({error:'Invalid history cursor'},400);
+      const {rows}=await pool.query(`SELECT id,sport,teams,occurred_at,profit_cents FROM trade_history
+        WHERE ($1::timestamptz IS NULL OR (occurred_at,id)<($1::timestamptz,$2::uuid))
+        ORDER BY occurred_at DESC,id DESC LIMIT 51`,[beforeTime||null,beforeId||null]);
+      const history=rows.slice(0,50),last=history.at(-1);
+      return json({history:history.map(({sport,teams,occurred_at,profit_cents})=>({sport,teams,occurred_at,profit_cents})),next:rows.length>50?{before_time:last.occurred_at,before_id:last.id}:null});
+    }
+    if(req.method==='GET'&&url.pathname==='/history')return new Response(historyPage,{headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store','content-security-policy':"default-src 'self'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'",'x-content-type-options':'nosniff'}});
     if(req.method==='GET'&&url.pathname==='/')return new Response(page,{headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store','content-security-policy':"default-src 'self'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self'; manifest-src 'self'; base-uri 'none'; frame-ancestors 'none'",'x-content-type-options':'nosniff'}})
   }catch(e){console.error(e);return json({error:'Service unavailable'},503)}
   return json({error:'Not found'},404);
