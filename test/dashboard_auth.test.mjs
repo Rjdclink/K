@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import app from '../src/index.mjs';
+import pg from 'pg';
 import { authorized, sessionCookie, sessionValid } from '../src/dashboard_auth.mjs';
 
 const base='https://example.test';
@@ -18,6 +19,46 @@ test('session cookie authenticates dashboard and rejects tampering and expiratio
   assert.equal(sessionValid(tampered,secret,now),false);
   assert.equal(authorized(new Request(base,{headers:{cookie}}),secret),true);
   assert.equal(authorized(new Request(base,{headers:{cookie,authorization:'Basic '+Buffer.from('rjdc:wrong').toString('base64')}}),secret),true);
+});
+
+test('dashboard includes alerts in its existing refresh while the alert endpoint remains available',async()=>{
+  const originalQuery=pg.Pool.prototype.query;
+  const previousPassword=process.env.DASHBOARD_PASSWORD;
+  const previousKey=process.env.KALSHI_API_KEY;
+  const previousKeyId=process.env.KALSHI_API_KEY_ID;
+  const alert={id:8,ticker:'KXTEST',profit_cents:25,settled_time:'2026-10-28T13:00:00Z'};
+  const seen=[];
+  process.env.DASHBOARD_PASSWORD=secret;
+  process.env.KALSHI_API_KEY='';process.env.KALSHI_API_KEY_ID='';
+  pg.Pool.prototype.query=async function(sql,params){
+    seen.push({sql,params});
+    if(sql.includes('FROM game_snapshots WHERE'))return {rows:[]};
+    if(sql.includes('FROM scan_status WHERE'))return {rows:[{scanned:0,signals:0}]};
+    if(sql.includes('FROM trade_attempts a LEFT JOIN'))return {rows:[]};
+    if(sql.includes('FROM settlement_alerts WHERE'))return {rows:[alert]};
+    throw Error('Unexpected query in dashboard test');
+  };
+  try{
+    const headers={cookie:sessionCookie(secret,Date.now())};
+    const response=await app.fetch(new Request(base+'/api/state?since=7',{headers}));
+    assert.equal(response.status,200);
+    const body=await response.json();
+    assert.deepEqual(body.alerts,[alert]);
+    assert.deepEqual(body.games,[]);
+    assert.equal(body.scan.scanned,0);
+    assert.equal(body.orders.length,0);
+    assert.equal(seen.filter(item=>item.sql.includes('FROM settlement_alerts WHERE')).length,1);
+    assert.deepEqual(seen.find(item=>item.sql.includes('FROM settlement_alerts WHERE')).params,[7]);
+    const legacy=await app.fetch(new Request(base+'/api/alerts?since=7',{headers}));
+    assert.equal(legacy.status,200);
+    assert.deepEqual((await legacy.json()).alerts,[alert]);
+    assert.equal((await app.fetch(new Request(base+'/api/state?since=-1',{headers}))).status,400);
+  }finally{
+    pg.Pool.prototype.query=originalQuery;
+    if(previousPassword===undefined)delete process.env.DASHBOARD_PASSWORD;else process.env.DASHBOARD_PASSWORD=previousPassword;
+    if(previousKey===undefined)delete process.env.KALSHI_API_KEY;else process.env.KALSHI_API_KEY=previousKey;
+    if(previousKeyId===undefined)delete process.env.KALSHI_API_KEY_ID;else process.env.KALSHI_API_KEY_ID=previousKeyId;
+  }
 });
 
 test('in-page login avoids repeated browser Basic Auth challenges',async()=>{
