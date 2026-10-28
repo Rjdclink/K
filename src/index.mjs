@@ -14,6 +14,7 @@ import { favorableSettlement } from './settlements.mjs';
 import { authorized, checkCredentials, sessionCookie, loginPage } from './dashboard_auth.mjs';
 import { eligibleForMarkets, linkedEventTickers, gameTimeLabel } from './discovery.mjs';
 import { tieRefundPreference } from './settlement_preference.mjs';
+import { verifyIndependentOver } from './score_verification.mjs';
 
 const API='https://external-api.kalshi.com/trade-api/v2';
 const pool = new pg.Pool({connectionString:process.env.DATABASE_URL, max:4, idleTimeoutMillis:15000});
@@ -228,7 +229,7 @@ function signalExecution(c,filled,account,balance,bankroll,overRemaining){
     const localCount=contractCount(Math.min(balance,local),c.market,c.signal.fraction,bankroll,c.signal.strategy==='over'?overRemaining:Infinity,fees);
     if(!profitableCount(localCount,price,fees,c.signal.strategy,balance,c.state.type,c.state.remainingSeconds))return 'Insufficient shard cash';
   }
-  return c.signal.strategy==='over'?'Awaiting score confirmation':'Eligible for final verification';
+  return c.signal.strategy==='over'?'Awaiting independent score confirmation':'Eligible for final verification';
 }
 async function ensureShardFunding(signal,event,market,account,desiredCents){
   const destination=marketShard(event,market);
@@ -387,7 +388,7 @@ async function scan(cachedMilestones){
     }
     // Exits are assessed before any new risk is added.
     if(live()||exitOnly())await exitComebacks(games,events,openPositions);
-    const opportunities=[],snapshotRows=new Map();
+    const opportunities=[],snapshotRows=new Map(),scoreboardCache=new Map();
     for(const {milestone,state} of games){
       const candidates=[];
       if(eligibleForMarkets(state))for(const ticker of linkedEventTickers(milestone)){const event=events.get(ticker);if(!event || event.category!=='Sports')continue;
@@ -440,6 +441,7 @@ async function scan(cachedMilestones){
         if(latestLive&&c.signal.strategy==='over')latestLive._observed_at=new Date().toISOString();
         const freshState=gameState(c.milestone,latestLive);
         if(c.signal.strategy==='over'&&!confirmedOver(state,freshState,c.market))continue;
+        if(c.signal.strategy==='over'&&!await verifyIndependentOver(freshState,c.milestone,{cache:scoreboardCache}))continue;
         if(c.signal.strategy==='lead' && /basketball/.test(state.type) &&
           (freshState.period!==state.period || !freshState.periodConsistent ||
             freshState.remainingSeconds>state.remainingSeconds))continue;
