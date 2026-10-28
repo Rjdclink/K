@@ -50,3 +50,13 @@ test('table tennis live set points come from period_scores with competitor orien
   const missing=gameState(milestone,{details:{status:'live',period_scores:[]}});
   assert.equal(missing.scoreKnown,false);
 });
+
+test('darts overall scores and esports phase display without an invented clock',()=>{
+  const darts=gameState({id:'dart',type:'darts_match',title:'Tricole vs Lovely'},{details:{status:'live',competitor1_is_home:true,competitor1_overall_score:1,competitor2_overall_score:2,match_status:'1st set',period_scores:[]}});
+  assert.equal(darts.sport,'Darts');assert.equal(darts.home,1);assert.equal(darts.away,2);
+  assert.equal(gameTimeLabel(darts),'1st set · no countdown clock');
+  assert.equal(eligibleForMarkets(darts),false);
+  const esports=gameState({id:'esports',type:'esports_match',title:'Fede vs Eder',details:{league:'eSoccer'}},{details:{status:'live',home_score:3,away_score:3,period_unit:'half',home_periods:{period_1:3,period_2:0},away_periods:{period_1:2,period_2:1}}});
+  assert.equal(gameTimeLabel(esports),'Half 2 · no live clock supplied');
+  assert.equal(esports.scoreKnown,true);assert.equal(eligibleForMarkets(esports),false);
+});
