@@ -72,7 +72,7 @@ test('baseball needs two runs in the ninth and caps allocation at 15 or 25 perce
   assert.equal(leadSignal(gameState(m,board(8)),market),null);
   assert.equal(leadSignal(gameState(m,board(9,4)),market),null);
   assert.equal(leadSignal(gameState(m,board(9)),market)?.fraction,.15);
-  assert.equal(leadSignal(gameState(m,board(9,6)),market)?.fraction,.15);
+  assert.equal(leadSignal(gameState(m,board(9,6)),market)?.fraction,.20);
   const veryLate=board(9,6);veryLate.details.outs=2;
   assert.equal(leadSignal(gameState(m,veryLate),market)?.fraction,.25);
 });
@@ -99,7 +99,8 @@ test('soccer starts at 85:00 and excludes extra time or ambiguous stoppage score
   assert.equal(leadSignal(board(2,0,"84'"),market),null);
   assert.equal(leadSignal(board(2,0,"85'"),market)?.fraction,.15);
   assert.equal(leadSignal(board(3,0,"85'"),market)?.fraction,.15);
-  assert.equal(leadSignal(board(3,0,"88'"),market)?.fraction,.25);
+  assert.equal(leadSignal(board(3,0,"88'"),market)?.fraction,.20);
+  assert.equal(leadSignal(board(3,0,"89'"),market)?.fraction,.25);
   assert.equal(leadSignal(board(3,1,"90+4'"),market),null);
   assert.equal(leadSignal(board(2,0,"90+4'",'extra time'),market),null);
   assert.equal(leadSignal(board(2,0,"85'",'1st'),market),null);
@@ -122,7 +123,7 @@ test('tennis match winner requires clinching set, two-game lead, server and poin
   const live=(games=3,sets=1,server='H',p1=30,p2=15,best='3')=>gameState({...m,details:{...m.details,best_of:best}},{details:{status:'live',competitor1_is_home:true,competitor1_round_scores:[{outcome:'winner',score:6},{outcome:'ongoing',score:5}],competitor2_round_scores:[{outcome:'loser',score:3},{outcome:'ongoing',score:games}],competitor1_overall_score:sets,competitor2_overall_score:0,competitor1_current_round_score:p1,competitor2_current_round_score:p2,server,advantage:''}});
   assert.equal(tennisSignal(live(),market),null);
   assert.equal(tennisSignal(live(2),market)?.fraction,.15);
-  assert.equal(tennisSignal(live(1),market)?.fraction,.15);
+  assert.equal(tennisSignal(live(1),market)?.fraction,.20);
   assert.equal(tennisSignal(live(1,1,'H',40,15),market)?.fraction,.25);
   assert.equal(tennisSignal(live(4),market),null);
   assert.equal(tennisSignal(live(3,0),market),null);
@@ -143,6 +144,7 @@ test('hockey requires three goals at 6:30 or less in final period',()=>{
   assert.equal(leadSignal(gameState(hockey,at(3,0,3,'06:31')),market),null);
   assert.equal(leadSignal(gameState(hockey,at(3,0,3,'06:30')),market)?.fraction,.15);
   assert.equal(leadSignal(gameState(hockey,at(3,0,3,'05:00')),market)?.fraction,.15);
+  assert.equal(leadSignal(gameState(hockey,at(5,0,3,'02:30')),market)?.fraction,.20);
   assert.equal(leadSignal(gameState(hockey,at(5,0,3,'00:29')),market)?.fraction,.25);
   assert.equal(leadSignal(gameState(hockey,at(3,1,3,'06:59')),market),null);
   assert.equal(leadSignal(gameState(hockey,at(3,1,3,'05:00')),market),null);
@@ -165,7 +167,8 @@ test('basketball requires five points at one minute or less in final segment wit
     assert.equal(leadSignal(at(8,'01:01'),market),null);
     assert.equal(leadSignal(at(4,'01:00'),market),null);
     assert.equal(leadSignal(at(5,'01:00'),market)?.fraction,.15);
-    assert.equal(leadSignal(at(20,'00:59'),market)?.fraction,.15);
+    assert.equal(leadSignal(at(20,'00:59'),market)?.fraction,.20);
+    assert.equal(leadSignal(at(20,'00:29'),market)?.fraction,.25);
     assert.equal(leadSignal(at(3,'00:19'),market),null);
     assert.equal(leadSignal(at(5,'00:19'),market)?.fraction,.15);
     assert.equal(leadSignal(at(8,'00:00'),market),null);
