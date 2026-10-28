@@ -70,7 +70,7 @@ export function gameState(m, live) {
 const wholeGame = s => !/1st|2nd|3rd|4th|first half|second half|quarter|period|inning|halftime|regulation only|first to score|team total|player|individual|series total/i.test(s);
 export function endWindow(game){
   if(!game.verifiedLive||!game.scoreKnown||!game.periodConsistent)return false;
-  if(/basketball/.test(game.type))return game.period===(game.sport==='NCAAB'?2:4) && game.remainingSeconds>0 && game.remainingSeconds<180;
+  if(/basketball/.test(game.type))return game.period===(game.sport==='NCAAB'?2:4) && game.remainingSeconds>0 && game.remainingSeconds<=60;
   if(/football/.test(game.type))return game.period===4 && game.remainingSeconds>0 && game.remainingSeconds<300;
   if(/hockey/.test(game.type))return game.period===3 && game.remainingSeconds>0 && game.remainingSeconds<420;
   if(/baseball/.test(game.type))return game.period===9;
@@ -103,7 +103,7 @@ export function overSignal(game, market) {
     if(!team||!norm(market.title).includes(norm(team)))return null;
   }
   if (!Number.isFinite(strike) || strike<0 || scored<=strike) return null;
-  return {strategy:'over', reason:`${scored} scored${team?` by ${team}`:''}; line ${strike} already passed`, fraction:0.8};
+  return {strategy:'over', reason:`${scored} scored${team?` by ${team}`:''}; line ${strike} already passed`, fraction:0.9};
 }
 const norm = s => String(s||'').toLowerCase().replace(/[^a-z0-9]/g,'');
 export function leadSignal(game, market) {
@@ -118,12 +118,12 @@ export function leadSignal(game, market) {
   const soccer=/soccer/.test(game.type);
   const segments=/baseball/.test(game.type)?9:/hockey/.test(game.type)?3:/soccer/.test(game.type)?2:basketball&&game.sport==='NCAAB'?2:/basketball|football/.test(game.type)?4:Infinity;
   const baseball=/baseball/.test(game.type);
-  const finalTime=baseball?game.period===9:soccer?game.period===2 && Number.isFinite(game.soccerMinute) && game.soccerMinute>=85:game.period===segments && game.periodConsistent && Number.isFinite(game.remainingSeconds) && game.remainingSeconds>0 && game.remainingSeconds<(hockey?420:basketball?180:300);
+  const finalTime=baseball?game.period===9:soccer?game.period===2 && Number.isFinite(game.soccerMinute) && game.soccerMinute>=85:game.period===segments && game.periodConsistent && Number.isFinite(game.remainingSeconds) && game.remainingSeconds>0 && (basketball?game.remainingSeconds<=60:game.remainingSeconds<(hockey?420:300));
   if (!game.verifiedLive || !game.scoreKnown || !finalTime || market.status!=='active' && market.status!=='open') return null;
   const h=game.homeUnits,a=game.awayUnits;
   if (!Number.isFinite(h)||!Number.isFinite(a)) return null;
   const margin=Math.abs(h-a),trailerScore=Math.min(h,a);
-  const minimum=basketball?8:football?10:hockey?(game.remainingSeconds<300?2:3):baseball||soccer?2:null;
+  const minimum=basketball?5:football?10:hockey?(game.remainingSeconds<300?2:3):baseball||soccer?2:null;
   const ratio=trailerScore>0?Math.max(h,a)/trailerScore:Infinity;
   if (minimum===null ? trailerScore<=0||ratio<3.5 : margin<minimum) return null;
   const leader = h>a ? game.homeName : game.awayName;
@@ -139,12 +139,11 @@ export function leadSignal(game, market) {
   return {strategy:'lead', reason:`${leader||market.yes_sub_title} leads ${h}–${a} ${game.unit} (${margin} ${game.unit} ahead); ${timing}`, fraction};
 }
 export function leadFraction(game,margin,minimum){
-  const bigger=margin>minimum;
-  if(/baseball/.test(game.type))return game.outs>=2 && game.period===9?.35:bigger?.30:.25;
-  if(/soccer/.test(game.type))return game.soccerMinute>=87.5?.35:bigger?.30:.25;
-  if(Number.isFinite(game.remainingSeconds)&&game.remainingSeconds<=150)return .35;
-  if(bigger||Number.isFinite(game.remainingSeconds)&&game.remainingSeconds<=225)return .30;
-  return .25;
+  const veryLate=/baseball/.test(game.type)?game.period===9 && game.outs>=2:
+    /soccer/.test(game.type)?game.soccerMinute>=88:
+    Number.isFinite(game.remainingSeconds)&&game.remainingSeconds<=30;
+  const veryCommanding=margin>=Math.ceil(minimum*1.5);
+  return veryLate&&veryCommanding?.25:.15;
 }
 export function tennisSignal(game,market){
   const t=game.tennis;
@@ -161,15 +160,14 @@ export function tennisSignal(game,market){
   if(opponentPoints===40 && leaderPoints<40 || leaderPoints===40 && opponentPoints===40 && t.advantage===opponentId)return null;
   if(t.advantage && !['',leaderId,opponentId].includes(t.advantage))return null;
   const leaderGames=first?t.firstGames:t.secondGames,opponentGames=first?t.secondGames:t.firstGames;
-  return {strategy:'lead',reason:`Tennis match-clinching set ${leaderGames}–${opponentGames}; leader serves, points ${leaderPoints}–${opponentPoints}${t.advantage===leaderId?' advantage':''}`,fraction:opponentGames<=1||leaderPoints===40?.35:opponentGames===2?.30:.25};
+  return {strategy:'lead',reason:`Tennis match-clinching set ${leaderGames}–${opponentGames}; leader serves, points ${leaderPoints}–${opponentPoints}${t.advantage===leaderId?' advantage':''}`,fraction:opponentGames<=1&&leaderPoints===40?.25:.15};
 }
 export function minimumProfitCents(strategy,availableCents,sportType='',remainingSeconds=NaN){
   if(strategy==='lead' && /basketball/.test(sportType)){
-    if(!Number.isFinite(remainingSeconds)||remainingSeconds<=0||remainingSeconds>=180)return Infinity;
-    return 50;
+    return Number.isFinite(remainingSeconds)&&remainingSeconds>0&&remainingSeconds<=60?0:Infinity;
   }
   const hundreds=Math.floor(Math.max(0,Number(availableCents))/10000);
-  return strategy==='over'?Math.max(50,hundreds*100):Math.max(25,hundreds*50);
+  return strategy==='over'?hundreds*100:hundreds*50;
 }
 export function netSettlementProfitCents(count,price,feeMultiplier=2){
   if(!Number.isFinite(count)||count<=0||!Number.isFinite(price)||price<=0||price>=1)return 0;
@@ -207,5 +205,5 @@ export function orderSize(balanceCents, askDollars, askSize, fraction, cap=1, ba
 export function overBudget(balanceCents, portfolioValueCents, openOverExposureCents) {
   const cash=N(balanceCents), value=N(portfolioValueCents), exposure=N(openOverExposureCents);
   if (![cash,value,exposure].every(Number.isFinite) || Math.min(cash,value,exposure)<0) return 0;
-  return Math.max(0,Math.floor((cash+value)*0.8)-Math.ceil(exposure));
+  return Math.max(0,Math.floor((cash+value)*0.9)-Math.ceil(exposure));
 }
