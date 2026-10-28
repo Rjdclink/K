@@ -1,7 +1,7 @@
 // ESPN and FOX publish the scoreboards used by their sites. These endpoints
 // are not contractual data APIs; a changed schema or unavailable fixture must
 // fail closed, never silently turn into permission to buy an over.
-import { periodValue } from './strategy.mjs';
+import { periodValue, playerOverSpec } from './strategy.mjs';
 const FOX_KEY='jE7yBJVRNAwdDesMgTzTXUUSx1It41Fq'; // Public key in foxsports.com scoreboard URLs.
 const clean=s=>String(s||'').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/&/g,' and ').replace(/[^a-z0-9]/g,'');
 const score=v=>v===null||v===undefined||v===''?NaN:Number(v);
@@ -16,8 +16,9 @@ const dateCandidates=ms=>{
 
 function feeds(game){
   if(/soccer/.test(game.type))return {espn:'soccer/all',fox:'soccer'};
+  if(/^tennis_/.test(game.type))return /^(?:ATP|WTA)$/i.test(game.tour)?{espn:`tennis/${game.tour.toLowerCase()}`,fox:null}:{espn:null,fox:null};
   const league=game.sport;
-  const supported={NBA:['basketball/nba','nba'],WNBA:['basketball/wnba','wnba'],NCAAB:['basketball/mens-college-basketball','cbk'],NFL:['football/nfl','nfl'],CFB:['football/college-football','cfb'],NHL:['hockey/nhl','nhl'],MLB:['baseball/mlb','mlb']};
+  const supported={NBA:['basketball/nba','nba'],WNBA:['basketball/wnba','wnba'],NCAAB:['basketball/mens-college-basketball','cbk'],NCAAW:['basketball/womens-college-basketball',null],NFL:['football/nfl','nfl'],CFB:['football/college-football','cfb'],NHL:['hockey/nhl','nhl'],MLB:['baseball/mlb','mlb']};
   const [espn,fox]=supported[league]||[];
   return {espn,fox};
 }
@@ -59,8 +60,57 @@ export function espnMatches(data,game,milestone){
     if(!home||!away||!sameFixture(game,milestone,teamAliases(home.team),teamAliases(away.team),e.date))return [];
     const status=c.status||e.status;
     const periods=(home.linescores||[]).map((part,i)=>({number:i+1,home:score(part.value),away:score(away.linescores?.[i]?.value)}));
-    return [{source:'ESPN',home:score(home.score),away:score(away.score),periods,live:status?.type?.state==='in',clockOk:clockCompatible(game,status?.period,status?.displayClock)}];
+    return [{source:'ESPN',eventId:e.id,home:score(home.score),away:score(away.score),periods,live:status?.type?.state==='in',clockOk:clockCompatible(game,status?.period,status?.displayClock)}];
   });
+}
+export function tennisMatches(data,game,milestone){
+  if(!Array.isArray(data?.events))return [];
+  const names=expectedNames(game,milestone);
+  const nameMatches=(expected,actual)=>{
+    const key=clean(expected),full=clean(actual);
+    return key.length>=4&&(full===key||full.endsWith(key));
+  };
+  return data.events.flatMap(e=>(e.groupings||[]).flatMap(group=>(group.competitions||[]).flatMap(c=>{
+    const first=c.competitors?.find(x=>x.homeAway==='home'),second=c.competitors?.find(x=>x.homeAway==='away');
+    const firstName=first?.athlete?.displayName||first?.roster?.displayName;
+    const secondName=second?.athlete?.displayName||second?.roster?.displayName;
+    const start=Date.parse(milestone.start_date||''),time=Date.parse(c.date||'');
+    if(!first||!second||!Number.isFinite(start)||!Number.isFinite(time)||Math.abs(start-time)>3*3600000||
+      !nameMatches(names.home,firstName)||!nameMatches(names.away,secondName))return [];
+    const homeSets=(first.linescores||[]).map(part=>score(part.value)),awaySets=(second.linescores||[]).map(part=>score(part.value));
+    if(!homeSets.length||homeSets.length!==awaySets.length||[...homeSets,...awaySets].some(n=>!Number.isInteger(n)||n<0||n>7))return [];
+    return [{source:'ESPN',home:homeSets.at(-1),away:awaySets.at(-1),totalGames:[...homeSets,...awaySets].reduce((a,b)=>a+b,0),live:c.status?.type?.state==='in',clockOk:true}];
+  })));
+}
+export function tableTennisMatches(data,game,milestone){
+  if(!Array.isArray(data?.events))return [];
+  const names=expectedNames(game,milestone),start=Date.parse(milestone.start_date||'');
+  return data.events.flatMap(e=>{
+    const time=Number(e.startTimestamp)*1000;
+    if(!Number.isFinite(start)||!Number.isFinite(time)||Math.abs(start-time)>3*3600000||
+      !sameTeam(names.home,[e.homeTeam?.name])||!sameTeam(names.away,[e.awayTeam?.name]))return [];
+    const home=score(e.homeScore?.period5),away=score(e.awayScore?.period5);
+    return [{home,away,homeSets:score(e.homeScore?.current),awaySets:score(e.awayScore?.current),live:e.status?.type==='inprogress'}];
+  });
+}
+export async function verifyIndependentTableTennisLead(game,milestone,{fetcher=fetch}={}){
+  if(!game.tableTennis||game.tableTennis.setNumber!==5||!game.verifiedLive)return false;
+  const start=Date.parse(milestone.start_date||'');
+  if(!Number.isFinite(start))return false;
+  try{
+    const dates=dateCandidates(start).map(s=>`${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6)}`);
+    const results=await Promise.allSettled(dates.map(day=>json(`https://www.sofascore.com/api/v1/sport/table-tennis/scheduled-events/${day}`,fetcher)));
+    const seen=new Set(),matches=[];
+    for(const r of results.filter(r=>r.status==='fulfilled')){
+      const found=tableTennisMatches(r.value,game,milestone),key=JSON.stringify(found);
+      if(!seen.has(key)){seen.add(key);matches.push(...found)}
+    }
+    if(matches.length!==1)return false;
+    const m=matches[0];
+    return m.live&&m.home===game.home&&m.away===game.away&&
+      m.homeSets===(game.tableTennis.firstIsHome?game.tableTennis.firstSets:game.tableTennis.secondSets)&&
+      m.awaySets===(game.tableTennis.firstIsHome?game.tableTennis.secondSets:game.tableTennis.firstSets);
+  }catch{return false}
 }
 export function foxMatches(data,game,milestone){
   if(!Array.isArray(data?.sectionList))return [];
@@ -76,12 +126,14 @@ export function foxMatches(data,game,milestone){
 }
 export function scoreAgreement(game,bySource,market){
   const segment=String(market?.event_ticker||'').split('-')[0].match(/([1-9])(?:Q|P|H|INNING)(?:TEAM)?TOTAL$/);
+  const tennisTotal=/^KX(?:ATP|WTA)GTOTAL$/.test(String(market?.event_ticker||'').split('-')[0]);
   let agrees=0;
   for(const matches of bySource){
     if(matches.length>1)return false; // Ambiguous fixture identity.
     if(!matches.length)continue;
     const m=matches[0];
     if(!m.live||!m.clockOk||!Number.isInteger(m.home)||!Number.isInteger(m.away)||m.home!==game.home||m.away!==game.away)return false;
+    if(tennisTotal&&(!Number.isInteger(m.totalGames)||m.totalGames!==game.tennisTotal))return false;
     if(segment){
       const expected=periodValue(game,market);
       const actual=periodValue({type:game.type,sport:game.sport,periodScores:m.periods},market);
@@ -90,6 +142,18 @@ export function scoreAgreement(game,bySource,market){
     agrees++;
   }
   return agrees>=1;
+}
+export function playerStatAgreement(summary,player){
+  const matches=(summary?.boxscore?.players||[]).flatMap(team=>(team.statistics||[]).flatMap(group=>{
+    const index=group.names?.findIndex(name=>name===({PTS:'PTS',REB:'REB',AST:'AST','3PT':'3PT',STL:'STL',BLK:'BLK',PRA:'PTS'}[player.metric]));
+    if(index<0)return [];
+    return (group.athletes||[]).filter(a=>clean(a.athlete?.displayName)===clean(player.name)&&!a.didNotPlay).map(a=>{
+      const at=label=>group.names?.indexOf(label);
+      const read=label=>{const n=at(label);return n<0?NaN:score(String(a.stats?.[n]||'').split('-')[0])};
+      return player.metric==='PRA'?read('PTS')+read('REB')+read('AST'):read(player.metric);
+    });
+  }));
+  return matches.length===1&&Number.isInteger(matches[0])&&matches[0]===player.value;
 }
 async function json(url,fetcher){
   const response=await fetcher(url,{headers:{accept:'application/json'},signal:AbortSignal.timeout(7000)});
@@ -121,11 +185,19 @@ export async function verifyIndependentOver(game,milestone,{fetcher=fetch,cache,
   const bySource=['ESPN','FOX Sports'].map(source=>{
     const seen=new Set();return results.flatMap(result=>{
       if(result.status!=='fulfilled'||result.value.source!==source)return [];
-      const matches=source==='ESPN'?espnMatches(result.value.data,game,milestone):foxMatches(result.value.data,game,milestone);
+      const matches=source==='ESPN'?/^tennis_/.test(game.type)?tennisMatches(result.value.data,game,milestone):espnMatches(result.value.data,game,milestone):foxMatches(result.value.data,game,milestone);
       const signature=JSON.stringify(matches);
       if(seen.has(signature))return [];
       seen.add(signature);return matches;
     });
   });
-  return scoreAgreement(game,bySource,market);
+  if(!scoreAgreement(game,bySource,market))return false;
+  const player=playerOverSpec(game,market);
+  if(!player)return true;
+  const matches=bySource[0].filter(m=>m.live&&m.clockOk&&m.home===game.home&&m.away===game.away&&m.eventId);
+  if(matches.length!==1)return false;
+  try{
+    const summary=await read(`https://site.api.espn.com/apis/site/v2/sports/${espn}/summary?event=${encodeURIComponent(matches[0].eventId)}`);
+    return playerStatAgreement(summary,player);
+  }catch{return false}
 }

@@ -2,7 +2,7 @@
 // The exchange remains authoritative: a guessed ticker is ignored unless an
 // open event and its market are actually returned by Kalshi.
 const supportedType=type=>/basketball|baseball|football|hockey|soccer|tennis/.test(String(type||'').toLowerCase()) &&
-  !/esports|table_tennis/.test(String(type||'').toLowerCase());
+  !/esports/.test(String(type||'').toLowerCase());
 
 export function eligibleForMarkets(game){return game?.verifiedLive && game.scoreKnown && supportedType(game.type)}
 
@@ -14,7 +14,10 @@ export function linkedEventTickers(milestone){
     if(/(?:1H|2H|[1-4]Q|[1-3]P|[1-9]INNING|HALF|SET)(?:GAME|MATCH)$/.test(series))return false;
     return !series.endsWith('MATCH')||/tennis/.test(String(milestone.type||''));
   };
-  const listed=source.filter(main);
+  // Kalshi links player props and other score markets directly to the game.
+  // Keep those actual tickers; the strategy still rejects any metric it
+  // cannot independently verify.
+  const listed=source.filter(t=>String(t).includes('-') && (main(t) || /(?:PTS|REB|AST|3PT|PRA|STL|BLK|GTOTAL)$/.test(String(t).split('-')[0])));
   const derived=listed.filter(ticker=>ticker.split('-')[0].endsWith('GAME')).flatMap(ticker=>{
     const [series,...rest]=ticker.split('-'),suffix=rest.join('-'),prefix=series.slice(0,-4);
     // These are only discovery candidates. The exchange must return an open
@@ -40,7 +43,7 @@ export function gameTimeLabel(game){
   if(/tennis/.test(family))return Number.isFinite(game.tennis?.firstGames)&&Number.isFinite(game.tennis?.secondGames)?`Set · ${game.tennis.firstGames}–${game.tennis.secondGames} games`:'Set score unavailable';
   if(/soccer/.test(family)&&Number.isFinite(game.matchRemainingSeconds)&&game.matchRemainingSeconds>=0)return `${String(Math.floor(game.matchRemainingSeconds/60)).padStart(2,'0')}:${String(game.matchRemainingSeconds%60).padStart(2,'0')} match time remaining`;
   if(/soccer/.test(family)&&Number.isFinite(game.soccerMinute))return `${game.soccerMinute}' elapsed`;
-  if(Number.isFinite(game.remainingSeconds)){const segment=Number.isFinite(game.period)?/basketball/.test(family)?`${game.sport==='NCAAB'?'Half':'Quarter'} ${game.period}`:/football/.test(family)?`Quarter ${game.period}`:/hockey/.test(family)?`Period ${game.period}`:'' : '';const seconds=game.clockRunning===false?Math.floor(game.remainingSeconds):Math.ceil(game.remainingSeconds);return `${segment?segment+' · ':''}${String(Math.floor(seconds/60)).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}${game.clockRunning===false?' paused':' remaining'}`}
+  if(Number.isFinite(game.remainingSeconds)){const segment=Number.isFinite(game.period)?/basketball/.test(family)?`${['NCAAB','NCAAW'].includes(game.sport)?'Half':'Quarter'} ${game.period}`:/football/.test(family)?`Quarter ${game.period}`:/hockey/.test(family)?`Period ${game.period}`:'' : '';const seconds=game.clockRunning===false?Math.floor(game.remainingSeconds):Math.ceil(game.remainingSeconds);return `${segment?segment+' · ':''}${String(Math.floor(seconds/60)).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}${game.clockRunning===false?' paused':' remaining'}`}
   if(/cricket/.test(family)&&Number.isFinite(game.period))return `Innings ${game.period} · no countdown clock`;
   if(/table_tennis/.test(family))return 'No countdown clock';
   return 'Live clock unavailable';
