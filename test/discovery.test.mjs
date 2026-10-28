@@ -34,7 +34,7 @@ test('show verified phase and parsed clock without fabricating remaining time',(
   assert.equal(gameTimeLabel({...state({}),status:'final'}),'Final');
   assert.equal(gameTimeLabel({type:'soccer_match',matchRemainingSeconds:44,soccerMinute:89.5}),'00:44 match time remaining');
   const over={status:'active',event_ticker:'KXNBATOTAL-DATE',title:'Combined total points over 130.5',rules_primary:'Combined total points scored in the game',floor_strike:130.5,yes_ask_dollars:'0.98'};
-  assert.equal(overSignal(state({quarter:4}),over),null);
+  assert.equal(overSignal(state({quarter:4}),over)?.strategy,'over');
   assert.equal(overSignal(state({quarter:4,period_remaining_time:'0:59'}),over)?.strategy,'over');
 });
 

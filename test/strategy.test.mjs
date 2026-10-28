@@ -8,8 +8,8 @@ const live=(home,away,quarter=4)=>({details:{status:'live',last_updated_ts:Math.
 test('over requires strict threshold exceeded and whole-game contract',()=>{
   const g=gameState(milestone,live(102,101));const market={status:'active',event_ticker:'KXNBATOTAL-26OCT27BOSNYK',title:'Total points in game over 203',rules_primary:'Combined total points scored in the game',strike_type:'greater',floor_strike:203};
   assert.equal(overSignal(g,market),null);assert.equal(overSignal(gameState(milestone,live(103,101)),market)?.fraction,.9);
-  assert.equal(overSignal(gameState(milestone,live(103,101,3)),market),null);
-  assert.equal(overSignal(gameState(milestone,{details:{...live(103,101).details,clock:'03:01'}}),market),null);
+  assert.ok(overSignal(gameState(milestone,live(103,101,3)),market));
+  assert.ok(overSignal(gameState(milestone,{details:{...live(103,101).details,clock:'03:01'}}),market));
   assert.equal(overSignal(gameState(milestone,live(103,101)),{...market,title:'First half total points'}),null);
 });
 test('Kalshi whole-game over wording is recognized after the line is crossed',()=>{
@@ -31,20 +31,24 @@ test('team overs use only the named team score; player props cannot use the game
   const player={...team,event_ticker:'KXNBAPRA-26OCT27BKNBOS',title:'Jayson Tatum: 35+ points, rebounds, and assists',floor_strike:34.5,custom_strike:{basketball_player:'tatum'}};
   assert.equal(overSignal(gameState({...milestone,details:{...milestone.details,home_team_id:'boston',away_team_id:'brooklyn'}},live(57,56)),player),null);
 });
-test('threshold overs enter only in each sport final game window',()=>{
+test('threshold overs enter in any live segment without a countdown clock',()=>{
   const market={status:'active',event_ticker:'KXTESTTOTAL-26OCT27GAME',title:'Total points in game over 1.5',rules_primary:'Combined total points scored in the game',floor_strike:1.5,yes_ask_dollars:'0.98'};
   const board=(type,details)=>gameState({id:type,title:'Away at Home',type,details:{league:type==='basketball_game'?'NBA':''}},{details:{status:'live',home_score:2,away_score:1,...details}});
-  assert.equal(overSignal(board('basketball_game',{quarter:3,clock:'00:20'}),market),null);
-  assert.equal(overSignal(board('basketball_game',{quarter:4,clock:'01:01'}),market),null);
+  assert.ok(overSignal(board('basketball_game',{quarter:3,clock:'00:20'}),market));
+  assert.ok(overSignal(board('basketball_game',{quarter:4,clock:'01:01'}),market));
   assert.ok(overSignal(board('basketball_game',{quarter:4,clock:'01:00'}),market));
-  assert.equal(overSignal(board('football_game',{quarter:3,clock:'00:20'}),market),null);
+  assert.ok(overSignal(board('football_game',{quarter:3,clock:'00:20'}),market));
   assert.ok(overSignal(board('football_game',{quarter:4,clock:'04:59'}),market));
-  assert.equal(overSignal(board('hockey_match',{period:2,clock:'00:20'}),market),null);
+  assert.ok(overSignal(board('hockey_match',{period:2,clock:'00:20'}),market));
   assert.ok(overSignal(board('hockey_match',{period:3,clock:'06:59'}),market));
-  assert.equal(overSignal(board('baseball_game',{inning:8}),market),null);
+  assert.ok(overSignal(board('baseball_game',{inning:8}),market));
   assert.ok(overSignal(board('baseball_game',{inning:9}),market));
-  assert.equal(overSignal(board('soccer_match',{half:'2nd',time:"84'"}),market),null);
+  assert.ok(overSignal(board('soccer_match',{half:'2nd',time:"84'"}),market));
   assert.ok(overSignal(board('soccer_match',{half:'2nd',time:"85'"}),market));
+  assert.ok(overSignal(board('soccer_match',{half:'1st',time:"20'"}),market));
+  for(const type of ['basketball_game','football_game','hockey_match','baseball_game'])assert.ok(overSignal(board(type,{}),market),type);
+  assert.equal(overSignal(board('basketball_game',{status:'closed'}),market),null);
+  assert.equal(overSignal(board('basketball_game',{home_score:null}),market),null);
 });
 test('scanner refuses unsupported score formats and delayed live data',()=>{
   const total={status:'active',title:'Combined total points over 8',floor_strike:8,strike_type:'greater',yes_ask_dollars:'0.95'};
