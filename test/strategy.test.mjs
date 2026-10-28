@@ -4,10 +4,12 @@ import {readFileSync} from 'node:fs';
 import {gameState,overSignal,leadSignal,tennisSignal,orderSize,estimatedCostCents,overBudget,minimumProfitCents,netSettlementProfitCents,profitableCount,comeback} from '../src/strategy.mjs';
 
 const milestone={id:'game-1',title:'Boston at New York',type:'basketball_game',details:{competition:'Pro Basketball (M)'},related_event_tickers:['GAME']};
-const live=(home,away,quarter=4)=>({details:{status:'live',last_updated_ts:Math.floor(Date.now()/1000),home_score:home,away_score:away,quarter,clock:'04:59',home_team_name:'New York',away_team_name:'Boston'}});
+const live=(home,away,quarter=4)=>({details:{status:'live',last_updated_ts:Math.floor(Date.now()/1000),home_score:home,away_score:away,quarter,clock:'02:59',home_team_name:'New York',away_team_name:'Boston'}});
 test('over requires strict threshold exceeded and whole-game contract',()=>{
   const g=gameState(milestone,live(102,101));const market={status:'active',event_ticker:'KXNBATOTAL-26OCT27BOSNYK',title:'Total points in game over 203',rules_primary:'Combined total points scored in the game',strike_type:'greater',floor_strike:203};
   assert.equal(overSignal(g,market),null);assert.equal(overSignal(gameState(milestone,live(103,101)),market)?.fraction,.8);
+  assert.equal(overSignal(gameState(milestone,live(103,101,3)),market),null);
+  assert.equal(overSignal(gameState(milestone,{details:{...live(103,101).details,clock:'03:01'}}),market),null);
   assert.equal(overSignal(gameState(milestone,live(103,101)),{...market,title:'First half total points'}),null);
 });
 test('Kalshi whole-game over wording is recognized after the line is crossed',()=>{
@@ -20,7 +22,7 @@ test('Kalshi whole-game over wording is recognized after the line is crossed',()
 });
 test('team overs use only the named team score; player props cannot use the game score',()=>{
   const m={id:'nhl',title:'Columbus at Philadelphia',type:'hockey_match',details:{home_team_id:'phi',away_team_id:'cbj'}};
-  const board=(home,away)=>gameState(m,{details:{status:'live',home_goals:home,away_goals:away}});
+  const board=(home,away)=>gameState(m,{details:{status:'live',home_goals:home,away_goals:away,period:3,clock:'04:59'}});
   const team={status:'active',event_ticker:'KXNHLTEAMTOTAL-26OCT27CBJPHI',title:'Philadelphia over 1.5 goals scored',yes_sub_title:'Philadelphia over 1.5',rules_primary:'If Philadelphia scores over 1.5 goals in the game, Yes.',floor_strike:1.5,strike_type:'greater',custom_strike:{hockey_team:'phi'},yes_ask_dollars:'0.81'};
   assert.equal(overSignal(board(1,3),team),null);
   assert.match(overSignal(board(2,3),team)?.reason,/2 scored by Philadelphia; line 1\.5/);
@@ -131,25 +133,28 @@ test('hockey needs three goals under seven minutes or two under five in the fina
   assert.equal(leadSignal(gameState(hockey,at(3,1,2,'04:59')),market),null);
   assert.equal(leadSignal(gameState(hockey,at(3,1,3,'05:00')),market),null);
 });
-test('basketball lead tiers use strict five minute, three minute and twenty second boundaries',()=>{
+test('basketball requires eight points under three minutes in the last quarter or half',()=>{
   const market={status:'active',title:'New York wins',yes_sub_title:'New York'};
   for(const league of ['NBA','WNBA','Basketball','NCAAMB','NCAAW']){
     const m={...milestone,details:{league}};
     const last=/NCAA/.test(league)?2:4;
     const at=(lead,clock,period=last)=>gameState(m,{details:{...live(100+lead,100,period).details,clock}});
     assert.equal(leadSignal(at(8,'05:00'),market),null);
-    assert.equal(leadSignal(at(7,'04:59'),market),null);
-    assert.equal(leadSignal(at(8,'04:59'),market)?.fraction,.25);
+    assert.equal(leadSignal(at(8,'03:00'),market),null);
+    assert.equal(leadSignal(at(7,'02:59'),market),null);
+    assert.equal(leadSignal(at(8,'02:59'),market)?.fraction,.30);
     assert.equal(leadSignal(at(5,'03:00'),market),null);
-    assert.ok(leadSignal(at(8,'03:00'),market));
-    assert.equal(leadSignal(at(4,'02:59'),market),null);
-    assert.ok(leadSignal(at(5,'02:59'),market));
-    assert.equal(leadSignal(at(3,'00:20'),market),null);
-    assert.ok(leadSignal(at(5,'00:20'),market));
-    assert.equal(leadSignal(at(2,'00:19'),market),null);
-    assert.ok(leadSignal(at(3,'00:19'),market));
+    assert.equal(leadSignal(at(5,'02:59'),market),null);
+    assert.equal(leadSignal(at(3,'00:19'),market),null);
+    assert.ok(leadSignal(at(8,'00:19'),market));
     assert.equal(leadSignal(at(8,'00:00'),market),null);
     assert.equal(leadSignal(at(8,'00:19',last-1),market),null);
+    const conflicting=gameState(m,{details:{...live(108,100,last).details,clock:'00:17',period_display:`Q${last-1}`}});
+    assert.equal(conflicting.periodConsistent,false);
+    assert.equal(leadSignal(conflicting,market),null);
+    const numericConflict=gameState(m,{details:{...live(108,100,last).details,period:last-1,clock:'00:17'}});
+    assert.equal(numericConflict.periodConsistent,false);
+    assert.equal(leadSignal(numericConflict,market),null);
   }
 });
 test('football needs a ten point lead, independent of percentage, in final five minutes',()=>{
@@ -219,21 +224,21 @@ test('zero score never creates an over and net profit tiers include conservative
   assert.equal(profitableCount(1,.90,2,'lead',20000,'football_game'),0);
   assert.equal(profitableCount(1,.99,2,'lead',20000,'basketball_game',20),0);
 });
-test('basketball net profit minimum steps down at three minutes and thirty seconds',()=>{
+test('basketball net profit minimum is fifty cents throughout final three minutes',()=>{
   for(const type of ['basketball_game','college_basketball_game']){
     assert.equal(minimumProfitCents('lead',20000,type,300),Infinity);
-    assert.equal(minimumProfitCents('lead',20000,type,299),100);
-    assert.equal(minimumProfitCents('lead',20000,type,181),100);
-    assert.equal(minimumProfitCents('lead',20000,type,180),50);
+    assert.equal(minimumProfitCents('lead',20000,type,181),Infinity);
+    assert.equal(minimumProfitCents('lead',20000,type,180),Infinity);
+    assert.equal(minimumProfitCents('lead',20000,type,179),50);
     assert.equal(minimumProfitCents('lead',20000,type,31),50);
-    assert.equal(minimumProfitCents('lead',20000,type,30),25);
-    assert.equal(minimumProfitCents('lead',20000,type,1),25);
+    assert.equal(minimumProfitCents('lead',20000,type,30),50);
+    assert.equal(minimumProfitCents('lead',20000,type,1),50);
     assert.equal(minimumProfitCents('lead',20000,type,0),Infinity);
-    assert.equal(profitableCount(12,.90,2,'lead',20000,type,299),12);
+    assert.equal(profitableCount(12,.90,2,'lead',20000,type,299),0);
     assert.equal(profitableCount(6,.90,2,'lead',20000,type,181),0);
-    assert.equal(profitableCount(6,.90,2,'lead',20000,type,180),6);
+    assert.equal(profitableCount(6,.90,2,'lead',20000,type,179),6);
     assert.equal(profitableCount(3,.90,2,'lead',20000,type,31),0);
-    assert.equal(profitableCount(3,.90,2,'lead',20000,type,30),3);
+    assert.equal(profitableCount(3,.90,2,'lead',20000,type,30),0);
     assert.equal(profitableCount(3,.99,2,'lead',20000,type,20),0);
   }
   assert.equal(minimumProfitCents('lead',20000,'football_game',30),100);

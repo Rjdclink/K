@@ -30,6 +30,14 @@ export function gameState(m, live) {
   const half=String(d.half||'').toLowerCase();
   const period = N(pick(d, ['period','period_number','quarter','current_period','inning','current_inning']) ?? d.game?.period ?? (/^(?:2nd|second)$/.test(half)?2:/^(?:1st|first)$/.test(half)?1:undefined));
   const periodText = String(d.period_display || d.period_name || d.clock?.period || d.inning_half || '').toLowerCase();
+  const quarterText=periodText.match(/(?:\bq(?:uarter)?\s*([1-4])\b|\b([1-4])(?:st|nd|rd|th)\s*(?:quarter|qtr)\b)/);
+  const statedQuarter=quarterText?Number(quarterText[1]||quarterText[2]):NaN;
+  // A feed can disagree with itself about the quarter. Do not enter a
+  // winner market on a clock that belongs to a different quarter.
+  const reportedPeriods=/basketball|football/.test(String(m.type||''))?
+    ['period','period_number','quarter','current_period'].map(k=>N(d[k])).filter(Number.isFinite):[];
+  const periodConsistent=(!Number.isFinite(statedQuarter)||statedQuarter===period) &&
+    reportedPeriods.every(value=>value===period);
   const clock = String(d.period_remaining_time || d.clock?.display || d.clock || d.time_remaining || '').trim();
   const parts = clock.match(/^(\d{1,2}):(\d{2})$/);
   const remainingSeconds=parts?Number(parts[1])*60+Number(parts[2]):NaN;
@@ -57,11 +65,20 @@ export function gameState(m, live) {
   const homeUnits=home,awayUnits=away;
   const unit=/baseball/.test(family)?'runs':/hockey|soccer/.test(family)?'goals':tennis?'games':'points';
   const tennisData=tennis?{bestOf:N(m.details?.best_of),firstId:m.details?.first_competitor_id,secondId:m.details?.second_competitor_id,firstGames:N(one?.score),secondGames:N(two?.score),firstSets:N(d.competitor1_overall_score),secondSets:N(d.competitor2_overall_score),firstPoints:N(d.competitor1_current_round_score),secondPoints:N(d.competitor2_current_round_score),firstRound:one?.outcome,secondRound:two?.outcome,server:String(d.server||''),advantage:String(d.advantage||''),mainEvent:m.details?.main_game_event_ticker}:null;
-  return {id:m.id, title:m.title, sport, type:family, status, home, away, homeUnits, awayUnits, unit, period, clock, remainingSeconds, soccerMinute, soccerHalf:half, soccerExtraTime, tennis:tennisData, inningHalf:N(d.inning_half), outs:N(d.outs), progress, verifiedLive, scoreKnown:Number.isFinite(home)&&Number.isFinite(away), homeName:String(d.home_team?.name||d.home_team_name||d.home?.name||(names.length===2?names[1]:'')), awayName:String(d.away_team?.name||d.away_team_name||d.away?.name||(names.length===2?names[0]:'')),homeTeamId:m.details?.home_team_id,awayTeamId:m.details?.away_team_id,eventTickers:m.related_event_tickers||[]};
+  return {id:m.id, title:m.title, sport, type:family, status, home, away, homeUnits, awayUnits, unit, period, periodConsistent, clock, remainingSeconds, soccerMinute, soccerHalf:half, soccerExtraTime, tennis:tennisData, inningHalf:N(d.inning_half), outs:N(d.outs), progress, verifiedLive, scoreKnown:Number.isFinite(home)&&Number.isFinite(away), homeName:String(d.home_team?.name||d.home_team_name||d.home?.name||(names.length===2?names[1]:'')), awayName:String(d.away_team?.name||d.away_team_name||d.away?.name||(names.length===2?names[0]:'')),homeTeamId:m.details?.home_team_id,awayTeamId:m.details?.away_team_id,eventTickers:m.related_event_tickers||[]};
 }
 const wholeGame = s => !/1st|2nd|3rd|4th|first half|second half|quarter|period|inning|halftime|regulation only|first to score|team total|player|individual|series total/i.test(s);
+export function endWindow(game){
+  if(!game.verifiedLive||!game.scoreKnown||!game.periodConsistent)return false;
+  if(/basketball/.test(game.type))return game.period===(game.sport==='NCAAB'?2:4) && game.remainingSeconds>0 && game.remainingSeconds<180;
+  if(/football/.test(game.type))return game.period===4 && game.remainingSeconds>0 && game.remainingSeconds<300;
+  if(/hockey/.test(game.type))return game.period===3 && game.remainingSeconds>0 && game.remainingSeconds<420;
+  if(/baseball/.test(game.type))return game.period===9;
+  if(/soccer/.test(game.type))return game.period===2 && Number.isFinite(game.soccerMinute) && game.soccerMinute>=85 && game.soccerMinute<90 && !game.soccerExtraTime;
+  return false;
+}
 export function overSignal(game, market) {
-  if (!game.verifiedLive || !game.scoreKnown || game.home+game.away<=0 || market.status!=='active' && market.status!=='open') return null;
+  if (!endWindow(game) || game.home+game.away<=0 || market.status!=='active' && market.status!=='open') return null;
   // Scores from these feeds are not comparable to a whole-game contract line.
   if (!/basketball|baseball|football|hockey|soccer/.test(game.type) || /esports|table_tennis/.test(game.type)) return null;
   const series=String(market.event_ticker||'').split('-')[0];
@@ -101,12 +118,12 @@ export function leadSignal(game, market) {
   const soccer=/soccer/.test(game.type);
   const segments=/baseball/.test(game.type)?9:/hockey/.test(game.type)?3:/soccer/.test(game.type)?2:basketball&&game.sport==='NCAAB'?2:/basketball|football/.test(game.type)?4:Infinity;
   const baseball=/baseball/.test(game.type);
-  const finalTime=baseball?game.period===9:soccer?game.period===2 && Number.isFinite(game.soccerMinute) && game.soccerMinute>=85:game.period===segments && Number.isFinite(game.remainingSeconds) && game.remainingSeconds>0 && game.remainingSeconds<(hockey?420:300);
+  const finalTime=baseball?game.period===9:soccer?game.period===2 && Number.isFinite(game.soccerMinute) && game.soccerMinute>=85:game.period===segments && game.periodConsistent && Number.isFinite(game.remainingSeconds) && game.remainingSeconds>0 && game.remainingSeconds<(hockey?420:basketball?180:300);
   if (!game.verifiedLive || !game.scoreKnown || !finalTime || market.status!=='active' && market.status!=='open') return null;
   const h=game.homeUnits,a=game.awayUnits;
   if (!Number.isFinite(h)||!Number.isFinite(a)) return null;
   const margin=Math.abs(h-a),trailerScore=Math.min(h,a);
-  const minimum=basketball?(game.remainingSeconds<20?3:game.remainingSeconds<180?5:8):football?10:hockey?(game.remainingSeconds<300?2:3):baseball||soccer?2:null;
+  const minimum=basketball?8:football?10:hockey?(game.remainingSeconds<300?2:3):baseball||soccer?2:null;
   const ratio=trailerScore>0?Math.max(h,a)/trailerScore:Infinity;
   if (minimum===null ? trailerScore<=0||ratio<3.5 : margin<minimum) return null;
   const leader = h>a ? game.homeName : game.awayName;
@@ -118,7 +135,8 @@ export function leadSignal(game, market) {
   if (!/win|winner|victory/i.test(description) || /wins? by|spread|handicap|margin of victory/i.test(description) || market.event_ticker && !/GAME(?:-|$)/i.test(market.event_ticker) || !identityMatches) return null;
   if(soccer && !/after 90 minutes plus stoppage time/i.test(market.rules_primary||''))return null;
   const fraction=leadFraction(game,margin,minimum);
-  return {strategy:'lead', reason:`${leader||market.yes_sub_title} leads ${h}–${a} ${game.unit} (${margin} ${game.unit} ahead); ${baseball?'9th inning':soccer?`${game.soccerMinute}' of regulation plus stoppage`:game.clock+' remaining'}`, fraction};
+  const timing=baseball?'9th inning':soccer?`${game.soccerMinute}' of regulation plus stoppage`:`${basketball?`period ${game.period}, `:''}${game.clock} remaining`;
+  return {strategy:'lead', reason:`${leader||market.yes_sub_title} leads ${h}–${a} ${game.unit} (${margin} ${game.unit} ahead); ${timing}`, fraction};
 }
 export function leadFraction(game,margin,minimum){
   const bigger=margin>minimum;
@@ -147,8 +165,8 @@ export function tennisSignal(game,market){
 }
 export function minimumProfitCents(strategy,availableCents,sportType='',remainingSeconds=NaN){
   if(strategy==='lead' && /basketball/.test(sportType)){
-    if(!Number.isFinite(remainingSeconds)||remainingSeconds<=0||remainingSeconds>=300)return Infinity;
-    return remainingSeconds<=30?25:remainingSeconds<=180?50:100;
+    if(!Number.isFinite(remainingSeconds)||remainingSeconds<=0||remainingSeconds>=180)return Infinity;
+    return 50;
   }
   const hundreds=Math.floor(Math.max(0,Number(availableCents))/10000);
   return strategy==='over'?Math.max(50,hundreds*100):Math.max(25,hundreds*50);
