@@ -37,3 +37,6 @@ export function gameTimeLabel(game){
   if(/table_tennis/.test(family))return 'No countdown clock';
   return 'Live clock unavailable';
 }
+export function storedClockSeconds(value,running=true){
+  return Number.isFinite(value)?Math.max(0,running===false?Math.floor(value):Math.ceil(value)):null;
+}

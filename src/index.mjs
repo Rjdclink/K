@@ -12,7 +12,7 @@ import { manifest, worker } from './pwa.mjs';
 import { vapidIdentity, validateSubscription, deliverPush } from './push.mjs';
 import { favorableSettlement } from './settlements.mjs';
 import { authorized, checkCredentials, sessionCookie, loginPage } from './dashboard_auth.mjs';
-import { eligibleForMarkets, linkedEventTickers, gameTimeLabel } from './discovery.mjs';
+import { eligibleForMarkets, linkedEventTickers, gameTimeLabel, storedClockSeconds } from './discovery.mjs';
 import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOver } from './score_verification.mjs';
 
@@ -396,7 +396,8 @@ async function scan(cachedMilestones){
       if(state.verifiedLive)scanned++;signals+=candidates.length;opportunities.push(...candidates);
       const baseball=/baseball/.test(state.type),tennis=/tennis/.test(state.type),soccer=/soccer/.test(state.type);
       const timeLeft=gameTimeLabel(state);
-      const clockSeconds=state.verifiedLive?(soccer&&Number.isFinite(state.matchRemainingSeconds)?state.matchRemainingSeconds:soccer&&Number.isFinite(state.soccerMinute)&&state.soccerMinute<90?Math.max(0,Math.ceil((90-state.soccerMinute)*60)):!baseball&&!tennis&&!soccer&&Number.isFinite(state.remainingSeconds)?state.remainingSeconds:null):null;
+      const preciseClockSeconds=state.verifiedLive?(soccer&&Number.isFinite(state.matchRemainingSeconds)?state.matchRemainingSeconds:soccer&&Number.isFinite(state.soccerMinute)&&state.soccerMinute<90?Math.max(0,(90-state.soccerMinute)*60):!baseball&&!tennis&&!soccer&&Number.isFinite(state.remainingSeconds)?state.remainingSeconds:null):null;
+      const clockSeconds=storedClockSeconds(preciseClockSeconds,state.clockRunning);
       const clockLabel=soccer?Number.isFinite(state.matchRemainingSeconds)?'Match time left':state.soccerMinute>=90?'Stoppage time':'Regulation left':baseball?'Inning progress':tennis?'Set progress':state.sport==='NCAAB'? `Half ${state.period||'?'} left`:/hockey/.test(state.type)?`Period ${state.period||'?'} left`:/football|basketball/.test(state.type)?`Quarter ${state.period||'?'} left`:'Game clock';
       const displayClockLabel=clockSeconds!=null&&state.clockRunning===false?`${clockLabel} · paused`:clockLabel;
       snapshotRows.set(state.id,[state.id,state.title||'Sports game',state.sport,state.type,state.scoreKnown?state.home:null,state.scoreKnown?state.away:null,state.verifiedLive?'live':/^(final|finished|complete|completed|closed|ended)$/.test(state.status)?'final':'inactive',Number.isFinite(state.progress)?state.progress:null,String(state.period||''),timeLeft,clockSeconds,displayClockLabel,liveMap.get(milestone.id)?._observed_at||null,scanStarted,JSON.stringify(candidates.map(c=>({strategy:c.signal.strategy,reason:c.signal.reason,ticker:c.market.ticker,execution:signalExecution(c,filled,account,balance,bankroll,overRemaining)}))) ]);
@@ -510,7 +511,7 @@ async function settlementAlerts(since){
   return rows;
 }
 export default {async fetch(req){const url=new URL(req.url);
-  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'fractional-live-clock-20261028'});
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'integer-clock-snapshot-20261028'});
   if(req.method==='GET'&&url.pathname==='/manifest.webmanifest')return response(manifest,'application/manifest+json');
   if(req.method==='GET'&&url.pathname==='/sw.js')return new Response(worker,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','service-worker-allowed':'/','x-content-type-options':'nosniff'}});
   if(req.method==='GET'&&/^\/icon-(192|512)\.png$/.test(url.pathname))return response(Buffer.from(icons[Number(url.pathname.match(/\d+/)[0])],'base64'),'image/png');

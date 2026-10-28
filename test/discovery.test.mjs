@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {eligibleForMarkets,linkedEventTickers,gameTimeLabel} from '../src/discovery.mjs';
+import {eligibleForMarkets,linkedEventTickers,gameTimeLabel,storedClockSeconds} from '../src/discovery.mjs';
 import {gameState,overSignal,sportName} from '../src/strategy.mjs';
 
 test('find game and both total families from a game-only milestone',()=>{
@@ -31,6 +31,9 @@ test('show verified phase and parsed clock without fabricating remaining time',(
   const state=d=>gameState(m,{details:{status:'live',home_score:73,away_score:65,...d}});
   assert.equal(gameTimeLabel(state({quarter:4,period_remaining_time:'1:07'})),'Quarter 4 · 01:07 remaining');
   assert.equal(gameTimeLabel(state({quarter:4,period_remaining_time:'00:09.20',clock_running:false})),'Quarter 4 · 00:09 paused');
+  assert.equal(storedClockSeconds(9.2,false),9);
+  assert.equal(storedClockSeconds(16.97,true),17);
+  assert.equal(storedClockSeconds(NaN),null);
   assert.equal(gameTimeLabel(state({quarter:2,period_remaining_time:'8:22'})),'Quarter 2 · 08:22 remaining');
   assert.equal(gameTimeLabel(state({quarter:4})),'Live clock unavailable');
   assert.equal(gameTimeLabel({...state({}),status:'final'}),'Final');
