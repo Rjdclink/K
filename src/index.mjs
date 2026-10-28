@@ -3,7 +3,7 @@ import pg from 'pg';
 import { page } from './ui.mjs';
 import { historyPage } from './history_ui.mjs';
 import { completedTrade } from './history.mjs';
-import { gameState, overSignal, leadSignal, tennisSignal, orderSize, estimatedCostCents, overBudget, profitableCount, netSettlementProfitCents, comeback } from './strategy.mjs';
+import { gameState, overSignal, confirmedOver, leadSignal, tennisSignal, orderSize, estimatedCostCents, overBudget, profitableCount, netSettlementProfitCents, comeback } from './strategy.mjs';
 import { reviewMiss } from './ai.mjs';
 import { kalshiSignature } from './auth.mjs';
 import { marketShard, shardCash, transferPlan } from './funding.mjs';
@@ -228,7 +228,7 @@ function signalExecution(c,filled,account,balance,bankroll,overRemaining){
     const localCount=contractCount(Math.min(balance,local),c.market,c.signal.fraction,bankroll,c.signal.strategy==='over'?overRemaining:Infinity,fees);
     if(!profitableCount(localCount,price,fees,c.signal.strategy,balance,c.state.type,c.state.remainingSeconds))return 'Insufficient shard cash';
   }
-  return 'Eligible for submission';
+  return c.signal.strategy==='over'?'Awaiting score confirmation':'Eligible for final verification';
 }
 async function ensureShardFunding(signal,event,market,account,desiredCents){
   const destination=marketShard(event,market);
@@ -391,7 +391,7 @@ async function scan(cachedMilestones){
     for(const {milestone,state} of games){
       const candidates=[];
       if(eligibleForMarkets(state))for(const ticker of linkedEventTickers(milestone)){const event=events.get(ticker);if(!event || event.category!=='Sports')continue;
-        for(const market of event.markets||[]){const signal=overSignal(state,market)||leadSignal(state,market)||tennisSignal(state,market);if(signal&&!filled.has(`${market.ticker}:${signal.strategy}`))candidates.push({signal,event,market,state,milestone})}}
+        for(const market of event.markets||[]){if(market.event_ticker!==event.event_ticker)continue;const signal=overSignal(state,market)||leadSignal(state,market)||tennisSignal(state,market);if(signal&&!filled.has(`${market.ticker}:${signal.strategy}`))candidates.push({signal,event,market,state,milestone})}}
       if(state.verifiedLive)scanned++;signals+=candidates.length;opportunities.push(...candidates);
       const baseball=/baseball/.test(state.type),tennis=/tennis/.test(state.type),soccer=/soccer/.test(state.type);
       const timeLeft=gameTimeLabel(state);
@@ -424,15 +424,27 @@ async function scan(cachedMilestones){
         // Refresh available cash before every order. If the account cannot afford one contract plus
         // the fee reserve, orderSize returns zero and no order is sent to Kalshi.
         const latest=await accountBalance();balance=Number(latest.balance);bankroll=balance+Number(latest.portfolio_value);
+        if(c.signal.strategy==='over'){
+          // Let a provisional score settle, particularly after a soccer goal.
+          // A score correction in this interval makes the candidate disappear.
+          const dwell=/soccer/.test(state.type)?12000:3000;
+          const remaining=dwell-(Date.now()-state.observedAt);
+          if(!Number.isFinite(remaining))continue;
+          if(remaining>0)await new Promise(resolve=>setTimeout(resolve,remaining));
+        }
         // Revalidate the game before fetching the final quote. Keep the quote
         // as the last remote read before the reserved fill-or-kill submission.
-        const latestLive=(await liveBatch([c.milestone])).get(c.milestone.id);
+        const latestLive=c.signal.strategy==='over'?
+          (await kalshi('/live_data/milestone/'+encodeURIComponent(c.milestone.id))).live_data:
+          (await liveBatch([c.milestone])).get(c.milestone.id);
+        if(latestLive&&c.signal.strategy==='over')latestLive._observed_at=new Date().toISOString();
         const freshState=gameState(c.milestone,latestLive);
+        if(c.signal.strategy==='over'&&!confirmedOver(state,freshState,c.market))continue;
         if(c.signal.strategy==='lead' && /basketball/.test(state.type) &&
           (freshState.period!==state.period || !freshState.periodConsistent ||
             freshState.remainingSeconds>state.remainingSeconds))continue;
         const quote=(await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market;
-        if(!quote||quote.ticker!==c.market.ticker||!hasAsk(quote))continue;
+        if(!quote||quote.ticker!==c.market.ticker||quote.event_ticker!==c.event.event_ticker||!hasAsk(quote))continue;
         const stillQualifies=c.signal.strategy==='over'?overSignal(freshState,quote):leadSignal(freshState,quote)||tennisSignal(freshState,quote);
         if(!stillQualifies)continue;
         c.signal=stillQualifies;
