@@ -73,3 +73,48 @@ test('filled position names describe the sport, matchup and current over margin 
   assert.equal(lead.children[0].textContent,'Basketball · BK Levicki Patrioti at CS Dinamo Bucuresti');
   assert.equal(lead.children[1].textContent,'Commanding lead');
 });
+
+test('dashboard refresh carries alerts, with fallback only when alerts stop arriving',async()=>{
+  const intervals=[],requests=[],stored=new Map();
+  const element={classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){}};
+  const document={getElementById:()=>element,querySelectorAll:()=>[]};
+  const script=page.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+  const context=vm.createContext({document,window:{addEventListener(){}},navigator:{},localStorage:{getItem:key=>stored.get(key)||null,setItem:(key,value)=>stored.set(key,value)},fetch:url=>{
+    requests.push(url);
+    if(url.startsWith('/api/state'))return new Promise(()=>{});
+    return Promise.resolve({ok:true,json:async()=>({alerts:[{id:3}]})});
+  },AbortSignal,setInterval:(fn,ms)=>intervals.push({fn,ms})});
+  vm.runInContext(script,context);
+  assert.match(requests[0],/^\/api\/state\?at=\d+&since=0$/);
+  const sounds=[];context.soundProbe=()=>sounds.push('ching');
+  vm.runInContext('ching=soundProbe;consumeAlerts([{id:1}]);consumeAlerts([{id:2}])',context);
+  assert.deepEqual(sounds,['ching']);
+  assert.equal(stored.get('kAlertCursor'),'2');
+  await vm.runInContext('pollAlertsFallback()',context);
+  assert.equal(requests.length,1);
+  vm.runInContext('lastAlertSuccess=Date.now()-6000',context);
+  await vm.runInContext('pollAlertsFallback()',context);
+  assert.equal(requests[1],'/api/alerts?since=2');
+  vm.runInContext('consumeAlerts([{id:3}])',context);
+  assert.deepEqual(sounds,['ching','ching']);
+  assert.equal(stored.get('kAlertCursor'),'3');
+  assert.ok(intervals.some(({ms})=>ms===2000));
+  assert.ok(intervals.some(({ms})=>ms===5000));
+});
+
+test('a successful dashboard refresh consumes alerts without a separate request',async()=>{
+  const requests=[],stored=new Map();
+  const element={children:[],classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){},replaceChildren(...items){this.children=items}};
+  const document={getElementById:()=>element,querySelectorAll:()=>[]};
+  const script=page.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+  const context=vm.createContext({document,window:{addEventListener(){}},navigator:{},localStorage:{getItem:key=>stored.get(key)||null,setItem:(key,value)=>stored.set(key,value)},fetch:async url=>{
+    requests.push(url);
+    return {status:200,ok:true,json:async()=>({live:false,exitOnly:false,credentials:false,aiConfigured:false,balance:null,games:[],orders:[],scan:{scanned:0,signals:0},alerts:[{id:8}]})};
+  },AbortSignal,setInterval(){}});
+  vm.runInContext(script,context);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(stored.get('kAlertCursor'),'8');
+  assert.equal(requests.length,1);
+  await vm.runInContext('pollAlertsFallback()',context);
+  assert.equal(requests.length,1);
+});

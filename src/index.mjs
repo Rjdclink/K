@@ -372,24 +372,23 @@ async function scan(cachedMilestones){
     const active=games.filter(g=>g.state.verifiedLive && g.state.scoreKnown);
     const events=await marketMap(active.flatMap(g=>linkedEventTickers(g.milestone)));
     let balance=0,bankroll=0,overRemaining=0,account=null;
-    const existingFills=await pool.query(`SELECT market_ticker,strategy FROM trade_attempts WHERE status='filled'`);
+    const existingFills=await pool.query(`SELECT market_ticker,strategy,fill_count,limit_price FROM trade_attempts WHERE status='filled'`);
     let filled=new Set(existingFills.rows.map(r=>`${r.market_ticker}:${r.strategy}`));
     if(live()||exitOnly()){
-      const [currentAccount,positions,attempts]=await Promise.all([
+      const [currentAccount,positions]=await Promise.all([
         accountBalance(),
-        allOpenPositions(),
-        pool.query(`SELECT market_ticker,fill_count,limit_price FROM trade_attempts WHERE strategy='over' AND status='filled'`)
+        allOpenPositions()
       ]);
       openPositions=positions;
       account=currentAccount;balance=Number(account.balance);
       bankroll=balance+Number(account.portfolio_value);
       const open=new Set((positions.market_positions||[]).filter(p=>Number(p.position_fp??p.position??0)!==0).map(p=>p.ticker));
-      const exposure=attempts.rows.reduce((sum,r)=>sum+(open.has(r.market_ticker)?Number(r.fill_count)*Number(r.limit_price)*100:0),0);
+      const exposure=existingFills.rows.reduce((sum,r)=>sum+(r.strategy==='over'&&open.has(r.market_ticker)?Number(r.fill_count)*Number(r.limit_price)*100:0),0);
       overRemaining=overBudget(balance,account.portfolio_value,exposure);
     }
     // Exits are assessed before any new risk is added.
     if(live()||exitOnly())await exitComebacks(games,events,openPositions);
-    const opportunities=[];
+    const opportunities=[],snapshotRows=new Map();
     for(const {milestone,state} of games){
       const candidates=[];
       if(state.verifiedLive && state.scoreKnown)for(const ticker of linkedEventTickers(milestone)){const event=events.get(ticker);if(!event || event.category!=='Sports')continue;
@@ -399,7 +398,13 @@ async function scan(cachedMilestones){
       const timeLeft=baseball?`Inning ${state.period||'?'}${Number.isFinite(state.outs)?` · ${state.outs} out(s)`:''}`:tennis?`Set · ${state.tennis?.firstGames ?? '?'}–${state.tennis?.secondGames ?? '?'} games`:soccer?Number.isFinite(state.soccerMinute)?`${state.soccerMinute}' elapsed`:'Clock pending':state.clock?state.clock+' remaining':'Clock pending';
       const clockSeconds=state.verifiedLive?(soccer&&Number.isFinite(state.soccerMinute)&&state.soccerMinute<90?Math.max(0,Math.ceil((90-state.soccerMinute)*60)):!baseball&&!tennis&&!soccer&&Number.isFinite(state.remainingSeconds)?state.remainingSeconds:null):null;
       const clockLabel=soccer?state.soccerMinute>=90?'Stoppage time':'Regulation left':baseball?'Inning progress':tennis?'Set progress':state.sport==='NCAAB'? `Half ${state.period||'?'} left`:/hockey/.test(state.type)?`Period ${state.period||'?'} left`:/football|basketball/.test(state.type)?`Quarter ${state.period||'?'} left`:'Game clock';
-      await pool.query(`INSERT INTO game_snapshots(id,title,sport,sport_family,home,away,status,progress,period,time_left,clock_seconds,clock_label,clock_observed_at,scanned_at,signals) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,sport=EXCLUDED.sport,sport_family=EXCLUDED.sport_family,home=EXCLUDED.home,away=EXCLUDED.away,status=EXCLUDED.status,progress=EXCLUDED.progress,period=EXCLUDED.period,time_left=EXCLUDED.time_left,clock_seconds=EXCLUDED.clock_seconds,clock_label=EXCLUDED.clock_label,clock_observed_at=CASE WHEN game_snapshots.clock_seconds IS NOT DISTINCT FROM EXCLUDED.clock_seconds AND game_snapshots.period=EXCLUDED.period AND game_snapshots.status=EXCLUDED.status THEN game_snapshots.clock_observed_at ELSE EXCLUDED.clock_observed_at END,scanned_at=EXCLUDED.scanned_at,signals=EXCLUDED.signals`,[state.id,state.title||'Sports game',state.sport,state.type,state.scoreKnown?state.home:null,state.scoreKnown?state.away:null,state.verifiedLive?'live':/^(final|finished|complete|completed|closed|ended)$/.test(state.status)?'final':'inactive',Number.isFinite(state.progress)?state.progress:null,String(state.period||''),timeLeft,clockSeconds,clockLabel,liveMap.get(milestone.id)?._observed_at||null,scanStarted,JSON.stringify(candidates.map(c=>({strategy:c.signal.strategy,reason:c.signal.reason,ticker:c.market.ticker,execution:signalExecution(c,filled,account,balance,bankroll,overRemaining)}))) ]);
+      snapshotRows.set(state.id,[state.id,state.title||'Sports game',state.sport,state.type,state.scoreKnown?state.home:null,state.scoreKnown?state.away:null,state.verifiedLive?'live':/^(final|finished|complete|completed|closed|ended)$/.test(state.status)?'final':'inactive',Number.isFinite(state.progress)?state.progress:null,String(state.period||''),timeLeft,clockSeconds,clockLabel,liveMap.get(milestone.id)?._observed_at||null,scanStarted,JSON.stringify(candidates.map(c=>({strategy:c.signal.strategy,reason:c.signal.reason,ticker:c.market.ticker,execution:signalExecution(c,filled,account,balance,bankroll,overRemaining)}))) ]);
+    }
+    const snapshots=[...snapshotRows.values()];
+    for(let i=0;i<snapshots.length;i+=100){
+      const batch=snapshots.slice(i,i+100);
+      const values=batch.map((_,row)=>'('+Array.from({length:15},(_,field)=>'$'+(row*15+field+1)).join(',')+')').join(',');
+      await pool.query(`INSERT INTO game_snapshots(id,title,sport,sport_family,home,away,status,progress,period,time_left,clock_seconds,clock_label,clock_observed_at,scanned_at,signals) VALUES ${values} ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,sport=EXCLUDED.sport,sport_family=EXCLUDED.sport_family,home=EXCLUDED.home,away=EXCLUDED.away,status=EXCLUDED.status,progress=EXCLUDED.progress,period=EXCLUDED.period,time_left=EXCLUDED.time_left,clock_seconds=EXCLUDED.clock_seconds,clock_label=EXCLUDED.clock_label,clock_observed_at=CASE WHEN game_snapshots.clock_seconds IS NOT DISTINCT FROM EXCLUDED.clock_seconds AND game_snapshots.period=EXCLUDED.period AND game_snapshots.status=EXCLUDED.status THEN game_snapshots.clock_observed_at ELSE EXCLUDED.clock_observed_at END,scanned_at=EXCLUDED.scanned_at,signals=EXCLUDED.signals`,batch.flat());
     }
     opportunities.sort((a,b)=>{
       if(a.signal.strategy!==b.signal.strategy)return a.signal.strategy==='over'?-1:1;
@@ -486,6 +491,10 @@ async function state(){const [snap,stats,attempts]=await Promise.all([
   }):[];
   return {live:live(),exitOnly:exitOnly(),credentials:configured(),aiConfigured:Boolean(process.env.AI_API_KEY),balance,accountError,positionsError,games:snap.rows,scan:stats.rows[0],orders};
 }
+async function settlementAlerts(since){
+  const {rows}=await pool.query(`SELECT id,ticker,profit_cents,settled_time,created_at FROM settlement_alerts WHERE id>$1 AND created_at>now()-interval '2 days' ORDER BY id LIMIT 50`,[since]);
+  return rows;
+}
 export default {async fetch(req){const url=new URL(req.url);
   if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'hockey-three-goals-six-thirty-time-tiers'});
   if(req.method==='GET'&&url.pathname==='/manifest.webmanifest')return response(manifest,'application/manifest+json');
@@ -518,8 +527,7 @@ export default {async fetch(req){const url=new URL(req.url);
     if(req.method==='GET'&&url.pathname==='/api/alerts'){
       const since=Number(url.searchParams.get('since'))||0;
       if(!Number.isFinite(since)||since<0)return json({error:'Invalid cursor'},400);
-      const alerts=await pool.query(`SELECT id,ticker,profit_cents,settled_time,created_at FROM settlement_alerts WHERE id>$1 AND created_at>now()-interval '2 days' ORDER BY id LIMIT 50`,[since]);
-      return json({alerts:alerts.rows});
+      return json({alerts:await settlementAlerts(since)});
     }
     if(req.method==='POST'&&url.pathname==='/api/push-subscription'){
       if(req.headers.get('origin')!==url.origin||!req.headers.get('content-type')?.startsWith('application/json'))return json({error:'Forbidden'},403);
@@ -534,7 +542,12 @@ export default {async fetch(req){const url=new URL(req.url);
       let subscription;try{subscription=validateSubscription(JSON.parse(raw))}catch{return json({error:'Invalid subscription'},400)}
       await pool.query('DELETE FROM push_subscriptions WHERE endpoint=$1',[subscription.endpoint]);return json({ok:true});
     }
-    if(req.method==='GET'&&url.pathname==='/api/state')return json(await state());
+    if(req.method==='GET'&&url.pathname==='/api/state'){
+      const since=Number(url.searchParams.get('since'))||0;
+      if(!Number.isFinite(since)||since<0)return json({error:'Invalid cursor'},400);
+      const [snapshot,alerts]=await Promise.all([state(),settlementAlerts(since).catch(e=>{console.error('Dashboard alerts unavailable:',e);return null})]);
+      return json({...snapshot,alerts});
+    }
     if(req.method==='GET'&&url.pathname==='/api/history'){
       const beforeTime=url.searchParams.get('before_time'),beforeId=url.searchParams.get('before_id');
       if(Boolean(beforeTime)!==Boolean(beforeId)||beforeTime&&(!Number.isFinite(new Date(beforeTime).getTime())||!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(beforeId)))return json({error:'Invalid history cursor'},400);
