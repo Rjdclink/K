@@ -50,6 +50,12 @@ test('filled order timer is bright red, advances each second and reanchors to li
   assert.equal(score.textContent,'Away 71 · Home 81');
   assert.match(page,/\.live-timer\{[^}]*color:#ff465c/);
   assert.match(page,/\.score-timer\{[^}]*display:flex/);
+  const paintScore=vm.runInContext('paintScore',context),chosen={};
+  paintScore(chosen,{...base,strategy:'lead',reason:'New York leads 79–71 points (8 points ahead)',score_scanned_at:new Date(start).toISOString()},start);
+  assert.match(chosen.innerHTML,/Away 71 · Home <strong class="chosen-score">79<\/strong>/);
+  paintScore(chosen,{...base,strategy:'lead',reason:'Boston leads 71–79 points (8 points ahead)',score_scanned_at:new Date(start).toISOString()},start);
+  assert.match(chosen.innerHTML,/Away <strong class="chosen-score">71<\/strong> · Home 79/);
+  assert.match(page,/\.chosen-score\{color:#26f5ae/);
   assert.match(page,/Tennis: <strong>5–2 or better<\/strong>/);
 });
 
