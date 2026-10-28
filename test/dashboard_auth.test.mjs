@@ -32,6 +32,8 @@ test('in-page login avoids repeated browser Basic Auth challenges',async()=>{
     const api=await request('/api/state');
     assert.equal(api.status,401);
     assert.equal(api.headers.get('www-authenticate'),null);
+    assert.equal((await request('/api/history')).status,401);
+    assert.equal((await request('/history')).status,303);
     const login=await request('/login');
     assert.equal(login.status,200);
     assert.match(await login.text(),/autocomplete="current-password"/);
@@ -46,6 +48,11 @@ test('in-page login avoids repeated browser Basic Auth challenges',async()=>{
     const cookie=signedIn.headers.get('set-cookie');
     assert.ok(cookie);
     assert.equal((await request('/',{headers:{cookie}})).status,200);
+    const dashboard=await request('/',{headers:{cookie}});
+    assert.match(await dashboard.text(),/href="\/history" aria-label="Trade history"/);
+    const history=await request('/history',{headers:{cookie}});
+    assert.equal(history.status,200);
+    assert.match(await history.text(),/Completed trades since history began/);
     const basic='Basic '+Buffer.from('rjdc:'+secret).toString('base64');
     assert.equal((await request('/',{headers:{authorization:basic}})).status,200);
   }finally{

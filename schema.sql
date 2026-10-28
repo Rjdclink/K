@@ -116,3 +116,21 @@ CREATE TABLE IF NOT EXISTS settlement_poll (
   last_check timestamptz NOT NULL DEFAULT to_timestamp(0)
 );
 INSERT INTO settlement_poll(id) VALUES(1) ON CONFLICT DO NOTHING;
+-- The one-time marker is created before this feature deploys. Reapplying the
+-- schema keeps the original start time and does not backfill older trades.
+CREATE TABLE IF NOT EXISTS trade_history_config (
+  id integer PRIMARY KEY CHECK (id=1),
+  started_at timestamptz NOT NULL DEFAULT now()
+);
+INSERT INTO trade_history_config(id) VALUES(1) ON CONFLICT DO NOTHING;
+CREATE TABLE IF NOT EXISTS trade_history (
+  id uuid PRIMARY KEY,
+  market_ticker text NOT NULL,
+  sport text NOT NULL,
+  teams text NOT NULL,
+  occurred_at timestamptz NOT NULL,
+  profit_cents integer NOT NULL,
+  outcome text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS trade_history_occurred_idx ON trade_history(occurred_at DESC,id DESC);
