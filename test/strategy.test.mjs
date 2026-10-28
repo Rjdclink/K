@@ -134,21 +134,23 @@ test('tennis match winner requires clinching set, two-game lead, server and poin
   assert.equal(tennisSignal(live(3,1,'unknown'),market),null);
   assert.equal(tennisSignal(live(),{...market,event_ticker:'KXATPSETWINNER-2'}),null);
 });
-test('hockey needs three goals under seven minutes or two under five in the final period',()=>{
+test('hockey requires three goals at 6:30 or less in final period',()=>{
   const hockey={...milestone,type:'hockey_match',details:{league:'NHL'}};
   const market={status:'active',title:'New York wins',yes_sub_title:'New York'};
   const at=(home,away,period,clock)=>({details:{...live(home,away,period).details,clock}});
-  assert.equal(leadSignal(gameState(hockey,at(3,1,3,'04:59')),market)?.fraction,.15);
+  assert.equal(leadSignal(gameState(hockey,at(3,1,3,'04:59')),market),null);
   assert.equal(leadSignal(gameState(hockey,at(4,1,3,'04:59')),market)?.fraction,.15);
-  assert.equal(leadSignal(gameState(hockey,at(3,0,3,'06:59')),market)?.fraction,.15);
+  assert.equal(leadSignal(gameState(hockey,at(3,0,3,'06:31')),market),null);
+  assert.equal(leadSignal(gameState(hockey,at(3,0,3,'06:30')),market)?.fraction,.15);
   assert.equal(leadSignal(gameState(hockey,at(3,0,3,'05:00')),market)?.fraction,.15);
-  assert.equal(leadSignal(gameState(hockey,at(4,1,3,'00:29')),market)?.fraction,.25);
+  assert.equal(leadSignal(gameState(hockey,at(5,0,3,'00:29')),market)?.fraction,.25);
   assert.equal(leadSignal(gameState(hockey,at(3,1,3,'06:59')),market),null);
   assert.equal(leadSignal(gameState(hockey,at(3,1,3,'05:00')),market),null);
+  assert.equal(leadSignal(gameState(hockey,at(3,1,3,'03:59')),market),null);
   assert.equal(leadSignal(gameState(hockey,at(3,0,3,'07:00')),market),null);
   assert.equal(leadSignal(gameState(hockey,at(3,0,3,'07:01')),market),null);
   assert.equal(leadSignal(gameState(hockey,at(3,0,2,'06:59')),market),null);
-  assert.equal(leadSignal(gameState(hockey,at(2,0,3,'04:59')),market)?.fraction,.15);
+  assert.equal(leadSignal(gameState(hockey,at(2,0,3,'04:59')),market),null);
   assert.equal(leadSignal(gameState(hockey,at(2,1,3,'04:59')),market),null);
   assert.equal(leadSignal(gameState(hockey,at(3,1,2,'04:59')),market),null);
   assert.equal(leadSignal(gameState(hockey,at(3,1,3,'05:00')),market),null);
