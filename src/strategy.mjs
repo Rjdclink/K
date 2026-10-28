@@ -94,7 +94,7 @@ export function endWindow(game){
   return false;
 }
 export function overSignal(game, market) {
-  if (!endWindow(game) || game.home+game.away<=0 || market.status!=='active' && market.status!=='open') return null;
+  if (!game.verifiedLive || !game.scoreKnown || Math.min(game.home,game.away)<0 || game.home+game.away<=0 || market.status!=='active' && market.status!=='open') return null;
   // Scores from these feeds are not comparable to a whole-game contract line.
   if (!/basketball|baseball|football|hockey|soccer/.test(game.type) || /esports|table_tennis/.test(game.type)) return null;
   const series=String(market.event_ticker||'').split('-')[0];
