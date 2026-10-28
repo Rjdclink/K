@@ -453,7 +453,8 @@ export default {async fetch(req){const url=new URL(req.url);
   }
   if(req.method==='GET'&&url.pathname==='/login')return dashboardAuth(req)?Response.redirect(new URL('/',url),303):response(loginPage(),'text/html; charset=utf-8');
   if(req.method==='POST'&&url.pathname==='/login'){
-    if(req.headers.get('origin')!==url.origin||!req.headers.get('content-type')?.startsWith('application/x-www-form-urlencoded'))return json({error:'Forbidden'},403);
+    const origin=req.headers.get('origin');
+    if((origin&&origin!==url.origin)||!req.headers.get('content-type')?.startsWith('application/x-www-form-urlencoded'))return json({error:'Forbidden'},403);
     const raw=await req.text();if(raw.length>512)return json({error:'Invalid sign-in'},400);
     const form=new URLSearchParams(raw);
     if(!checkCredentials(form.get('username'),form.get('password'),process.env.DASHBOARD_PASSWORD))return new Response(loginPage(true),{status:401,headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'}});

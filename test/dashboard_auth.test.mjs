@@ -35,13 +35,14 @@ test('in-page login avoids repeated browser Basic Auth challenges',async()=>{
     const login=await request('/login');
     assert.equal(login.status,200);
     assert.match(await login.text(),/autocomplete="current-password"/);
-    const post=(password,origin=base)=>request('/login',{method:'POST',headers:{origin,'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({username:'rjdc',password}).toString()});
+    const post=(password,origin=base)=>request('/login',{method:'POST',headers:{...(origin?{origin}:{}),'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({username:'rjdc',password}).toString()});
     assert.equal((await post(secret,'https://other.test')).status,403);
     const incorrect=await post('wrong');
     assert.equal(incorrect.status,401);
     assert.equal(incorrect.headers.get('www-authenticate'),null);
     const signedIn=await post(secret);
     assert.equal(signedIn.status,303);
+    assert.equal((await post(secret,null)).status,303);
     const cookie=signedIn.headers.get('set-cookie');
     assert.ok(cookie);
     assert.equal((await request('/',{headers:{cookie}})).status,200);
