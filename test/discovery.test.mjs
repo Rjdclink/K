@@ -1,0 +1,38 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {eligibleForMarkets,linkedEventTickers,gameTimeLabel} from '../src/discovery.mjs';
+import {gameState,overSignal,sportName} from '../src/strategy.mjs';
+
+test('find game and both total families from a game-only milestone',()=>{
+  const m={type:'basketball_game',related_event_tickers:['KXNBAGAME-26OCT28BOSBKN']};
+  assert.deepEqual(linkedEventTickers(m),['KXNBAGAME-26OCT28BOSBKN','KXNBATOTAL-26OCT28BOSBKN','KXNBATEAMTOTAL-26OCT28BOSBKN']);
+  assert.deepEqual(linkedEventTickers({...m,related_event_tickers:[...m.related_event_tickers,'KXNBATOTAL-26OCT28BOSBKN']}),['KXNBAGAME-26OCT28BOSBKN','KXNBATOTAL-26OCT28BOSBKN','KXNBATEAMTOTAL-26OCT28BOSBKN']);
+});
+
+test('retain only full game markets, primary winner and tennis match',()=>{
+  const m={type:'basketball_game',related_event_tickers:['KXNBA1QGAME-DATE','KXNBASPREAD-DATE','KXNBAGAME-DATE','KXNBA1HTOTAL-DATE'],primary_event_tickers:['KXNBAGAME-DATE'],details:{main_game_event_ticker:'KXNBAGAME-DATE'}};
+  assert.deepEqual(linkedEventTickers(m),['KXNBAGAME-DATE','KXNBATOTAL-DATE','KXNBATEAMTOTAL-DATE']);
+  assert.deepEqual(linkedEventTickers({type:'tennis_tournament_singles',details:{main_game_event_ticker:'KXATPMATCH-DATE'}}),['KXATPMATCH-DATE']);
+});
+
+test('unsupported feeds keep the scan active but do not fetch markets',()=>{
+  const board=(type)=>gameState({id:type,type,title:'Away at Home'},{details:{status:'live',home_score:9,away_score:3}});
+  assert.equal(eligibleForMarkets(board('esports_match')),false);
+  assert.equal(eligibleForMarkets(board('cricket_match')),false);
+  assert.equal(eligibleForMarkets(board('basketball_game')),true);
+  assert.equal(sportName({type:'esports_soccer_game'}),'eSoccer');
+  assert.equal(gameTimeLabel(board('esports_match')),'Live clock unavailable');
+  assert.equal(gameTimeLabel(board('cricket_match')),'Live clock unavailable');
+  assert.equal(gameTimeLabel({...board('cricket_match'),period:2}),'Innings 2 · no countdown clock');
+});
+
+test('show verified phase and parsed clock without fabricating remaining time',()=>{
+  const m={id:'a',type:'basketball_game',title:'Away at Home'};
+  const state=d=>gameState(m,{details:{status:'live',home_score:73,away_score:65,...d}});
+  assert.equal(gameTimeLabel(state({quarter:4,period_remaining_time:'1:07'})),'01:07 remaining');
+  assert.equal(gameTimeLabel(state({quarter:4})),'Live clock unavailable');
+  assert.equal(gameTimeLabel({...state({}),status:'final'}),'Final');
+  const over={status:'active',event_ticker:'KXNBATOTAL-DATE',title:'Combined total points over 130.5',rules_primary:'Combined total points scored in the game',floor_strike:130.5,yes_ask_dollars:'0.98'};
+  assert.equal(overSignal(state({quarter:4}),over),null);
+  assert.equal(overSignal(state({quarter:4,period_remaining_time:'0:59'}),over)?.strategy,'over');
+});

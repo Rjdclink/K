@@ -2,6 +2,7 @@ const N = v => v === null || v === undefined || v === '' ? NaN : Number(v);
 const pick = (obj, names) => names.map(k => obj?.[k]).find(v => Number.isFinite(N(v)));
 export function sportName(m) {
   const s = `${m.details?.competition || ''} ${m.details?.league || ''} ${m.type || ''}`.toLowerCase();
+  if (/esports/.test(String(m.type||'').toLowerCase())) return /soccer/.test(s)?'eSoccer':/basketball/.test(s)?'eBasketball':'Esports';
   if (/table_tennis/.test(s)) return 'Table tennis';
   if (/college.*football|cfb/.test(s)) return 'CFB';
   if (/college.*basketball|ncaab|ncaam|ncaaw/.test(s)) return 'NCAAB';
