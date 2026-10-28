@@ -35,7 +35,7 @@ export function quoteForYes(quote,ticker,budgetCents,feeMultiplier=2){
   const feeCents=Math.ceil(feeMultiplier*7*count*yesCost*(1-yesCost));
   const debitCents=Math.ceil(100*count*yesCost)+feeCents;
   const profitCents=Math.floor(100*count-debitCents);
-  if(debitCents>budgetCents||profitCents<=0)return null;
+  if(debitCents>budgetCents||profitCents<25)return null;
   return {count,yesCost,debitCents,profitCents};
 }
 export function comboLegs(legs){return legs.map(c=>({game_id:c.milestone.id,event_ticker:c.event.event_ticker,market_ticker:c.market.ticker,strategy:c.signal.strategy,title:c.state.title,sport:c.state.sport}));}

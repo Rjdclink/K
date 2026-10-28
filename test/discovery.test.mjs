@@ -22,6 +22,12 @@ test('retain actual linked period total markets plus primary winner and tennis m
   assert.equal(discovered.filter(t=>t==='KXNBA1HTOTAL-DATE').length,1);
   assert.deepEqual(linkedEventTickers({type:'tennis_tournament_singles',details:{main_game_event_ticker:'KXATPMATCH-DATE'}}),['KXATPMATCH-DATE']);
 });
+test('retain directly linked player score markets without treating their game score as a player stat',()=>{
+  const m={type:'basketball_game',related_event_tickers:['KXNBAGAME-DATE','KXNBAPTS-DATE','KXNBAPRA-DATE','KXNBASPREAD-DATE']};
+  const found=linkedEventTickers(m);
+  assert.ok(found.includes('KXNBAPTS-DATE'));assert.ok(found.includes('KXNBAPRA-DATE'));
+  assert.ok(!found.includes('KXNBASPREAD-DATE'));
+});
 
 test('unsupported feeds keep the scan active but do not fetch markets',()=>{
   const board=(type)=>gameState({id:type,type,title:'Away at Home'},{details:{status:'live',home_score:9,away_score:3}});

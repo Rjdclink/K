@@ -14,7 +14,10 @@ export function linkedEventTickers(milestone){
     if(/(?:1H|2H|[1-4]Q|[1-3]P|[1-9]INNING|HALF|SET)(?:GAME|MATCH)$/.test(series))return false;
     return !series.endsWith('MATCH')||/tennis/.test(String(milestone.type||''));
   };
-  const listed=source.filter(main);
+  // Kalshi links player props and other score markets directly to the game.
+  // Keep those actual tickers; the strategy still rejects any metric it
+  // cannot independently verify.
+  const listed=source.filter(t=>String(t).includes('-') && (main(t) || /(?:PTS|REB|AST|3PT|PRA|STL|BLK)$/.test(String(t).split('-')[0])));
   const derived=listed.filter(ticker=>ticker.split('-')[0].endsWith('GAME')).flatMap(ticker=>{
     const [series,...rest]=ticker.split('-'),suffix=rest.join('-'),prefix=series.slice(0,-4);
     // These are only discovery candidates. The exchange must return an open

@@ -1,7 +1,7 @@
 // ESPN and FOX publish the scoreboards used by their sites. These endpoints
 // are not contractual data APIs; a changed schema or unavailable fixture must
 // fail closed, never silently turn into permission to buy an over.
-import { periodValue } from './strategy.mjs';
+import { periodValue, playerOverSpec } from './strategy.mjs';
 const FOX_KEY='jE7yBJVRNAwdDesMgTzTXUUSx1It41Fq'; // Public key in foxsports.com scoreboard URLs.
 const clean=s=>String(s||'').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/&/g,' and ').replace(/[^a-z0-9]/g,'');
 const score=v=>v===null||v===undefined||v===''?NaN:Number(v);
@@ -59,7 +59,7 @@ export function espnMatches(data,game,milestone){
     if(!home||!away||!sameFixture(game,milestone,teamAliases(home.team),teamAliases(away.team),e.date))return [];
     const status=c.status||e.status;
     const periods=(home.linescores||[]).map((part,i)=>({number:i+1,home:score(part.value),away:score(away.linescores?.[i]?.value)}));
-    return [{source:'ESPN',home:score(home.score),away:score(away.score),periods,live:status?.type?.state==='in',clockOk:clockCompatible(game,status?.period,status?.displayClock)}];
+    return [{source:'ESPN',eventId:e.id,home:score(home.score),away:score(away.score),periods,live:status?.type?.state==='in',clockOk:clockCompatible(game,status?.period,status?.displayClock)}];
   });
 }
 export function foxMatches(data,game,milestone){
@@ -90,6 +90,18 @@ export function scoreAgreement(game,bySource,market){
     agrees++;
   }
   return agrees>=1;
+}
+export function playerStatAgreement(summary,player){
+  const matches=(summary?.boxscore?.players||[]).flatMap(team=>(team.statistics||[]).flatMap(group=>{
+    const index=group.names?.findIndex(name=>name===({PTS:'PTS',REB:'REB',AST:'AST','3PT':'3PT',STL:'STL',BLK:'BLK',PRA:'PTS'}[player.metric]));
+    if(index<0)return [];
+    return (group.athletes||[]).filter(a=>clean(a.athlete?.displayName)===clean(player.name)&&!a.didNotPlay).map(a=>{
+      const at=label=>group.names?.indexOf(label);
+      const read=label=>{const n=at(label);return n<0?NaN:score(String(a.stats?.[n]||'').split('-')[0])};
+      return player.metric==='PRA'?read('PTS')+read('REB')+read('AST'):read(player.metric);
+    });
+  }));
+  return matches.length===1&&Number.isInteger(matches[0])&&matches[0]===player.value;
 }
 async function json(url,fetcher){
   const response=await fetcher(url,{headers:{accept:'application/json'},signal:AbortSignal.timeout(7000)});
@@ -127,5 +139,13 @@ export async function verifyIndependentOver(game,milestone,{fetcher=fetch,cache,
       seen.add(signature);return matches;
     });
   });
-  return scoreAgreement(game,bySource,market);
+  if(!scoreAgreement(game,bySource,market))return false;
+  const player=playerOverSpec(game,market);
+  if(!player)return true;
+  const matches=bySource[0].filter(m=>m.live&&m.clockOk&&m.home===game.home&&m.away===game.away&&m.eventId);
+  if(matches.length!==1)return false;
+  try{
+    const summary=await read(`https://site.api.espn.com/apis/site/v2/sports/${espn}/summary?event=${encodeURIComponent(matches[0].eventId)}`);
+    return playerStatAgreement(summary,player);
+  }catch{return false}
 }

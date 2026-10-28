@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { gameState } from '../src/strategy.mjs';
-import { espnMatches, foxMatches, scoreAgreement, verifyIndependentOver } from '../src/score_verification.mjs';
+import { espnMatches, foxMatches, scoreAgreement, verifyIndependentOver, playerStatAgreement } from '../src/score_verification.mjs';
 
 const start=new Date(Date.now()-20*60000).toISOString();
 const m={id:'nba-game',title:'BKN Nets at BOS Celtics',type:'basketball_game',start_date:start,details:{league:'NBA'}};
@@ -53,4 +53,18 @@ test('a period total requires an independent matching period breakdown, not just
   assert.equal(scoreAgreement(board,[[same],[]],contract),true);
   assert.equal(scoreAgreement(board,[[{...same,periods:[{number:1,home:13,away:11}]}],[]],contract),false);
   assert.equal(scoreAgreement(board,[[],[{source:'FOX Sports',home:24,away:20,live:true,clockOk:true}]],contract),false);
+});
+test('player point and PRA overs require the named ESPN athlete and matching boxscore stat',async()=>{
+  const live={milestone_id:m.id,_observed_at:new Date().toISOString(),details:{status:'live',home_score:24,away_score:20,quarter:1,clock:'05:00',last_updated_ts:Date.now()/1000,player_stats:{player1:{points:16,rebounds:4,assists:3}}}};
+  const state=gameState(m,live);
+  const market={event_ticker:'KXNBAPTS-DATE',status:'active',title:'Player points',yes_sub_title:'Cade Cunningham: 15+',rules_primary:'Cade Cunningham records 15+ points',custom_strike:{basketball_player:'player1'},floor_strike:14.5,yes_ask_dollars:'0.90'};
+  const summary={boxscore:{players:[{statistics:[{names:['PTS','REB','AST'],athletes:[{athlete:{displayName:'Cade Cunningham'},stats:['16','4','3']}]}]}]}};
+  assert.equal(playerStatAgreement(summary,{name:'Cade Cunningham',metric:'PTS',value:16}),true);
+  assert.equal(playerStatAgreement(summary,{name:'Cade Cunningham',metric:'PRA',value:23}),true);
+  assert.equal(playerStatAgreement(summary,{name:'Cade Cunningham',metric:'PTS',value:17}),false);
+  const board=espn(24,20,{id:'espn-game'});
+  const fetcher=async url=>({ok:true,json:async()=>url.includes('/summary?')?summary:url.includes('espn.com')?board:fox()});
+  assert.equal(await verifyIndependentOver(state,m,{fetcher,market}),true);
+  assert.equal(await verifyIndependentOver({...state,playerStats:{player1:{points:17,rebounds:4,assists:3}}},m,{fetcher,market}),false);
+  assert.equal(await verifyIndependentOver(state,m,{fetcher:async url=>({ok:true,json:async()=>url.includes('/summary?')?{boxscore:{players:[]}}:url.includes('espn.com')?board:fox()}),market}),false);
 });

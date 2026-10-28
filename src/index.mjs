@@ -16,6 +16,7 @@ import { eligibleForMarkets, linkedEventTickers, gameTimeLabel, storedClockSecon
 import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOver } from './score_verification.mjs';
 import { COMBO_WINDOW_MS, comboCollection, comboLegs, filledComboWindow, quoteForYes } from './combos.mjs';
+import { yesDepthAtAsk } from './orderbook.mjs';
 
 const API='https://external-api.kalshi.com/trade-api/v2';
 const pool = new pg.Pool({connectionString:process.env.DATABASE_URL, max:4, idleTimeoutMillis:15000});
@@ -170,11 +171,11 @@ async function milestones(){
 }
 async function liveBatch(ms){
   const map=new Map();for(let i=0;i<ms.length;i+=40){const groups=[ms.slice(i,i+20),ms.slice(i+20,i+40)].filter(g=>g.length);
-    const results=await Promise.all(groups.map(async group=>{const q=new URLSearchParams();group.forEach(m=>q.append('milestone_ids',m.id));
+    const results=await Promise.all(groups.map(async group=>{const q=new URLSearchParams();group.forEach(m=>q.append('milestone_ids',m.id));if(group.some(m=>/basketball/.test(m.type)))q.set('include_player_stats','true');
     let list=[];try{list=(await kalshi('/live_data/batch?'+q)).live_datas||[]}catch(e){
       if(!/^Kalshi (400|404|405) /.test(String(e.message)))throw e;
       console.warn('Live batch unsupported; using bounded individual requests:',e.message);
-      for(const m of group){try{const result=await kalshi('/live_data/milestone/'+encodeURIComponent(m.id));if(result.live_data)list.push(result.live_data)}catch(error){if(/Kalshi 429 /.test(String(error.message)))throw error}}
+      for(const m of group){try{const result=await kalshi('/live_data/milestone/'+encodeURIComponent(m.id)+(/basketball/.test(m.type)?'?include_player_stats=true':''));if(result.live_data)list.push(result.live_data)}catch(error){if(/Kalshi 429 /.test(String(error.message)))throw error}}
     }
     return {list,observedAt:new Date().toISOString()};}));
     results.forEach(({list,observedAt})=>list.forEach(d=>map.set(d.milestone_id,{...d,_observed_at:observedAt})));}
@@ -206,6 +207,13 @@ async function reserve(signal,game,event,market,count,price,balance){
 function feeReserve(event,market){return Math.max(2,Number(process.env.FEE_MULTIPLIER_RESERVE)||2,2*Number(event?.fee_multiplier_override||0),2*Number(market?.fee_multiplier_override||0))}
 const minimumCount=market=>market.fractional_trading_enabled===false?1:0.01;
 const hasAsk=market=>Number.isFinite(Number(market.yes_ask_size_fp))&&Number(market.yes_ask_size_fp)>=minimumCount(market);
+async function executableQuote(market){
+  // A market's advertised best ask can disappear before a FOK order crosses.
+  // NO bids are the resting YES offers; use only depth at or below this ask.
+  const {orderbook_fp}=await kalshi('/markets/'+encodeURIComponent(market.ticker)+'/orderbook');
+  const available=yesDepthAtAsk(orderbook_fp,market.yes_ask_dollars,market.yes_ask_size_fp);
+  return available>=minimumCount(market)?{...market,yes_ask_size_fp:String(available)}:null;
+}
 function contractCount(balance,market,fraction,bankroll,budget,fees){
   const count=orderSize(balance,market.yes_ask_dollars,market.yes_ask_size_fp,fraction,Number(process.env.MAX_YES_PRICE||1),bankroll,budget,fees);
   return market.fractional_trading_enabled===false?Math.floor(count):count;
@@ -273,10 +281,11 @@ async function submit(signal,game,event,market,balance,bankroll,budgetCents=Infi
     // A partial IOC fill can be below the minimum net profit. Require the
     // entire quantity at the limit price or no entry at all.
     const result=await kalshi('/portfolio/events/orders',{method:'POST',auth:true,body:{ticker:market.ticker,client_order_id:id,side:'bid',count:count.toFixed(2),price:price.toFixed(4),time_in_force:'fill_or_kill',self_trade_prevention_type:'taker_at_cross',post_only:false}});
-    await pool.query(`UPDATE trade_attempts SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE id=$1`,[id,Number(result.fill_count)>0?'filled':'unfilled',result.order_id||null,Number(result.fill_count||0)]);
-    if(Number(result.fill_count)>0)await invalidateBalance();
-    return Number(result.fill_count)>0;
-  }catch(e){const terminal=/^Kalshi (400|401|403|404|422) /.test(String(e.message));await pool.query(`UPDATE trade_attempts SET status=$2,error=$3,updated_at=now() WHERE id=$1`,[id,terminal?'rejected':'check_order',String(e.message).slice(0,250)]);console.error('Order needs reconciliation:',market.ticker,e.message);return false}
+    const filled=Number(result.fill_count_fp??result.fill_count??result.order?.fill_count_fp??0);
+    await pool.query(`UPDATE trade_attempts SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE id=$1`,[id,filled>0?'filled':'unfilled',result.order_id||result.order?.order_id||null,filled]);
+    if(filled>0)await invalidateBalance();
+    return filled>0;
+  }catch(e){const message=String(e.message),noLiquidity=/^Kalshi 409 .*fill or kill insufficient resting volume/i.test(message),terminal=/^Kalshi (400|401|403|404|422) /.test(message);await pool.query(`UPDATE trade_attempts SET status=$2,error=$3,updated_at=now() WHERE id=$1`,[id,noLiquidity?'unfilled':terminal?'rejected':'check_order',message.slice(0,250)]);console.error('Order response:',market.ticker,e.message);return false}
 }
 async function recoverPending(signal,game,event,market,balance,bankroll,budgetCents=Infinity,availableCents=balance){
   const {rows:[row]}=await pool.query(`SELECT * FROM trade_attempts WHERE market_ticker=$1 AND strategy=$2 AND status IN ('check_order','reserved')`,[market.ticker,signal.strategy]);
@@ -342,7 +351,7 @@ async function executeCombo(group,account,bankroll,overRemaining,scoreboardCache
         if(!Number.isFinite(remaining))return null;
         if(remaining>0)await new Promise(resolve=>setTimeout(resolve,remaining));
       }
-      const liveData=(await kalshi('/live_data/milestone/'+encodeURIComponent(c.milestone.id))).live_data;
+      const liveData=(await kalshi('/live_data/milestone/'+encodeURIComponent(c.milestone.id)+(/basketball/.test(c.milestone.type)?'?include_player_stats=true':''))).live_data;
       if(!liveData)return null;
       liveData._observed_at=new Date().toISOString();
       const state=gameState(c.milestone,liveData);
@@ -552,20 +561,22 @@ async function scan(cachedMilestones){
     });
     // Verify independent over scoreboards in parallel. A dozen sequential 12s
     // dwells used to freeze the dashboard for minutes and miss later games.
-    const overPreflights=new Map(),overs=opportunities.filter(c=>c.signal.strategy==='over'&&hasAsk(c.market));
+    const overPreflights=new Map(),overReady=new Map(),overs=live()?opportunities.filter(c=>c.signal.strategy==='over'&&hasAsk(c.market)):[];
+    for(const c of overs)overReady.set(signalKey(c),new Promise(resolve=>{c.preflightDone=resolve}));
     let cursor=0;
-    await Promise.all(Array.from({length:Math.min(20,overs.length)},async()=>{
+    const workersDone=Promise.all(Array.from({length:Math.min(20,overs.length)},async()=>{
       while(cursor<overs.length){const c=overs[cursor++];
         try{
           const remaining=COMBO_WINDOW_MS-(Date.now()-c.state.observedAt);
           if(!Number.isFinite(remaining))continue;
           if(remaining>0)await new Promise(resolve=>setTimeout(resolve,remaining));
-          const latest=(await kalshi('/live_data/milestone/'+encodeURIComponent(c.milestone.id))).live_data;
+          const latest=(await kalshi('/live_data/milestone/'+encodeURIComponent(c.milestone.id)+(/basketball/.test(c.milestone.type)?'?include_player_stats=true':''))).live_data;
           if(!latest)continue;
           latest._observed_at=new Date().toISOString();
           const state=gameState(c.milestone,latest);
           if(confirmedOver(c.state,state,c.market)&&await verifyIndependentOver(state,c.milestone,{cache:scoreboardCache,market:c.market}))overPreflights.set(signalKey(c),state);
         }catch(e){console.warn('Over preflight deferred:',c.market.ticker,e.message)}
+        finally{c.preflightDone()}
       }
     }));
     for(const c of opportunities){let state=c.state;try{
@@ -584,13 +595,24 @@ async function scan(cachedMilestones){
         const latest=await accountBalance();balance=Number(latest.balance);bankroll=balance+Number(latest.portfolio_value);
         // A confirmed over preflight expires quickly; never submit on a stale
         // score. Lead games still require a fresh check before the quote.
-        const freshState=c.signal.strategy==='over'?overPreflights.get(signalKey(c)):
+        if(c.signal.strategy==='over'&&overReady.has(signalKey(c)))await overReady.get(signalKey(c));
+        let freshState=c.signal.strategy==='over'?overPreflights.get(signalKey(c)):
           gameState(c.milestone,(await liveBatch([c.milestone])).get(c.milestone.id));
-        if(!freshState || c.signal.strategy==='over' && Date.now()-freshState.observedAt>10000)continue;
+        if(!freshState)continue;
+        if(c.signal.strategy==='over'&&Date.now()-freshState.observedAt>10000){
+          const remaining=COMBO_WINDOW_MS-(Date.now()-freshState.observedAt);
+          if(remaining>0)await new Promise(resolve=>setTimeout(resolve,remaining));
+          const next=(await kalshi('/live_data/milestone/'+encodeURIComponent(c.milestone.id)+(/basketball/.test(c.milestone.type)?'?include_player_stats=true':''))).live_data;
+          if(!next)continue;
+          next._observed_at=new Date().toISOString();const rechecked=gameState(c.milestone,next);
+          if(!confirmedOver(freshState,rechecked,c.market)||!await verifyIndependentOver(rechecked,c.milestone,{cache:scoreboardCache,market:c.market}))continue;
+          freshState=rechecked;
+        }
         if(c.signal.strategy==='lead' && /basketball/.test(state.type) &&
           (freshState.period!==state.period || !freshState.periodConsistent ||
             freshState.remainingSeconds>state.remainingSeconds))continue;
-        const quote=(await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market;
+        const rawQuote=(await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market;
+        const quote=rawQuote&&hasAsk(rawQuote)?await executableQuote(rawQuote):null;
         if(!quote||quote.ticker!==c.market.ticker||quote.event_ticker!==c.event.event_ticker||!hasAsk(quote))continue;
         const stillQualifies=c.signal.strategy==='over'?overSignal(freshState,quote):leadSignal(freshState,quote)||tennisSignal(freshState,quote);
         if(!stillQualifies)continue;
@@ -618,6 +640,7 @@ async function scan(cachedMilestones){
         }
       }catch(e){const message=`${c.market.ticker}: ${String(e.message).slice(0,170)}`;executionErrors.push(message);console.error('Candidate execution failed:',message)}
     }
+    await workersDone;
     // The first ticket uses the currently held fills. A later ticket waits for
     // two newly filled singles, then uses up to six distinct held games.
     if(live()&&account){

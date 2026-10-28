@@ -307,37 +307,25 @@ test('entry submissions and recovery use full fills while exits cannot target ov
   assert.match(source,/if\(a\.signal\.strategy!==b\.signal\.strategy\)return a\.signal\.strategy==='over'\?-1:1/);
   assert.match(source,/return profit\(b\)-profit\(a\)/);
 });
-test('zero score never creates an over and net profit tiers include conservative fees',()=>{
+test('zero score never creates an over and every entry needs 25 cents net after fees',()=>{
   const market={status:'active',title:'Total goals over 0',rules_primary:'Combined total goals scored in the game',strike_type:'greater',floor_strike:-0.5};
   const soccer={...milestone,type:'soccer_tournament_multi_leg'};
   assert.equal(overSignal(gameState(soccer,{details:{status:'live',home_score:0,away_score:0}}),market),null);
-  assert.equal(minimumProfitCents('over',9900),0);
-  assert.equal(minimumProfitCents('over',10000),0);
-  assert.equal(minimumProfitCents('over',20000),0);
-  assert.equal(minimumProfitCents('lead',9900),0);
-  assert.equal(minimumProfitCents('lead',10000),50);
-  assert.equal(minimumProfitCents('lead',20000),100);
+  for(const strategy of ['over','lead'])for(const cash of [9900,10000,20000])assert.equal(minimumProfitCents(strategy,cash),25);
   assert.equal(profitableCount(10,.99,2,'over',9900),0);
   assert.equal(profitableCount(10,.99,2,'over',20000),0);
   assert.equal(profitableCount(1,.99,2,'over',9900),0);
-  assert.equal(profitableCount(100,.99,2,'over',9900),0);
+  assert.equal(profitableCount(100,.99,2,'over',9900),100);
   assert.equal(profitableCount(100,.90,2,'over',9900),100);
   assert.ok(netSettlementProfitCents(100,.99,2)>0);
   assert.equal(profitableCount(1,1,2,'lead',100),0);
-  assert.equal(profitableCount(1,.90,2,'lead',20000,'basketball_game',299),1);
+  assert.equal(profitableCount(1,.90,2,'lead',20000,'basketball_game',299),0);
   assert.equal(profitableCount(1,.90,2,'lead',20000,'football_game'),0);
   assert.equal(profitableCount(1,.99,2,'lead',20000,'basketball_game',20),0);
 });
-test('basketball needs positive net profit after fees but no additional floor',()=>{
+test('basketball and other sports share the 25 cent net floor',()=>{
   for(const type of ['basketball_game','college_basketball_game']){
-    assert.equal(minimumProfitCents('lead',20000,type,300),0);
-    assert.equal(minimumProfitCents('lead',20000,type,181),0);
-    assert.equal(minimumProfitCents('lead',20000,type,180),0);
-    assert.equal(minimumProfitCents('lead',20000,type,61),0);
-    assert.equal(minimumProfitCents('lead',20000,type,60),0);
-    assert.equal(minimumProfitCents('lead',20000,type,30),0);
-    assert.equal(minimumProfitCents('lead',20000,type,1),0);
-    assert.equal(minimumProfitCents('lead',20000,type,0),Infinity);
+    for(const seconds of [300,181,180,61,60,30,1,0])assert.equal(minimumProfitCents('lead',20000,type,seconds),25);
     assert.equal(profitableCount(12,.90,2,'lead',20000,type,299),12);
     assert.equal(profitableCount(6,.90,2,'lead',20000,type,61),6);
     assert.equal(profitableCount(6,.90,2,'lead',20000,type,60),6);
@@ -345,8 +333,8 @@ test('basketball needs positive net profit after fees but no additional floor',(
     assert.equal(profitableCount(3,.90,2,'lead',20000,type,30),3);
     assert.equal(profitableCount(3,.99,2,'lead',20000,type,20),0);
   }
-  assert.equal(minimumProfitCents('lead',20000,'football_game',30),100);
-  assert.equal(minimumProfitCents('over',20000,'basketball_game',30),0);
+  assert.equal(minimumProfitCents('lead',20000,'football_game',30),25);
+  assert.equal(minimumProfitCents('over',20000,'basketball_game',30),25);
 });
 test('very late and commanding lead reaches 25 percent; comeback detects tie or reversal',()=>{
   const m={...milestone,type:'football_game',details:{league:'NFL',home_team_id:'NY',away_team_id:'BOS'}};

@@ -94,7 +94,7 @@ export function gameState(m, live) {
   const homeUnits=home,awayUnits=away;
   const unit=/baseball/.test(family)?'runs':/hockey|soccer/.test(family)?'goals':tennis?'games':'points';
   const tennisData=tennis?{bestOf:N(m.details?.best_of),firstId:m.details?.first_competitor_id,secondId:m.details?.second_competitor_id,firstGames:N(one?.score),secondGames:N(two?.score),firstSets:N(d.competitor1_overall_score),secondSets:N(d.competitor2_overall_score),firstPoints:N(d.competitor1_current_round_score),secondPoints:N(d.competitor2_current_round_score),firstRound:one?.outcome,secondRound:two?.outcome,server:String(d.server||''),advantage:String(d.advantage||''),mainEvent:m.details?.main_game_event_ticker}:null;
-  return {id:m.id, feedId:live?.milestone_id, observedAt:Date.parse(live?._observed_at||''), updatedAt:Number.isFinite(updated)?updated*1000:NaN, title:m.title, sport, type:family, status, home, away, homeUnits, awayUnits, unit, period, periodScores, setNumber:N(currentSet?.number), phase, periodConsistent, scoreConsistent, clock, remainingSeconds, clockRunning, soccerMinute, soccerHalf:half, soccerExtraTime, matchRemainingSeconds, possessionSide, tennis:tennisData, inningHalf:N(d.inning_half), outs:N(d.outs), progress, verifiedLive, scoreKnown:Number.isFinite(home)&&Number.isFinite(away), homeName:String(d.home_team?.name||d.home_team_name||d.home?.name||(names.length===2?names[1]:'')), awayName:String(d.away_team?.name||d.away_team_name||d.away?.name||(names.length===2?names[0]:'')),homeTeamId:m.details?.home_team_id,awayTeamId:m.details?.away_team_id,eventTickers:m.related_event_tickers||[]};
+  return {id:m.id, feedId:live?.milestone_id, observedAt:Date.parse(live?._observed_at||''), updatedAt:Number.isFinite(updated)?updated*1000:NaN, title:m.title, sport, type:family, status, home, away, homeUnits, awayUnits, unit, period, periodScores, playerStats:d.player_stats||null, setNumber:N(currentSet?.number), phase, periodConsistent, scoreConsistent, clock, remainingSeconds, clockRunning, soccerMinute, soccerHalf:half, soccerExtraTime, matchRemainingSeconds, possessionSide, tennis:tennisData, inningHalf:N(d.inning_half), outs:N(d.outs), progress, verifiedLive, scoreKnown:Number.isFinite(home)&&Number.isFinite(away), homeName:String(d.home_team?.name||d.home_team_name||d.home?.name||(names.length===2?names[1]:'')), awayName:String(d.away_team?.name||d.away_team_name||d.away?.name||(names.length===2?names[0]:'')),homeTeamId:m.details?.home_team_id,awayTeamId:m.details?.away_team_id,eventTickers:m.related_event_tickers||[]};
 }
 const wholeGame = s => !/1st|2nd|3rd|4th|first half|second half|quarter|period|inning|halftime|regulation only|first to score|team total|player|individual|series total/i.test(s);
 export function periodValue(game,market){
@@ -121,7 +121,9 @@ export function overSignal(game, market) {
   if (!/basketball|baseball|football|hockey|soccer/.test(game.type) || /esports|table_tennis/.test(game.type)) return null;
   const series=String(market.event_ticker||'').split('-')[0];
   const teamTotal=/TEAMTOTAL$/.test(series),gameTotal=/TOTAL$/.test(series)&&!teamTotal;
-  if(!teamTotal&&!gameTotal||Object.keys(market.custom_strike||{}).some(k=>/_player$/.test(k)))return null;
+  const player=playerOverSpec(game,market);
+  if(Object.keys(market.custom_strike||{}).some(k=>/_player$/.test(k))&&!player)return null;
+  if(!teamTotal&&!gameTotal&&!player)return null;
   if (game.soccerExtraTime || /soccer/.test(game.type) && !Number.isFinite(game.soccerMinute)) return null;
   // A nearly free YES after an apparently crossed line means the feed and
   // contract disagree. Never treat this as a guaranteed arbitrage.
@@ -129,8 +131,8 @@ export function overSignal(game, market) {
   if (market.result && !['','not_determined'].includes(String(market.result))) return null;
   const text = `${market.title||''} ${market.yes_sub_title||''} ${market.rules_primary||''}`;
   const segment=series.match(/([1-9])(?:Q|P|H|INNING)(?:TEAM)?TOTAL$/);
-  if(!segment && !wholeGame(teamTotal?text.replace(/team total/gi,''):text))return null;
-  if(!/total (points|runs|goals|score)|combined (points|runs|goals|score)|combined score|\bover\s+\d+(?:\.\d+)?\s+(?:points|runs|goals)\s+scored\b/i.test(text))return null;
+  if(!player && !segment && !wholeGame(teamTotal?text.replace(/team total/gi,''):text))return null;
+  if(!player && !/total (points|runs|goals|score)|combined (points|runs|goals|score)|combined score|\bover\s+\d+(?:\.\d+)?\s+(?:points|runs|goals)\s+scored\b/i.test(text))return null;
   if (market.strike_type && !['greater','greater_than'].includes(market.strike_type)) return null;
   const strike = N(market.floor_strike);
   // The displayed line and structured strike must describe the same bet.
@@ -139,6 +141,7 @@ export function overSignal(game, market) {
     if(shown && Number(shown[1])!==strike)return null;
   }
   let scored=game.home+game.away,team='';
+  if(player){scored=player.value;team=player.name;}
   if(segment){
     const period=periodValue(game,market);
     if(!period || !new RegExp(`(?:${segment[1]}(?:st|nd|rd|th)?\\s*(?:quarter|period|half|inning)|(?:Q|P|H)${segment[1]})`,'i').test(text))return null;
@@ -154,7 +157,19 @@ export function overSignal(game, market) {
     if(!team||!norm(market.title).includes(norm(team)))return null;
   }
   if (!Number.isFinite(strike) || strike<0 || scored<=strike) return null;
-  return {strategy:'over', reason:`${scored} scored${team?` by ${team}`:''}; line ${strike} already passed${segment?`; segment ${segment[1]}`:''}`, fraction:0.9};
+  return {strategy:'over', reason:`${scored} ${player?.metric||'scored'}${team?` by ${team}`:''}; line ${strike} already passed${segment?`; segment ${segment[1]}`:''}`, fraction:0.9};
+}
+export function playerOverSpec(game,market){
+  if(!market||!/basketball/.test(game.type)||!/^(?:KX[A-Z0-9]+)(PTS|REB|AST|3PT|PRA|STL|BLK)$/.test(String(market.event_ticker||'').split('-')[0]))return null;
+  const suffix=String(market.event_ticker).split('-')[0].match(/(PTS|REB|AST|3PT|PRA|STL|BLK)$/)?.[1];
+  const id=market.custom_strike?.basketball_player,stats=game.playerStats?.[id];
+  const name=String(market.yes_sub_title||market.title||'').split(':')[0].trim();
+  const line=Number(market.floor_strike),shown=String(market.yes_sub_title||market.title||'').match(/:\s*(\d+)\s*\+/);
+  if(!id||!stats||!name||!shown||!Number.isFinite(line)||Number(shown[1])!==line+0.5)return null;
+  const metrics={PTS:stats.points,REB:stats.rebounds,AST:stats.assists,'3PT':stats.three_points_made,PRA:Number(stats.points)+Number(stats.rebounds)+Number(stats.assists),STL:stats.steals,BLK:stats.blocks};
+  const value=Number(metrics[suffix]);
+  if(!Number.isInteger(value)||value<0)return null;
+  return {id,name,metric:suffix,value};
 }
 // A preflight over needs two distinct exchange updates after the line was
 // crossed. An identical cached response, reversed clock, or corrected score
@@ -167,6 +182,8 @@ export function confirmedOver(first,second,market){
   if(Number.isFinite(first.updatedAt)&&Number.isFinite(second.updatedAt)&&second.updatedAt<=first.updatedAt)return false;
   if([first,second].some(s=>Number.isFinite(s.updatedAt)&&(s.updatedAt>s.observedAt+5000||s.observedAt-s.updatedAt>30000)))return false;
   if(first.home!==second.home||first.away!==second.away||!first.periodConsistent||!second.periodConsistent)return false;
+  const firstPlayer=playerOverSpec(first,market),secondPlayer=playerOverSpec(second,market);
+  if(firstPlayer&&(!secondPlayer||firstPlayer.value!==secondPlayer.value))return false;
   if(Number.isFinite(first.period)&&Number.isFinite(second.period)&&second.period<first.period)return false;
   if(first.period===second.period&&Number.isFinite(first.remainingSeconds)&&Number.isFinite(second.remainingSeconds)&&second.remainingSeconds>first.remainingSeconds)return false;
   if(Number.isFinite(first.soccerMinute)&&Number.isFinite(second.soccerMinute)&&second.soccerMinute<first.soccerMinute)return false;
@@ -235,12 +252,7 @@ export function tennisSignal(game,market){
   return {strategy:'lead',reason:`Tennis match-clinching set ${leaderGames}–${opponentGames}; leader serves, points ${leaderPoints}–${opponentPoints}${t.advantage===leaderId?' advantage':''}`,fraction:opponentGames<=1&&leaderPoints===40?.25:opponentGames<=1?.20:.15};
 }
 export function minimumProfitCents(strategy,availableCents,sportType='',remainingSeconds=NaN){
-  if(strategy==='over')return 0;
-  if(strategy==='lead' && /basketball/.test(sportType)){
-    return Number.isFinite(remainingSeconds)&&remainingSeconds>0&&remainingSeconds<600?0:Infinity;
-  }
-  const hundreds=Math.floor(Math.max(0,Number(availableCents))/10000);
-  return hundreds*50;
+  return 25;
 }
 export function netSettlementProfitCents(count,price,feeMultiplier=2){
   if(!Number.isFinite(count)||count<=0||!Number.isFinite(price)||price<=0||price>=1)return 0;
@@ -249,7 +261,7 @@ export function netSettlementProfitCents(count,price,feeMultiplier=2){
 export function profitableCount(count,price,feeMultiplier,strategy,availableCents,sportType='',remainingSeconds=NaN){
   const profit=netSettlementProfitCents(count,price,feeMultiplier);
   const cost=estimatedCostCents(count,price,feeMultiplier);
-  return profit>0&&cost>0&&profit/cost>=0.0833&&profit>=minimumProfitCents(strategy,availableCents,sportType,remainingSeconds)?count:0;
+  return cost>0&&profit>=minimumProfitCents(strategy,availableCents,sportType,remainingSeconds)?count:0;
 }
 export function comeback(game,market,strategy){
   if(!game?.verifiedLive||!game.scoreKnown)return false;
