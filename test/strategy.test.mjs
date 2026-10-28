@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {gameState,overSignal,leadSignal,tennisSignal,orderSize,estimatedCostCents,overBudget,minimumProfitCents,netSettlementProfitCents,profitableCount,comeback} from '../src/strategy.mjs';
+import {gameState,overSignal,confirmedOver,leadSignal,tennisSignal,orderSize,estimatedCostCents,overBudget,minimumProfitCents,netSettlementProfitCents,profitableCount,comeback} from '../src/strategy.mjs';
 
 const milestone={id:'game-1',title:'Boston at New York',type:'basketball_game',details:{competition:'Pro Basketball (M)'},related_event_tickers:['GAME']};
 const live=(home,away,quarter=4)=>({details:{status:'live',last_updated_ts:Math.floor(Date.now()/1000),home_score:home,away_score:away,quarter,clock:'00:59',possession:'home',home_team_name:'New York',away_team_name:'Boston'}});
@@ -11,6 +11,29 @@ test('over requires strict threshold exceeded and whole-game contract',()=>{
   assert.ok(overSignal(gameState(milestone,live(103,101,3)),market));
   assert.ok(overSignal(gameState(milestone,{details:{...live(103,101).details,clock:'03:01'}}),market));
   assert.equal(overSignal(gameState(milestone,live(103,101)),{...market,title:'First half total points'}),null);
+});
+test('over preflight requires stable scores from a newer, fresh milestone update',()=>{
+  const m={id:'soccer-1',title:'Dolomiti Bellunesi vs Desenzano',type:'soccer_match'};
+  const market={status:'active',event_ticker:'KXSERIECTOTAL-26OCT28BELLDESE',title:'Over 0.5 goals',rules_primary:'Combined total goals scored in the game',floor_strike:.5,yes_ask_dollars:'0.99'};
+  const now=Date.now();
+  const sample=(home,away,observed,updated,extra={})=>gameState(m,{milestone_id:m.id,_observed_at:new Date(observed).toISOString(),details:{status:'live',home_score:home,away_score:away,time:"55'",last_updated_ts:updated/1000,...extra}});
+  const first=sample(1,0,now-13000,now-14000);
+  const valid=sample(1,0,now,now-1000);
+  assert.equal(confirmedOver(first,valid,market),true);
+  assert.equal(confirmedOver(first,sample(0,0,now,now-1000),market),false,'goal overturned');
+  assert.equal(confirmedOver(first,sample(1,0,now,now-14000),market),false,'cached feed update');
+  assert.equal(confirmedOver(first,sample(1,0,now-2000,now-3000),market),false,'provisional goal window');
+  assert.equal(confirmedOver(first,sample(1,0,now,now-1000,{time:"54'"}),market),false,'clock reversed');
+  assert.equal(confirmedOver(first,sample(1,0,now,now-1000,{away_goals:1}),market),false,'score aliases disagree');
+  assert.equal(confirmedOver(first,sample(1,0,now,now-1000,{live_data_delayed:true}),market),false);
+  assert.equal(confirmedOver(first,sample(1,0,now,now-1000),{...market,title:'Over 1.5 goals'}),false,'displayed line differs');
+  assert.equal(confirmedOver(first,sample(1,0,now,now-1000),{...market,floor_strike:1.5}),false);
+  assert.equal(confirmedOver(first,sample(1,0,now,now-1000),{...market,status:'closed'}),false);
+  assert.equal(confirmedOver(first,gameState(m,{milestone_id:'wrong',_observed_at:new Date(now).toISOString(),details:{status:'live',home_score:1,away_score:0,time:"55'",last_updated_ts:(now-1000)/1000}}),market),false,'wrong game');
+  assert.equal(confirmedOver(first,sample(1,0,now,now-1000,{home_regulation_score:0}),market),false,'regulation score conflicts');
+  assert.equal(confirmedOver(sample(1,0,now-13000,now-100000),valid,market),false,'initial score stale');
+  assert.equal(confirmedOver(first,sample(1,0,now,now-50000),market),false,'latest score stale');
+  assert.equal(confirmedOver(first,gameState(m,{milestone_id:m.id,_observed_at:new Date(now).toISOString(),details:{status:'live',home_score:1,away_score:0,time:"55'"}}),market),false,'missing source timestamp');
 });
 test('Kalshi whole-game over wording is recognized after the line is crossed',()=>{
   const m={id:'kbo-game',title:'Kia Tigers vs Samsung Lions',type:'baseball_game',details:{league:'Korea KBO'}};
@@ -125,7 +148,9 @@ test('regulation soccer totals reject extra-time goals even when live feed says 
   assert.equal(overSignal(game("89'",'aet'),{...market,yes_ask_dollars:'0.98'}),null);
   assert.equal(overSignal(game("90+4'",'live'),{...market,yes_ask_dollars:'0.98'}),null);
   assert.equal(overSignal(game("88'",'live'),market),null);
-  assert.equal(overSignal(game("88'",'live'),{...market,yes_ask_dollars:'0.98'})?.fraction,.9);
+  assert.equal(overSignal(game("88'",'live'),{...market,yes_ask_dollars:'0.98'}),null,'conflicting regulation score');
+  const consistent=gameState(m,{details:{status:'inprogress',time:"88'",half:'2nd',home_same_game_score:1,away_same_game_score:2,home_regulation_score:1,away_regulation_score:2}});
+  assert.equal(overSignal(consistent,{...market,yes_ask_dollars:'0.98'})?.fraction,.9);
   assert.equal(overSignal(game("88'",'live'),{...market,yes_ask_dollars:'0.98',result:'no'}),null);
 });
 test('tennis match winner requires clinching set, two-game lead, server and point score',()=>{
