@@ -1,4 +1,4 @@
-import { timingSafeEqual, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { page } from './ui.mjs';
 import { gameState, overSignal, leadSignal, tennisSignal, orderSize, estimatedCostCents, overBudget, profitableCount, netSettlementProfitCents, comeback } from './strategy.mjs';
@@ -9,6 +9,7 @@ import { icons } from './icons.mjs';
 import { manifest, worker } from './pwa.mjs';
 import { vapidIdentity, validateSubscription, deliverPush } from './push.mjs';
 import { favorableSettlement } from './settlements.mjs';
+import { authorized, checkCredentials, sessionCookie, loginPage } from './dashboard_auth.mjs';
 
 const API='https://external-api.kalshi.com/trade-api/v2';
 const pool = new pg.Pool({connectionString:process.env.DATABASE_URL, max:4, idleTimeoutMillis:15000});
@@ -17,10 +18,9 @@ const json=(body,status=200)=>new Response(JSON.stringify(body),{status,headers:
 const configured=()=>Boolean((process.env.KALSHI_API_KEY||process.env.KALSHI_API_KEY_ID) && process.env.KALSHI_PRIVATE_KEY);
 const live=()=>configured() && process.env.LIVE_TRADING==='true';
 const credentials=()=>({key:process.env.KALSHI_API_KEY||process.env.KALSHI_API_KEY_ID,privateKey:process.env.KALSHI_PRIVATE_KEY});
-const safeEqual=(a,b)=>{const x=Buffer.from(a),y=Buffer.from(b);return x.length===y.length && timingSafeEqual(x,y)};
 const pushIdentity=()=>vapidIdentity(process.env.KALSHI_PRIVATE_KEY);
 const response=(body,type)=>new Response(body,{headers:{'content-type':type,'cache-control':'no-store','x-content-type-options':'nosniff'}});
-function authorized(req){const expected=process.env.DASHBOARD_PASSWORD;if(!expected)return false;const raw=req.headers.get('authorization')||'';if(!raw.startsWith('Basic '))return false;try{const [user,...password]=Buffer.from(raw.slice(6),'base64').toString('utf8').split(':');return user==='rjdc'&&safeEqual(password.join(':'),expected)}catch{return false}}
+const dashboardAuth=req=>authorized(req,process.env.DASHBOARD_PASSWORD);
 async function kalshi(path,opts={}){
   const method=opts.method||'GET';const headers={'accept':'application/json'};
   if(opts.auth){const {key,privateKey}=credentials();if(!key||!privateKey)throw Error('Kalshi credentials unavailable');const timestamp=String(Date.now());const unsignedPath='/trade-api/v2'+path.split('?')[0];const signature=kalshiSignature(privateKey,timestamp,method,unsignedPath);Object.assign(headers,{'KALSHI-ACCESS-KEY':key,'KALSHI-ACCESS-TIMESTAMP':timestamp,'KALSHI-ACCESS-SIGNATURE':signature})}
@@ -435,7 +435,7 @@ async function state(){const [snap,stats,attempts]=await Promise.all([
   return {live:live(),credentials:configured(),aiConfigured:Boolean(process.env.AI_API_KEY),balance,accountError,positionsError,games:snap.rows,scan:stats.rows[0],orders};
 }
 export default {async fetch(req){const url=new URL(req.url);
-  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'scanner-funding-tennis-audit-1'});
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'cookie-login-1'});
   if(req.method==='GET'&&url.pathname==='/manifest.webmanifest')return response(manifest,'application/manifest+json');
   if(req.method==='GET'&&url.pathname==='/sw.js')return new Response(worker,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','service-worker-allowed':'/','x-content-type-options':'nosniff'}});
   if(req.method==='GET'&&/^\/icon-(192|512)\.png$/.test(url.pathname))return response(Buffer.from(icons[Number(url.pathname.match(/\d+/)[0])],'base64'),'image/png');
@@ -451,7 +451,15 @@ export default {async fetch(req){const url=new URL(req.url);
     }
     const {next,...summary}=last;return json({...summary,cycles});
   }
-  if(!authorized(req))return new Response('Authentication required',{status:401,headers:{'www-authenticate':'Basic realm="K Trading"','cache-control':'no-store'}});
+  if(req.method==='GET'&&url.pathname==='/login')return dashboardAuth(req)?Response.redirect(new URL('/',url),303):response(loginPage(),'text/html; charset=utf-8');
+  if(req.method==='POST'&&url.pathname==='/login'){
+    if(req.headers.get('origin')!==url.origin||!req.headers.get('content-type')?.startsWith('application/x-www-form-urlencoded'))return json({error:'Forbidden'},403);
+    const raw=await req.text();if(raw.length>512)return json({error:'Invalid sign-in'},400);
+    const form=new URLSearchParams(raw);
+    if(!checkCredentials(form.get('username'),form.get('password'),process.env.DASHBOARD_PASSWORD))return new Response(loginPage(true),{status:401,headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'}});
+    return new Response(null,{status:303,headers:{location:'/', 'set-cookie':sessionCookie(process.env.DASHBOARD_PASSWORD,Date.now(),url.protocol==='https:'),'cache-control':'no-store'}});
+  }
+  if(!dashboardAuth(req))return url.pathname==='/'?new Response(null,{status:303,headers:{location:'/login','cache-control':'no-store'}}):json({error:'Sign in required'},401);
   try{
     if(req.method==='GET'&&url.pathname==='/api/push-key')return json({key:pushIdentity().publicBase64});
     if(req.method==='GET'&&url.pathname==='/api/alerts'){
