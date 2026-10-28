@@ -376,6 +376,9 @@ async function scan(cachedMilestones){
         // as the last remote read before the reserved fill-or-kill submission.
         const latestLive=(await liveBatch([c.milestone])).get(c.milestone.id);
         const freshState=gameState(c.milestone,latestLive);
+        if(c.signal.strategy==='lead' && /basketball/.test(state.type) &&
+          (freshState.period!==state.period || !freshState.periodConsistent ||
+            freshState.remainingSeconds>state.remainingSeconds))continue;
         const quote=(await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market;
         if(!quote||quote.ticker!==c.market.ticker||!hasAsk(quote))continue;
         const stillQualifies=c.signal.strategy==='over'?overSignal(freshState,quote):leadSignal(freshState,quote)||tennisSignal(freshState,quote);
