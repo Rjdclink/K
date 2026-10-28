@@ -372,12 +372,12 @@ async function scan(cachedMilestones){
         // Refresh available cash before every order. If the account cannot afford one contract plus
         // the fee reserve, orderSize returns zero and no order is sent to Kalshi.
         const latest=await accountBalance();balance=Number(latest.balance);bankroll=balance+Number(latest.portfolio_value);
-        // The nested event quote may already be stale after the balance wait.
-        // Recheck the market and eligibility just before sizing an IOC order.
-        const quote=(await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market;
-        if(!quote||quote.ticker!==c.market.ticker||!hasAsk(quote))continue;
+        // Revalidate the game before fetching the final quote. Keep the quote
+        // as the last remote read before the reserved fill-or-kill submission.
         const latestLive=(await liveBatch([c.milestone])).get(c.milestone.id);
         const freshState=gameState(c.milestone,latestLive);
+        const quote=(await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market;
+        if(!quote||quote.ticker!==c.market.ticker||!hasAsk(quote))continue;
         const stillQualifies=c.signal.strategy==='over'?overSignal(freshState,quote):leadSignal(freshState,quote)||tennisSignal(freshState,quote);
         if(!stillQualifies)continue;
         c.signal=stillQualifies;
