@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { gameState } from '../src/strategy.mjs';
-import { espnMatches, foxMatches, scoreAgreement, verifyIndependentOver, playerStatAgreement } from '../src/score_verification.mjs';
+import { espnMatches, foxMatches, tennisMatches, scoreAgreement, verifyIndependentOver, playerStatAgreement } from '../src/score_verification.mjs';
 
 const start=new Date(Date.now()-20*60000).toISOString();
 const m={id:'nba-game',title:'BKN Nets at BOS Celtics',type:'basketball_game',start_date:start,details:{league:'NBA'}};
@@ -67,4 +67,26 @@ test('player point and PRA overs require the named ESPN athlete and matching box
   assert.equal(await verifyIndependentOver(state,m,{fetcher,market}),true);
   assert.equal(await verifyIndependentOver({...state,playerStats:{player1:{points:17,rebounds:4,assists:3}}},m,{fetcher,market}),false);
   assert.equal(await verifyIndependentOver(state,m,{fetcher:async url=>({ok:true,json:async()=>url.includes('/summary?')?{boxscore:{players:[]}}:url.includes('espn.com')?board:fox()}),market}),false);
+});
+test('WTA game totals need the exact ESPN match and all set games',async()=>{
+  const milestone={id:'wta',title:'Rakhimova vs Alexandrova',type:'tennis_tournament_singles',start_date:start,details:{tour:'WTA'}};
+  const live={details:{status:'live',competitor1_is_home:true,competitor1_round_scores:[{score:6},{score:4},{score:3}],competitor2_round_scores:[{score:4},{score:6},{score:2}]}};
+  const state=gameState(milestone,live),market={event_ticker:'KXWTAGTOTAL-DATE',status:'active',title:'Over 24.5 games',rules_primary:'If the number of completed games in the full match is above 24.5, then Yes.',floor_strike:24.5,yes_ask_dollars:'0.90'};
+  const competition={date:start,status:{type:{state:'in'}},competitors:[
+    {homeAway:'home',athlete:{displayName:'Kamilla Rakhimova'},linescores:[{value:6},{value:4},{value:3}]},
+    {homeAway:'away',athlete:{displayName:'Ekaterina Alexandrova'},linescores:[{value:4},{value:6},{value:2}]}]};
+  const board={events:[{groupings:[{competitions:[competition]}]}]};
+  assert.equal(scoreAgreement(state,[tennisMatches(board,state,milestone),[]],market),true);
+  assert.equal(await verifyIndependentOver(state,milestone,{market,fetcher:async url=>({ok:true,json:async()=>board})}),true);
+  const wrong={events:[{groupings:[{competitions:[{...competition,competitors:[competition.competitors[0],{...competition.competitors[1],linescores:[{value:4},{value:6},{value:1}]}]}]}]}]};
+  assert.equal(await verifyIndependentOver(state,milestone,{market,fetcher:async()=>({ok:true,json:async()=>wrong})}),false);
+  assert.equal(tennisMatches({events:[{groupings:[{competitions:[{...competition,date:new Date(Date.now()-86400000).toISOString()}]}]}]},state,milestone).length,0);
+});
+test('women college basketball uses its own ESPN scoreboard for independent verification',async()=>{
+  const milestone={...m,details:{league:'NCAAW'}};
+  const state=gameState(milestone,{details:{status:'live',home_score:24,away_score:20,period:1,home_team_name:'BOS Celtics',away_team_name:'BKN Nets'}});
+  assert.equal(state.sport,'NCAAW');
+  const urls=[];
+  assert.equal(await verifyIndependentOver(state,milestone,{fetcher:async url=>{urls.push(url);return {ok:true,json:async()=>espn()}}}),true);
+  assert.ok(urls.some(url=>url.includes('womens-college-basketball')));
 });

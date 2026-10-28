@@ -16,8 +16,9 @@ const dateCandidates=ms=>{
 
 function feeds(game){
   if(/soccer/.test(game.type))return {espn:'soccer/all',fox:'soccer'};
+  if(/^tennis_/.test(game.type))return /^(?:ATP|WTA)$/i.test(game.tour)?{espn:`tennis/${game.tour.toLowerCase()}`,fox:null}:{espn:null,fox:null};
   const league=game.sport;
-  const supported={NBA:['basketball/nba','nba'],WNBA:['basketball/wnba','wnba'],NCAAB:['basketball/mens-college-basketball','cbk'],NFL:['football/nfl','nfl'],CFB:['football/college-football','cfb'],NHL:['hockey/nhl','nhl'],MLB:['baseball/mlb','mlb']};
+  const supported={NBA:['basketball/nba','nba'],WNBA:['basketball/wnba','wnba'],NCAAB:['basketball/mens-college-basketball','cbk'],NCAAW:['basketball/womens-college-basketball',null],NFL:['football/nfl','nfl'],CFB:['football/college-football','cfb'],NHL:['hockey/nhl','nhl'],MLB:['baseball/mlb','mlb']};
   const [espn,fox]=supported[league]||[];
   return {espn,fox};
 }
@@ -62,6 +63,25 @@ export function espnMatches(data,game,milestone){
     return [{source:'ESPN',eventId:e.id,home:score(home.score),away:score(away.score),periods,live:status?.type?.state==='in',clockOk:clockCompatible(game,status?.period,status?.displayClock)}];
   });
 }
+export function tennisMatches(data,game,milestone){
+  if(!Array.isArray(data?.events))return [];
+  const names=expectedNames(game,milestone);
+  const nameMatches=(expected,actual)=>{
+    const key=clean(expected),full=clean(actual);
+    return key.length>=4&&(full===key||full.endsWith(key));
+  };
+  return data.events.flatMap(e=>(e.groupings||[]).flatMap(group=>(group.competitions||[]).flatMap(c=>{
+    const first=c.competitors?.find(x=>x.homeAway==='home'),second=c.competitors?.find(x=>x.homeAway==='away');
+    const firstName=first?.athlete?.displayName||first?.roster?.displayName;
+    const secondName=second?.athlete?.displayName||second?.roster?.displayName;
+    const start=Date.parse(milestone.start_date||''),time=Date.parse(c.date||'');
+    if(!first||!second||!Number.isFinite(start)||!Number.isFinite(time)||Math.abs(start-time)>3*3600000||
+      !nameMatches(names.home,firstName)||!nameMatches(names.away,secondName))return [];
+    const homeSets=(first.linescores||[]).map(part=>score(part.value)),awaySets=(second.linescores||[]).map(part=>score(part.value));
+    if(!homeSets.length||homeSets.length!==awaySets.length||[...homeSets,...awaySets].some(n=>!Number.isInteger(n)||n<0||n>7))return [];
+    return [{source:'ESPN',home:homeSets.at(-1),away:awaySets.at(-1),totalGames:[...homeSets,...awaySets].reduce((a,b)=>a+b,0),live:c.status?.type?.state==='in',clockOk:true}];
+  })));
+}
 export function foxMatches(data,game,milestone){
   if(!Array.isArray(data?.sectionList))return [];
   return data.sectionList.flatMap(section=>(section.events||[]).flatMap(e=>{
@@ -76,12 +96,14 @@ export function foxMatches(data,game,milestone){
 }
 export function scoreAgreement(game,bySource,market){
   const segment=String(market?.event_ticker||'').split('-')[0].match(/([1-9])(?:Q|P|H|INNING)(?:TEAM)?TOTAL$/);
+  const tennisTotal=/^KX(?:ATP|WTA)GTOTAL$/.test(String(market?.event_ticker||'').split('-')[0]);
   let agrees=0;
   for(const matches of bySource){
     if(matches.length>1)return false; // Ambiguous fixture identity.
     if(!matches.length)continue;
     const m=matches[0];
     if(!m.live||!m.clockOk||!Number.isInteger(m.home)||!Number.isInteger(m.away)||m.home!==game.home||m.away!==game.away)return false;
+    if(tennisTotal&&(!Number.isInteger(m.totalGames)||m.totalGames!==game.tennisTotal))return false;
     if(segment){
       const expected=periodValue(game,market);
       const actual=periodValue({type:game.type,sport:game.sport,periodScores:m.periods},market);
@@ -133,7 +155,7 @@ export async function verifyIndependentOver(game,milestone,{fetcher=fetch,cache,
   const bySource=['ESPN','FOX Sports'].map(source=>{
     const seen=new Set();return results.flatMap(result=>{
       if(result.status!=='fulfilled'||result.value.source!==source)return [];
-      const matches=source==='ESPN'?espnMatches(result.value.data,game,milestone):foxMatches(result.value.data,game,milestone);
+      const matches=source==='ESPN'?/^tennis_/.test(game.type)?tennisMatches(result.value.data,game,milestone):espnMatches(result.value.data,game,milestone):foxMatches(result.value.data,game,milestone);
       const signature=JSON.stringify(matches);
       if(seen.has(signature))return [];
       seen.add(signature);return matches;

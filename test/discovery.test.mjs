@@ -28,6 +28,11 @@ test('retain directly linked player score markets without treating their game sc
   assert.ok(found.includes('KXNBAPTS-DATE'));assert.ok(found.includes('KXNBAPRA-DATE'));
   assert.ok(!found.includes('KXNBASPREAD-DATE'));
 });
+test('retain linked ATP and WTA full-match game totals',()=>{
+  const found=linkedEventTickers({type:'tennis_tournament_singles',related_event_tickers:['KXWTAMATCH-DATE','KXWTAGTOTAL-DATE','KXWTASETWINNER-DATE']});
+  assert.ok(found.includes('KXWTAGTOTAL-DATE'));
+  assert.ok(!found.includes('KXWTASETWINNER-DATE'));
+});
 
 test('unsupported feeds keep the scan active but do not fetch markets',()=>{
   const board=(type)=>gameState({id:type,type,title:'Away at Home'},{details:{status:'live',home_score:9,away_score:3}});
@@ -35,6 +40,8 @@ test('unsupported feeds keep the scan active but do not fetch markets',()=>{
   assert.equal(eligibleForMarkets(board('cricket_match')),false);
   assert.equal(eligibleForMarkets(board('basketball_game')),true);
   assert.equal(sportName({type:'esports_soccer_game'}),'eSoccer');
+  assert.equal(sportName({type:'football_game',details:{league:'NCAAFB'}}),'CFB');
+  assert.equal(sportName({type:'basketball_game',details:{league:'NCAAW'}}),'NCAAW');
   assert.equal(gameTimeLabel(board('esports_match')),'Live clock unavailable');
   assert.equal(gameTimeLabel(board('cricket_match')),'Live clock unavailable');
   assert.equal(gameTimeLabel({...board('cricket_match'),period:2}),'Innings 2 · no countdown clock');

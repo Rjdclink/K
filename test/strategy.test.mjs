@@ -62,6 +62,17 @@ test('team overs use only the named team score; player props cannot use the game
   const player={...team,event_ticker:'KXNBAPRA-26OCT27BKNBOS',title:'Jayson Tatum: 35+ points, rebounds, and assists',floor_strike:34.5,custom_strike:{basketball_player:'tatum'}};
   assert.equal(overSignal(gameState({...milestone,details:{...milestone.details,home_team_id:'boston',away_team_id:'brooklyn'}},live(57,56)),player),null);
 });
+test('WTA full-match game totals use all completed and current set games',()=>{
+  const m={id:'wta',title:'Rakhimova vs Alexandrova',type:'tennis_tournament_singles',details:{tour:'WTA'}};
+  const details={status:'live',competitor1_is_home:true,competitor1_round_scores:[{score:6},{score:4},{score:3}],competitor2_round_scores:[{score:4},{score:6},{score:2}],competitor1_statistics:{games_won:13},competitor2_statistics:{games_won:12}};
+  const game=gameState(m,{details});
+  const market={event_ticker:'KXWTAGTOTAL-DATE',status:'active',title:'Over 24.5 games',rules_primary:'If the number of completed games in the full match is above 24.5, then Yes.',floor_strike:24.5,strike_type:'greater',yes_ask_dollars:'0.90'};
+  assert.equal(game.tennisTotal,25);
+  assert.match(overSignal(game,market)?.reason||'',/25 scored; line 24.5/);
+  assert.equal(overSignal(game,{...market,floor_strike:25.5}),null);
+  assert.equal(overSignal(gameState(m,{details:{...details,competitor1_statistics:{games_won:12}}}),market),null);
+  assert.equal(overSignal(game,{...market,event_ticker:'KXWTASETWINNER-DATE'}),null);
+});
 test('a period over uses that period alone and never substitutes the game total',()=>{
   const m={...milestone,related_event_tickers:['KXNBA1QTOTAL-26OCT28BOSBKN']};
   const board=gameState(m,{details:{status:'live',home_score:60,away_score:58,quarter:3,clock:'06:00',period_scores:[{number:1,type:'regular_period',home_score:25,away_score:20},{number:2,type:'regular_period',home_score:20,away_score:20},{number:3,type:'regular_period',home_score:15,away_score:18}]}});
