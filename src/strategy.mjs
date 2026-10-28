@@ -64,22 +64,37 @@ export function overSignal(game, market) {
   if (!game.verifiedLive || !game.scoreKnown || game.home+game.away<=0 || market.status!=='active' && market.status!=='open') return null;
   // Scores from these feeds are not comparable to a whole-game contract line.
   if (!/basketball|baseball|football|hockey|soccer/.test(game.type) || /esports|table_tennis/.test(game.type)) return null;
+  const series=String(market.event_ticker||'').split('-')[0];
+  const teamTotal=/TEAMTOTAL$/.test(series),gameTotal=/TOTAL$/.test(series)&&!teamTotal;
+  if(!teamTotal&&!gameTotal||Object.keys(market.custom_strike||{}).some(k=>/_player$/.test(k)))return null;
   if (game.soccerExtraTime || /soccer/.test(game.type) && !Number.isFinite(game.soccerMinute)) return null;
   // A nearly free YES after an apparently crossed line means the feed and
   // contract disagree. Never treat this as a guaranteed arbitrage.
   if (Number.isFinite(Number(market.yes_ask_dollars)) && market.yes_ask_dollars!=null && Number(market.yes_ask_dollars)<0.8) return null;
   if (market.result && !['','not_determined'].includes(String(market.result))) return null;
   const text = `${market.title||''} ${market.yes_sub_title||''} ${market.rules_primary||''}`;
-  if (!wholeGame(text) || !/total (points|runs|goals|score)|combined (points|runs|goals|score)|combined score|\bover\s+\d+(?:\.\d+)?\s+(?:points|runs|goals)\s+scored\b/i.test(text)) return null;
+  if (!wholeGame(teamTotal?text.replace(/team total/gi,''):text) || !/total (points|runs|goals|score)|combined (points|runs|goals|score)|combined score|\bover\s+\d+(?:\.\d+)?\s+(?:points|runs|goals)\s+scored\b/i.test(text)) return null;
   if (market.strike_type && !['greater','greater_than'].includes(market.strike_type)) return null;
   const strike = N(market.floor_strike);
-  if (!Number.isFinite(strike) || strike<0 || game.home+game.away <= strike) return null;
-  return {strategy:'over', reason:`${game.home+game.away} scored; line ${strike} already passed`, fraction:0.8};
+  let scored=game.home+game.away,team='';
+  if(teamTotal){
+    const target=Object.entries(market.custom_strike||{}).find(([k,v])=>/_team$/.test(k)&&typeof v==='string')?.[1];
+    const home=target&&target===game.homeTeamId,away=target&&target===game.awayTeamId;
+    if(!target||home===away)return null;
+    scored=home?game.home:game.away;
+    team=home?game.homeName:game.awayName;
+    if(!team||!norm(market.title).includes(norm(team)))return null;
+  }
+  if (!Number.isFinite(strike) || strike<0 || scored<=strike) return null;
+  return {strategy:'over', reason:`${scored} scored${team?` by ${team}`:''}; line ${strike} already passed`, fraction:0.8};
 }
 const norm = s => String(s||'').toLowerCase().replace(/[^a-z0-9]/g,'');
 export function leadSignal(game, market) {
   if(game.soccerExtraTime)return null;
   if(!/basketball|baseball|football|hockey|soccer/.test(game.type)||/esports|table_tennis/.test(game.type))return null;
+  // A low YES ask in the final minutes conflicts with an apparently commanding
+  // lead and often signals a stale or incorrectly mapped live game clock.
+  if(market.yes_ask_dollars!=null&&Number.isFinite(Number(market.yes_ask_dollars))&&Number(market.yes_ask_dollars)<0.8)return null;
   const basketball=/basketball/.test(game.type);
   const football=/football/.test(game.type);
   const hockey=/hockey/.test(game.type);
