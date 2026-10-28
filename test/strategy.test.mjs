@@ -186,6 +186,8 @@ test('entry submissions and recovery use full fills while exits cannot target ov
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
   assert.equal((source.match(/side:'bid'[^\n]+time_in_force:'fill_or_kill'/g)||[]).length,2);
   assert.match(source,/if\(original\?\.strategy!=='lead'\|\|\/TOTAL\/i\.test\(position\.ticker\)\)continue/);
+  assert.match(source,/if\(live\(\)\|\|exitOnly\(\)\)await exitComebacks/);
+  assert.match(source,/for\(const c of opportunities\)[^]*?if\(!live\(\)\)continue/);
 });
 test('zero score never creates an over and net profit tiers include conservative fees',()=>{
   const market={status:'active',title:'Total goals over 0',rules_primary:'Combined total goals scored in the game',strike_type:'greater',floor_strike:-0.5};

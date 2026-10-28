@@ -17,6 +17,7 @@ pool.on('error', e=>console.error('Idle database connection:',e.message));
 const json=(body,status=200)=>new Response(JSON.stringify(body),{status,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'}});
 const configured=()=>Boolean((process.env.KALSHI_API_KEY||process.env.KALSHI_API_KEY_ID) && process.env.KALSHI_PRIVATE_KEY);
 const live=()=>configured() && process.env.LIVE_TRADING==='true';
+const exitOnly=()=>configured() && process.env.EXIT_ONLY==='true' && !live();
 const credentials=()=>({key:process.env.KALSHI_API_KEY||process.env.KALSHI_API_KEY_ID,privateKey:process.env.KALSHI_PRIVATE_KEY});
 const pushIdentity=()=>vapidIdentity(process.env.KALSHI_PRIVATE_KEY);
 const response=(body,type)=>new Response(body,{headers:{'content-type':type,'cache-control':'no-store','x-content-type-options':'nosniff'}});
@@ -325,7 +326,7 @@ async function scan(cachedMilestones){
     let balance=0,bankroll=0,overRemaining=0,account=null;
     const existingFills=await pool.query(`SELECT market_ticker,strategy FROM trade_attempts WHERE status='filled'`);
     let filled=new Set(existingFills.rows.map(r=>`${r.market_ticker}:${r.strategy}`));
-    if(live()){
+    if(live()||exitOnly()){
       const [currentAccount,positions,attempts]=await Promise.all([
         accountBalance(),
         allOpenPositions(),
@@ -339,7 +340,7 @@ async function scan(cachedMilestones){
       overRemaining=overBudget(balance,account.portfolio_value,exposure);
     }
     // Exits are assessed before any new risk is added.
-    if(live())await exitComebacks(games,events,openPositions);
+    if(live()||exitOnly())await exitComebacks(games,events,openPositions);
     const opportunities=[];
     for(const {milestone,state} of games){
       const candidates=[];
@@ -432,10 +433,10 @@ async function state(){const [snap,stats,attempts]=await Promise.all([
     const count=Math.min(Number(o.fill_count),Number((positions.market_positions||[]).find(p=>p.ticker===o.market_ticker)?.position_fp||0));
     return {...o,allocated_cents:Math.ceil(count*Number(o.limit_price)*100),potential_profit_cents:netSettlementProfitCents(count,Number(o.limit_price),2)};
   }):[];
-  return {live:live(),credentials:configured(),aiConfigured:Boolean(process.env.AI_API_KEY),balance,accountError,positionsError,games:snap.rows,scan:stats.rows[0],orders};
+  return {live:live(),exitOnly:exitOnly(),credentials:configured(),aiConfigured:Boolean(process.env.AI_API_KEY),balance,accountError,positionsError,games:snap.rows,scan:stats.rows[0],orders};
 }
 export default {async fetch(req){const url=new URL(req.url);
-  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'cookie-login-1'});
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'verified-overs-exit-only-1'});
   if(req.method==='GET'&&url.pathname==='/manifest.webmanifest')return response(manifest,'application/manifest+json');
   if(req.method==='GET'&&url.pathname==='/sw.js')return new Response(worker,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','service-worker-allowed':'/','x-content-type-options':'nosniff'}});
   if(req.method==='GET'&&/^\/icon-(192|512)\.png$/.test(url.pathname))return response(Buffer.from(icons[Number(url.pathname.match(/\d+/)[0])],'base64'),'image/png');
