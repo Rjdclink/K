@@ -41,7 +41,7 @@ test('over preflight requires stable scores from a newer, fresh milestone update
   assert.equal(confirmedOver(first,sample(1,0,now,now-1000,{home_regulation_score:0}),market),false,'regulation score conflicts');
   assert.equal(confirmedOver(sample(1,0,now-13000,now-100000),valid,market),false,'initial score stale');
   assert.equal(confirmedOver(first,sample(1,0,now,now-50000),market),false,'latest score stale');
-  assert.equal(confirmedOver(first,gameState(m,{milestone_id:m.id,_observed_at:new Date(now).toISOString(),details:{status:'live',home_score:1,away_score:0,time:"55'"}}),market),false,'missing source timestamp');
+  assert.equal(confirmedOver(first,gameState(m,{milestone_id:m.id,_observed_at:new Date(now).toISOString(),details:{status:'live',home_score:1,away_score:0,time:"55'"}}),market),true,'provider may omit its update timestamp; independent source still required');
 });
 test('Kalshi whole-game over wording is recognized after the line is crossed',()=>{
   const m={id:'kbo-game',title:'Kia Tigers vs Samsung Lions',type:'baseball_game',details:{league:'Korea KBO'}};
@@ -61,6 +61,22 @@ test('team overs use only the named team score; player props cannot use the game
   assert.equal(overSignal(board(2,3),{...team,event_ticker:'KXNHLTOTAL-26OCT27CBJPHI',custom_strike:{hockey_player:'id'}}),null);
   const player={...team,event_ticker:'KXNBAPRA-26OCT27BKNBOS',title:'Jayson Tatum: 35+ points, rebounds, and assists',floor_strike:34.5,custom_strike:{basketball_player:'tatum'}};
   assert.equal(overSignal(gameState({...milestone,details:{...milestone.details,home_team_id:'boston',away_team_id:'brooklyn'}},live(57,56)),player),null);
+});
+test('a period over uses that period alone and never substitutes the game total',()=>{
+  const m={...milestone,related_event_tickers:['KXNBA1QTOTAL-26OCT28BOSBKN']};
+  const board=gameState(m,{details:{status:'live',home_score:60,away_score:58,quarter:3,clock:'06:00',period_scores:[{number:1,type:'regular_period',home_score:25,away_score:20},{number:2,type:'regular_period',home_score:20,away_score:20},{number:3,type:'regular_period',home_score:15,away_score:18}]}});
+  const market={status:'active',event_ticker:'KXNBA1QTOTAL-26OCT28BOSBKN',title:'1st quarter total points over 44.5',rules_primary:'Total points scored in the 1st quarter',floor_strike:44.5,strike_type:'greater',yes_ask_dollars:'.90'};
+  assert.match(overSignal(board,market)?.reason||'',/45 scored/);
+  assert.equal(overSignal(board,{...market,floor_strike:45.5}),null);
+  assert.equal(overSignal(gameState(m,{details:{status:'live',home_score:60,away_score:58,quarter:3,clock:'06:00'}}),market),null);
+});
+test('inning team totals use only verified inning runs from the named team',()=>{
+  const m={id:'mlb',title:'Boston at New York',type:'baseball_game',details:{league:'MLB',home_team_id:'ny',away_team_id:'bos'}};
+  const board=gameState(m,{details:{status:'live',home_runs:6,away_runs:4,inning:9,home_team_name:'New York',away_team_name:'Boston',period_scores:[{number:9,home_score:2,away_score:0}]}});
+  const market={status:'active',event_ticker:'KXMLB9INNINGTEAMTOTAL-DATE',title:'New York 9th inning team total runs over 1.5',rules_primary:'Total runs scored by New York in the 9th inning',custom_strike:{baseball_team:'ny'},floor_strike:1.5,strike_type:'greater',yes_ask_dollars:'0.90'};
+  assert.match(overSignal(board,market)?.reason||'',/2 scored by New York/);
+  assert.equal(overSignal(board,{...market,custom_strike:{baseball_team:'bos'}}),null);
+  assert.equal(overSignal(gameState(m,{details:{status:'live',home_runs:6,away_runs:4,inning:9}}),market),null);
 });
 test('threshold overs enter in any live segment without a countdown clock',()=>{
   const market={status:'active',event_ticker:'KXTESTTOTAL-26OCT27GAME',title:'Total points in game over 1.5',rules_primary:'Combined total points scored in the game',floor_strike:1.5,yes_ask_dollars:'0.98'};
@@ -136,9 +152,9 @@ test('soccer starts at 85:00 and excludes extra time or ambiguous stoppage score
   const market={status:'active',event_ticker:'KXSAUDIPLGAME-26OCT27ABHFAI',title:'Abha wins',yes_sub_title:'Abha',custom_strike:{soccer_team:'abha'},rules_primary:'If Abha wins after 90 minutes plus stoppage time (does not include extra time or penalties), then Yes.'};
   assert.equal(leadSignal(board(2,0,"84'"),market),null);
   assert.equal(leadSignal(board(2,0,"85'"),market)?.fraction,.15);
-  assert.equal(leadSignal(board(3,0,"85'"),market)?.fraction,.15);
-  assert.equal(leadSignal(board(3,0,"88'"),market)?.fraction,.20);
-  assert.equal(leadSignal(board(3,0,"89'"),market)?.fraction,.25);
+  assert.equal(leadSignal(board(3,0,"85'"),market)?.fraction,.25);
+  assert.equal(leadSignal(board(3,0,"88'"),market)?.fraction,.30);
+  assert.equal(leadSignal(board(3,0,"89'"),market)?.fraction,.35);
   assert.equal(leadSignal(board(3,1,"90+4'"),market),null);
   assert.equal(leadSignal(board(2,0,"90+4'",'extra time'),market),null);
   assert.equal(leadSignal(board(2,0,"85'",'1st'),market),null);
@@ -202,26 +218,26 @@ test('hockey requires three goals at 6:30 or less in final period',()=>{
   assert.equal(leadSignal(gameState(hockey,at(3,1,2,'04:59')),market),null);
   assert.equal(leadSignal(gameState(hockey,at(3,1,3,'05:00')),market),null);
 });
-test('basketball accepts ten points under ten minutes or five in the last minute, final segment only',()=>{
+test('basketball accepts eleven points under seven minutes thirty seconds, final segment only, capped at fifteen percent',()=>{
   const market={status:'active',title:'New York wins',yes_sub_title:'New York'};
   for(const league of ['NBA','WNBA','Basketball','NCAAMB','NCAAW']){
     const m={...milestone,details:{league}};
     const last=/NCAA/.test(league)?2:4;
     const at=(lead,clock,period=last)=>gameState(m,{details:{...live(100+lead,100,period).details,clock}});
-    assert.equal(leadSignal(at(10,'10:00'),market),null);
-    assert.equal(leadSignal(at(10,'09:59'),market)?.fraction,.15);
-    assert.equal(leadSignal(at(9,'09:59'),market),null);
-    assert.equal(leadSignal(at(15,'04:59'),market)?.fraction,.175);
-    assert.equal(leadSignal(at(20,'02:30'),market)?.fraction,.20);
+    assert.equal(leadSignal(at(11,'07:30'),market),null);
+    assert.equal(leadSignal(at(11,'07:29'),market)?.fraction,.15);
+    assert.equal(leadSignal(at(10,'07:29'),market),null);
+    assert.equal(leadSignal(at(15,'04:59'),market)?.fraction,.15);
+    assert.equal(leadSignal(at(20,'02:30'),market)?.fraction,.15);
     assert.equal(leadSignal(at(30,'08:22',last-1),market),null);
     assert.equal(leadSignal(at(8,'03:00'),market),null);
     assert.equal(leadSignal(at(8,'01:01'),market),null);
     assert.equal(leadSignal(at(4,'01:00'),market),null);
-    assert.equal(leadSignal(at(5,'01:00'),market)?.fraction,.15);
-    assert.equal(leadSignal(at(20,'00:59'),market)?.fraction,.20);
-    assert.equal(leadSignal(at(20,'00:29'),market)?.fraction,.20);
+    assert.equal(leadSignal(at(5,'01:00'),market),null);
+    assert.equal(leadSignal(at(20,'00:59'),market)?.fraction,.15);
+    assert.equal(leadSignal(at(20,'00:29'),market)?.fraction,.15);
     assert.equal(leadSignal(at(3,'00:19'),market),null);
-    assert.equal(leadSignal(at(5,'00:19'),market)?.fraction,.15);
+    assert.equal(leadSignal(at(5,'00:19'),market),null);
     assert.equal(leadSignal(at(8,'00:00'),market),null);
     assert.equal(leadSignal(at(8,'00:19',last-1),market),null);
     const conflicting=gameState(m,{details:{...live(108,100,last).details,clock:'00:17',period_display:`Q${last-1}`}});
@@ -301,10 +317,11 @@ test('zero score never creates an over and net profit tiers include conservative
   assert.equal(minimumProfitCents('lead',9900),0);
   assert.equal(minimumProfitCents('lead',10000),50);
   assert.equal(minimumProfitCents('lead',20000),100);
-  assert.equal(profitableCount(10,.99,2,'over',9900),10);
-  assert.equal(profitableCount(10,.99,2,'over',20000),10);
+  assert.equal(profitableCount(10,.99,2,'over',9900),0);
+  assert.equal(profitableCount(10,.99,2,'over',20000),0);
   assert.equal(profitableCount(1,.99,2,'over',9900),0);
-  assert.equal(profitableCount(100,.99,2,'over',9900),100);
+  assert.equal(profitableCount(100,.99,2,'over',9900),0);
+  assert.equal(profitableCount(100,.90,2,'over',9900),100);
   assert.ok(netSettlementProfitCents(100,.99,2)>0);
   assert.equal(profitableCount(1,1,2,'lead',100),0);
   assert.equal(profitableCount(1,.90,2,'lead',20000,'basketball_game',299),1);
@@ -326,7 +343,7 @@ test('basketball needs positive net profit after fees but no additional floor',(
     assert.equal(profitableCount(6,.90,2,'lead',20000,type,60),6);
     assert.equal(profitableCount(3,.90,2,'lead',20000,type,31),3);
     assert.equal(profitableCount(3,.90,2,'lead',20000,type,30),3);
-    assert.equal(profitableCount(3,.99,2,'lead',20000,type,20),3);
+    assert.equal(profitableCount(3,.99,2,'lead',20000,type,20),0);
   }
   assert.equal(minimumProfitCents('lead',20000,'football_game',30),100);
   assert.equal(minimumProfitCents('over',20000,'basketball_game',30),0);

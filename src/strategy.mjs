@@ -28,6 +28,8 @@ export function gameState(m, live) {
   const darts=/^darts_/.test(String(m.type||''));
   const one=tennis?d.competitor1_round_scores?.at(-1):null,two=tennis?d.competitor2_round_scores?.at(-1):null;
   const currentSet=tableTennis&&Array.isArray(d.period_scores)?d.period_scores.filter(p=>p.type==='set').at(-1):null;
+  const periodScores=(Array.isArray(d.period_scores)?d.period_scores:[]).filter(p=>Number.isInteger(Number(p.number))&&Number.isInteger(Number(p.home_score))&&Number.isInteger(Number(p.away_score)))
+    .map(p=>({number:Number(p.number),home:Number(p.home_score),away:Number(p.away_score),type:String(p.type||'')}));
   const firstIsHome=d.competitor1_is_home!==false;
   const home = N(tennis?(firstIsHome?one?.score:two?.score):tableTennis?(firstIsHome?currentSet?.competitor1_score:currentSet?.competitor2_score):darts?(firstIsHome?d.competitor1_overall_score:d.competitor2_overall_score):pick(d, ['home_score','homeScore','home_points','home_runs','home_goals','home_same_game_score']) ?? d.home?.score ?? d.home_team?.score);
   const away = N(tennis?(firstIsHome?two?.score:one?.score):tableTennis?(firstIsHome?currentSet?.competitor2_score:currentSet?.competitor1_score):darts?(firstIsHome?d.competitor2_overall_score:d.competitor1_overall_score):pick(d, ['away_score','awayScore','away_points','away_runs','away_goals','away_same_game_score']) ?? d.away?.score ?? d.away_team?.score);
@@ -92,12 +94,21 @@ export function gameState(m, live) {
   const homeUnits=home,awayUnits=away;
   const unit=/baseball/.test(family)?'runs':/hockey|soccer/.test(family)?'goals':tennis?'games':'points';
   const tennisData=tennis?{bestOf:N(m.details?.best_of),firstId:m.details?.first_competitor_id,secondId:m.details?.second_competitor_id,firstGames:N(one?.score),secondGames:N(two?.score),firstSets:N(d.competitor1_overall_score),secondSets:N(d.competitor2_overall_score),firstPoints:N(d.competitor1_current_round_score),secondPoints:N(d.competitor2_current_round_score),firstRound:one?.outcome,secondRound:two?.outcome,server:String(d.server||''),advantage:String(d.advantage||''),mainEvent:m.details?.main_game_event_ticker}:null;
-  return {id:m.id, feedId:live?.milestone_id, observedAt:Date.parse(live?._observed_at||''), updatedAt:Number.isFinite(updated)?updated*1000:NaN, title:m.title, sport, type:family, status, home, away, homeUnits, awayUnits, unit, period, setNumber:N(currentSet?.number), phase, periodConsistent, scoreConsistent, clock, remainingSeconds, clockRunning, soccerMinute, soccerHalf:half, soccerExtraTime, matchRemainingSeconds, possessionSide, tennis:tennisData, inningHalf:N(d.inning_half), outs:N(d.outs), progress, verifiedLive, scoreKnown:Number.isFinite(home)&&Number.isFinite(away), homeName:String(d.home_team?.name||d.home_team_name||d.home?.name||(names.length===2?names[1]:'')), awayName:String(d.away_team?.name||d.away_team_name||d.away?.name||(names.length===2?names[0]:'')),homeTeamId:m.details?.home_team_id,awayTeamId:m.details?.away_team_id,eventTickers:m.related_event_tickers||[]};
+  return {id:m.id, feedId:live?.milestone_id, observedAt:Date.parse(live?._observed_at||''), updatedAt:Number.isFinite(updated)?updated*1000:NaN, title:m.title, sport, type:family, status, home, away, homeUnits, awayUnits, unit, period, periodScores, setNumber:N(currentSet?.number), phase, periodConsistent, scoreConsistent, clock, remainingSeconds, clockRunning, soccerMinute, soccerHalf:half, soccerExtraTime, matchRemainingSeconds, possessionSide, tennis:tennisData, inningHalf:N(d.inning_half), outs:N(d.outs), progress, verifiedLive, scoreKnown:Number.isFinite(home)&&Number.isFinite(away), homeName:String(d.home_team?.name||d.home_team_name||d.home?.name||(names.length===2?names[1]:'')), awayName:String(d.away_team?.name||d.away_team_name||d.away?.name||(names.length===2?names[0]:'')),homeTeamId:m.details?.home_team_id,awayTeamId:m.details?.away_team_id,eventTickers:m.related_event_tickers||[]};
 }
 const wholeGame = s => !/1st|2nd|3rd|4th|first half|second half|quarter|period|inning|halftime|regulation only|first to score|team total|player|individual|series total/i.test(s);
+export function periodValue(game,market){
+  const match=String(market?.event_ticker||'').split('-')[0].match(/([1-9])(Q|P|H|INNING)(?:TEAM)?TOTAL$/);
+  if(!match)return null;
+  const n=Number(match[1]),unit=match[2];
+  const numbers=unit==='H'&&/basketball/.test(game.type)&&game.sport!=='NCAAB'?(n===1?[1,2]:n===2?[3,4]:[]):[n];
+  const parts=numbers.map(number=>game.periodScores?.find(p=>p.number===number));
+  if(!parts.length||parts.some(p=>!p))return null;
+  return {home:parts.reduce((s,p)=>s+p.home,0),away:parts.reduce((s,p)=>s+p.away,0),number:n,unit};
+}
 export function endWindow(game){
   if(!game.verifiedLive||!game.scoreKnown||!game.periodConsistent)return false;
-  if(/basketball/.test(game.type))return game.period===(game.sport==='NCAAB'?2:4) && game.remainingSeconds>0 && game.remainingSeconds<=60;
+  if(/basketball/.test(game.type))return game.period===(game.sport==='NCAAB'?2:4) && game.remainingSeconds>0 && game.remainingSeconds<450;
   if(/football/.test(game.type))return game.period===4 && game.remainingSeconds>0 && game.remainingSeconds<300;
   if(/hockey/.test(game.type))return game.period===3 && game.remainingSeconds>0 && game.remainingSeconds<420;
   if(/baseball/.test(game.type))return game.period===9;
@@ -117,7 +128,9 @@ export function overSignal(game, market) {
   if (Number.isFinite(Number(market.yes_ask_dollars)) && market.yes_ask_dollars!=null && Number(market.yes_ask_dollars)<0.8) return null;
   if (market.result && !['','not_determined'].includes(String(market.result))) return null;
   const text = `${market.title||''} ${market.yes_sub_title||''} ${market.rules_primary||''}`;
-  if (!wholeGame(teamTotal?text.replace(/team total/gi,''):text) || !/total (points|runs|goals|score)|combined (points|runs|goals|score)|combined score|\bover\s+\d+(?:\.\d+)?\s+(?:points|runs|goals)\s+scored\b/i.test(text)) return null;
+  const segment=series.match(/([1-9])(?:Q|P|H|INNING)(?:TEAM)?TOTAL$/);
+  if(!segment && !wholeGame(teamTotal?text.replace(/team total/gi,''):text))return null;
+  if(!/total (points|runs|goals|score)|combined (points|runs|goals|score)|combined score|\bover\s+\d+(?:\.\d+)?\s+(?:points|runs|goals)\s+scored\b/i.test(text))return null;
   if (market.strike_type && !['greater','greater_than'].includes(market.strike_type)) return null;
   const strike = N(market.floor_strike);
   // The displayed line and structured strike must describe the same bet.
@@ -126,16 +139,22 @@ export function overSignal(game, market) {
     if(shown && Number(shown[1])!==strike)return null;
   }
   let scored=game.home+game.away,team='';
+  if(segment){
+    const period=periodValue(game,market);
+    if(!period || !new RegExp(`(?:${segment[1]}(?:st|nd|rd|th)?\\s*(?:quarter|period|half|inning)|(?:Q|P|H)${segment[1]})`,'i').test(text))return null;
+    scored=period.home+period.away;
+  }
   if(teamTotal){
     const target=Object.entries(market.custom_strike||{}).find(([k,v])=>/_team$/.test(k)&&typeof v==='string')?.[1];
     const home=target&&target===game.homeTeamId,away=target&&target===game.awayTeamId;
     if(!target||home===away)return null;
-    scored=home?game.home:game.away;
+    const segmentResult=segment?periodValue(game,market):null;
+    scored=segment?(home?segmentResult.home:segmentResult.away):(home?game.home:game.away);
     team=home?game.homeName:game.awayName;
     if(!team||!norm(market.title).includes(norm(team)))return null;
   }
   if (!Number.isFinite(strike) || strike<0 || scored<=strike) return null;
-  return {strategy:'over', reason:`${scored} scored${team?` by ${team}`:''}; line ${strike} already passed`, fraction:0.9};
+  return {strategy:'over', reason:`${scored} scored${team?` by ${team}`:''}; line ${strike} already passed${segment?`; segment ${segment[1]}`:''}`, fraction:0.9};
 }
 // A preflight over needs two distinct exchange updates after the line was
 // crossed. An identical cached response, reversed clock, or corrected score
@@ -143,10 +162,10 @@ export function overSignal(game, market) {
 export function confirmedOver(first,second,market){
   if(!overSignal(first,market)||!overSignal(second,market))return false;
   if(first.id!==second.id||first.feedId!==first.id||second.feedId!==second.id)return false;
-  const dwell=/soccer/.test(first.type)?12000:3000;
+  const dwell=12000;
   if(!Number.isFinite(first.observedAt)||!Number.isFinite(second.observedAt)||second.observedAt-first.observedAt<dwell)return false;
-  if(!Number.isFinite(first.updatedAt)||!Number.isFinite(second.updatedAt)||second.updatedAt<=first.updatedAt)return false;
-  if([first,second].some(s=>s.updatedAt>s.observedAt+5000||s.observedAt-s.updatedAt>30000))return false;
+  if(Number.isFinite(first.updatedAt)&&Number.isFinite(second.updatedAt)&&second.updatedAt<=first.updatedAt)return false;
+  if([first,second].some(s=>Number.isFinite(s.updatedAt)&&(s.updatedAt>s.observedAt+5000||s.observedAt-s.updatedAt>30000)))return false;
   if(first.home!==second.home||first.away!==second.away||!first.periodConsistent||!second.periodConsistent)return false;
   if(Number.isFinite(first.period)&&Number.isFinite(second.period)&&second.period<first.period)return false;
   if(first.period===second.period&&Number.isFinite(first.remainingSeconds)&&Number.isFinite(second.remainingSeconds)&&second.remainingSeconds>first.remainingSeconds)return false;
@@ -166,13 +185,13 @@ export function leadSignal(game, market) {
   const soccer=/soccer/.test(game.type);
   const segments=/baseball/.test(game.type)?9:/hockey/.test(game.type)?3:/soccer/.test(game.type)?2:basketball&&game.sport==='NCAAB'?2:/basketball|football/.test(game.type)?4:Infinity;
   const baseball=/baseball/.test(game.type);
-  const finalTime=baseball?game.period===9:soccer?game.period===2 && Number.isFinite(game.soccerMinute) && game.soccerMinute>=85:game.period===segments && game.periodConsistent && Number.isFinite(game.remainingSeconds) && game.remainingSeconds>0 && (basketball?game.remainingSeconds<600:hockey?game.remainingSeconds<=390:game.remainingSeconds<300);
+  const finalTime=baseball?game.period===9:soccer?game.period===2 && Number.isFinite(game.soccerMinute) && game.soccerMinute>=85:game.period===segments && game.periodConsistent && Number.isFinite(game.remainingSeconds) && game.remainingSeconds>0 && (basketball?game.remainingSeconds<450:hockey?game.remainingSeconds<=390:game.remainingSeconds<300);
   if (!game.verifiedLive || !game.scoreKnown || !finalTime || market.status!=='active' && market.status!=='open') return null;
   const h=game.homeUnits,a=game.awayUnits;
   if (!Number.isFinite(h)||!Number.isFinite(a)) return null;
   const margin=Math.abs(h-a),trailerScore=Math.min(h,a);
   const soccerLastSeconds=soccer&&game.soccerMinute>=89&&game.matchRemainingSeconds>0&&game.matchRemainingSeconds<45;
-  const minimum=basketball?game.remainingSeconds<=60?5:10:football?10:hockey?3:baseball?2:soccer?soccerLastSeconds?1:2:null;
+  const minimum=basketball?11:football?10:hockey?3:baseball?2:soccer?soccerLastSeconds?1:2:null;
   const ratio=trailerScore>0?Math.max(h,a)/trailerScore:Infinity;
   if (minimum===null ? trailerScore<=0||ratio<3.5 : margin<minimum) return null;
   const leader = h>a ? game.homeName : game.awayName;
@@ -191,9 +210,9 @@ export function leadSignal(game, market) {
 export function leadFraction(game,margin,minimum){
   const veryCommanding=margin>=Math.ceil(minimum*1.5);
   if(!veryCommanding)return .15;
-  if(/basketball/.test(game.type))return game.remainingSeconds<=150?.20:game.remainingSeconds<=300||margin>=20?.175:.15;
+  if(/basketball/.test(game.type))return .15;
   if(/baseball/.test(game.type))return game.period===9&&game.outs>=2?.25:game.period===9&&game.outs>=1?.20:.15;
-  if(/soccer/.test(game.type))return game.soccerMinute>=89?.25:game.soccerMinute>=88?.20:.15;
+  if(/soccer/.test(game.type))return game.soccerMinute>=89?.35:game.soccerMinute>=88?.30:.25;
   if(Number.isFinite(game.remainingSeconds)&&game.remainingSeconds<=30)return .25;
   if(Number.isFinite(game.remainingSeconds)&&game.remainingSeconds<=150)return .20;
   return .15;
@@ -229,7 +248,8 @@ export function netSettlementProfitCents(count,price,feeMultiplier=2){
 }
 export function profitableCount(count,price,feeMultiplier,strategy,availableCents,sportType='',remainingSeconds=NaN){
   const profit=netSettlementProfitCents(count,price,feeMultiplier);
-  return profit>0&&profit>=minimumProfitCents(strategy,availableCents,sportType,remainingSeconds)?count:0;
+  const cost=estimatedCostCents(count,price,feeMultiplier);
+  return profit>0&&cost>0&&profit/cost>=0.0833&&profit>=minimumProfitCents(strategy,availableCents,sportType,remainingSeconds)?count:0;
 }
 export function comeback(game,market,strategy){
   if(!game?.verifiedLive||!game.scoreKnown)return false;

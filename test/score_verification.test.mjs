@@ -46,3 +46,11 @@ test('FOX soccer home team may be the upper row',()=>{
   const data={sectionList:[{events:[{eventTime:start,eventStatus:1,statusLine:"35'",entityLink:{layout:{tokens:{homeUri:'milan',awayUri:'bologna'}}},upperTeam:{uri:'milan',longName:'AC Milan',score:2},lowerTeam:{uri:'bologna',longName:'Bologna',score:1}}]}]};
   assert.equal(scoreAgreement(state,[[],foxMatches(data,state,fixture)]),true);
 });
+test('a period total requires an independent matching period breakdown, not just game scores',()=>{
+  const board={...game,periodScores:[{number:1,home:14,away:10}]};
+  const contract={event_ticker:'KXNBA1QTOTAL-26OCT28BOSBKN'};
+  const same={source:'ESPN',home:24,away:20,live:true,clockOk:true,periods:[{number:1,home:14,away:10}]};
+  assert.equal(scoreAgreement(board,[[same],[]],contract),true);
+  assert.equal(scoreAgreement(board,[[{...same,periods:[{number:1,home:13,away:11}]}],[]],contract),false);
+  assert.equal(scoreAgreement(board,[[],[{source:'FOX Sports',home:24,away:20,live:true,clockOk:true}]],contract),false);
+});

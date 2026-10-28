@@ -15,6 +15,7 @@ import { authorized, checkCredentials, sessionCookie, loginPage } from './dashbo
 import { eligibleForMarkets, linkedEventTickers, gameTimeLabel, storedClockSeconds } from './discovery.mjs';
 import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOver } from './score_verification.mjs';
+import { COMBO_WINDOW_MS, comboCollection, comboLegs, filledComboWindow, quoteForYes } from './combos.mjs';
 
 const API='https://external-api.kalshi.com/trade-api/v2';
 const pool = new pg.Pool({connectionString:process.env.DATABASE_URL, max:4, idleTimeoutMillis:15000});
@@ -67,7 +68,7 @@ async function invalidateBalance(){await pool.query('UPDATE account_cache SET up
 async function syncTradeHistory(settlements){
   const {rows:[config]}=await pool.query('SELECT started_at FROM trade_history_config WHERE id=1');
   if(!config)return;
-  const {rows:pending}=await pool.query(`SELECT a.id,a.market_ticker,a.sport,a.order_id,a.fill_count,a.created_at,
+  const {rows:pending}=await pool.query(`SELECT a.id,a.market_ticker,a.sport,a.order_id,a.fill_count,a.created_at,a.combo_legs,
       g.sport_family,COALESCE(g.title,'Sports game') AS teams
     FROM trade_attempts a LEFT JOIN game_snapshots g ON g.id=a.game_id
     WHERE a.created_at>=$1 AND a.status='filled' AND NOT EXISTS (SELECT 1 FROM trade_history h WHERE h.id=a.id)
@@ -104,7 +105,8 @@ async function syncTradeHistory(settlements){
       .find(([family])=>String(entry.sport_family||'').includes(family))||[])[1]||entry.sport;
     await pool.query(`INSERT INTO trade_history(id,market_ticker,sport,teams,occurred_at,profit_cents,outcome)
       VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(id) DO NOTHING`,
-      [entry.id,entry.market_ticker,sport,entry.teams,completed.occurredAt,completed.profitCents,completed.outcome]);
+      [entry.id,entry.market_ticker,entry.combo_legs?.length?`${entry.combo_legs.length}-pick combo`:sport,
+        entry.combo_legs?.length?entry.combo_legs.map(l=>l.title).join(' / '):entry.teams,completed.occurredAt,completed.profitCents,completed.outcome]);
   }
 }
 async function syncSettlementAlerts(){
@@ -306,24 +308,154 @@ async function recoverPending(signal,game,event,market,balance,bankroll,budgetCe
     const filled=Number(result.fill_count||0);await pool.query(`UPDATE trade_attempts SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE id=$1`,[row.id,filled>0?'filled':'unfilled',result.order_id||null,filled]);return filled>0
   }catch(e){await pool.query(`UPDATE trade_attempts SET status='check_order',error=$2,updated_at=now() WHERE id=$1`,[row.id,'Recovery response uncertain: '+String(e.message).slice(0,200)]);return false}
 }
+async function reconcileCombos(){
+  const pending=await pool.query(`SELECT id,market_ticker,combo_rfq_id,combo_quote_id,created_at FROM trade_attempts
+    WHERE status='combo_pending' AND combo_quote_id IS NOT NULL ORDER BY created_at LIMIT 20`);
+  for(const row of pending.rows){
+    try{
+      const path='/communications/rfqs/'+encodeURIComponent(row.combo_rfq_id)+'/quotes/'+encodeURIComponent(row.combo_quote_id);
+      const quote=(await kalshi(path,{auth:true})).quote;
+      if(!quote)continue;
+      if(quote.status==='executed' && quote.executed_ts){
+        const orderId=quote.rfq_creator_order_id;
+        if(!orderId)continue;
+        // Confirm actual account fills; quote acceptance by itself is not execution.
+        const fills=await kalshi('/portfolio/fills?'+new URLSearchParams({ticker:row.market_ticker,min_ts:String(Math.floor(new Date(row.created_at).getTime()/1000)-60),limit:'1000'}),{auth:true});
+        const mine=(fills.fills||[]).filter(f=>f.ticker===row.market_ticker && f.order_id===orderId && new Date(f.created_time||f.ts||0)>=new Date(row.created_at));
+        const count=mine.reduce((sum,f)=>sum+Number(f.count_fp??f.count??0),0);
+        if(count>0){await pool.query(`UPDATE trade_attempts SET status='filled',fill_count=$2,order_id=$3,updated_at=now() WHERE id=$1`,[row.id,count,orderId||null]);await invalidateBalance()}
+      }else if(['cancelled','expired','rejected','voided'].includes(quote.status) ||
+        (Date.now()-new Date(row.created_at).getTime()>90000 && quote.status==='open')){
+        await pool.query(`UPDATE trade_attempts SET status='unfilled',updated_at=now() WHERE id=$1`,[row.id]);
+      }
+    }catch(e){console.warn('Combo reconciliation deferred:',row.market_ticker,e.message)}
+  }
+}
+async function executeCombo(group,account,bankroll,overRemaining,scoreboardCache){
+  if(group.length<2)return {filled:false,pending:false};
+  // The verification window begins with a fresh observation of every leg.
+  const verified=await Promise.all(group.map(async c=>{
+    try{
+      if(c.signal.strategy==='over'){
+        const dwell=COMBO_WINDOW_MS;
+        const remaining=dwell-(Date.now()-c.state.observedAt);
+        if(!Number.isFinite(remaining))return null;
+        if(remaining>0)await new Promise(resolve=>setTimeout(resolve,remaining));
+      }
+      const liveData=(await kalshi('/live_data/milestone/'+encodeURIComponent(c.milestone.id))).live_data;
+      if(!liveData)return null;
+      liveData._observed_at=new Date().toISOString();
+      const state=gameState(c.milestone,liveData);
+      if(c.signal.strategy==='over'){
+        if(!confirmedOver(c.state,state,c.market)||!await verifyIndependentOver(state,c.milestone,{cache:scoreboardCache,market:c.market}))return null;
+      }else if(/basketball/.test(c.state.type) && (state.period!==c.state.period||!state.periodConsistent||state.remainingSeconds>c.state.remainingSeconds))return null;
+      const market=(await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market;
+      if(!market||market.ticker!==c.market.ticker||market.event_ticker!==c.event.event_ticker)return null;
+      const signal=c.signal.strategy==='over'?overSignal(state,market):leadSignal(state,market)||tennisSignal(state,market);
+      return signal?{...c,state,market,signal}:null;
+    }catch(e){console.warn('Combo leg verification:',c.market.ticker,e.message);return null}
+  }));
+  const seenGames=new Set(),seenEvents=new Set();
+  const eligible=verified.filter(Boolean).filter(c=>{
+    if(seenGames.has(c.milestone.id)||seenEvents.has(c.event.event_ticker))return false;
+    seenGames.add(c.milestone.id);seenEvents.add(c.event.event_ticker);return true;
+  }).slice(0,6);
+  if(eligible.length<2)return {filled:false,pending:false};
+  // Prefer all available verified legs, then smaller valid combinations.
+  const collections=(await kalshi('/multivariate_event_collections?'+new URLSearchParams({status:'open',associated_event_ticker:eligible[0].event.event_ticker,limit:'100'}))).multivariate_contracts||[];
+  const deadline=Date.now()+COMBO_WINDOW_MS;
+  const plans=[],funding=[];
+  // Request executable quotes for all available ticket sizes in the same
+  // bounded window. A six-pick market may have no maker while a three-pick does.
+  await Promise.all(Array.from({length:eligible.length-1},(_,i)=>eligible.length-i).map(async n=>{
+    const legs=eligible.slice(0,n),collection=comboCollection(collections,legs);
+    if(!collection)return;
+    try{
+      const identifiers=legs.map(c=>({event_ticker:c.event.event_ticker,market_ticker:c.market.ticker}));
+      const created=await kalshi('/multivariate_event_collections/'+encodeURIComponent(collection.collection_ticker),{auth:true,method:'POST',body:{selected_markets:identifiers,with_market_payload:true}});
+      const ticker=created.market_ticker,combo=created.market;
+      if(!ticker||!combo||combo.ticker!==ticker||combo.event_ticker!==created.event_ticker||!['active','open'].includes(combo.status))return;
+      const strategy=legs.every(c=>c.signal.strategy==='over')?'over':'lead';
+      const fraction=strategy==='over'?.35:.10;
+      const shard=marketShard({exchange_index:collection.exchange_index},combo),local=shardCash(account,shard);
+      const desired=Math.floor(Math.min(Number(account.balance),bankroll*fraction,legs.some(c=>c.signal.strategy==='over')?overRemaining:Infinity));
+      if(local===null||desired<100)return;
+      if(local<desired&&transferPlan(account,shard,desired)){funding.push({strategy,created,combo,desired});return}
+      const budget=Math.floor(Math.min(desired,local));
+      if(budget<100)return;
+      const existing=await pool.query(`SELECT status FROM trade_attempts WHERE market_ticker=$1 AND strategy=$2`,[ticker,strategy]);
+      if(existing.rows.some(r=>['filled','combo_pending','reserved','check_order'].includes(r.status)))return;
+      if(Date.now()>=deadline)return;
+      const rfq=(await kalshi('/communications/rfqs',{auth:true,method:'POST',body:{market_ticker:ticker,target_cost_dollars:(budget/100).toFixed(2),rest_remainder:false,obscure_creator_id:true}})).id;
+      if(rfq)plans.push({legs,created,ticker,combo,strategy,fraction,shard,budget,rfq});
+    }catch(e){console.warn('Combo size unavailable:',n,e.message)}
+  }));
+  if(!plans.length){if(funding.length){const p=funding[0];await ensureShardFunding({strategy:p.strategy},p.created,p.combo,account,p.desired)}return {filled:false,pending:false}}
+  try{
+    while(Date.now()<deadline){
+      const offers=(await Promise.all(plans.map(async plan=>{
+        try{
+          const list=(await kalshi('/communications/quotes?'+new URLSearchParams({rfq_id:plan.rfq,limit:'100'}),{auth:true})).quotes||[];
+          const fees=feeReserve({fee_multiplier_override:plan.combo.fee_multiplier_override},plan.combo);
+          return list.map(q=>({plan,q,terms:quoteForYes(q,plan.ticker,plan.budget,fees),fees})).filter(x=>x.terms&&
+            profitableCount(x.terms.count,x.terms.yesCost,fees,plan.strategy,Number(account.balance),plan.legs[0].state.type,plan.legs[0].state.remainingSeconds));
+        }catch(e){console.warn('Combo quotes unavailable:',plan.ticker,e.message);return []}
+      }))).flat().sort((a,b)=>b.terms.profitCents-a.terms.profitCents||b.plan.legs.length-a.plan.legs.length);
+      if(offers.length){
+        const {q,terms,plan,fees}=offers[0],{legs,ticker,strategy,fraction,shard,rfq,created}=plan;
+        // Refresh every leg immediately before accepting a quote. A goal correction
+        // or changed leader invalidates the entire combination.
+        const fresh=await liveBatch(legs.map(c=>c.milestone));
+        if(legs.some(c=>{
+          const d=fresh.get(c.milestone.id),s=gameState(c.milestone,d);
+          return c.signal.strategy==='over'?!overSignal(s,c.market)||s.home!==c.state.home||s.away!==c.state.away||
+            s.period<c.state.period||s.soccerMinute<c.state.soccerMinute:!(leadSignal(s,c.market)||tennisSignal(s,c.market));
+        }))break;
+        if(Date.now()>=deadline)break;
+        const latest=await accountBalance({fresh:true});
+        if(Number(latest.balance)<terms.debitCents || (shardCash(latest,shard)??0)<terms.debitCents ||
+          !profitableCount(terms.count,terms.yesCost,fees,strategy,Number(latest.balance),legs[0].state.type,legs[0].state.remainingSeconds))break;
+        const id=randomUUID(),reason=`${legs.length}-pick ${strategy} combo: ${legs.map(c=>c.state.title).join(' / ')}`;
+        const inserted=await pool.query(`INSERT INTO trade_attempts(id,market_ticker,event_ticker,game_id,sport,strategy,reason,fraction,count,limit_price,available_cents,status,combo_legs,combo_rfq_id,combo_quote_id)
+          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'combo_pending',$12,$13,$14)
+          ON CONFLICT(market_ticker,strategy) DO NOTHING RETURNING id`,
+          [id,ticker,created.event_ticker,legs[0].milestone.id,legs[0].state.sport,strategy,reason,fraction,terms.count,terms.yesCost,Number(latest.balance),JSON.stringify(comboLegs(legs)),rfq,q.id]);
+        if(!inserted.rowCount)break;
+        try{
+          // Accepting the maker's NO bid buys YES (the complementary price).
+          await kalshi('/communications/rfqs/'+encodeURIComponent(rfq)+'/quotes/'+encodeURIComponent(q.id)+'/accept',{auth:true,method:'PUT',body:{accepted_side:'no'}});
+          await reconcileCombos();
+          return {filled:true,pending:true,legs};
+        }catch(e){console.error('Combo accept uncertain; reconciliation required:',ticker,e.message);return {filled:false,pending:true,legs}}
+      }
+      await new Promise(resolve=>setTimeout(resolve,Math.min(500,Math.max(0,deadline-Date.now()))));
+    }
+  }finally{await Promise.all(plans.map(p=>kalshi('/communications/rfqs/'+encodeURIComponent(p.rfq),{auth:true,method:'DELETE'}).catch(e=>console.warn('RFQ cancellation deferred:',e.message))))}
+  return {filled:false,pending:false};
+}
 async function exitComebacks(games,events,positions){
   const byGame=new Map(games.map(g=>[g.milestone.id,g.state]));
   const markets=new Map([...events.values()].flatMap(e=>(e.markets||[]).map(m=>[m.ticker,m])));
   const marketGames=new Map(games.flatMap(g=>linkedEventTickers(g.milestone).flatMap(t=>(events.get(t)?.markets||[]).map(m=>[m.ticker,g.milestone.id]))));
   const held=(positions.market_positions||[]).filter(p=>Number(p.position_fp??p.position??0)>0);
   if(!held.length)return;
-  const recorded=await pool.query(`SELECT DISTINCT ON (market_ticker) market_ticker,game_id,strategy,status FROM trade_attempts WHERE status='filled' ORDER BY market_ticker,updated_at DESC`);
+  const recorded=await pool.query(`SELECT DISTINCT ON (market_ticker) market_ticker,game_id,strategy,status,combo_legs FROM trade_attempts WHERE status='filled' ORDER BY market_ticker,updated_at DESC`);
   const ownership=new Map(recorded.rows.map(r=>[r.market_ticker,r]));
   for(const position of held){
     const original=ownership.get(position.ticker),gameId=original?.game_id||marketGames.get(position.ticker),state=byGame.get(gameId),nested=markets.get(position.ticker);
-    if(!state?.verifiedLive||!nested)continue;
     // Never auto-sell overs or positions without a verified lead entry.
     if(original?.strategy!=='lead'||/TOTAL/i.test(position.ticker))continue;
     const strategy='lead';
-    if(!comeback(state,nested,strategy))continue;
+    const combo=Array.isArray(original.combo_legs)&&original.combo_legs.length>=2;
+    const reversed=combo?original.combo_legs.some(leg=>{
+      if(leg.strategy!=='lead')return false;
+      const legState=byGame.get(leg.game_id),legMarket=(events.get(leg.event_ticker)?.markets||[]).find(m=>m.ticker===leg.market_ticker);
+      return legState&&legMarket&&comeback(legState,legMarket,strategy);
+    }):state?.verifiedLive&&nested&&comeback(state,nested,strategy);
+    if(!reversed)continue;
     try{
       const market=(await kalshi('/markets/'+encodeURIComponent(position.ticker))).market;
-      if(!market||!['active','open'].includes(market.status)||!comeback(state,market,strategy))continue;
+      if(!market||!['active','open'].includes(market.status)||!combo&&!comeback(state,market,strategy))continue;
       const bid=Number(market.yes_bid_dollars),bidSize=Number(market.yes_bid_size_fp),heldCount=Number(position.position_fp??position.position);
       if(!Number.isFinite(bid)||bid<=0||!Number.isFinite(bidSize)||bidSize<minimumCount(market))continue;
       let prior=(await pool.query('SELECT * FROM exit_attempts WHERE market_ticker=$1',[position.ticker])).rows[0];
@@ -366,14 +498,17 @@ async function scan(cachedMilestones){
   if(!lock.rows[0].acquired){await client.query('ROLLBACK');client.release();return {skipped:'scan in progress'}};
   let scanned=0,signals=0,submitted=0,ms;const executionErrors=[],scanStarted=new Date();let openPositions=null;
   try{
+    if(live()||exitOnly())await reconcileCombos();
     if(live()&&!cachedMilestones)try{await reconcileFundingTransfers()}catch(e){console.warn('Transfer history unavailable:',e.message)}
     ms=cachedMilestones||await milestones();const liveMap=await liveBatch(ms);
     const games=ms.map(m=>({milestone:m,state:gameState(m,liveMap.get(m.id))}));
     const active=games.filter(g=>g.state.verifiedLive && g.state.scoreKnown);
     const events=await marketMap(active.filter(g=>eligibleForMarkets(g.state)).flatMap(g=>linkedEventTickers(g.milestone)));
     let balance=0,bankroll=0,overRemaining=0,account=null;
-    const existingFills=await pool.query(`SELECT market_ticker,strategy,fill_count,limit_price FROM trade_attempts WHERE status='filled'`);
+    const existingFills=await pool.query(`SELECT market_ticker,event_ticker,game_id,strategy,fill_count,limit_price,created_at,updated_at,combo_legs FROM trade_attempts WHERE status='filled'`);
     let filled=new Set(existingFills.rows.map(r=>`${r.market_ticker}:${r.strategy}`));
+    const pendingLegs=await pool.query(`SELECT combo_legs FROM trade_attempts WHERE status='combo_pending' AND combo_legs IS NOT NULL`);
+    for(const row of pendingLegs.rows)for(const leg of row.combo_legs||[])filled.add(`${leg.market_ticker}:${leg.strategy}`);
     if(live()||exitOnly()){
       const [currentAccount,positions]=await Promise.all([
         accountBalance(),
@@ -408,11 +543,31 @@ async function scan(cachedMilestones){
       const values=batch.map((_,row)=>'('+Array.from({length:15},(_,field)=>'$'+(row*15+field+1)).join(',')+')').join(',');
       await pool.query(`INSERT INTO game_snapshots(id,title,sport,sport_family,home,away,status,progress,period,time_left,clock_seconds,clock_label,clock_observed_at,scanned_at,signals) VALUES ${values} ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,sport=EXCLUDED.sport,sport_family=EXCLUDED.sport_family,home=EXCLUDED.home,away=EXCLUDED.away,status=EXCLUDED.status,progress=EXCLUDED.progress,period=EXCLUDED.period,time_left=EXCLUDED.time_left,clock_seconds=EXCLUDED.clock_seconds,clock_label=EXCLUDED.clock_label,clock_observed_at=CASE WHEN game_snapshots.clock_seconds IS NOT DISTINCT FROM EXCLUDED.clock_seconds AND game_snapshots.period=EXCLUDED.period AND game_snapshots.status=EXCLUDED.status AND game_snapshots.clock_label=EXCLUDED.clock_label THEN game_snapshots.clock_observed_at ELSE EXCLUDED.clock_observed_at END,scanned_at=EXCLUDED.scanned_at,signals=EXCLUDED.signals`,batch.flat());
     }
+    // Make the live score and clock visible before slower order preflights.
+    await pool.query(`UPDATE scan_status SET last_scan=$1,scanned=$2,signals=$3 WHERE id=1`,[scanStarted,scanned,signals]);
     opportunities.sort((a,b)=>{
       if(a.signal.strategy!==b.signal.strategy)return a.signal.strategy==='over'?-1:1;
       const profit=c=>netSettlementProfitCents(executableCount(c,balance,bankroll,overRemaining),Number(c.market.yes_ask_dollars),feeReserve(c.event,c.market));
       return profit(b)-profit(a) || (a.signal.strategy==='lead'?Number(tieRefundPreference(b.market))-Number(tieRefundPreference(a.market)):0);
     });
+    // Verify independent over scoreboards in parallel. A dozen sequential 12s
+    // dwells used to freeze the dashboard for minutes and miss later games.
+    const overPreflights=new Map(),overs=opportunities.filter(c=>c.signal.strategy==='over'&&hasAsk(c.market));
+    let cursor=0;
+    await Promise.all(Array.from({length:Math.min(20,overs.length)},async()=>{
+      while(cursor<overs.length){const c=overs[cursor++];
+        try{
+          const remaining=COMBO_WINDOW_MS-(Date.now()-c.state.observedAt);
+          if(!Number.isFinite(remaining))continue;
+          if(remaining>0)await new Promise(resolve=>setTimeout(resolve,remaining));
+          const latest=(await kalshi('/live_data/milestone/'+encodeURIComponent(c.milestone.id))).live_data;
+          if(!latest)continue;
+          latest._observed_at=new Date().toISOString();
+          const state=gameState(c.milestone,latest);
+          if(confirmedOver(c.state,state,c.market)&&await verifyIndependentOver(state,c.milestone,{cache:scoreboardCache,market:c.market}))overPreflights.set(signalKey(c),state);
+        }catch(e){console.warn('Over preflight deferred:',c.market.ticker,e.message)}
+      }
+    }));
     for(const c of opportunities){let state=c.state;try{
         if(!live())continue;
         if(filled.has(signalKey(c)))continue;
@@ -427,23 +582,11 @@ async function scan(cachedMilestones){
         // Refresh available cash before every order. If the account cannot afford one contract plus
         // the fee reserve, orderSize returns zero and no order is sent to Kalshi.
         const latest=await accountBalance();balance=Number(latest.balance);bankroll=balance+Number(latest.portfolio_value);
-        if(c.signal.strategy==='over'){
-          // Let a provisional score settle, particularly after a soccer goal.
-          // A score correction in this interval makes the candidate disappear.
-          const dwell=/soccer/.test(state.type)?12000:3000;
-          const remaining=dwell-(Date.now()-state.observedAt);
-          if(!Number.isFinite(remaining))continue;
-          if(remaining>0)await new Promise(resolve=>setTimeout(resolve,remaining));
-        }
-        // Revalidate the game before fetching the final quote. Keep the quote
-        // as the last remote read before the reserved fill-or-kill submission.
-        const latestLive=c.signal.strategy==='over'?
-          (await kalshi('/live_data/milestone/'+encodeURIComponent(c.milestone.id))).live_data:
-          (await liveBatch([c.milestone])).get(c.milestone.id);
-        if(latestLive&&c.signal.strategy==='over')latestLive._observed_at=new Date().toISOString();
-        const freshState=gameState(c.milestone,latestLive);
-        if(c.signal.strategy==='over'&&!confirmedOver(state,freshState,c.market))continue;
-        if(c.signal.strategy==='over'&&!await verifyIndependentOver(freshState,c.milestone,{cache:scoreboardCache}))continue;
+        // A confirmed over preflight expires quickly; never submit on a stale
+        // score. Lead games still require a fresh check before the quote.
+        const freshState=c.signal.strategy==='over'?overPreflights.get(signalKey(c)):
+          gameState(c.milestone,(await liveBatch([c.milestone])).get(c.milestone.id));
+        if(!freshState || c.signal.strategy==='over' && Date.now()-freshState.observedAt>10000)continue;
         if(c.signal.strategy==='lead' && /basketball/.test(state.type) &&
           (freshState.period!==state.period || !freshState.periodConsistent ||
             freshState.remainingSeconds>state.remainingSeconds))continue;
@@ -475,16 +618,75 @@ async function scan(cachedMilestones){
         }
       }catch(e){const message=`${c.market.ticker}: ${String(e.message).slice(0,170)}`;executionErrors.push(message);console.error('Candidate execution failed:',message)}
     }
+    // The first ticket uses the currently held fills. A later ticket waits for
+    // two newly filled singles, then uses up to six distinct held games.
+    if(live()&&account){
+      const last=(await pool.query(`SELECT created_at FROM trade_attempts WHERE combo_legs IS NOT NULL ORDER BY created_at DESC LIMIT 1`)).rows[0];
+      const [currentPositions,currentAccount,currentFills]=await Promise.all([
+        allOpenPositions(),accountBalance({fresh:true}),pool.query(`SELECT market_ticker,event_ticker,game_id,strategy,fill_count,limit_price,created_at,updated_at,combo_legs FROM trade_attempts WHERE status='filled'`)
+      ]);
+      const held=new Set((currentPositions.market_positions||[]).filter(p=>Number(p.position_fp??p.position??0)>0).map(p=>p.ticker));
+      const singles=filledComboWindow(currentFills.rows,held,last?.created_at);
+      if(singles.length>=2){
+        const gameById=new Map(games.map(g=>[g.milestone.id,g]));
+        const comboCandidates=singles.flatMap(r=>{
+          const g=gameById.get(r.game_id),event=events.get(r.event_ticker),market=(event?.markets||[]).find(m=>m.ticker===r.market_ticker);
+          if(!g?.state.verifiedLive||!market)return [];
+          const signal=r.strategy==='over'?overSignal(g.state,market):leadSignal(g.state,market)||tennisSignal(g.state,market);
+          return signal?[{...g,market,event,signal,state:g.state}]:[];
+        });
+        const group=[],seenGames=new Set(),seenEvents=new Set();
+        for(const c of comboCandidates){if(seenGames.has(c.milestone.id)||seenEvents.has(c.event.event_ticker))continue;
+          group.push(c);seenGames.add(c.milestone.id);seenEvents.add(c.event.event_ticker);if(group.length===6)break}
+        if(group.length>=2)try{
+          const result=await executeCombo(group,currentAccount,Number(currentAccount.balance)+Number(currentAccount.portfolio_value),overRemaining,scoreboardCache);
+          if(result.filled)submitted++;
+        }catch(e){executionErrors.push('Combo: '+String(e.message).slice(0,180));console.error('Combo execution deferred:',e)}
+      }
+    }
     await pool.query('UPDATE scan_status SET last_scan=$5,last_error=$4,scanned=$1,signals=$2,orders_submitted=orders_submitted+$3 WHERE id=1',[scanned,signals,submitted,executionErrors.length?executionErrors.slice(0,2).join('; ').slice(0,250):null,scanStarted]);
     try{await syncSettlementAlerts()}catch(e){console.error('Settlement alert scan failed:',e)}
     return {scanned,signals,submitted,active:active.length,next:games.filter(g=>g.state.verifiedLive || (new Date(g.milestone.start_date).getTime()>Date.now()-3600000 && new Date(g.milestone.start_date).getTime()<Date.now()+3600000)).map(g=>g.milestone)};
   }catch(e){console.error('Scan failed:',e);await pool.query('UPDATE scan_status SET last_scan=now(),last_error=$1,scanned=$2,signals=$3 WHERE id=1',[String(e.message).slice(0,250),scanned,signals]);return {error:e.message,scanned,signals,next:ms}}
   finally{await client.query('ROLLBACK');client.release()}
 }
+async function refreshOpenClocks(){
+  // Only the dashboard visitor requests this five-second refresh; the scanner
+  // can spend longer evaluating orders without freezing the visible game clock.
+  const claim=await pool.query(`UPDATE scan_status SET clock_refresh_at=clock_timestamp() WHERE id=1
+    AND (clock_refresh_at IS NULL OR clock_refresh_at<now()-interval '5 seconds') RETURNING id`);
+  if(!claim.rowCount)return;
+  try{
+    const {rows}=await pool.query(`SELECT DISTINCT g.id,g.title,g.sport,g.sport_family FROM trade_attempts a
+      JOIN game_snapshots g ON g.id=a.game_id WHERE a.status='filled' AND g.status='live'
+      ORDER BY g.id LIMIT 40`);
+    if(!rows.length)return;
+    const milestones=rows.map(g=>({id:g.id,title:g.title,type:g.sport_family,details:{league:g.sport}}));
+    const data=await liveBatch(milestones);
+    await Promise.all(milestones.map(async m=>{
+      const item=data.get(m.id);if(!item)return;
+      const s=gameState(m,item);
+      const final=/^(final|finished|complete|completed|closed|ended)$/.test(s.status);
+      if(!s.verifiedLive&&!final)return;
+      const soccer=/soccer/.test(s.type),baseball=/baseball/.test(s.type),tennis=/tennis/.test(s.type);
+      const seconds=s.verifiedLive?(soccer&&Number.isFinite(s.matchRemainingSeconds)?s.matchRemainingSeconds:
+        soccer&&Number.isFinite(s.soccerMinute)&&s.soccerMinute<90?(90-s.soccerMinute)*60:
+        !baseball&&!tennis&&!soccer&&Number.isFinite(s.remainingSeconds)?s.remainingSeconds:null):null;
+      const label=soccer?'Regulation left':baseball?'Inning progress':tennis?'Set progress':s.sport==='NCAAB'?`Half ${s.period||'?'} left`:/hockey/.test(s.type)?`Period ${s.period||'?'} left`:/football|basketball/.test(s.type)?`Quarter ${s.period||'?'} left`:'Game clock';
+      await pool.query(`UPDATE game_snapshots SET home=$2,away=$3,status=$4,time_left=$5,
+        clock_observed_at=CASE WHEN clock_seconds IS DISTINCT FROM $6::integer OR period IS DISTINCT FROM $8::text OR status IS DISTINCT FROM $4::text
+          THEN clock_timestamp() ELSE clock_observed_at END,
+        clock_seconds=$6,clock_label=$7,period=$8,scanned_at=clock_timestamp()
+        WHERE id=$1 AND (scanned_at<clock_timestamp() OR status='live')`,
+        [m.id,s.scoreKnown?s.home:null,s.scoreKnown?s.away:null,s.verifiedLive?'live':'final',
+          gameTimeLabel(s),storedClockSeconds(seconds,s.clockRunning),s.clockRunning===false?`${label} · paused`:label,String(s.period||'')]);
+    }));
+  }catch(e){console.warn('Dashboard clock refresh deferred:',e.message)}
+}
 async function state(){const [snap,stats,attempts]=await Promise.all([
   pool.query(`SELECT id,title,sport,home,away,status,time_left,signals FROM game_snapshots WHERE status IN ('live','inprogress','started') AND scanned_at>=(SELECT COALESCE(last_scan,now()-interval '1 minute') FROM scan_status WHERE id=1) ORDER BY jsonb_array_length(signals) DESC,title`),
   pool.query('SELECT * FROM scan_status WHERE id=1'),
-  pool.query(`SELECT a.market_ticker,a.game_id,a.sport,a.strategy,a.reason,a.fill_count,a.limit_price,g.status AS game_status,g.title AS game_title,g.sport_family,g.home AS home_score,g.away AS away_score,g.scanned_at AS score_scanned_at,g.clock_seconds,g.clock_label,g.clock_observed_at,g.time_left FROM trade_attempts a LEFT JOIN game_snapshots g ON g.id=a.game_id WHERE a.status='filled' ORDER BY a.created_at DESC`)
+  pool.query(`SELECT a.market_ticker,a.game_id,a.sport,a.strategy,a.reason,a.combo_legs,a.fill_count,a.limit_price,g.status AS game_status,g.title AS game_title,g.sport_family,g.home AS home_score,g.away AS away_score,g.scanned_at AS score_scanned_at,g.clock_seconds,g.clock_label,g.clock_observed_at,g.time_left FROM trade_attempts a LEFT JOIN game_snapshots g ON g.id=a.game_id WHERE a.status='filled' ORDER BY a.created_at DESC`)
 ]);
   let balance=null,positions=null,accountError=null,positionsError=null;
   if(configured()){
@@ -511,7 +713,7 @@ async function settlementAlerts(since){
   return rows;
 }
 export default {async fetch(req){const url=new URL(req.url);
-  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'integer-clock-snapshot-20261028'});
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'combo-rfq-window-20261028'});
   if(req.method==='GET'&&url.pathname==='/manifest.webmanifest')return response(manifest,'application/manifest+json');
   if(req.method==='GET'&&url.pathname==='/sw.js')return new Response(worker,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','service-worker-allowed':'/','x-content-type-options':'nosniff'}});
   if(req.method==='GET'&&/^\/icon-(192|512)\.png$/.test(url.pathname))return response(Buffer.from(icons[Number(url.pathname.match(/\d+/)[0])],'base64'),'image/png');
@@ -560,6 +762,7 @@ export default {async fetch(req){const url=new URL(req.url);
     if(req.method==='GET'&&url.pathname==='/api/state'){
       const since=Number(url.searchParams.get('since'))||0;
       if(!Number.isFinite(since)||since<0)return json({error:'Invalid cursor'},400);
+      await refreshOpenClocks();
       const [snapshot,alerts]=await Promise.all([state(),settlementAlerts(since).catch(e=>{console.error('Dashboard alerts unavailable:',e);return null})]);
       return json({...snapshot,alerts});
     }

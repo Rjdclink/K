@@ -5,13 +5,21 @@ import {gameState,overSignal,sportName} from '../src/strategy.mjs';
 
 test('find game and both total families from a game-only milestone',()=>{
   const m={type:'basketball_game',related_event_tickers:['KXNBAGAME-26OCT28BOSBKN']};
-  assert.deepEqual(linkedEventTickers(m),['KXNBAGAME-26OCT28BOSBKN','KXNBATOTAL-26OCT28BOSBKN','KXNBATEAMTOTAL-26OCT28BOSBKN']);
-  assert.deepEqual(linkedEventTickers({...m,related_event_tickers:[...m.related_event_tickers,'KXNBATOTAL-26OCT28BOSBKN']}),['KXNBAGAME-26OCT28BOSBKN','KXNBATOTAL-26OCT28BOSBKN','KXNBATEAMTOTAL-26OCT28BOSBKN']);
+  const discovered=linkedEventTickers(m);
+  assert.ok(discovered.includes('KXNBATOTAL-26OCT28BOSBKN'));
+  assert.ok(discovered.includes('KXNBATEAMTOTAL-26OCT28BOSBKN'));
+  assert.ok(discovered.includes('KXNBA3QTOTAL-26OCT28BOSBKN'));
+  assert.ok(discovered.includes('KXNBA1HTEAMTOTAL-26OCT28BOSBKN'));
+  assert.equal(new Set(discovered).size,discovered.length);
+  assert.deepEqual(linkedEventTickers({...m,related_event_tickers:[...m.related_event_tickers,'KXNBATOTAL-26OCT28BOSBKN']}),discovered);
 });
 
-test('retain only full game markets, primary winner and tennis match',()=>{
+test('retain actual linked period total markets plus primary winner and tennis match',()=>{
   const m={type:'basketball_game',related_event_tickers:['KXNBA1QGAME-DATE','KXNBASPREAD-DATE','KXNBAGAME-DATE','KXNBA1HTOTAL-DATE'],primary_event_tickers:['KXNBAGAME-DATE'],details:{main_game_event_ticker:'KXNBAGAME-DATE'}};
-  assert.deepEqual(linkedEventTickers(m),['KXNBAGAME-DATE','KXNBATOTAL-DATE','KXNBATEAMTOTAL-DATE']);
+  const discovered=linkedEventTickers(m);
+  assert.deepEqual(discovered.slice(0,4),['KXNBAGAME-DATE','KXNBA1HTOTAL-DATE','KXNBATOTAL-DATE','KXNBATEAMTOTAL-DATE']);
+  assert.ok(discovered.includes('KXNBA4QTOTAL-DATE'));
+  assert.equal(discovered.filter(t=>t==='KXNBA1HTOTAL-DATE').length,1);
   assert.deepEqual(linkedEventTickers({type:'tennis_tournament_singles',details:{main_game_event_ticker:'KXATPMATCH-DATE'}}),['KXATPMATCH-DATE']);
 });
 

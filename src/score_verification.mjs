@@ -1,6 +1,7 @@
 // ESPN and FOX publish the scoreboards used by their sites. These endpoints
 // are not contractual data APIs; a changed schema or unavailable fixture must
 // fail closed, never silently turn into permission to buy an over.
+import { periodValue } from './strategy.mjs';
 const FOX_KEY='jE7yBJVRNAwdDesMgTzTXUUSx1It41Fq'; // Public key in foxsports.com scoreboard URLs.
 const clean=s=>String(s||'').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/&/g,' and ').replace(/[^a-z0-9]/g,'');
 const score=v=>v===null||v===undefined||v===''?NaN:Number(v);
@@ -57,7 +58,8 @@ export function espnMatches(data,game,milestone){
     const c=e.competitions?.[0],home=c?.competitors?.find(t=>t.homeAway==='home'),away=c?.competitors?.find(t=>t.homeAway==='away');
     if(!home||!away||!sameFixture(game,milestone,teamAliases(home.team),teamAliases(away.team),e.date))return [];
     const status=c.status||e.status;
-    return [{source:'ESPN',home:score(home.score),away:score(away.score),live:status?.type?.state==='in',clockOk:clockCompatible(game,status?.period,status?.displayClock)}];
+    const periods=(home.linescores||[]).map((part,i)=>({number:i+1,home:score(part.value),away:score(away.linescores?.[i]?.value)}));
+    return [{source:'ESPN',home:score(home.score),away:score(away.score),periods,live:status?.type?.state==='in',clockOk:clockCompatible(game,status?.period,status?.displayClock)}];
   });
 }
 export function foxMatches(data,game,milestone){
@@ -72,13 +74,19 @@ export function foxMatches(data,game,milestone){
     return [{source:'FOX Sports',home:score(home.score),away:score(away.score),live:e.eventStatus===1,clockOk:clockCompatible(game,NaN,e.statusLine)}];
   }));
 }
-export function scoreAgreement(game,bySource){
+export function scoreAgreement(game,bySource,market){
+  const segment=String(market?.event_ticker||'').split('-')[0].match(/([1-9])(?:Q|P|H|INNING)(?:TEAM)?TOTAL$/);
   let agrees=0;
   for(const matches of bySource){
     if(matches.length>1)return false; // Ambiguous fixture identity.
     if(!matches.length)continue;
     const m=matches[0];
     if(!m.live||!m.clockOk||!Number.isInteger(m.home)||!Number.isInteger(m.away)||m.home!==game.home||m.away!==game.away)return false;
+    if(segment){
+      const expected=periodValue(game,market);
+      const actual=periodValue({type:game.type,sport:game.sport,periodScores:m.periods},market);
+      if(!expected||!actual||actual.home!==expected.home||actual.away!==expected.away)continue;
+    }
     agrees++;
   }
   return agrees>=1;
@@ -88,7 +96,7 @@ async function json(url,fetcher){
   if(!response.ok)throw Error(`Scoreboard ${response.status}`);
   return response.json();
 }
-export async function verifyIndependentOver(game,milestone,{fetcher=fetch,cache}={}){
+export async function verifyIndependentOver(game,milestone,{fetcher=fetch,cache,market}={}){
   const start=Date.parse(milestone.start_date||'');
   if(!Number.isFinite(start)||!game.scoreKnown)return false;
   const {espn,fox}=feeds(game);
@@ -110,7 +118,14 @@ export async function verifyIndependentOver(game,milestone,{fetcher=fetch,cache}
     return value;
   };
   const results=await Promise.allSettled(requests.map(async request=>({source:request.source,data:await read(request.url)})));
-  const bySource=['ESPN','FOX Sports'].map(source=>results.flatMap(result=>result.status==='fulfilled'&&result.value.source===source?
-    source==='ESPN'?espnMatches(result.value.data,game,milestone):foxMatches(result.value.data,game,milestone):[]));
-  return scoreAgreement(game,bySource);
+  const bySource=['ESPN','FOX Sports'].map(source=>{
+    const seen=new Set();return results.flatMap(result=>{
+      if(result.status!=='fulfilled'||result.value.source!==source)return [];
+      const matches=source==='ESPN'?espnMatches(result.value.data,game,milestone):foxMatches(result.value.data,game,milestone);
+      const signature=JSON.stringify(matches);
+      if(seen.has(signature))return [];
+      seen.add(signature);return matches;
+    });
+  });
+  return scoreAgreement(game,bySource,market);
 }

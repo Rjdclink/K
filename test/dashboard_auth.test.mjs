@@ -32,6 +32,7 @@ test('dashboard includes alerts in its existing refresh while the alert endpoint
   process.env.KALSHI_API_KEY='';process.env.KALSHI_API_KEY_ID='';
   pg.Pool.prototype.query=async function(sql,params){
     seen.push({sql,params});
+    if(sql.includes('SET clock_refresh_at='))return {rows:[]};
     if(sql.includes('FROM game_snapshots WHERE'))return {rows:[]};
     if(sql.includes('FROM scan_status WHERE'))return {rows:[{scanned:0,signals:0}]};
     if(sql.includes('FROM trade_attempts a LEFT JOIN'))return {rows:[]};
