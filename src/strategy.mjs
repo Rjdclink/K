@@ -134,13 +134,13 @@ export function leadSignal(game, market) {
   const soccer=/soccer/.test(game.type);
   const segments=/baseball/.test(game.type)?9:/hockey/.test(game.type)?3:/soccer/.test(game.type)?2:basketball&&game.sport==='NCAAB'?2:/basketball|football/.test(game.type)?4:Infinity;
   const baseball=/baseball/.test(game.type);
-  const finalTime=baseball?game.period===9:soccer?game.period===2 && Number.isFinite(game.soccerMinute) && game.soccerMinute>=85:game.period===segments && game.periodConsistent && Number.isFinite(game.remainingSeconds) && game.remainingSeconds>0 && (basketball?game.remainingSeconds<=60:hockey?game.remainingSeconds<=390:game.remainingSeconds<300);
+  const finalTime=baseball?game.period===9:soccer?game.period===2 && Number.isFinite(game.soccerMinute) && game.soccerMinute>=85:game.period===segments && game.periodConsistent && Number.isFinite(game.remainingSeconds) && game.remainingSeconds>0 && (basketball?game.remainingSeconds<600:hockey?game.remainingSeconds<=390:game.remainingSeconds<300);
   if (!game.verifiedLive || !game.scoreKnown || !finalTime || market.status!=='active' && market.status!=='open') return null;
   const h=game.homeUnits,a=game.awayUnits;
   if (!Number.isFinite(h)||!Number.isFinite(a)) return null;
   const margin=Math.abs(h-a),trailerScore=Math.min(h,a);
   const soccerLastSeconds=soccer&&game.soccerMinute>=89&&game.matchRemainingSeconds>0&&game.matchRemainingSeconds<45;
-  const minimum=basketball?5:football?10:hockey?3:baseball?2:soccer?soccerLastSeconds?1:2:null;
+  const minimum=basketball?game.remainingSeconds<=60?5:10:football?10:hockey?3:baseball?2:soccer?soccerLastSeconds?1:2:null;
   const ratio=trailerScore>0?Math.max(h,a)/trailerScore:Infinity;
   if (minimum===null ? trailerScore<=0||ratio<3.5 : margin<minimum) return null;
   const leader = h>a ? game.homeName : game.awayName;
@@ -159,6 +159,7 @@ export function leadSignal(game, market) {
 export function leadFraction(game,margin,minimum){
   const veryCommanding=margin>=Math.ceil(minimum*1.5);
   if(!veryCommanding)return .15;
+  if(/basketball/.test(game.type))return game.remainingSeconds<=150?.20:game.remainingSeconds<=300||margin>=20?.175:.15;
   if(/baseball/.test(game.type))return game.period===9&&game.outs>=2?.25:game.period===9&&game.outs>=1?.20:.15;
   if(/soccer/.test(game.type))return game.soccerMinute>=89?.25:game.soccerMinute>=88?.20:.15;
   if(Number.isFinite(game.remainingSeconds)&&game.remainingSeconds<=30)return .25;
@@ -183,11 +184,12 @@ export function tennisSignal(game,market){
   return {strategy:'lead',reason:`Tennis match-clinching set ${leaderGames}–${opponentGames}; leader serves, points ${leaderPoints}–${opponentPoints}${t.advantage===leaderId?' advantage':''}`,fraction:opponentGames<=1&&leaderPoints===40?.25:opponentGames<=1?.20:.15};
 }
 export function minimumProfitCents(strategy,availableCents,sportType='',remainingSeconds=NaN){
+  if(strategy==='over')return 0;
   if(strategy==='lead' && /basketball/.test(sportType)){
-    return Number.isFinite(remainingSeconds)&&remainingSeconds>0&&remainingSeconds<=60?0:Infinity;
+    return Number.isFinite(remainingSeconds)&&remainingSeconds>0&&remainingSeconds<600?0:Infinity;
   }
   const hundreds=Math.floor(Math.max(0,Number(availableCents))/10000);
-  return strategy==='over'?hundreds*100:hundreds*50;
+  return hundreds*50;
 }
 export function netSettlementProfitCents(count,price,feeMultiplier=2){
   if(!Number.isFinite(count)||count<=0||!Number.isFinite(price)||price<=0||price>=1)return 0;

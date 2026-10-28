@@ -32,7 +32,7 @@ export function gameTimeLabel(game){
   if(/tennis/.test(family))return Number.isFinite(game.tennis?.firstGames)&&Number.isFinite(game.tennis?.secondGames)?`Set · ${game.tennis.firstGames}–${game.tennis.secondGames} games`:'Set score unavailable';
   if(/soccer/.test(family)&&Number.isFinite(game.matchRemainingSeconds)&&game.matchRemainingSeconds>=0)return `${String(Math.floor(game.matchRemainingSeconds/60)).padStart(2,'0')}:${String(game.matchRemainingSeconds%60).padStart(2,'0')} match time remaining`;
   if(/soccer/.test(family)&&Number.isFinite(game.soccerMinute))return `${game.soccerMinute}' elapsed`;
-  if(Number.isFinite(game.remainingSeconds))return `${String(Math.floor(game.remainingSeconds/60)).padStart(2,'0')}:${String(game.remainingSeconds%60).padStart(2,'0')} remaining`;
+  if(Number.isFinite(game.remainingSeconds)){const segment=Number.isFinite(game.period)?/basketball/.test(family)?`${game.sport==='NCAAB'?'Half':'Quarter'} ${game.period}`:/football/.test(family)?`Quarter ${game.period}`:/hockey/.test(family)?`Period ${game.period}`:'' : '';return `${segment?segment+' · ':''}${String(Math.floor(game.remainingSeconds/60)).padStart(2,'0')}:${String(game.remainingSeconds%60).padStart(2,'0')} remaining`}
   if(/cricket/.test(family)&&Number.isFinite(game.period))return `Innings ${game.period} · no countdown clock`;
   if(/table_tennis/.test(family))return 'No countdown clock';
   return 'Live clock unavailable';
