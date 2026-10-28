@@ -45,6 +45,10 @@ CREATE TABLE IF NOT EXISTS trade_attempts (
 );
 ALTER TABLE trade_attempts ADD COLUMN IF NOT EXISTS available_cents integer NOT NULL DEFAULT 0;
 ALTER TABLE trade_attempts ADD COLUMN IF NOT EXISTS attempt_history jsonb NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE trade_attempts ADD COLUMN IF NOT EXISTS combo_legs jsonb;
+ALTER TABLE trade_attempts ADD COLUMN IF NOT EXISTS combo_rfq_id text;
+ALTER TABLE trade_attempts ADD COLUMN IF NOT EXISTS combo_quote_id text;
+
 ALTER TABLE trade_attempts ALTER COLUMN count TYPE numeric(12,2) USING count::numeric;
 CREATE TABLE IF NOT EXISTS scan_status (
   id integer PRIMARY KEY CHECK (id = 1),
@@ -54,6 +58,7 @@ CREATE TABLE IF NOT EXISTS scan_status (
   signals integer NOT NULL DEFAULT 0,
   orders_submitted integer NOT NULL DEFAULT 0
 );
+ALTER TABLE scan_status ADD COLUMN IF NOT EXISTS clock_refresh_at timestamptz;
 INSERT INTO scan_status(id) VALUES(1) ON CONFLICT DO NOTHING;
 CREATE TABLE IF NOT EXISTS funding_transfers (
   id uuid PRIMARY KEY,

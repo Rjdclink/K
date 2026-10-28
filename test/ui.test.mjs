@@ -23,8 +23,8 @@ test('filled order timer is bright red, advances each second and reanchors to li
   assert.equal(clock(base,start+2000),'04:36');
   assert.equal(clock({...base,clock_seconds:276,clock_observed_at:new Date(start+2000).toISOString()},start+2000),'04:36');
   assert.equal(clock({...base,clock_seconds:2},start+6000),'00:00');
-  assert.equal(clock({...base,time_left:'04:38 remaining'},start+31000),'Clock updating');
-  assert.equal(clock({...base,clock_seconds:11,time_left:'00:11 remaining'},start+21000),'Clock updating');
+  assert.equal(clock({...base,time_left:'04:38 remaining'},start+31000),'Last exchange clock 04:38 · delayed');
+  assert.equal(clock({...base,clock_seconds:11,time_left:'00:11 remaining'},start+21000),'Last exchange clock 00:11 · delayed');
   assert.equal(clock({...base,clock_seconds:9.2,clock_label:'Quarter 4 left · paused'},start+5000),'00:09 · paused');
   assert.equal(clock({...base,clock_seconds:9.2,clock_label:'Quarter 4 left · paused'},start+12000),'00:09 · paused');
   assert.equal(clock({game_status:'live',clock_seconds:null,clock_label:'Stoppage time'}),'Stoppage time · live');
@@ -33,10 +33,10 @@ test('filled order timer is bright red, advances each second and reanchors to li
   assert.equal(scoreDisplay(base,start),'Away 71 · Home 79');
   assert.equal(scoreDisplay({...base,home_score:0,away_score:0},start),'Away 0 · Home 0');
   assert.equal(scoreDisplay({...base,sport:'Tennis',home_score:5,away_score:3},start),'Away 3 · Home 5 games');
-  assert.equal(scoreDisplay({...base,home_score:null},start),'Score updating');
-  assert.equal(scoreDisplay({...base,game_status:'inactive'},start),'Score updating');
+  assert.equal(scoreDisplay({...base,home_score:null},start),'Score unavailable');
+  assert.equal(scoreDisplay({...base,game_status:'inactive'},start),'Last score · Away 71 · Home 79');
   assert.equal(scoreDisplay({...base,game_status:'final'},start+91000),'Final · Away 71 · Home 79');
-  assert.equal(scoreDisplay(base,start+91000),'Score updating');
+  assert.equal(scoreDisplay(base,start+91000),'Last score · Away 71 · Home 79');
   const row=order({...base,clock_observed_at:new Date(Date.now()).toISOString(),score_scanned_at:new Date(Date.now()).toISOString()});
   const timer=row.children[3].children[0],score=row.children[3].children[1];
   elements.push(timer,score);
