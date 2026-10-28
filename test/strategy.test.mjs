@@ -169,18 +169,24 @@ test('hockey requires three goals at 6:30 or less in final period',()=>{
   assert.equal(leadSignal(gameState(hockey,at(3,1,2,'04:59')),market),null);
   assert.equal(leadSignal(gameState(hockey,at(3,1,3,'05:00')),market),null);
 });
-test('basketball requires five points at one minute or less in final segment with 15 percent allocation',()=>{
+test('basketball accepts ten points under ten minutes or five in the last minute, final segment only',()=>{
   const market={status:'active',title:'New York wins',yes_sub_title:'New York'};
   for(const league of ['NBA','WNBA','Basketball','NCAAMB','NCAAW']){
     const m={...milestone,details:{league}};
     const last=/NCAA/.test(league)?2:4;
     const at=(lead,clock,period=last)=>gameState(m,{details:{...live(100+lead,100,period).details,clock}});
+    assert.equal(leadSignal(at(10,'10:00'),market),null);
+    assert.equal(leadSignal(at(10,'09:59'),market)?.fraction,.15);
+    assert.equal(leadSignal(at(9,'09:59'),market),null);
+    assert.equal(leadSignal(at(15,'04:59'),market)?.fraction,.175);
+    assert.equal(leadSignal(at(20,'02:30'),market)?.fraction,.20);
+    assert.equal(leadSignal(at(30,'08:22',last-1),market),null);
     assert.equal(leadSignal(at(8,'03:00'),market),null);
     assert.equal(leadSignal(at(8,'01:01'),market),null);
     assert.equal(leadSignal(at(4,'01:00'),market),null);
     assert.equal(leadSignal(at(5,'01:00'),market)?.fraction,.15);
     assert.equal(leadSignal(at(20,'00:59'),market)?.fraction,.20);
-    assert.equal(leadSignal(at(20,'00:29'),market)?.fraction,.25);
+    assert.equal(leadSignal(at(20,'00:29'),market)?.fraction,.20);
     assert.equal(leadSignal(at(3,'00:19'),market),null);
     assert.equal(leadSignal(at(5,'00:19'),market)?.fraction,.15);
     assert.equal(leadSignal(at(8,'00:00'),market),null);
@@ -257,39 +263,40 @@ test('zero score never creates an over and net profit tiers include conservative
   const soccer={...milestone,type:'soccer_tournament_multi_leg'};
   assert.equal(overSignal(gameState(soccer,{details:{status:'live',home_score:0,away_score:0}}),market),null);
   assert.equal(minimumProfitCents('over',9900),0);
-  assert.equal(minimumProfitCents('over',10000),100);
-  assert.equal(minimumProfitCents('over',20000),200);
+  assert.equal(minimumProfitCents('over',10000),0);
+  assert.equal(minimumProfitCents('over',20000),0);
   assert.equal(minimumProfitCents('lead',9900),0);
   assert.equal(minimumProfitCents('lead',10000),50);
   assert.equal(minimumProfitCents('lead',20000),100);
   assert.equal(profitableCount(10,.99,2,'over',9900),10);
+  assert.equal(profitableCount(10,.99,2,'over',20000),10);
   assert.equal(profitableCount(1,.99,2,'over',9900),0);
   assert.equal(profitableCount(100,.99,2,'over',9900),100);
   assert.ok(netSettlementProfitCents(100,.99,2)>0);
   assert.equal(profitableCount(1,1,2,'lead',100),0);
-  assert.equal(profitableCount(1,.90,2,'lead',20000,'basketball_game',299),0);
+  assert.equal(profitableCount(1,.90,2,'lead',20000,'basketball_game',299),1);
   assert.equal(profitableCount(1,.90,2,'lead',20000,'football_game'),0);
   assert.equal(profitableCount(1,.99,2,'lead',20000,'basketball_game',20),0);
 });
 test('basketball needs positive net profit after fees but no additional floor',()=>{
   for(const type of ['basketball_game','college_basketball_game']){
-    assert.equal(minimumProfitCents('lead',20000,type,300),Infinity);
-    assert.equal(minimumProfitCents('lead',20000,type,181),Infinity);
-    assert.equal(minimumProfitCents('lead',20000,type,180),Infinity);
-    assert.equal(minimumProfitCents('lead',20000,type,61),Infinity);
+    assert.equal(minimumProfitCents('lead',20000,type,300),0);
+    assert.equal(minimumProfitCents('lead',20000,type,181),0);
+    assert.equal(minimumProfitCents('lead',20000,type,180),0);
+    assert.equal(minimumProfitCents('lead',20000,type,61),0);
     assert.equal(minimumProfitCents('lead',20000,type,60),0);
     assert.equal(minimumProfitCents('lead',20000,type,30),0);
     assert.equal(minimumProfitCents('lead',20000,type,1),0);
     assert.equal(minimumProfitCents('lead',20000,type,0),Infinity);
-    assert.equal(profitableCount(12,.90,2,'lead',20000,type,299),0);
-    assert.equal(profitableCount(6,.90,2,'lead',20000,type,61),0);
+    assert.equal(profitableCount(12,.90,2,'lead',20000,type,299),12);
+    assert.equal(profitableCount(6,.90,2,'lead',20000,type,61),6);
     assert.equal(profitableCount(6,.90,2,'lead',20000,type,60),6);
     assert.equal(profitableCount(3,.90,2,'lead',20000,type,31),3);
     assert.equal(profitableCount(3,.90,2,'lead',20000,type,30),3);
     assert.equal(profitableCount(3,.99,2,'lead',20000,type,20),3);
   }
   assert.equal(minimumProfitCents('lead',20000,'football_game',30),100);
-  assert.equal(minimumProfitCents('over',20000,'basketball_game',30),200);
+  assert.equal(minimumProfitCents('over',20000,'basketball_game',30),0);
 });
 test('very late and commanding lead reaches 25 percent; comeback detects tie or reversal',()=>{
   const m={...milestone,type:'football_game',details:{league:'NFL',home_team_id:'NY',away_team_id:'BOS'}};
