@@ -13,6 +13,7 @@ import { vapidIdentity, validateSubscription, deliverPush } from './push.mjs';
 import { favorableSettlement } from './settlements.mjs';
 import { authorized, checkCredentials, sessionCookie, loginPage } from './dashboard_auth.mjs';
 import { eligibleForMarkets, linkedEventTickers, gameTimeLabel } from './discovery.mjs';
+import { tieRefundPreference } from './settlement_preference.mjs';
 
 const API='https://external-api.kalshi.com/trade-api/v2';
 const pool = new pg.Pool({connectionString:process.env.DATABASE_URL, max:4, idleTimeoutMillis:15000});
@@ -407,7 +408,7 @@ async function scan(cachedMilestones){
     opportunities.sort((a,b)=>{
       if(a.signal.strategy!==b.signal.strategy)return a.signal.strategy==='over'?-1:1;
       const profit=c=>netSettlementProfitCents(executableCount(c,balance,bankroll,overRemaining),Number(c.market.yes_ask_dollars),feeReserve(c.event,c.market));
-      return profit(b)-profit(a);
+      return profit(b)-profit(a) || (a.signal.strategy==='lead'?Number(tieRefundPreference(b.market))-Number(tieRefundPreference(a.market)):0);
     });
     for(const c of opportunities){let state=c.state;try{
         if(!live())continue;

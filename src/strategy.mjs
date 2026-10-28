@@ -12,6 +12,7 @@ export function sportName(m) {
   if (/mlb|pro baseball/.test(s)) return 'MLB';
   if (/nhl|pro hockey/.test(s)) return 'NHL';
   if (/tennis|\batp\b|\bwta\b/.test(s)) return 'Tennis';
+  if (/darts/.test(s)) return 'Darts';
   if (/soccer|football match/.test(s)) return 'Soccer';
   if (/basketball/.test(s)) return m.details?.league || 'Basketball';
   if (/baseball/.test(s)) return m.details?.league || 'Baseball';
@@ -24,11 +25,12 @@ export function gameState(m, live) {
   const sport = sportName(m);
   const tennis=/^tennis_/.test(String(m.type||''));
   const tableTennis=/^table_tennis_/.test(String(m.type||''));
+  const darts=/^darts_/.test(String(m.type||''));
   const one=tennis?d.competitor1_round_scores?.at(-1):null,two=tennis?d.competitor2_round_scores?.at(-1):null;
   const currentSet=tableTennis&&Array.isArray(d.period_scores)?d.period_scores.filter(p=>p.type==='set').at(-1):null;
   const firstIsHome=d.competitor1_is_home!==false;
-  const home = N(tennis?(firstIsHome?one?.score:two?.score):tableTennis?(firstIsHome?currentSet?.competitor1_score:currentSet?.competitor2_score):pick(d, ['home_score','homeScore','home_points','home_runs','home_goals','home_same_game_score']) ?? d.home?.score ?? d.home_team?.score);
-  const away = N(tennis?(firstIsHome?two?.score:one?.score):tableTennis?(firstIsHome?currentSet?.competitor2_score:currentSet?.competitor1_score):pick(d, ['away_score','awayScore','away_points','away_runs','away_goals','away_same_game_score']) ?? d.away?.score ?? d.away_team?.score);
+  const home = N(tennis?(firstIsHome?one?.score:two?.score):tableTennis?(firstIsHome?currentSet?.competitor1_score:currentSet?.competitor2_score):darts?(firstIsHome?d.competitor1_overall_score:d.competitor2_overall_score):pick(d, ['home_score','homeScore','home_points','home_runs','home_goals','home_same_game_score']) ?? d.home?.score ?? d.home_team?.score);
+  const away = N(tennis?(firstIsHome?two?.score:one?.score):tableTennis?(firstIsHome?currentSet?.competitor2_score:currentSet?.competitor1_score):darts?(firstIsHome?d.competitor2_overall_score:d.competitor1_overall_score):pick(d, ['away_score','awayScore','away_points','away_runs','away_goals','away_same_game_score']) ?? d.away?.score ?? d.away_team?.score);
   const status = String(d.status || '').toLowerCase();
   const half=String(d.half||'').toLowerCase();
   const period = N(pick(d, ['period','period_number','quarter','current_period','inning','current_inning']) ?? d.game?.period ?? (/^(?:2nd|second)$/.test(half)?2:/^(?:1st|first)$/.test(half)?1:undefined));
@@ -48,6 +50,7 @@ export function gameState(m, live) {
   const minuteMatch=soccerTime.match(/^(\d{1,3})(?::(\d{2}))?(?:\+(\d{1,2}))?['′]?$/);
   const soccerMinute=minuteMatch?Number(minuteMatch[1])+Number(minuteMatch[3]||0)+Number(minuteMatch[2]||0)/60:NaN;
   const family=String(m.type||'').toLowerCase();
+  const phase=/esports/.test(family)?(()=>{const periods=[...Object.keys(d.home_periods||{}),...Object.keys(d.away_periods||{})].map(k=>Number(k.match(/^period_(\d+)$/)?.[1])).filter(Number.isFinite);const last=Math.max(0,...periods);return last?`${d.period_unit==='half'?'Half':d.period_unit==='quarter'?'Quarter':'Period'} ${last}`:''})():darts?String(d.match_status||''):'';
   const possessionValue=/hockey/.test(family)?d.puck_possession_team_id??d.puck_possession:
     /football/.test(family)?d.situation?.possession_team_id??d.possession_team_id??d.possession:
     /soccer/.test(family)?d.ball_possession_team_id??d.possession_team_id??d.possession:
@@ -78,7 +81,7 @@ export function gameState(m, live) {
   const homeUnits=home,awayUnits=away;
   const unit=/baseball/.test(family)?'runs':/hockey|soccer/.test(family)?'goals':tennis?'games':'points';
   const tennisData=tennis?{bestOf:N(m.details?.best_of),firstId:m.details?.first_competitor_id,secondId:m.details?.second_competitor_id,firstGames:N(one?.score),secondGames:N(two?.score),firstSets:N(d.competitor1_overall_score),secondSets:N(d.competitor2_overall_score),firstPoints:N(d.competitor1_current_round_score),secondPoints:N(d.competitor2_current_round_score),firstRound:one?.outcome,secondRound:two?.outcome,server:String(d.server||''),advantage:String(d.advantage||''),mainEvent:m.details?.main_game_event_ticker}:null;
-  return {id:m.id, title:m.title, sport, type:family, status, home, away, homeUnits, awayUnits, unit, period, setNumber:N(currentSet?.number), periodConsistent, clock, remainingSeconds, soccerMinute, soccerHalf:half, soccerExtraTime, matchRemainingSeconds, possessionSide, tennis:tennisData, inningHalf:N(d.inning_half), outs:N(d.outs), progress, verifiedLive, scoreKnown:Number.isFinite(home)&&Number.isFinite(away), homeName:String(d.home_team?.name||d.home_team_name||d.home?.name||(names.length===2?names[1]:'')), awayName:String(d.away_team?.name||d.away_team_name||d.away?.name||(names.length===2?names[0]:'')),homeTeamId:m.details?.home_team_id,awayTeamId:m.details?.away_team_id,eventTickers:m.related_event_tickers||[]};
+  return {id:m.id, title:m.title, sport, type:family, status, home, away, homeUnits, awayUnits, unit, period, setNumber:N(currentSet?.number), phase, periodConsistent, clock, remainingSeconds, soccerMinute, soccerHalf:half, soccerExtraTime, matchRemainingSeconds, possessionSide, tennis:tennisData, inningHalf:N(d.inning_half), outs:N(d.outs), progress, verifiedLive, scoreKnown:Number.isFinite(home)&&Number.isFinite(away), homeName:String(d.home_team?.name||d.home_team_name||d.home?.name||(names.length===2?names[1]:'')), awayName:String(d.away_team?.name||d.away_team_name||d.away?.name||(names.length===2?names[0]:'')),homeTeamId:m.details?.home_team_id,awayTeamId:m.details?.away_team_id,eventTickers:m.related_event_tickers||[]};
 }
 const wholeGame = s => !/1st|2nd|3rd|4th|first half|second half|quarter|period|inning|halftime|regulation only|first to score|team total|player|individual|series total/i.test(s);
 export function endWindow(game){
