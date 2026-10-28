@@ -23,10 +23,12 @@ export function gameState(m, live) {
   const d = live?.details || {};
   const sport = sportName(m);
   const tennis=/^tennis_/.test(String(m.type||''));
+  const tableTennis=/^table_tennis_/.test(String(m.type||''));
   const one=tennis?d.competitor1_round_scores?.at(-1):null,two=tennis?d.competitor2_round_scores?.at(-1):null;
+  const currentSet=tableTennis&&Array.isArray(d.period_scores)?d.period_scores.filter(p=>p.type==='set').at(-1):null;
   const firstIsHome=d.competitor1_is_home!==false;
-  const home = N(tennis?(firstIsHome?one?.score:two?.score):pick(d, ['home_score','homeScore','home_points','home_runs','home_goals','home_same_game_score']) ?? d.home?.score ?? d.home_team?.score);
-  const away = N(tennis?(firstIsHome?two?.score:one?.score):pick(d, ['away_score','awayScore','away_points','away_runs','away_goals','away_same_game_score']) ?? d.away?.score ?? d.away_team?.score);
+  const home = N(tennis?(firstIsHome?one?.score:two?.score):tableTennis?(firstIsHome?currentSet?.competitor1_score:currentSet?.competitor2_score):pick(d, ['home_score','homeScore','home_points','home_runs','home_goals','home_same_game_score']) ?? d.home?.score ?? d.home_team?.score);
+  const away = N(tennis?(firstIsHome?two?.score:one?.score):tableTennis?(firstIsHome?currentSet?.competitor2_score:currentSet?.competitor1_score):pick(d, ['away_score','awayScore','away_points','away_runs','away_goals','away_same_game_score']) ?? d.away?.score ?? d.away_team?.score);
   const status = String(d.status || '').toLowerCase();
   const half=String(d.half||'').toLowerCase();
   const period = N(pick(d, ['period','period_number','quarter','current_period','inning','current_inning']) ?? d.game?.period ?? (/^(?:2nd|second)$/.test(half)?2:/^(?:1st|first)$/.test(half)?1:undefined));
@@ -46,6 +48,16 @@ export function gameState(m, live) {
   const minuteMatch=soccerTime.match(/^(\d{1,3})(?::(\d{2}))?(?:\+(\d{1,2}))?['′]?$/);
   const soccerMinute=minuteMatch?Number(minuteMatch[1])+Number(minuteMatch[3]||0)+Number(minuteMatch[2]||0)/60:NaN;
   const family=String(m.type||'').toLowerCase();
+  const possessionValue=/hockey/.test(family)?d.puck_possession_team_id??d.puck_possession:
+    /football/.test(family)?d.situation?.possession_team_id??d.possession_team_id??d.possession:
+    /soccer/.test(family)?d.ball_possession_team_id??d.possession_team_id??d.possession:
+    /basketball/.test(family)?d.possession_team_id??d.possession:null;
+  const possessionSide=String(possessionValue||'').toLowerCase()==='home'||possessionValue&&possessionValue===m.details?.home_team_id?'home':
+    String(possessionValue||'').toLowerCase()==='away'||possessionValue&&possessionValue===m.details?.away_team_id?'away':
+    /baseball/.test(family)?d.inning_half===2||d.inning_half==='bottom'?'home':d.inning_half===1||d.inning_half==='top'?'away':null:null;
+  // Only a final-whistle countdown can establish the last 45 seconds in soccer.
+  // The displayed minute alone excludes unknown stoppage time.
+  const matchRemainingSeconds=/soccer/.test(family)?N(d.match_remaining_seconds):NaN;
   // Soccer feeds include extra-time goals in same-game scores, while the
   // matching Kalshi totals and winner markets settle on regulation only.
   const soccerExtraTime=/soccer/.test(family) &&
@@ -66,7 +78,7 @@ export function gameState(m, live) {
   const homeUnits=home,awayUnits=away;
   const unit=/baseball/.test(family)?'runs':/hockey|soccer/.test(family)?'goals':tennis?'games':'points';
   const tennisData=tennis?{bestOf:N(m.details?.best_of),firstId:m.details?.first_competitor_id,secondId:m.details?.second_competitor_id,firstGames:N(one?.score),secondGames:N(two?.score),firstSets:N(d.competitor1_overall_score),secondSets:N(d.competitor2_overall_score),firstPoints:N(d.competitor1_current_round_score),secondPoints:N(d.competitor2_current_round_score),firstRound:one?.outcome,secondRound:two?.outcome,server:String(d.server||''),advantage:String(d.advantage||''),mainEvent:m.details?.main_game_event_ticker}:null;
-  return {id:m.id, title:m.title, sport, type:family, status, home, away, homeUnits, awayUnits, unit, period, periodConsistent, clock, remainingSeconds, soccerMinute, soccerHalf:half, soccerExtraTime, tennis:tennisData, inningHalf:N(d.inning_half), outs:N(d.outs), progress, verifiedLive, scoreKnown:Number.isFinite(home)&&Number.isFinite(away), homeName:String(d.home_team?.name||d.home_team_name||d.home?.name||(names.length===2?names[1]:'')), awayName:String(d.away_team?.name||d.away_team_name||d.away?.name||(names.length===2?names[0]:'')),homeTeamId:m.details?.home_team_id,awayTeamId:m.details?.away_team_id,eventTickers:m.related_event_tickers||[]};
+  return {id:m.id, title:m.title, sport, type:family, status, home, away, homeUnits, awayUnits, unit, period, setNumber:N(currentSet?.number), periodConsistent, clock, remainingSeconds, soccerMinute, soccerHalf:half, soccerExtraTime, matchRemainingSeconds, possessionSide, tennis:tennisData, inningHalf:N(d.inning_half), outs:N(d.outs), progress, verifiedLive, scoreKnown:Number.isFinite(home)&&Number.isFinite(away), homeName:String(d.home_team?.name||d.home_team_name||d.home?.name||(names.length===2?names[1]:'')), awayName:String(d.away_team?.name||d.away_team_name||d.away?.name||(names.length===2?names[0]:'')),homeTeamId:m.details?.home_team_id,awayTeamId:m.details?.away_team_id,eventTickers:m.related_event_tickers||[]};
 }
 const wholeGame = s => !/1st|2nd|3rd|4th|first half|second half|quarter|period|inning|halftime|regulation only|first to score|team total|player|individual|series total/i.test(s);
 export function endWindow(game){
@@ -124,11 +136,13 @@ export function leadSignal(game, market) {
   const h=game.homeUnits,a=game.awayUnits;
   if (!Number.isFinite(h)||!Number.isFinite(a)) return null;
   const margin=Math.abs(h-a),trailerScore=Math.min(h,a);
-  const minimum=basketball?5:football?10:hockey?3:baseball||soccer?2:null;
+  const soccerLastSeconds=soccer&&game.soccerMinute>=89&&game.matchRemainingSeconds>0&&game.matchRemainingSeconds<45;
+  const minimum=basketball?5:football?10:hockey?3:baseball?2:soccer?soccerLastSeconds?1:2:null;
   const ratio=trailerScore>0?Math.max(h,a)/trailerScore:Infinity;
   if (minimum===null ? trailerScore<=0||ratio<3.5 : margin<minimum) return null;
   const leader = h>a ? game.homeName : game.awayName;
   const trailer = h>a ? game.awayName : game.homeName;
+  if(!hockey&&!soccer&&game.possessionSide!==(h>a?'home':'away'))return null;
   const description = `${market.title||''} ${market.yes_sub_title||''}`;
   const teamId=Object.entries(market.custom_strike||{}).find(([k,v])=>/_team$/.test(k)&&typeof v==='string')?.[1];
   const expectedId=h>a?game.homeTeamId:game.awayTeamId;

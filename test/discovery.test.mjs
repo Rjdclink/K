@@ -32,7 +32,21 @@ test('show verified phase and parsed clock without fabricating remaining time',(
   assert.equal(gameTimeLabel(state({quarter:4,period_remaining_time:'1:07'})),'01:07 remaining');
   assert.equal(gameTimeLabel(state({quarter:4})),'Live clock unavailable');
   assert.equal(gameTimeLabel({...state({}),status:'final'}),'Final');
+  assert.equal(gameTimeLabel({type:'soccer_match',matchRemainingSeconds:44,soccerMinute:89.5}),'00:44 match time remaining');
   const over={status:'active',event_ticker:'KXNBATOTAL-DATE',title:'Combined total points over 130.5',rules_primary:'Combined total points scored in the game',floor_strike:130.5,yes_ask_dollars:'0.98'};
   assert.equal(overSignal(state({quarter:4}),over),null);
   assert.equal(overSignal(state({quarter:4,period_remaining_time:'0:59'}),over)?.strategy,'over');
+});
+
+test('table tennis live set points come from period_scores with competitor orientation',()=>{
+  const milestone={id:'ping',type:'table_tennis_match',title:'Priakhin Vadim vs Davlitshin Ildar'};
+  const details={status:'live',competitor1_is_home:true,competitor1_overall_score:0,competitor2_overall_score:0,period_scores:[{competitor1_score:3,competitor2_score:7,number:1,type:'set'}]};
+  const first=gameState(milestone,{details});
+  assert.equal(first.home,3);assert.equal(first.away,7);assert.equal(first.scoreKnown,true);
+  assert.equal(gameTimeLabel(first),'Set 1 · no countdown clock');
+  const reversed=gameState(milestone,{details:{...details,competitor1_is_home:false}});
+  assert.equal(reversed.home,7);assert.equal(reversed.away,3);
+  assert.equal(eligibleForMarkets(first),false);
+  const missing=gameState(milestone,{details:{status:'live',period_scores:[]}});
+  assert.equal(missing.scoreKnown,false);
 });

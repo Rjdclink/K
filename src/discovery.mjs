@@ -25,8 +25,10 @@ export function linkedEventTickers(milestone){
 export function gameTimeLabel(game){
   if(/^(final|finished|complete|completed|closed|ended)$/.test(game?.status||''))return 'Final';
   const family=String(game?.type||'');
+  if(/table_tennis/.test(family))return Number.isFinite(game.setNumber)?`Set ${game.setNumber} · no countdown clock`:'Set number unavailable';
   if(/baseball/.test(family))return Number.isFinite(game.period)?`Inning ${game.period}${Number.isFinite(game.outs)?` · ${game.outs} out(s)`:''}`:'Inning unavailable';
   if(/tennis/.test(family))return Number.isFinite(game.tennis?.firstGames)&&Number.isFinite(game.tennis?.secondGames)?`Set · ${game.tennis.firstGames}–${game.tennis.secondGames} games`:'Set score unavailable';
+  if(/soccer/.test(family)&&Number.isFinite(game.matchRemainingSeconds)&&game.matchRemainingSeconds>=0)return `${String(Math.floor(game.matchRemainingSeconds/60)).padStart(2,'0')}:${String(game.matchRemainingSeconds%60).padStart(2,'0')} match time remaining`;
   if(/soccer/.test(family)&&Number.isFinite(game.soccerMinute))return `${game.soccerMinute}' elapsed`;
   if(Number.isFinite(game.remainingSeconds))return `${String(Math.floor(game.remainingSeconds/60)).padStart(2,'0')}:${String(game.remainingSeconds%60).padStart(2,'0')} remaining`;
   if(/cricket/.test(family)&&Number.isFinite(game.period))return `Innings ${game.period} · no countdown clock`;
