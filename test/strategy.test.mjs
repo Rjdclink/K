@@ -6,17 +6,28 @@ import {gameState,overSignal,leadSignal,tennisSignal,orderSize,estimatedCostCent
 const milestone={id:'game-1',title:'Boston at New York',type:'basketball_game',details:{competition:'Pro Basketball (M)'},related_event_tickers:['GAME']};
 const live=(home,away,quarter=4)=>({details:{status:'live',last_updated_ts:Math.floor(Date.now()/1000),home_score:home,away_score:away,quarter,clock:'04:59',home_team_name:'New York',away_team_name:'Boston'}});
 test('over requires strict threshold exceeded and whole-game contract',()=>{
-  const g=gameState(milestone,live(102,101));const market={status:'active',title:'Total points in game over 203',rules_primary:'Combined total points scored in the game',strike_type:'greater',floor_strike:203};
+  const g=gameState(milestone,live(102,101));const market={status:'active',event_ticker:'KXNBATOTAL-26OCT27BOSNYK',title:'Total points in game over 203',rules_primary:'Combined total points scored in the game',strike_type:'greater',floor_strike:203};
   assert.equal(overSignal(g,market),null);assert.equal(overSignal(gameState(milestone,live(103,101)),market)?.fraction,.8);
   assert.equal(overSignal(gameState(milestone,live(103,101)),{...market,title:'First half total points'}),null);
 });
 test('Kalshi whole-game over wording is recognized after the line is crossed',()=>{
   const m={id:'kbo-game',title:'Kia Tigers vs Samsung Lions',type:'baseball_game',details:{league:'Korea KBO'}};
   const g=gameState(m,{details:{status:'inprogress',away_points:3,home_points:8,inning:9}});
-  const market={status:'active',title:'Over 9.5 runs scored?',yes_sub_title:'Over 9.5 runs scored',rules_primary:'If the teams collectively score more than 9.5 runs in the KBO game, the market resolves to Yes.',strike_type:'greater',floor_strike:9.5};
+  const market={status:'active',event_ticker:'KXKBOTOTAL-26OCT27KIASAM',title:'Over 9.5 runs scored?',yes_sub_title:'Over 9.5 runs scored',rules_primary:'If the teams collectively score more than 9.5 runs in the KBO game, the market resolves to Yes.',strike_type:'greater',floor_strike:9.5};
   assert.equal(overSignal(g,market)?.fraction,.8);
   assert.equal(overSignal(g,{...market,title:'Over 11.5 runs scored?',floor_strike:11.5}),null);
   assert.equal(orderSize(5097,'1.0000','0.00',.8),0);
+});
+test('team overs use only the named team score; player props cannot use the game score',()=>{
+  const m={id:'nhl',title:'Columbus at Philadelphia',type:'hockey_match',details:{home_team_id:'phi',away_team_id:'cbj'}};
+  const board=(home,away)=>gameState(m,{details:{status:'live',home_goals:home,away_goals:away}});
+  const team={status:'active',event_ticker:'KXNHLTEAMTOTAL-26OCT27CBJPHI',title:'Philadelphia over 1.5 goals scored',yes_sub_title:'Philadelphia over 1.5',rules_primary:'If Philadelphia scores over 1.5 goals in the game, Yes.',floor_strike:1.5,strike_type:'greater',custom_strike:{hockey_team:'phi'},yes_ask_dollars:'0.81'};
+  assert.equal(overSignal(board(1,3),team),null);
+  assert.match(overSignal(board(2,3),team)?.reason,/2 scored by Philadelphia; line 1\.5/);
+  assert.equal(overSignal(board(2,3),{...team,custom_strike:{hockey_team:'unknown'}}),null);
+  assert.equal(overSignal(board(2,3),{...team,event_ticker:'KXNHLTOTAL-26OCT27CBJPHI',custom_strike:{hockey_player:'id'}}),null);
+  const player={...team,event_ticker:'KXNBAPRA-26OCT27BKNBOS',title:'Jayson Tatum: 35+ points, rebounds, and assists',floor_strike:34.5,custom_strike:{basketball_player:'tatum'}};
+  assert.equal(overSignal(gameState({...milestone,details:{...milestone.details,home_team_id:'boston',away_team_id:'brooklyn'}},live(57,56)),player),null);
 });
 test('scanner refuses unsupported score formats and delayed live data',()=>{
   const total={status:'active',title:'Combined total points over 8',floor_strike:8,strike_type:'greater',yes_ask_dollars:'0.95'};
@@ -32,6 +43,7 @@ test('scanner refuses unsupported score formats and delayed live data',()=>{
 test('late lead requires verified live score, leader identity, and progress',()=>{
   const market={status:'active',title:'Will New York win?',yes_sub_title:'New York wins'};
   assert.ok(leadSignal(gameState(milestone,live(140,30)),market));
+  assert.equal(leadSignal(gameState(milestone,live(140,30)),{...market,yes_ask_dollars:'0.41'}),null);
   assert.equal(leadSignal(gameState(milestone,live(140,30,2)),market),null);
   assert.equal(leadSignal(gameState(milestone,{details:{...live(140,30).details,live_data_delayed:true}}),market),null);
   assert.equal(leadSignal(gameState(milestone,live(140,30)),{...market,title:'Will Boston win?',yes_sub_title:'Boston wins'}),null);
@@ -75,7 +87,7 @@ test('soccer starts at 85:00 and excludes extra time or ambiguous stoppage score
 });
 test('regulation soccer totals reject extra-time goals even when live feed says in progress',()=>{
   const m={id:'cup',title:'Castellonense vs Almeria',type:'soccer_tournament_multi_leg'};
-  const market={status:'active',title:'Will over 1.5 goals be scored?',yes_sub_title:'Reg Time: Over 1.5 goals scored',rules_primary:'If over 1.5 goals are scored after 90 minutes plus stoppage time (does not include extra time or penalties), then Yes.',floor_strike:1.5,strike_type:'greater',yes_ask_dollars:'0.0100'};
+  const market={status:'active',event_ticker:'KXCOPADELREYTOTAL-26OCT27CASALM',title:'Will over 1.5 goals be scored?',yes_sub_title:'Reg Time: Over 1.5 goals scored',rules_primary:'If over 1.5 goals are scored after 90 minutes plus stoppage time (does not include extra time or penalties), then Yes.',floor_strike:1.5,strike_type:'greater',yes_ask_dollars:'0.0100'};
   const game=(time,match_status,price=market.yes_ask_dollars)=>gameState(m,{details:{status:'inprogress',time,half:'2nd',match_status,home_same_game_score:1,away_same_game_score:2,home_regulation_score:0,away_regulation_score:0,period_scores:[{type:match_status==='aet'?'overtime':'regular_period'}]}});
   assert.equal(overSignal(game("110'",'aet'),market),null);
   assert.equal(overSignal(game("89'",'aet'),{...market,yes_ask_dollars:'0.98'}),null);
