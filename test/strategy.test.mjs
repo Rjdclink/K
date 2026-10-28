@@ -5,6 +5,14 @@ import {gameState,overSignal,confirmedOver,leadSignal,tennisSignal,orderSize,est
 
 const milestone={id:'game-1',title:'Boston at New York',type:'basketball_game',details:{competition:'Pro Basketball (M)'},related_event_tickers:['GAME']};
 const live=(home,away,quarter=4)=>({details:{status:'live',last_updated_ts:Math.floor(Date.now()/1000),home_score:home,away_score:away,quarter,clock:'00:59',possession:'home',home_team_name:'New York',away_team_name:'Boston'}});
+test('fractional final-minute clock is parsed and stopped clock is identified',()=>{
+  const details={...live(79,73).details,period_remaining_time:'00:09.20',clock_running:false};
+  const state=gameState(milestone,{details});
+  assert.equal(state.remainingSeconds,9.2);
+  assert.equal(state.clockRunning,false);
+  assert.equal(state.period,4);
+  assert.equal(gameState(milestone,{details:{...details,period_remaining_time:'06:27',clock_running:true}}).remainingSeconds,387);
+});
 test('over requires strict threshold exceeded and whole-game contract',()=>{
   const g=gameState(milestone,live(102,101));const market={status:'active',event_ticker:'KXNBATOTAL-26OCT27BOSNYK',title:'Total points in game over 203',rules_primary:'Combined total points scored in the game',strike_type:'greater',floor_strike:203};
   assert.equal(overSignal(g,market),null);assert.equal(overSignal(gameState(milestone,live(103,101)),market)?.fraction,.9);
