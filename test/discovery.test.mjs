@@ -72,7 +72,7 @@ test('table tennis live set points come from period_scores with competitor orien
   assert.equal(gameTimeLabel(first),'Set 1 · no countdown clock');
   const reversed=gameState(milestone,{details:{...details,competitor1_is_home:false}});
   assert.equal(reversed.home,7);assert.equal(reversed.away,3);
-  assert.equal(eligibleForMarkets(first),false);
+  assert.equal(eligibleForMarkets(first),true);
   const missing=gameState(milestone,{details:{status:'live',period_scores:[]}});
   assert.equal(missing.scoreKnown,false);
 });

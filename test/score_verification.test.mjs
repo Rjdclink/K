@@ -1,7 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { gameState } from '../src/strategy.mjs';
-import { espnMatches, foxMatches, tennisMatches, scoreAgreement, verifyIndependentOver, playerStatAgreement } from '../src/score_verification.mjs';
+import { espnMatches, foxMatches, tennisMatches, scoreAgreement, verifyIndependentOver, playerStatAgreement, tableTennisMatches, verifyIndependentTableTennisLead } from '../src/score_verification.mjs';
+
+test('Liga Pro table tennis lead requires an exact independent live set score and fixture',async()=>{
+  const milestone={id:'liga',type:'table_tennis_match',title:'Oleg Moshnikov vs Iurii Krivenkii',start_date:start,details:{league:'Russia Liga Pro',best_of:5,first_competitor_id:'oleg',second_competitor_id:'iurii'}};
+  const state=gameState(milestone,{details:{status:'live',competitor1_is_home:true,competitor1_overall_score:2,competitor2_overall_score:2,period_scores:[{type:'set',number:5,competitor1_score:10,competitor2_score:4}]}});
+  const match={startTimestamp:Math.floor(Date.parse(start)/1000),status:{type:'inprogress'},homeTeam:{name:'Oleg Moshnikov'},awayTeam:{name:'Iurii Krivenkii'},homeScore:{current:2,period5:10},awayScore:{current:2,period5:4}};
+  const data={events:[match]};
+  assert.equal(tableTennisMatches(data,state,milestone).length,1);
+  assert.equal(await verifyIndependentTableTennisLead(state,milestone,{fetcher:async()=>({ok:true,json:async()=>data})}),true);
+  assert.equal(await verifyIndependentTableTennisLead(state,milestone,{fetcher:async()=>({ok:true,json:async()=>({events:[{...match,awayScore:{current:2,period5:5}}]})})}),false);
+  assert.equal(await verifyIndependentTableTennisLead(state,milestone,{fetcher:async()=>({ok:true,json:async()=>({events:[{...match,startTimestamp:match.startTimestamp+86400}]})})}),false);
+  assert.equal(await verifyIndependentTableTennisLead(state,milestone,{fetcher:async()=>({ok:true,json:async()=>({events:[match,match]})})}),false);
+  assert.equal(await verifyIndependentTableTennisLead(state,milestone,{fetcher:async()=>{throw Error('unavailable')}}),false);
+});
 
 const start=new Date(Date.now()-20*60000).toISOString();
 const m={id:'nba-game',title:'BKN Nets at BOS Celtics',type:'basketball_game',start_date:start,details:{league:'NBA'}};

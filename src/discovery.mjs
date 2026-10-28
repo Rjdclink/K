@@ -2,7 +2,7 @@
 // The exchange remains authoritative: a guessed ticker is ignored unless an
 // open event and its market are actually returned by Kalshi.
 const supportedType=type=>/basketball|baseball|football|hockey|soccer|tennis/.test(String(type||'').toLowerCase()) &&
-  !/esports|table_tennis/.test(String(type||'').toLowerCase());
+  !/esports/.test(String(type||'').toLowerCase());
 
 export function eligibleForMarkets(game){return game?.verifiedLive && game.scoreKnown && supportedType(game.type)}
 

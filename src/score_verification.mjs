@@ -82,6 +82,36 @@ export function tennisMatches(data,game,milestone){
     return [{source:'ESPN',home:homeSets.at(-1),away:awaySets.at(-1),totalGames:[...homeSets,...awaySets].reduce((a,b)=>a+b,0),live:c.status?.type?.state==='in',clockOk:true}];
   })));
 }
+export function tableTennisMatches(data,game,milestone){
+  if(!Array.isArray(data?.events))return [];
+  const names=expectedNames(game,milestone),start=Date.parse(milestone.start_date||'');
+  return data.events.flatMap(e=>{
+    const time=Number(e.startTimestamp)*1000;
+    if(!Number.isFinite(start)||!Number.isFinite(time)||Math.abs(start-time)>3*3600000||
+      !sameTeam(names.home,[e.homeTeam?.name])||!sameTeam(names.away,[e.awayTeam?.name]))return [];
+    const home=score(e.homeScore?.period5),away=score(e.awayScore?.period5);
+    return [{home,away,homeSets:score(e.homeScore?.current),awaySets:score(e.awayScore?.current),live:e.status?.type==='inprogress'}];
+  });
+}
+export async function verifyIndependentTableTennisLead(game,milestone,{fetcher=fetch}={}){
+  if(!game.tableTennis||game.tableTennis.setNumber!==5||!game.verifiedLive)return false;
+  const start=Date.parse(milestone.start_date||'');
+  if(!Number.isFinite(start))return false;
+  try{
+    const dates=dateCandidates(start).map(s=>`${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6)}`);
+    const results=await Promise.allSettled(dates.map(day=>json(`https://www.sofascore.com/api/v1/sport/table-tennis/scheduled-events/${day}`,fetcher)));
+    const seen=new Set(),matches=[];
+    for(const r of results.filter(r=>r.status==='fulfilled')){
+      const found=tableTennisMatches(r.value,game,milestone),key=JSON.stringify(found);
+      if(!seen.has(key)){seen.add(key);matches.push(...found)}
+    }
+    if(matches.length!==1)return false;
+    const m=matches[0];
+    return m.live&&m.home===game.home&&m.away===game.away&&
+      m.homeSets===(game.tableTennis.firstIsHome?game.tableTennis.firstSets:game.tableTennis.secondSets)&&
+      m.awaySets===(game.tableTennis.firstIsHome?game.tableTennis.secondSets:game.tableTennis.firstSets);
+  }catch{return false}
+}
 export function foxMatches(data,game,milestone){
   if(!Array.isArray(data?.sectionList))return [];
   return data.sectionList.flatMap(section=>(section.events||[]).flatMap(e=>{

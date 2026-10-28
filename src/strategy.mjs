@@ -92,11 +92,13 @@ export function gameState(m, live) {
   const updated=N(d.last_updated_ts);const fresh=!Number.isFinite(updated) || Math.abs(Date.now()-updated*1000)<120000;
   const verifiedLive = ['live','in_progress','in progress','playing','inprogress'].includes(status) && !d.live_data_delayed && fresh;
   const names=String(m.title||'').split(/\s+at\s+/i);
+  const versus=tableTennis?String(m.title||'').split(/\s+vs\.?\s+/i):[];
   const homeUnits=home,awayUnits=away;
   const unit=/baseball/.test(family)?'runs':/hockey|soccer/.test(family)?'goals':tennis?'games':'points';
   const tennisData=tennis?{bestOf:N(m.details?.best_of),firstId:m.details?.first_competitor_id,secondId:m.details?.second_competitor_id,firstGames:N(one?.score),secondGames:N(two?.score),firstSets:N(d.competitor1_overall_score),secondSets:N(d.competitor2_overall_score),firstPoints:N(d.competitor1_current_round_score),secondPoints:N(d.competitor2_current_round_score),firstRound:one?.outcome,secondRound:two?.outcome,server:String(d.server||''),advantage:String(d.advantage||''),mainEvent:m.details?.main_game_event_ticker}:null;
+  const tableTennisData=tableTennis?{bestOf:N(m.details?.best_of),firstId:m.details?.first_competitor_id,secondId:m.details?.second_competitor_id,firstIsHome,firstSets:N(d.competitor1_overall_score),secondSets:N(d.competitor2_overall_score),setNumber:N(currentSet?.number),firstPoints:N(currentSet?.competitor1_score),secondPoints:N(currentSet?.competitor2_score)}:null;
   const tennisTotal=tennis?tennisGameTotal(d):NaN;
-  return {id:m.id, feedId:live?.milestone_id, observedAt:Date.parse(live?._observed_at||''), updatedAt:Number.isFinite(updated)?updated*1000:NaN, title:m.title, sport, tour:String(m.details?.tour||''), type:family, status, home, away, homeUnits, awayUnits, unit, period, periodScores, playerStats:d.player_stats||null, tennisTotal, setNumber:N(currentSet?.number), phase, periodConsistent, scoreConsistent, clock, remainingSeconds, clockRunning, soccerMinute, soccerHalf:half, soccerExtraTime, matchRemainingSeconds, possessionSide, tennis:tennisData, inningHalf:N(d.inning_half), outs:N(d.outs), progress, verifiedLive, scoreKnown:Number.isFinite(home)&&Number.isFinite(away), homeName:String(d.home_team?.name||d.home_team_name||d.home?.name||(names.length===2?names[1]:'')), awayName:String(d.away_team?.name||d.away_team_name||d.away?.name||(names.length===2?names[0]:'')),homeTeamId:m.details?.home_team_id,awayTeamId:m.details?.away_team_id,eventTickers:m.related_event_tickers||[]};
+  return {id:m.id, feedId:live?.milestone_id, observedAt:Date.parse(live?._observed_at||''), updatedAt:Number.isFinite(updated)?updated*1000:NaN, title:m.title, sport, competition:String(m.details?.league||''), tour:String(m.details?.tour||''), type:family, status, home, away, homeUnits, awayUnits, unit, period, periodScores, playerStats:d.player_stats||null, tennisTotal, tableTennis:tableTennisData, setNumber:N(currentSet?.number), phase, periodConsistent, scoreConsistent, clock, remainingSeconds, clockRunning, soccerMinute, soccerHalf:half, soccerExtraTime, matchRemainingSeconds, possessionSide, tennis:tennisData, inningHalf:N(d.inning_half), outs:N(d.outs), progress, verifiedLive, scoreKnown:Number.isFinite(home)&&Number.isFinite(away), homeName:String(d.home_team?.name||d.home_team_name||d.home?.name||(versus.length===2?versus[0]:names.length===2?names[1]:'')), awayName:String(d.away_team?.name||d.away_team_name||d.away?.name||(versus.length===2?versus[1]:names.length===2?names[0]:'')),homeTeamId:m.details?.home_team_id,awayTeamId:m.details?.away_team_id,eventTickers:m.related_event_tickers||[]};
 }
 export function tennisGameTotal(details){
   const first=details?.competitor1_round_scores,second=details?.competitor2_round_scores;
@@ -208,6 +210,25 @@ export function confirmedOver(first,second,market){
   return true;
 }
 const norm = s => String(s||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+export function tableTennisSignal(game,market){
+  const t=game?.tableTennis;
+  if(!t||!game.verifiedLive||!game.scoreKnown||!game.scoreConsistent||!/^KXLIGAPROMATCH-/.test(String(market?.event_ticker||''))||
+    !['active','open'].includes(market.status)||market.result&&!['','not_determined'].includes(String(market.result))||
+    market.yes_ask_dollars!=null&&Number(market.yes_ask_dollars)<.8)return null;
+  if(t.setNumber!==5||!(t.bestOf===5||!Number.isFinite(t.bestOf)&&game.competition==='Russia Liga Pro')||t.firstSets!==2||t.secondSets!==2||
+    !Number.isInteger(t.firstPoints)||!Number.isInteger(t.secondPoints))return null;
+  const first=t.firstPoints>=10&&t.secondPoints<=4,second=t.secondPoints>=10&&t.firstPoints<=4;
+  if(first===second)return null;
+  const selectedId=first?t.firstId:t.secondId;
+  const leaderName=first?(t.firstIsHome?game.homeName:game.awayName):(t.firstIsHome?game.awayName:game.homeName);
+  const contractName=String(market.yes_sub_title||market.title||'').trim();
+  if(!leaderName||norm(leaderName).length<5||norm(contractName)!==norm(leaderName))return null;
+  const strike=market.custom_strike||{};
+  if(Object.values(strike).some(value=>typeof value==='string'&&value=== (first?t.secondId:t.firstId)))return null;
+  if(Object.values(strike).some(value=>typeof value==='string'&&[t.firstId,t.secondId].includes(value))&&
+    !Object.values(strike).includes(selectedId))return null;
+  return {strategy:'lead',reason:`Table tennis deciding set ${first?t.firstPoints:t.secondPoints}–${first?t.secondPoints:t.firstPoints}; sets 2–2, independently verified before order`,fraction:.10};
+}
 export function leadSignal(game, market) {
   if(game.soccerExtraTime)return null;
   if(!/basketball|baseball|football|hockey|soccer/.test(game.type)||/esports|table_tennis/.test(game.type))return null;
@@ -284,6 +305,7 @@ export function profitableCount(count,price,feeMultiplier,strategy,availableCent
 export function comeback(game,market,strategy){
   if(!game?.verifiedLive||!game.scoreKnown)return false;
   if(strategy==='over')return false;
+  if(game.tableTennis)return false;
   if(game.tennis){
     const t=game.tennis,leader=t.firstId===market.custom_strike?.tennis_competitor?0:t.secondId===market.custom_strike?.tennis_competitor?1:-1;
     return leader===0?t.firstGames<=t.secondGames:leader===1?t.secondGames<=t.firstGames:false;
