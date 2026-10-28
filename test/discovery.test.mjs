@@ -30,6 +30,7 @@ test('show verified phase and parsed clock without fabricating remaining time',(
   const m={id:'a',type:'basketball_game',title:'Away at Home'};
   const state=d=>gameState(m,{details:{status:'live',home_score:73,away_score:65,...d}});
   assert.equal(gameTimeLabel(state({quarter:4,period_remaining_time:'1:07'})),'Quarter 4 · 01:07 remaining');
+  assert.equal(gameTimeLabel(state({quarter:4,period_remaining_time:'00:09.20',clock_running:false})),'Quarter 4 · 00:09 paused');
   assert.equal(gameTimeLabel(state({quarter:2,period_remaining_time:'8:22'})),'Quarter 2 · 08:22 remaining');
   assert.equal(gameTimeLabel(state({quarter:4})),'Live clock unavailable');
   assert.equal(gameTimeLabel({...state({}),status:'final'}),'Final');

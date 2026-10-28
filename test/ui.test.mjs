@@ -24,7 +24,9 @@ test('filled order timer is bright red, advances each second and reanchors to li
   assert.equal(clock({...base,clock_seconds:276,clock_observed_at:new Date(start+2000).toISOString()},start+2000),'04:36');
   assert.equal(clock({...base,clock_seconds:2},start+6000),'00:00');
   assert.equal(clock({...base,time_left:'04:38 remaining'},start+31000),'Clock updating');
-  assert.equal(clock({...base,clock_seconds:11,time_left:'00:11 remaining'},start+12000),'Clock updating');
+  assert.equal(clock({...base,clock_seconds:11,time_left:'00:11 remaining'},start+21000),'Clock updating');
+  assert.equal(clock({...base,clock_seconds:9.2,clock_label:'Quarter 4 left · paused'},start+5000),'00:09 · paused');
+  assert.equal(clock({...base,clock_seconds:9.2,clock_label:'Quarter 4 left · paused'},start+12000),'00:09 · paused');
   assert.equal(clock({game_status:'live',clock_seconds:null,clock_label:'Stoppage time'}),'Stoppage time · live');
   assert.equal(clock({game_status:'live',clock_seconds:null,clock_label:'Inning progress',time_left:'Inning 9 · 2 outs'}),'Inning 9 · 2 outs');
   assert.equal(clock({...base,game_status:'final'},start+12000),'Final · awaiting settlement');
@@ -48,6 +50,12 @@ test('filled order timer is bright red, advances each second and reanchors to li
   assert.equal(score.textContent,'Away 71 · Home 81');
   assert.match(page,/\.live-timer\{[^}]*color:#ff465c/);
   assert.match(page,/\.score-timer\{[^}]*display:flex/);
+  const paintScore=vm.runInContext('paintScore',context),chosen={};
+  paintScore(chosen,{...base,strategy:'lead',reason:'New York leads 79–71 points (8 points ahead)',score_scanned_at:new Date(start).toISOString()},start);
+  assert.match(chosen.innerHTML,/Away 71 · Home <strong class="chosen-score">79<\/strong>/);
+  paintScore(chosen,{...base,strategy:'lead',reason:'Boston leads 71–79 points (8 points ahead)',score_scanned_at:new Date(start).toISOString()},start);
+  assert.match(chosen.innerHTML,/Away <strong class="chosen-score">71<\/strong> · Home 79/);
+  assert.match(page,/\.chosen-score\{color:#26f5ae/);
   assert.match(page,/Tennis: <strong>5–2 or better<\/strong>/);
 });
 
