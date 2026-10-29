@@ -622,7 +622,10 @@ async function scan(cachedMilestones){
       const values=batch.map((_,n)=>`($${2*n+1},$${2*n+2})`).join(',');
       await pool.query(`INSERT INTO candidate_windows(market_ticker,strategy) VALUES ${values} ON CONFLICT DO NOTHING`,batch.flatMap(c=>[c.market.ticker,c.signal.strategy]));
     }
-    const aged=await pool.query(`SELECT market_ticker,strategy FROM candidate_windows WHERE first_seen<now()-interval '10 minutes'`);
+    // Expire only the current ten-minute attempt. Removing the row allows a
+    // still-live market to enter a new window on a later scan, including when
+    // ask liquidity appears after an earlier unfilled window.
+    const aged=await pool.query(`DELETE FROM candidate_windows WHERE first_seen<now()-interval '10 minutes' RETURNING market_ticker,strategy`);
     const expired=new Set(aged.rows.map(r=>`${r.market_ticker}:${r.strategy}`));
     for(const row of snapshotRows.values())row[14]=JSON.stringify(JSON.parse(row[14]).filter(s=>!expired.has(`${s.ticker}:${s.strategy}`)));
     opportunities.push(...allCandidates.filter(c=>!expired.has(signalKey(c))));signals=opportunities.length;
