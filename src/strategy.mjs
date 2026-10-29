@@ -177,7 +177,9 @@ export function overSignal(game, market) {
     team=home?game.homeName:game.awayName;
     if(!team||!norm(market.title).includes(norm(team)))return null;
   }
-  if (!Number.isFinite(strike) || strike<0 || !Number.isFinite(scored) || scored<=strike) return null;
+  // Live player box scores can be revised after a rebound, assist or steal is
+  // reassigned. Require one whole statistic beyond the contract threshold.
+  if (!Number.isFinite(strike) || strike<0 || !Number.isFinite(scored) || scored<=strike+(player?1:0)) return null;
   return {strategy:'over', reason:`${scored} ${player?.metric||'scored'}${team?` by ${team}`:''}; line ${strike} already passed${segment?`; segment ${segment[1]}`:''}`, fraction:0.30};
 }
 export function playerOverSpec(game,market){

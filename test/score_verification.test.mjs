@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { gameState } from '../src/strategy.mjs';
-import { espnMatches, foxMatches, tennisMatches, scoreAgreement, verifyIndependentOver, playerStatAgreement, tableTennisMatches, verifyIndependentTableTennisLead } from '../src/score_verification.mjs';
+import { espnMatches, foxMatches, tennisMatches, scoreAgreement, verifyIndependentOver, playerStatAgreement, foxPlayerStat, tableTennisMatches, verifyIndependentTableTennisLead } from '../src/score_verification.mjs';
 
 test('Liga Pro table tennis lead requires an exact independent live set score and fixture',async()=>{
   const milestone={id:'liga',type:'table_tennis_match',title:'Oleg Moshnikov vs Iurii Krivenkii',start_date:start,details:{league:'Russia Liga Pro',best_of:5,first_competitor_id:'oleg',second_competitor_id:'iurii'}};
@@ -80,6 +80,22 @@ test('player point and PRA overs require the named ESPN athlete and matching box
   assert.equal(await verifyIndependentOver(state,m,{fetcher,market}),true);
   assert.equal(await verifyIndependentOver({...state,playerStats:{player1:{points:17,rebounds:4,assists:3}}},m,{fetcher,market}),false);
   assert.equal(await verifyIndependentOver(state,m,{fetcher:async url=>({ok:true,json:async()=>url.includes('/summary?')?{boxscore:{players:[]}}:url.includes('espn.com')?board:fox()}),market}),false);
+});
+test('a matched FOX NBA box score vetoes a conflicting player stat; unavailable FOX is optional',async()=>{
+  const player={name:'Cade Cunningham',metric:'REB',value:7};
+  const box=value=>({header:{id:'106594'},boxscore:{boxscoreSections:[{boxscoreItems:[{boxscoreTable:{headers:[{columns:[{index:0,text:'STARTERS'},{index:4,text:'REB'}]}],rows:[{entityLink:{title:'CADE CUNNINGHAM'},columns:[{index:0,text:'C. Cunningham'},{index:4,text:String(value)}]}]}}]}]}});
+  assert.equal(foxPlayerStat(box(7),player,'106594'),7);
+  assert.equal(foxPlayerStat(box(6),player,'106594'),6);
+  assert.equal(foxPlayerStat(box(7),player,'wrong-fixture'),null);
+  const milestone={...m,start_date:start},state=gameState(milestone,{details:{status:'live',home_score:24,away_score:20,quarter:1,clock:'05:00',player_stats:{p:{rebounds:7}}}});
+  const market={event_ticker:'KXNBAREB-DATE',status:'active',yes_sub_title:'Cade Cunningham: 6+',custom_strike:{basketball_player:'p'},floor_strike:5.5};
+  const board=espn(24,20,{id:'espn-game'});
+  const summary={boxscore:{players:[{statistics:[{names:['REB'],athletes:[{athlete:{displayName:'Cade Cunningham'},stats:['7']}]}]}]}};
+  const foxBoard=fox(24,20,{entityLink:{layout:{tokens:{homeUri:'team-bos',awayUri:'team-bkn',id:'106594'}}}});
+  const fetcher=value=>async url=>({ok:true,json:async()=>url.includes('/summary?')?summary:url.includes('espn.com')?board:url.includes('/event/106594/data')?box(value):foxBoard});
+  assert.equal(await verifyIndependentOver(state,milestone,{market,fetcher:fetcher(6)}),false);
+  assert.equal(await verifyIndependentOver(state,milestone,{market,fetcher:fetcher(7)}),true);
+  assert.equal(await verifyIndependentOver(state,milestone,{market,fetcher:async url=>url.includes('/event/106594/data')?{ok:false,status:503}:{ok:true,json:async()=>url.includes('/summary?')?summary:url.includes('espn.com')?board:foxBoard}}),true);
 });
 test('WTA game totals need the exact ESPN match and all set games',async()=>{
   const milestone={id:'wta',title:'Rakhimova vs Alexandrova',type:'tennis_tournament_singles',start_date:start,details:{tour:'WTA'}};
