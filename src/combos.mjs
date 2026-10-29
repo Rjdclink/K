@@ -23,7 +23,7 @@ export function comboCollection(collections,legs){
     Number(c.size_min)<=legs.length && (!Number(c.size_max)||Number(c.size_max)>=legs.length) &&
     legs.every(l=>(c.associated_event_tickers||[]).includes(l.event.event_ticker)));
 }
-export function quoteForYes(quote,ticker,budgetCents,feeMultiplier=2){
+export function quoteForYes(quote,ticker,budgetCents,feeMultiplier=2,bankrollCents=budgetCents){
   if(!quote || quote.market_ticker!==ticker || quote.status!=='open')return null;
   // The maker's NO bid is the price at which the RFQ creator buys YES.
   const noBid=Number(quote.no_bid_dollars),count=Number(quote.no_contracts_fp??quote.contracts_fp);
@@ -35,7 +35,7 @@ export function quoteForYes(quote,ticker,budgetCents,feeMultiplier=2){
   const feeCents=Math.ceil(feeMultiplier*7*count*yesCost*(1-yesCost));
   const debitCents=Math.ceil(100*count*yesCost)+feeCents;
   const profitCents=Math.floor(100*count-debitCents);
-  if(debitCents>budgetCents||profitCents<25)return null;
+  if(debitCents>budgetCents||profitCents<(bankrollCents>=10000?50:25))return null;
   return {count,yesCost,debitCents,profitCents};
 }
 export function comboLegs(legs){return legs.map(c=>({game_id:c.milestone.id,event_ticker:c.event.event_ticker,market_ticker:c.market.ticker,strategy:c.signal.strategy,title:c.state.title,sport:c.state.sport}));}
