@@ -34,11 +34,28 @@ const credentials=()=>({key:process.env.KALSHI_API_KEY||process.env.KALSHI_API_K
 const pushIdentity=()=>vapidIdentity(process.env.KALSHI_PRIVATE_KEY);
 const response=(body,type)=>new Response(body,{headers:{'content-type':type,'cache-control':'no-store','x-content-type-options':'nosniff'}});
 const dashboardAuth=req=>authorized(req,process.env.DASHBOARD_PASSWORD);
+const kalshiRateLimit=async(method)=>{
+  const kind=method==='GET'?'read':'write';
+  const spacing=method==='GET'?70:130;
+  const client=await pool.connect();
+  let wait=0;
+  try{
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(83027545)');
+    await client.query('CREATE TABLE IF NOT EXISTS kalshi_rate_limits (kind text PRIMARY KEY, next_at timestamptz NOT NULL)');
+    const {rows:[slot]}=await client.query(`INSERT INTO kalshi_rate_limits(kind,next_at) VALUES($1,clock_timestamp()+($2 * interval '1 millisecond')) ON CONFLICT(kind) DO UPDATE SET next_at=GREATEST(kalshi_rate_limits.next_at,clock_timestamp())+($2 * interval '1 millisecond') RETURNING EXTRACT(EPOCH FROM (next_at-clock_timestamp()))*1000 AS wait_ms`,[kind,spacing]);
+    wait=Math.max(0,Number(slot.wait_ms)-spacing);
+    await client.query('COMMIT');
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}
+  finally{client.release()}
+  if(wait>0)await new Promise(resolve=>setTimeout(resolve,wait));
+};
 async function kalshi(path,opts={}){
   const method=opts.method||'GET';const headers={'accept':'application/json'};
   if(opts.auth){const {key,privateKey}=credentials();if(!key||!privateKey)throw Error('Kalshi credentials unavailable');const timestamp=String(Date.now());const unsignedPath='/trade-api/v2'+path.split('?')[0];const signature=kalshiSignature(privateKey,timestamp,method,unsignedPath);Object.assign(headers,{'KALSHI-ACCESS-KEY':key,'KALSHI-ACCESS-TIMESTAMP':timestamp,'KALSHI-ACCESS-SIGNATURE':signature})}
   if(opts.body)headers['content-type']='application/json';
   for(let attempt=0;;attempt++){
+    await kalshiRateLimit(method);
     const response=await fetch(API+path,{method,headers,body:opts.body?JSON.stringify(opts.body):undefined,signal:AbortSignal.timeout(12000)});
     const data=await response.json().catch(()=>({}));
     if(response.status===429 && method==='GET' && attempt<4){await new Promise(resolve=>setTimeout(resolve,500*2**attempt));continue}
