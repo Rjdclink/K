@@ -18,7 +18,7 @@ import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOver, verifyIndependentTableTennisLead } from './score_verification.mjs';
 import { COMBO_WINDOW_MS, compatibleComboGroups, comboLegs, filledComboWindow, quoteForYes } from './combos.mjs';
 import { estimatedSaleProfitCents } from './positions.mjs';
-import { weatherContract, observedWeather } from './weather.mjs';
+import { weatherContract } from './weather.mjs';
 import { scanWeatherMarkets } from './weather_scanner.mjs';
 import { sellQuote } from './sell.mjs';
 import { yesDepthAtAsk, bestYesAsk } from './orderbook.mjs';
@@ -435,13 +435,6 @@ async function executeCombo(group,account,bankroll,overRemaining,scoreboardCache
   // The verification window begins with a fresh observation of every leg.
   const verified=await Promise.all(group.map(async c=>{
     try{
-      if(c.weatherEvidence){
-        const evidence=c.weatherEvidence;
-        if(Date.now()-evidence.secondAt.getTime()>45000)return null;
-        const market=(await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market;
-        if(!market||market.rules_primary!==evidence.second.rules_primary||!weatherContract(c.event,market,{id:evidence.contract.station,timezone:evidence.contract.timezone}))return null;
-        return {...c,market};
-      }
       if(c.signal.strategy==='over'){
         const dwell=COMBO_WINDOW_MS;
         const remaining=dwell-(Date.now()-c.state.observedAt);
@@ -481,7 +474,7 @@ async function executeCombo(group,account,bankroll,overRemaining,scoreboardCache
       const created=await kalshi('/multivariate_event_collections/'+encodeURIComponent(collection.collection_ticker),{auth:true,method:'POST',body:{selected_markets:identifiers,with_market_payload:true}});
       const ticker=created.market_ticker,combo=created.market;
       if(!ticker||!combo||combo.ticker!==ticker||combo.event_ticker!==created.event_ticker||!['active','open'].includes(combo.status))return;
-      const strategy=legs.some(c=>c.signal.strategy==='over')?'over':legs.every(c=>c.signal.strategy==='weather')?'weather':'lead';
+      const strategy=legs.some(c=>c.signal.strategy==='over')?'over':'lead';
       const fraction=.10; // A separate bounded combo budget preserves cash for mixed tickets.
       const shard=marketShard({exchange_index:collection.exchange_index},combo),local=shardCash(account,shard);
       const desired=Math.floor(Math.min(Number(account.balance),bankroll*fraction,strategy==='over'?overRemaining:Infinity));
@@ -511,23 +504,15 @@ async function executeCombo(group,account,bankroll,overRemaining,scoreboardCache
         const {q,terms,plan,fees}=offers[0],{legs,ticker,strategy,fraction,shard,rfq,created}=plan;
         // Refresh every leg immediately before accepting a quote. A goal correction
         // or changed leader invalidates the entire combination.
-        const fresh=await liveBatch(legs.filter(c=>!c.weatherEvidence).map(c=>c.milestone));
+        const fresh=await liveBatch(legs.map(c=>c.milestone));
         if(legs.some(c=>{
-          if(c.weatherEvidence)return !weatherContract(c.event,c.market,{id:c.weatherEvidence.contract.station,timezone:c.weatherEvidence.contract.timezone})||Date.now()-c.weatherEvidence.secondAt.getTime()>45000;
           const d=fresh.get(c.milestone.id),s=gameState(c.milestone,d);
           return c.signal.strategy==='over'?!overSignal(s,c.market)||s.home!==c.state.home||s.away!==c.state.away||
             s.period<c.state.period||s.soccerMinute<c.state.soccerMinute||/^tennis_/.test(s.type)&&s.tennisTotal!==c.state.tennisTotal:!(golfSignal(s,c.market)||leadSignal(s,c.market)||additionalLeadSignal(s,c.market)||tennisSignal(s,c.market)||tableTennisSignal(s,c.market));
         }))break;
         const checks=await Promise.all(legs.filter(c=>c.signal.strategy==='over'||c.state.golf).map(c=>c.state.golf?verifyGolf(gameState(c.milestone,fresh.get(c.milestone.id)),c.milestone,c.event):auditedOver(gameState(c.milestone,fresh.get(c.milestone.id)),c.milestone,{market:c.market,firstObservation:c.state,cache:scoreboardCache})));
         if(checks.some(ok=>!ok)||Date.now()>=deadline)break;
-        const weatherChecks=await Promise.all(legs.filter(c=>c.weatherEvidence).map(async c=>{
-          const evidence=c.weatherEvidence,market=(await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market;
-          const contract=weatherContract(c.event,market,{id:evidence.contract.station,timezone:evidence.contract.timezone});
-          if(!contract||market.rules_primary!==evidence.second.rules_primary)return false;
-          const observations=await nws('/stations/'+contract.station+'/observations?'+new URLSearchParams({start:new Date(contract.start).toISOString(),end:new Date(contract.end).toISOString(),limit:'500'}));
-          return Boolean(observedWeather(contract,observations.features));
-        }));
-        if(weatherChecks.some(ok=>!ok)||Date.now()>=deadline)break;
+        if(Date.now()>=deadline)break;
         const latest=await accountBalance({fresh:true});
         if(Number(latest.balance)<terms.debitCents || (shardCash(latest,shard)??0)<terms.debitCents ||
           terms.debitCents>Math.floor((Number(latest.balance)+Number(latest.portfolio_value))*fraction) ||
@@ -613,14 +598,7 @@ async function nws(path){
   if(!response.ok)throw Error(`NWS ${response.status}`);
   return response.json();
 }
-let weatherCandidates=[];
 async function executeVerifiedWeather(verified){
-  weatherCandidates=weatherCandidates.filter(c=>c.event.event_ticker!==verified[0].event.event_ticker&&Date.now()-c.weatherEvidence.secondAt.getTime()<45000);
-  for(const item of verified){
-    const state={id:'weather:'+item.event.event_ticker,title:item.event.title,sport:'Weather',type:'weather',verifiedLive:true,scoreKnown:true};
-    weatherCandidates.push({milestone:{id:state.id,type:'weather'},state,market:item.market,event:item.event,
-      signal:{strategy:'weather',fraction:.15,reason:`${item.contract.type} observed at ${item.contract.station}`},weatherEvidence:item});
-  }
   if(!live())return;
   const event=verified[0].event;
   const duplicate=await pool.query(`SELECT 1 FROM trade_attempts WHERE event_ticker=$1 AND strategy='weather' AND status IN ('filled','reserved','check_order','retrying') LIMIT 1`,[event.event_ticker]);
@@ -824,7 +802,7 @@ async function scan(cachedMilestones){
       ]);
       const held=new Set((currentPositions.market_positions||[]).filter(p=>Number(p.position_fp??p.position??0)>0).map(p=>p.ticker));
       const singles=filledComboWindow(currentFills.rows,held,last?.created_at);
-      if(singles.length>=2||opportunities.length+weatherCandidates.length>=2){
+      if(singles.length>=2||opportunities.length>=2){
         const gameById=new Map(games.map(g=>[g.milestone.id,g]));
         const comboCandidates=singles.flatMap(r=>{
           const g=gameById.get(r.game_id),event=events.get(r.event_ticker),market=(event?.markets||[]).find(m=>m.ticker===r.market_ticker);
@@ -833,7 +811,7 @@ async function scan(cachedMilestones){
           return signal?[{...g,market,event,signal,state:g.state}]:[];
         });
         const group=[],seenGames=new Set(),seenEvents=new Set();
-        for(const c of [...comboCandidates,...opportunities,...weatherCandidates.filter(c=>Date.now()-c.weatherEvidence.secondAt.getTime()<45000)]){if(seenGames.has(c.milestone.id)||seenEvents.has(c.event.event_ticker))continue;
+        for(const c of [...comboCandidates,...opportunities]){if(seenGames.has(c.milestone.id)||seenEvents.has(c.event.event_ticker))continue;
           group.push(c);seenGames.add(c.milestone.id);seenEvents.add(c.event.event_ticker);if(group.length===10)break}
         if(group.length>=2)try{
           const result=await executeCombo(group,currentAccount,Number(currentAccount.balance)+Number(currentAccount.portfolio_value),overRemaining,scoreboardCache);
@@ -935,10 +913,6 @@ export default {async fetch(req){const url=new URL(req.url);
       await new Promise(resolve=>setTimeout(resolve,pause));
     }
     await weatherJob;
-    if(live()&&weatherCandidates.some(c=>Date.now()-c.weatherEvidence.secondAt.getTime()<45000)){
-      const followup=await scan(last.next).catch(e=>({error:e.message}));
-      if(followup.submitted)last.submitted=(last.submitted||0)+followup.submitted;
-    }
     const {next,...summary}=last;return json({...summary,cycles});
   }
   if(req.method==='GET'&&url.pathname==='/login')return dashboardAuth(req)?Response.redirect(new URL('/',url),303):response(loginPage(),'text/html; charset=utf-8');
