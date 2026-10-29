@@ -124,7 +124,7 @@ test('dashboard refresh carries alerts, with fallback only when alerts stop arri
   vm.runInContext('consumeAlerts([{id:3}])',context);
   assert.deepEqual(sounds,['ching','ching']);
   assert.equal(stored.get('kAlertCursor'),'3');
-  assert.ok(intervals.some(({ms})=>ms===2000));
+  assert.ok(intervals.some(({ms})=>ms===30000));
   assert.ok(intervals.some(({ms})=>ms===5000));
 });
 
