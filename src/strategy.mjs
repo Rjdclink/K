@@ -45,7 +45,9 @@ export function gameState(m, live) {
   const scoreConsistent=tennis||tableTennis||darts||agrees('home',home)&&agrees('away',away);
   const status = String(d.status || '').toLowerCase();
   const half=String(d.half||'').toLowerCase();
-  const period = N(pick(d, ['period','period_number','quarter','current_period','inning','current_inning']) ?? d.game?.period ?? (/^(?:2nd|second)$/.test(half)?2:/^(?:1st|first)$/.test(half)?1:undefined));
+  const baseball=/baseball/.test(String(m.type||''));
+  const inning=baseball?[d.inning,d.current_inning,d.inning_number,d.period,d.period_number].map(v=>String(v??'').trim().match(/^(\d{1,2})(?:st|nd|rd|th)?$/i)?.[1]).find(v=>v&&Number(v)>0):null;
+  const period = inning?Number(inning):N(pick(d, ['period','period_number','quarter','current_period','inning','current_inning']) ?? d.game?.period ?? (/^(?:2nd|second)$/.test(half)?2:/^(?:1st|first)$/.test(half)?1:undefined));
   const periodText = String(d.period_display || d.period_name || d.clock?.period || d.inning_half || '').toLowerCase();
   const quarterText=periodText.match(/(?:\bq(?:uarter)?\s*([1-4])\b|\b([1-4])(?:st|nd|rd|th)\s*(?:quarter|qtr)\b)/);
   const statedQuarter=quarterText?Number(quarterText[1]||quarterText[2]):NaN;
@@ -71,7 +73,7 @@ export function gameState(m, live) {
     /basketball/.test(family)?d.possession_team_id??d.possession:null;
   const possessionSide=String(possessionValue||'').toLowerCase()==='home'||possessionValue&&possessionValue===m.details?.home_team_id?'home':
     String(possessionValue||'').toLowerCase()==='away'||possessionValue&&possessionValue===m.details?.away_team_id?'away':
-    /baseball/.test(family)?d.inning_half===2||d.inning_half==='bottom'?'home':d.inning_half===1||d.inning_half==='top'?'away':null:null;
+    /baseball/.test(family)?d.inning_half===2||/bottom/i.test(String(d.inning_half||periodText))?'home':d.inning_half===1||/top/i.test(String(d.inning_half||periodText))?'away':null:null;
   // Only a final-whistle countdown can establish the last 45 seconds in soccer.
   // The displayed minute alone excludes unknown stoppage time.
   const matchRemainingSeconds=/soccer/.test(family)?N(d.match_remaining_seconds):NaN;
@@ -175,8 +177,10 @@ export function overSignal(game, market) {
     team=home?game.homeName:game.awayName;
     if(!team||!norm(market.title).includes(norm(team)))return null;
   }
-  if (!Number.isFinite(strike) || strike<0 || !Number.isFinite(scored) || scored<=strike) return null;
-  return {strategy:'over', reason:`${scored} ${player?.metric||'scored'}${team?` by ${team}`:''}; line ${strike} already passed${segment?`; segment ${segment[1]}`:''}`, fraction:0.9};
+  // Live player box scores can be revised after a rebound, assist or steal is
+  // reassigned. Require one whole statistic beyond the contract threshold.
+  if (!Number.isFinite(strike) || strike<0 || !Number.isFinite(scored) || scored<=strike+(player?1:0)) return null;
+  return {strategy:'over', reason:`${scored} ${player?.metric||'scored'}${team?` by ${team}`:''}; line ${strike} already passed${segment?`; segment ${segment[1]}`:''}`, fraction:0.30};
 }
 export function playerOverSpec(game,market){
   if(!market||!/basketball/.test(game.type)||!/^(?:KX[A-Z0-9]+)(PTS|REB|AST|3PT|PRA|STL|BLK)$/.test(String(market.event_ticker||'').split('-')[0]))return null;
@@ -291,7 +295,7 @@ export function tennisSignal(game,market){
   return {strategy:'lead',reason:`Tennis match-clinching set ${leaderGames}–${opponentGames}; leader serves, points ${leaderPoints}–${opponentPoints}${t.advantage===leaderId?' advantage':''}`,fraction:opponentGames<=1&&leaderPoints===40?.25:opponentGames<=1?.20:.15};
 }
 export function minimumProfitCents(strategy,availableCents,sportType='',remainingSeconds=NaN){
-  return 25;
+  return Number(availableCents)>=10000?50:25;
 }
 export function netSettlementProfitCents(count,price,feeMultiplier=2){
   if(!Number.isFinite(count)||count<=0||!Number.isFinite(price)||price<=0||price>=1)return 0;
@@ -331,5 +335,5 @@ export function orderSize(balanceCents, askDollars, askSize, fraction, cap=1, ba
 export function overBudget(balanceCents, portfolioValueCents, openOverExposureCents) {
   const cash=N(balanceCents), value=N(portfolioValueCents), exposure=N(openOverExposureCents);
   if (![cash,value,exposure].every(Number.isFinite) || Math.min(cash,value,exposure)<0) return 0;
-  return Math.max(0,Math.floor((cash+value)*0.9)-Math.ceil(exposure));
+  return Math.max(0,Math.floor((cash+value)*0.30)-Math.ceil(exposure));
 }

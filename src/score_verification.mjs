@@ -121,7 +121,8 @@ export function foxMatches(data,game,milestone){
     const home=teams.find(t=>homeUri&&t?.uri===homeUri),away=teams.find(t=>awayUri&&t?.uri===awayUri);
     if(!homeUri||!awayUri||homeUri===awayUri||home===away)return [];
     if(!home||!away||!sameFixture(game,milestone,teamAliases(home,true),teamAliases(away,true),e.eventTime))return [];
-    return [{source:'FOX Sports',home:score(home.score),away:score(away.score),live:e.eventStatus===1,clockOk:clockCompatible(game,NaN,e.statusLine)}];
+    const eventId=String(e.entityLink?.layout?.tokens?.id||'');
+    return [{source:'FOX Sports',eventId:/^\d+$/.test(eventId)?eventId:null,home:score(home.score),away:score(away.score),live:e.eventStatus===1,clockOk:clockCompatible(game,NaN,e.statusLine)}];
   }));
 }
 export function scoreAgreement(game,bySource,market){
@@ -154,6 +155,30 @@ export function playerStatAgreement(summary,player){
     });
   }));
   return matches.length===1&&Number.isInteger(matches[0])&&matches[0]===player.value;
+}
+// A missing FOX box score is optional; an exact fixture/player/stat that
+// disagrees with the exchange and ESPN is a veto. Parse the named statistic
+// from the player table, not the recap or a similarly named opponent.
+export function foxPlayerStat(data,player,eventId){
+  if(String(data?.header?.id)!==String(eventId))return null;
+  const column={PTS:'PTS',REB:'REB',AST:'AST','3PT':'3FG',STL:'STL',BLK:'BLK'}[player.metric];
+  if(!column&&player.metric!=='PRA')return null;
+  const matches=[];
+  for(const section of data?.boxscore?.boxscoreSections||[])for(const item of section.boxscoreItems||[]){
+    const table=item.boxscoreTable;
+    if(!table)continue;
+    const headers=table.headers?.[0]?.columns||[];
+    const indexes=(player.metric==='PRA'?['PTS','REB','AST']:[column]).map(label=>headers.find(h=>h.text===label)?.index);
+    if(indexes.some(n=>!Number.isInteger(n)))continue;
+    for(const row of table.rows||[]){
+      if(clean(row.entityLink?.title)!==clean(player.name))continue;
+      const values=indexes.map(n=>score(String(row.columns?.find(c=>c.index===n)?.text||'').split('/')[0]));
+      if(values.every(Number.isInteger))matches.push(values.reduce((a,b)=>a+b,0));
+    }
+  }
+  // Starters and bench are separate tables; duplicate player entries are
+  // ambiguous unless their values agree.
+  return matches.length&&matches.every(n=>n===matches[0])?matches[0]:null;
 }
 async function json(url,fetcher){
   const response=await fetcher(url,{headers:{accept:'application/json'},signal:AbortSignal.timeout(7000)});
@@ -198,6 +223,15 @@ export async function verifyIndependentOver(game,milestone,{fetcher=fetch,cache,
   if(matches.length!==1)return false;
   try{
     const summary=await read(`https://site.api.espn.com/apis/site/v2/sports/${espn}/summary?event=${encodeURIComponent(matches[0].eventId)}`);
-    return playerStatAgreement(summary,player);
+    if(!playerStatAgreement(summary,player))return false;
+    if(fox!=='nba')return true;
+    const foxFixtures=bySource[1].filter(m=>m.eventId&&m.live&&m.home===game.home&&m.away===game.away);
+    if(foxFixtures.length!==1)return true; // FOX has no usable box score for this fixture.
+    try{
+      const eventId=foxFixtures[0].eventId;
+      const box=await read(`https://api.foxsports.com/bifrost/v1/${fox}/event/${eventId}/data?apikey=${FOX_KEY}&api-version=1.1`);
+      const foxStat=foxPlayerStat(box,player,eventId);
+      return foxStat===null||foxStat===player.value;
+    }catch{return true} // FOX unavailable; the Kalshi and ESPN gates still apply.
   }catch{return false}
 }
