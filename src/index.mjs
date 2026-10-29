@@ -362,6 +362,8 @@ async function reconcileFundingTransfers(){
 async function submit(signal,game,event,market,balance,bankroll,budgetCents=Infinity,availableCents=bankroll){
   const price=Number(market.yes_ask_dollars);const count=profitableCount(contractCount(balance,market,signal.fraction,bankroll,budgetCents,feeReserve(event,market)),price,feeReserve(event,market),signal.strategy,availableCents,game.type,game.remainingSeconds);if(!count)return false;
   if(['over','weather'].includes(signal.strategy)&&!game.verificationId)return false;
+  const active=await pool.query(`SELECT 1 FROM trade_attempts WHERE market_ticker=$1 AND status IN ('filled','reserved','check_order','retrying','combo_pending') LIMIT 1`,[market.ticker]);
+  if(active.rowCount)return false;
   const id=await reserve(signal,game,event,market,count,price,balance);if(!id)return false;
   await pool.query(`CREATE TABLE IF NOT EXISTS order_verifications(order_id uuid PRIMARY KEY,verification_id uuid NOT NULL,created_at timestamptz DEFAULT now())`);
   if(game.verificationId)await pool.query('INSERT INTO order_verifications(order_id,verification_id) VALUES($1,$2) ON CONFLICT DO NOTHING',[id,game.verificationId]);
@@ -487,7 +489,7 @@ async function executeCombo(group,account,bankroll,overRemaining,scoreboardCache
       if(local<desired&&transferPlan(account,shard,desired)){funding.push({strategy,created,combo,desired});return}
       const budget=Math.floor(Math.min(desired,local));
       if(budget<100)return;
-      const existing=await pool.query(`SELECT status FROM trade_attempts WHERE market_ticker=$1 AND strategy=$2`,[ticker,strategy]);
+      const existing=await pool.query(`SELECT status FROM trade_attempts WHERE market_ticker=$1`,[ticker]);
       if(existing.rows.some(r=>['filled','combo_pending','reserved','check_order'].includes(r.status)))return;
       if(Date.now()>=deadline)return;
       const rfq=(await kalshi('/communications/rfqs',{auth:true,method:'POST',body:{market_ticker:ticker,target_cost_dollars:(budget/100).toFixed(2),rest_remainder:false,obscure_creator_id:true}})).id;
@@ -534,7 +536,7 @@ async function executeCombo(group,account,bankroll,overRemaining,scoreboardCache
         const id=randomUUID(),reason=`${legs.length}-pick ${strategy} combo: ${legs.map(c=>c.state.title).join(' / ')}`;
         const inserted=await pool.query(`INSERT INTO trade_attempts(id,market_ticker,event_ticker,game_id,sport,strategy,reason,fraction,count,limit_price,available_cents,status,combo_legs,combo_rfq_id,combo_quote_id)
           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'combo_pending',$12,$13,$14)
-          ON CONFLICT(market_ticker,strategy) DO NOTHING RETURNING id`,
+          ON CONFLICT DO NOTHING RETURNING id`,
           [id,ticker,created.event_ticker,legs[0].milestone.id,legs[0].state.sport,strategy,reason,fraction,terms.count,terms.yesCost,Number(latest.balance),JSON.stringify(comboLegs(legs)),rfq,q.id]);
         if(!inserted.rowCount)break;
         try{
@@ -681,7 +683,7 @@ async function scan(cachedMilestones){
       account=currentAccount;balance=Number(account.balance);
       bankroll=balance+Number(account.portfolio_value);
       const open=new Set((positions.market_positions||[]).filter(p=>Number(p.position_fp??p.position??0)!==0).map(p=>p.ticker));
-      const exposure=existingFills.rows.reduce((sum,r)=>sum+(r.strategy==='over'&&open.has(r.market_ticker)?Number(r.fill_count)*Number(r.limit_price)*100:0),0);
+      const exposure=existingFills.rows.reduce((sum,r)=>sum+(r.strategy==='over'&&open.has(r.market_ticker)?estimatedCostCents(Number(r.fill_count),Number(r.limit_price),2):0),0);
       overRemaining=overBudget(balance,account.portfolio_value,exposure);
     }
     // Exits are assessed before any new risk is added.

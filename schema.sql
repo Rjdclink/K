@@ -51,6 +51,8 @@ ALTER TABLE trade_attempts ADD COLUMN IF NOT EXISTS attempt_history jsonb NOT NU
 ALTER TABLE trade_attempts ADD COLUMN IF NOT EXISTS combo_legs jsonb;
 ALTER TABLE trade_attempts ADD COLUMN IF NOT EXISTS combo_rfq_id text;
 ALTER TABLE trade_attempts ADD COLUMN IF NOT EXISTS combo_quote_id text;
+CREATE UNIQUE INDEX IF NOT EXISTS one_active_trade_per_market_idx ON trade_attempts(market_ticker)
+  WHERE status IN ('filled','reserved','check_order','retrying','combo_pending');
 
 ALTER TABLE trade_attempts ALTER COLUMN count TYPE numeric(12,2) USING count::numeric;
 CREATE TABLE IF NOT EXISTS scan_status (
