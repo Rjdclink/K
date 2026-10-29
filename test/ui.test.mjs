@@ -3,6 +3,24 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {page} from '../src/ui.mjs';
 
+test('score possession and net sale result refresh with the order display',()=>{
+  const refresh={classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){}};
+  const document={getElementById:()=>refresh,querySelectorAll:()=>[],createElement:()=>({children:[],append(...items){this.children.push(...items)}})};
+  const context=vm.createContext({document,window:{addEventListener(){}},navigator:{},localStorage:{getItem(){return null},setItem(){}},fetch:()=>new Promise(()=>{}),AbortSignal,setInterval(){}});
+  vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],context);
+  const order=vm.runInContext('order',context),score=vm.runInContext('scoreDisplay',context);
+  const base={game_status:'live',score_scanned_at:new Date().toISOString(),home_score:4,away_score:6,possession_side:'away',sport:'Baseball',strategy:'lead',reason:'Away leads 4–6',market_ticker:'M',sell_quote:{count:10,price:.92},sell_profit_cents:149};
+  assert.match(score(base),/Away 6\* · Home 4/);
+  assert.match(score({...base,possession_side:'home'}),/Away 6 · Home 4\*/);
+  const gain=order(base).children.at(-1);
+  assert.equal(gain.textContent,'↗ +$1.49');
+  assert.match(gain.className,/sell-gain/);
+  const loss=order({...base,sell_profit_cents:-90}).children.at(-1);
+  assert.equal(loss.textContent,'↗ −$0.90');
+  assert.match(loss.className,/sell-loss/);
+  assert.equal(order({...base,sell_profit_cents:null}).children.at(-1).textContent,'↗ —');
+});
+
 test('filled order timer is bright red, advances each second and reanchors to live score',()=>{
   const intervals=[],elements=[];
   const refresh={classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){}};

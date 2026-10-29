@@ -90,12 +90,13 @@ export function tableTennisMatches(data,game,milestone){
     const time=Number(e.startTimestamp)*1000;
     if(!Number.isFinite(start)||!Number.isFinite(time)||Math.abs(start-time)>3*3600000||
       !sameTeam(names.home,[e.homeTeam?.name])||!sameTeam(names.away,[e.awayTeam?.name]))return [];
-    const home=score(e.homeScore?.period5),away=score(e.awayScore?.period5);
+    const set=game.tableTennis?.setNumber;
+    const home=score(e.homeScore?.['period'+set]),away=score(e.awayScore?.['period'+set]);
     return [{home,away,homeSets:score(e.homeScore?.current),awaySets:score(e.awayScore?.current),live:e.status?.type==='inprogress'}];
   });
 }
 export async function verifyIndependentTableTennisLead(game,milestone,{fetcher=fetch}={}){
-  if(!game.tableTennis||game.tableTennis.setNumber!==5||!game.verifiedLive)return false;
+  if(!game.tableTennis||![3,5,7].includes(game.tableTennis.setNumber)||!game.verifiedLive)return false;
   const start=Date.parse(milestone.start_date||'');
   if(!Number.isFinite(start))return false;
   try{
@@ -147,12 +148,15 @@ export function scoreAgreement(game,bySource,market){
 }
 export function playerStatAgreement(summary,player){
   const matches=(summary?.boxscore?.players||[]).flatMap(team=>(team.statistics||[]).flatMap(group=>{
-    const index=group.names?.findIndex(name=>name===({PTS:'PTS',REB:'REB',AST:'AST','3PT':'3PT',STL:'STL',BLK:'BLK',PRA:'PTS'}[player.metric]));
+    const yardType={PASSYDS:'passing',RUSHYDS:'rushing',RECYDS:'receiving'}[player.metric];
+    if(yardType&&!String(group.name||group.displayName||'').toLowerCase().includes(yardType))return [];
+    const label={PTS:'PTS',REB:'REB',AST:'AST','3PT':'3PT',STL:'STL',BLK:'BLK',PRA:'PTS',GOALS:'G',SAVES:'SV',SOG:'SOG',HITS:'H',RBI:'RBI',HR:'HR',PASSYDS:'YDS',RUSHYDS:'YDS',RECYDS:'YDS'}[player.metric];
+    const index=group.names?.findIndex(name=>name===label);
     if(index<0)return [];
     return (group.athletes||[]).filter(a=>clean(a.athlete?.displayName)===clean(player.name)&&!a.didNotPlay).map(a=>{
       const at=label=>group.names?.indexOf(label);
       const read=label=>{const n=at(label);return n<0?NaN:score(String(a.stats?.[n]||'').split('-')[0])};
-      return player.metric==='PRA'?read('PTS')+read('REB')+read('AST'):read(player.metric);
+      return player.metric==='PRA'?read('PTS')+read('REB')+read('AST'):read(label);
     });
   }));
   return matches.length===1&&Number.isInteger(matches[0])&&matches[0]===player.value;
@@ -220,6 +224,8 @@ async function verifyExistingOver(game,milestone,{fetcher=fetch,cache,market}={}
   // Use the preferred provider for a matched fixture. An absent fixture is
   // unavailable, while a positively identified contradictory score is false.
   if(bySource[0].length>1||bySource[1].length>1)return false;
+  if(bySource[0].length&&bySource[1].length&&
+    (!scoreAgreement(game,[bySource[0]],market)||!scoreAgreement(game,[bySource[1]],market)))return false;
   const chosen=bySource[0].length?bySource[0]:bySource[1];
   if(!chosen.length)return null;
   if(!scoreAgreement(game,[chosen],market))return false;

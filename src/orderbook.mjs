@@ -9,3 +9,13 @@ export function yesDepthAtAsk(orderbook,ask,size){
   },0);
   return Math.max(0,Math.floor(Math.min(depth,advertised)*100+1e-7)/100);
 }
+export function bestYesAsk(orderbook){
+  if(!Array.isArray(orderbook?.no_dollars))return null;
+  const levels=orderbook.no_dollars.map(([price,size])=>({bid:Number(price),size:Number(size)}))
+    .filter(x=>Number.isFinite(x.bid)&&x.bid>0&&x.bid<1&&Number.isFinite(x.size)&&x.size>0)
+    .sort((a,b)=>b.bid-a.bid);
+  if(!levels.length)return null;
+  const best=levels[0];
+  const size=levels.filter(x=>Math.round(x.bid*10000)===Math.round(best.bid*10000)).reduce((sum,x)=>sum+x.size,0);
+  return {price:Number((1-best.bid).toFixed(4)),size:Math.floor(size*100+1e-7)/100};
+}

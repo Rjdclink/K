@@ -11,7 +11,7 @@ export function comboCandidates(candidates, strategy, max=6){
 export function filledComboWindow(fills,heldTickers,lastComboAt,max=6){
   const singles=fills.filter(r=>!r.combo_legs&&heldTickers.has(r.market_ticker))
     .sort((a,b)=>new Date(b.updated_at)-new Date(a.updated_at));
-  if(singles.length<2 || lastComboAt && singles.filter(r=>new Date(r.updated_at)>new Date(lastComboAt)).length<2)return [];
+  if(singles.length<2)return [];
   const games=new Set(),events=new Set();
   return singles.filter(r=>{
     if(games.has(r.game_id)||events.has(r.event_ticker))return false;
@@ -19,9 +19,22 @@ export function filledComboWindow(fills,heldTickers,lastComboAt,max=6){
   }).slice(0,max);
 }
 export function comboCollection(collections,legs){
-  return (collections||[]).find(c=>c.is_all_yes===true && (c.is_single_market_per_event===false || c.is_single_market_per_event===true && new Set(legs.map(l=>l.event.event_ticker)).size===legs.length) &&
+  return (collections||[]).find(c=>(c.is_all_yes===true || c.is_all_yes===false && /every associated market resolves to YES/i.test(String(c.functional_description||''))) &&
+    (c.is_single_market_per_event===false || c.is_single_market_per_event===true && new Set(legs.map(l=>l.event.event_ticker)).size===legs.length) &&
     Number(c.size_min)<=legs.length && (!Number(c.size_max)||Number(c.size_max)>=legs.length) &&
-    legs.every(l=>(c.associated_event_tickers||[]).includes(l.event.event_ticker)));
+    legs.every(l=>(c.associated_events||[]).some(e=>e.ticker===l.event.event_ticker) ||
+      (c.associated_event_tickers||[]).includes(l.event.event_ticker)));
+}
+export function compatibleComboGroups(collections,candidates,maxGroups=6){
+  const groups=[];
+  const count=Math.min(10,candidates.length);
+  for(let mask=1;mask<(1<<count);mask++){
+    const legs=candidates.slice(0,count).filter((_,i)=>mask&(1<<i));
+    if(legs.length<2||legs.length>6)continue;
+    const collection=comboCollection(collections,legs);
+    if(collection)groups.push({legs,collection});
+  }
+  return groups.sort((a,b)=>b.legs.length-a.legs.length).slice(0,maxGroups);
 }
 export function quoteForYes(quote,ticker,budgetCents,feeMultiplier=2,bankrollCents=budgetCents){
   if(!quote || quote.market_ticker!==ticker || quote.status!=='open')return null;
@@ -35,7 +48,7 @@ export function quoteForYes(quote,ticker,budgetCents,feeMultiplier=2,bankrollCen
   const feeCents=Math.ceil(feeMultiplier*7*count*yesCost*(1-yesCost));
   const debitCents=Math.ceil(100*count*yesCost)+feeCents;
   const profitCents=Math.floor(100*count-debitCents);
-  if(debitCents>budgetCents||profitCents<(bankrollCents>=10000?50:25))return null;
+  if(debitCents>budgetCents||profitCents<50)return null;
   return {count,yesCost,debitCents,profitCents};
 }
 export function comboLegs(legs){return legs.map(c=>({game_id:c.milestone.id,event_ticker:c.event.event_ticker,market_ticker:c.market.ticker,strategy:c.signal.strategy,title:c.state.title,sport:c.state.sport}));}

@@ -35,6 +35,7 @@ test('dashboard includes alerts in its existing refresh while the alert endpoint
     if(sql.includes('SET clock_refresh_at='))return {rows:[]};
     if(sql.includes('FROM game_snapshots WHERE'))return {rows:[]};
     if(sql.includes('FROM scan_status WHERE'))return {rows:[{scanned:0,signals:0}]};
+    if(sql.includes('FROM weather_scan_status WHERE'))return {rows:[{series:0,events:0,eligible:0,verified:0}]};
     if(sql.includes('FROM trade_attempts a LEFT JOIN'))return {rows:[]};
     if(sql.includes('FROM settlement_alerts WHERE'))return {rows:[alert]};
     throw Error('Unexpected query in dashboard test');

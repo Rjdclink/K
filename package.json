@@ -7,6 +7,11 @@
     "build": "esbuild src/index.mjs --bundle --platform=node --target=node24 --format=esm --banner:js=\"import{createRequire as ___cr}from'module';import{fileURLToPath as ___f}from'url';import{dirname as ___d}from'path';const require=___cr(import.meta.url);const __filename=___f(import.meta.url);const __dirname=___d(__filename);\" --outfile=dist/index.mjs",
     "dev": "node dev.mjs"
   },
-  "dependencies": {"pg": "^8.16.3"},
-  "devDependencies": {"esbuild": "^0.25.12"}
+  "dependencies": {
+    "pg": "^8.16.3",
+    "tz-lookup": "^6.1.25"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.12"
+  }
 }
