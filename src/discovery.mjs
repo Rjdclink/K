@@ -1,12 +1,13 @@
 // Only fetch event families used by the two entry strategies and comeback exits.
 // The exchange remains authoritative: a guessed ticker is ignored unless an
 // open event and its market are actually returned by Kalshi.
-const supportedType=type=>/basketball|baseball|football|hockey|soccer|tennis/.test(String(type||'').toLowerCase()) &&
+const supportedType=type=>/basketball|baseball|football|hockey|soccer|tennis|golf/.test(String(type||'').toLowerCase()) &&
   !/esports/.test(String(type||'').toLowerCase());
 
 export function eligibleForMarkets(game){return game?.verifiedLive && game.scoreKnown && supportedType(game.type)}
 
 export function linkedEventTickers(milestone){
+  if(milestone.type==='golf_tournament')return [milestone.details?.main_game_event_ticker].filter(Boolean);
   const source=[...(milestone.related_event_tickers||[]),...(milestone.primary_event_tickers||[]),milestone.details?.main_game_event_ticker].filter(Boolean);
   const main=ticker=>{
     const series=String(ticker).split('-')[0].toUpperCase();

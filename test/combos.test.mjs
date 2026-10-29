@@ -35,3 +35,8 @@ test('accepts only fresh affordable positive net YES quotes, with maker NO bid a
   assert.ok(quoteForYes(small,'COMBO',1000,2,9900));
   assert.equal(quoteForYes(small,'COMBO',1000,2,10000),null);
 });
+test('same game and event picks require a collection explicitly allowing multiple markets per event',()=>{
+ const legs=[candidate('a','A'),candidate('b','A')];
+ const c={is_all_yes:true,is_single_market_per_event:false,size_min:2,size_max:6,associated_event_tickers:['A']};
+ assert.ok(comboCollection([c],legs));assert.equal(comboCollection([{...c,is_single_market_per_event:true}],legs),undefined);
+});

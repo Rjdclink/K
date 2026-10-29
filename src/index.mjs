@@ -1,3 +1,4 @@
+import { golfSignal, verifyGolf } from './golf.mjs';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { page } from './ui.mjs';
@@ -74,8 +75,13 @@ async function auditTable(){return auditReady??=pool.query(`CREATE TABLE IF NOT 
 async function auditedOver(game,milestone,options={}){
   const observations=[];
   const fetcher=async(url,opts)=>{
-    const at=new Date().toISOString();
-    try{const r=await fetch(url,opts);const data=await r.json();observations.push({source:url.includes('espn.com')?'ESPN':'FOX',url,requested_at:at,received_at:new Date().toISOString(),status:r.status,data});return {ok:r.ok,status:r.status,json:async()=>data}}
+    const at=new Date().toISOString(),key='raw:'+url,cached=options.cache?.get(key);
+    const task=cached&&Date.now()-cached.at<2000?cached.value:(async()=>{
+      const r=await fetch(url,opts),raw=await r.text();let data;try{data=JSON.parse(raw)}catch{data=raw}
+      return {ok:r.ok,status:r.status,data,raw,requested_at:at,received_at:new Date().toISOString()};
+    })();
+    if(!cached||Date.now()-cached.at>=2000)options.cache?.set(key,{at:Date.now(),value:task});
+    try{const r=await task;observations.push({source:url.includes('espn.com')?'ESPN':url.includes('cdn.nba.com')?'NBA':url.includes('cbssports.com')?'CBS':url.includes('yahoo.com')?'Yahoo':'FOX',url,requested_at:r.requested_at,received_at:r.received_at,status:r.status,data:r.data});return {ok:r.ok,status:r.status,json:async()=>r.data,text:async()=>r.raw}}
     catch(e){observations.push({url,requested_at:at,error:String(e.message)});throw e}
   };
   // Separate reads retain the exact source response used for this decision.
@@ -220,6 +226,8 @@ async function milestones(){
     if(!cursor||page.length&&new Date(page.at(-1).start_date).getTime()>now+3600000)break;
     if(i===19)throw Error('Sports milestones exceed the pagination safety limit before current games');
   }
+  const golf=await kalshi('/milestones?'+new URLSearchParams({category:'Sports',type:'golf_tournament',minimum_start_date:new Date(now-7*86400000).toISOString(),limit:'100'})).catch(e=>{console.warn('Golf discovery unavailable:',e.message);return {milestones:[]}});
+  const ids=new Set(found.map(m=>m.id));for(const m of golf.milestones||[])if(!ids.has(m.id))found.push(m);
   return found.filter(m=>m.id && new Date(m.start_date).getTime()<now+3600000 && (!m.end_date||new Date(m.end_date).getTime()>now-3600000));
 }
 async function liveBatch(ms){
@@ -419,14 +427,15 @@ async function executeCombo(group,account,bankroll,overRemaining,scoreboardCache
       }else if(/basketball/.test(c.state.type) && (state.period!==c.state.period||!state.periodConsistent||state.remainingSeconds>c.state.remainingSeconds))return null;
       const market=(await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market;
       if(!market||market.ticker!==c.market.ticker||market.event_ticker!==c.event.event_ticker)return null;
-      const signal=c.signal.strategy==='over'?overSignal(state,market):leadSignal(state,market)||tennisSignal(state,market);
+      if(state.golf&&!await verifyGolf(state,c.milestone,c.event))return null;
+      const signal=c.signal.strategy==='over'?overSignal(state,market):golfSignal(state,market)||leadSignal(state,market)||tennisSignal(state,market);
       return signal?{...c,state,market,signal}:null;
     }catch(e){console.warn('Combo leg verification:',c.market.ticker,e.message);return null}
   }));
-  const seenGames=new Set(),seenEvents=new Set();
+  const seenMarkets=new Set();
   const eligible=verified.filter(Boolean).filter(c=>{
-    if(seenGames.has(c.milestone.id)||seenEvents.has(c.event.event_ticker))return false;
-    seenGames.add(c.milestone.id);seenEvents.add(c.event.event_ticker);return true;
+    if(seenMarkets.has(c.market.ticker))return false;
+    seenMarkets.add(c.market.ticker);return true;
   }).slice(0,6);
   if(eligible.length<2)return {filled:false,pending:false};
   // Prefer all available verified legs, then smaller valid combinations.
@@ -477,9 +486,9 @@ async function executeCombo(group,account,bankroll,overRemaining,scoreboardCache
         if(legs.some(c=>{
           const d=fresh.get(c.milestone.id),s=gameState(c.milestone,d);
           return c.signal.strategy==='over'?!overSignal(s,c.market)||s.home!==c.state.home||s.away!==c.state.away||
-            s.period<c.state.period||s.soccerMinute<c.state.soccerMinute||/^tennis_/.test(s.type)&&s.tennisTotal!==c.state.tennisTotal:!(leadSignal(s,c.market)||tennisSignal(s,c.market));
+            s.period<c.state.period||s.soccerMinute<c.state.soccerMinute||/^tennis_/.test(s.type)&&s.tennisTotal!==c.state.tennisTotal:!(golfSignal(s,c.market)||leadSignal(s,c.market)||tennisSignal(s,c.market));
         }))break;
-        const checks=await Promise.all(legs.filter(c=>c.signal.strategy==='over').map(c=>auditedOver(gameState(c.milestone,fresh.get(c.milestone.id)),c.milestone,{market:c.market,firstObservation:c.state})));
+        const checks=await Promise.all(legs.filter(c=>c.signal.strategy==='over'||c.state.golf).map(c=>c.state.golf?verifyGolf(gameState(c.milestone,fresh.get(c.milestone.id)),c.milestone,c.event):auditedOver(gameState(c.milestone,fresh.get(c.milestone.id)),c.milestone,{market:c.market,firstObservation:c.state,cache:scoreboardCache})));
         if(checks.some(ok=>!ok)||Date.now()>=deadline)break;
         const latest=await accountBalance({fresh:true});
         if(Number(latest.balance)<terms.debitCents || (shardCash(latest,shard)??0)<terms.debitCents ||
@@ -598,7 +607,7 @@ async function scan(cachedMilestones){
     for(const {milestone,state} of games){
       const candidates=[];
       if(eligibleForMarkets(state))for(const ticker of linkedEventTickers(milestone)){const event=events.get(ticker);if(!event || event.category!=='Sports')continue;
-        for(const market of event.markets||[]){if(market.event_ticker!==event.event_ticker)continue;const signal=overSignal(state,market)||leadSignal(state,market)||tennisSignal(state,market)||tableTennisSignal(state,market);if(signal&&!filled.has(`${market.ticker}:${signal.strategy}`))candidates.push({signal,event,market,state,milestone})}}
+        for(const market of event.markets||[]){if(market.event_ticker!==event.event_ticker)continue;const signal=overSignal(state,market)||golfSignal(state,market)||leadSignal(state,market)||tennisSignal(state,market)||tableTennisSignal(state,market);if(signal&&!filled.has(`${market.ticker}:${signal.strategy}`))candidates.push({signal,event,market,state,milestone})}}
       allCandidates.push(...candidates);
       if(state.verifiedLive)scanned++;
       const baseball=/baseball/.test(state.type),tennis=/tennis/.test(state.type),soccer=/soccer/.test(state.type);
@@ -688,8 +697,9 @@ async function scan(cachedMilestones){
         const rawQuote=(await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market;
         const quote=rawQuote&&hasAsk(rawQuote)?await executableQuote(rawQuote):null;
         if(!quote||quote.ticker!==c.market.ticker||quote.event_ticker!==c.event.event_ticker||!hasAsk(quote))continue;
-        const stillQualifies=c.signal.strategy==='over'?overSignal(freshState,quote):leadSignal(freshState,quote)||tennisSignal(freshState,quote)||tableTennisSignal(freshState,quote);
+        const stillQualifies=c.signal.strategy==='over'?overSignal(freshState,quote):golfSignal(freshState,quote)||leadSignal(freshState,quote)||tennisSignal(freshState,quote)||tableTennisSignal(freshState,quote);
         if(!stillQualifies)continue;
+        if(freshState.golf&&!await verifyGolf(freshState,c.milestone,c.event))continue;
         if(tableTennisSignal(freshState,quote)&&!await verifyIndependentTableTennisLead(freshState,c.milestone))continue;
         c.signal=stillQualifies;
         c.market=quote;
@@ -725,17 +735,17 @@ async function scan(cachedMilestones){
       ]);
       const held=new Set((currentPositions.market_positions||[]).filter(p=>Number(p.position_fp??p.position??0)>0).map(p=>p.ticker));
       const singles=filledComboWindow(currentFills.rows,held,last?.created_at);
-      if(singles.length>=2){
+      if(singles.length>=2||opportunities.length>=2){
         const gameById=new Map(games.map(g=>[g.milestone.id,g]));
         const comboCandidates=singles.flatMap(r=>{
           const g=gameById.get(r.game_id),event=events.get(r.event_ticker),market=(event?.markets||[]).find(m=>m.ticker===r.market_ticker);
           if(!g?.state.verifiedLive||!market)return [];
-          const signal=r.strategy==='over'?overSignal(g.state,market):leadSignal(g.state,market)||tennisSignal(g.state,market);
+          const signal=r.strategy==='over'?overSignal(g.state,market):golfSignal(g.state,market)||leadSignal(g.state,market)||tennisSignal(g.state,market);
           return signal?[{...g,market,event,signal,state:g.state}]:[];
         });
-        const group=[],seenGames=new Set(),seenEvents=new Set();
-        for(const c of comboCandidates){if(seenGames.has(c.milestone.id)||seenEvents.has(c.event.event_ticker))continue;
-          group.push(c);seenGames.add(c.milestone.id);seenEvents.add(c.event.event_ticker);if(group.length===6)break}
+        const group=[],seenMarkets=new Set();
+        for(const c of [...comboCandidates,...opportunities]){if(seenMarkets.has(c.market.ticker))continue;
+          group.push(c);seenMarkets.add(c.market.ticker);if(group.length===6)break}
         if(group.length>=2)try{
           const result=await executeCombo(group,currentAccount,Number(currentAccount.balance)+Number(currentAccount.portfolio_value),overRemaining,scoreboardCache);
           if(result.filled)submitted++;
@@ -813,7 +823,7 @@ async function settlementAlerts(since){
   return rows;
 }
 export default {async fetch(req){const url=new URL(req.url);
-  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'verified-overs-sell-audit-20261029'});
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'parallel-sources-golf-combos-20261029'});
   if(req.method==='GET'&&url.pathname==='/manifest.webmanifest')return response(manifest,'application/manifest+json');
   if(req.method==='GET'&&url.pathname==='/sw.js')return new Response(worker,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','service-worker-allowed':'/','x-content-type-options':'nosniff'}});
   if(req.method==='GET'&&/^\/icon-(192|512)\.png$/.test(url.pathname))return response(Buffer.from(icons[Number(url.pathname.match(/\d+/)[0])],'base64'),'image/png');

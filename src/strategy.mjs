@@ -1,3 +1,4 @@
+import { golfState } from './golf.mjs';
 const N = v => v === null || v === undefined || v === '' ? NaN : Number(v);
 const pick = (obj, names) => names.map(k => obj?.[k]).find(v => Number.isFinite(N(v)));
 export function sportName(m) {
@@ -22,6 +23,7 @@ export function sportName(m) {
   return m.details?.league || m.details?.competition || m.type || 'Sports';
 }
 export function gameState(m, live) {
+  if(m.type==='golf_tournament')return golfState(m,live);
   const d = live?.details || {};
   const sport = sportName(m);
   const tennis=/^tennis_/.test(String(m.type||''));
@@ -146,7 +148,7 @@ export function overSignal(game, market) {
   if (game.soccerExtraTime || /soccer/.test(game.type) && !Number.isFinite(game.soccerMinute)) return null;
   // A nearly free YES after an apparently crossed line means the feed and
   // contract disagree. Never treat this as a guaranteed arbitrage.
-  if (Number.isFinite(Number(market.yes_ask_dollars)) && market.yes_ask_dollars!=null && Number(market.yes_ask_dollars)<0.8) return null;
+  if (Number.isFinite(Number(market.yes_ask_dollars)) && market.yes_ask_dollars!=null && Number(market.yes_ask_dollars)>0 && Number(market.yes_ask_dollars)<0.8) return null;
   if (market.result && !['','not_determined'].includes(String(market.result))) return null;
   const text = `${market.title||''} ${market.yes_sub_title||''} ${market.rules_primary||''}`;
   const segment=series.match(/([1-9])(?:Q|P|H|INNING)(?:TEAM)?TOTAL$/);
@@ -177,9 +179,7 @@ export function overSignal(game, market) {
     team=home?game.homeName:game.awayName;
     if(!team||!norm(market.title).includes(norm(team)))return null;
   }
-  // Live player box scores can be revised after a rebound, assist or steal is
-  // reassigned. Require one whole statistic beyond the contract threshold.
-  if (!Number.isFinite(strike) || strike<0 || !Number.isFinite(scored) || scored<=strike+(player?1:0)) return null;
+  if (!Number.isFinite(strike) || strike<0 || !Number.isFinite(scored) || scored<=strike) return null;
   return {strategy:'over', reason:`${scored} ${player?.metric||'scored'}${team?` by ${team}`:''}; line ${strike} already passed${segment?`; segment ${segment[1]}`:''}`, fraction:0.30};
 }
 export function playerOverSpec(game,market){
