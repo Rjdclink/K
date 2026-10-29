@@ -1,3 +1,4 @@
+import { alternateCheck } from './alternate_scores.mjs';
 // ESPN and FOX publish the scoreboards used by their sites. These endpoints
 // are not contractual data APIs; a changed schema or unavailable fixture must
 // fail closed, never silently turn into permission to buy an over.
@@ -185,11 +186,11 @@ async function json(url,fetcher){
   if(!response.ok)throw Error(`Scoreboard ${response.status}`);
   return response.json();
 }
-export async function verifyIndependentOver(game,milestone,{fetcher=fetch,cache,market}={}){
+async function verifyExistingOver(game,milestone,{fetcher=fetch,cache,market}={}){
   const start=Date.parse(milestone.start_date||'');
   if(!Number.isFinite(start)||!game.scoreKnown)return false;
   const {espn,fox}=feeds(game);
-  if(!espn&&!fox)return false;
+  if(!espn&&!fox)return null;
   const dates=dateCandidates(start);
   // The UTC date may differ from the league's local scoreboard date.
   const requests=[];
@@ -216,22 +217,74 @@ export async function verifyIndependentOver(game,milestone,{fetcher=fetch,cache,
       seen.add(signature);return matches;
     });
   });
-  if(!scoreAgreement(game,bySource,market))return false;
+  // Use the preferred provider for a matched fixture. An absent fixture is
+  // unavailable, while a positively identified contradictory score is false.
+  if(bySource[0].length>1||bySource[1].length>1)return false;
+  const chosen=bySource[0].length?bySource[0]:bySource[1];
+  if(!chosen.length)return null;
+  if(!scoreAgreement(game,[chosen],market))return false;
   const player=playerOverSpec(game,market);
   if(!player)return true;
-  const matches=bySource[0].filter(m=>m.live&&m.clockOk&&m.home===game.home&&m.away===game.away&&m.eventId);
-  if(matches.length!==1)return false;
+  const matches=chosen.filter(m=>m.live&&m.clockOk&&m.home===game.home&&m.away===game.away&&m.eventId);
+  if(matches.length!==1)return null;
   try{
-    const summary=await read(`https://site.api.espn.com/apis/site/v2/sports/${espn}/summary?event=${encodeURIComponent(matches[0].eventId)}`);
-    if(!playerStatAgreement(summary,player))return false;
-    if(fox!=='nba')return true;
-    const foxFixtures=bySource[1].filter(m=>m.eventId&&m.live&&m.home===game.home&&m.away===game.away);
-    if(foxFixtures.length!==1)return true; // FOX has no usable box score for this fixture.
-    try{
-      const eventId=foxFixtures[0].eventId;
-      const box=await read(`https://api.foxsports.com/bifrost/v1/${fox}/event/${eventId}/data?apikey=${FOX_KEY}&api-version=1.1`);
-      const foxStat=foxPlayerStat(box,player,eventId);
-      return foxStat===null||foxStat===player.value;
-    }catch{return true} // FOX unavailable; the Kalshi and ESPN gates still apply.
-  }catch{return false}
+    if(chosen===bySource[0]){
+      const summary=await read(`https://site.api.espn.com/apis/site/v2/sports/${espn}/summary?event=${encodeURIComponent(matches[0].eventId)}`);
+      return summary?.boxscore?.players?.length?playerStatAgreement(summary,player):null;
+    }
+    if(fox!=='nba')return null;
+    const eventId=matches[0].eventId;
+    const box=await read(`https://api.foxsports.com/bifrost/v1/${fox}/event/${eventId}/data?apikey=${FOX_KEY}&api-version=1.1`);
+    const foxStat=foxPlayerStat(box,player,eventId);
+    return foxStat===null?null:foxStat===player.value;
+  }catch{return null}
+}
+
+const nbaAliases=t=>[`${t?.teamCity||''} ${t?.teamName||''}`,`${t?.teamTricode||''} ${t?.teamName||''}`,t?.teamName];
+export function nbaFixtures(data,game,milestone){
+  return (data?.scoreboard?.games||[]).filter(g=>/^\d{10}$/.test(String(g.gameId))&&sameFixture(game,milestone,nbaAliases(g.homeTeam),nbaAliases(g.awayTeam),g.gameTimeUTC));
+}
+// null = unavailable; false = a positively identified statistic disagrees.
+export function nbaAgreement(data,game,milestone,market,eventId){
+  const g=data?.game;
+  if(!g||String(g.gameId)!==String(eventId)||!sameFixture(game,milestone,nbaAliases(g.homeTeam),nbaAliases(g.awayTeam),g.gameTimeUTC))return null;
+  if(![2,3].includes(g.gameStatus))return null;
+  const player=playerOverSpec(game,market);
+  if(player){
+    const players=[...(g.homeTeam?.players||[]),...(g.awayTeam?.players||[])].filter(p=>clean(p.name||`${p.firstName||''} ${p.familyName||''}`)===clean(player.name));
+    if(players.length!==1)return null;
+    const stats=players[0].statistics||{};
+    const keys=player.metric==='PRA'?['points','reboundsTotal','assists']:[{PTS:'points',REB:'reboundsTotal',AST:'assists','3PT':'threePointersMade',STL:'steals',BLK:'blocks'}[player.metric]];
+    const values=keys.map(k=>score(stats[k]));
+    return values.every(n=>Number.isInteger(n)&&n>=0)?values.reduce((a,b)=>a+b,0)===player.value:null;
+  }
+  const home=score(g.homeTeam?.score),away=score(g.awayTeam?.score);
+  if(!Number.isInteger(home)||!Number.isInteger(away))return null;
+  const segment=periodValue(game,market);
+  if(segment){
+    const periods=(g.homeTeam.periods||[]).map(p=>({number:Number(p.period),home:score(p.score),away:score(g.awayTeam.periods?.find(a=>a.period===p.period)?.score)}));
+    const official=periodValue({...game,periodScores:periods},market);
+    if(!official||!Number.isFinite(official.home)||!Number.isFinite(official.away))return null;
+    return segment.home===official.home&&segment.away===official.away;
+  }
+  return home===game.home&&away===game.away;
+}
+async function verifyNbaOver(game,milestone,{fetcher=fetch,market}={}){
+  if(game.sport!=='NBA')return null;
+  try{
+    const board=await json('https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json',fetcher);
+    const fixtures=nbaFixtures(board,game,milestone);
+    if(fixtures.length!==1)return null;
+    const id=fixtures[0].gameId;
+    const box=await json(`https://cdn.nba.com/static/json/liveData/boxscore/boxscore_${id}.json`,fetcher);
+    return nbaAgreement(box,game,milestone,market,id);
+  }catch{return null}
+}
+export async function verifyIndependentOver(game,milestone,options={}){
+  const [preferred,nba,cbs,yahoo]=await Promise.all([verifyExistingOver(game,milestone,options),verifyNbaOver(game,milestone,options),alternateCheck('CBS',game,milestone,options),alternateCheck('Yahoo',game,milestone,options)]);
+  if(nba!==null)return nba;
+  if(preferred!==null)return preferred;
+  // CBS and Yahoo are fallback sources only. Conflicting fallback readings
+  // cannot establish a reliable statistic.
+  return [cbs,yahoo].includes(true)&&![cbs,yahoo].includes(false);
 }

@@ -74,11 +74,12 @@ test('team overs use only the named team score; player props cannot use the game
   const player={...team,event_ticker:'KXNBAPRA-26OCT27BKNBOS',title:'Jayson Tatum: 35+ points, rebounds, and assists',floor_strike:34.5,custom_strike:{basketball_player:'tatum'}};
   assert.equal(overSignal(gameState({...milestone,details:{...milestone.details,home_team_id:'boston',away_team_id:'brooklyn'}},live(57,56)),player),null);
 });
-test('a live player stat must clear the line by an extra whole unit before entry',()=>{
+test('a live player stat qualifies at the contract winning count',()=>{
   const m={id:'nba',title:'New York Knicks at Chicago Bulls',type:'basketball_game',details:{home_team_id:'chi',away_team_id:'nyk'}};
   const market={status:'active',event_ticker:'KXNBAREB-26OCT28NYKCHI',title:'Matas Buzelis: 6+ rebounds',yes_sub_title:'Matas Buzelis: 6+',floor_strike:5.5,strike_type:'greater',custom_strike:{basketball_player:'buzelis'},yes_ask_dollars:'0.81'};
   const state=rebounds=>gameState(m,{details:{status:'live',home_score:127,away_score:133,quarter:4,player_stats:{buzelis:{rebounds}}}});
-  assert.equal(overSignal(state(6),market),null,'a correction from six to five would lose the contract');
+  assert.equal(overSignal(state(5),market),null);
+  assert.equal(overSignal(state(6),market)?.strategy,'over');
   assert.equal(overSignal(state(7),market)?.strategy,'over');
 });
 test('WTA full-match game totals use all completed and current set games',()=>{

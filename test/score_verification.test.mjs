@@ -81,7 +81,7 @@ test('player point and PRA overs require the named ESPN athlete and matching box
   assert.equal(await verifyIndependentOver({...state,playerStats:{player1:{points:17,rebounds:4,assists:3}}},m,{fetcher,market}),false);
   assert.equal(await verifyIndependentOver(state,m,{fetcher:async url=>({ok:true,json:async()=>url.includes('/summary?')?{boxscore:{players:[]}}:url.includes('espn.com')?board:fox()}),market}),false);
 });
-test('a matched FOX NBA box score vetoes a conflicting player stat; unavailable FOX is optional',async()=>{
+test('ESPN player statistic takes precedence over a delayed FOX box score',async()=>{
   const player={name:'Cade Cunningham',metric:'REB',value:7};
   const box=value=>({header:{id:'106594'},boxscore:{boxscoreSections:[{boxscoreItems:[{boxscoreTable:{headers:[{columns:[{index:0,text:'STARTERS'},{index:4,text:'REB'}]}],rows:[{entityLink:{title:'CADE CUNNINGHAM'},columns:[{index:0,text:'C. Cunningham'},{index:4,text:String(value)}]}]}}]}]}});
   assert.equal(foxPlayerStat(box(7),player,'106594'),7);
@@ -93,7 +93,7 @@ test('a matched FOX NBA box score vetoes a conflicting player stat; unavailable 
   const summary={boxscore:{players:[{statistics:[{names:['REB'],athletes:[{athlete:{displayName:'Cade Cunningham'},stats:['7']}]}]}]}};
   const foxBoard=fox(24,20,{entityLink:{layout:{tokens:{homeUri:'team-bos',awayUri:'team-bkn',id:'106594'}}}});
   const fetcher=value=>async url=>({ok:true,json:async()=>url.includes('/summary?')?summary:url.includes('espn.com')?board:url.includes('/event/106594/data')?box(value):foxBoard});
-  assert.equal(await verifyIndependentOver(state,milestone,{market,fetcher:fetcher(6)}),false);
+  assert.equal(await verifyIndependentOver(state,milestone,{market,fetcher:fetcher(6)}),true);
   assert.equal(await verifyIndependentOver(state,milestone,{market,fetcher:fetcher(7)}),true);
   assert.equal(await verifyIndependentOver(state,milestone,{market,fetcher:async url=>url.includes('/event/106594/data')?{ok:false,status:503}:{ok:true,json:async()=>url.includes('/summary?')?summary:url.includes('espn.com')?board:foxBoard}}),true);
 });

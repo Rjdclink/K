@@ -19,7 +19,7 @@ export function filledComboWindow(fills,heldTickers,lastComboAt,max=6){
   }).slice(0,max);
 }
 export function comboCollection(collections,legs){
-  return (collections||[]).find(c=>c.is_all_yes===true && c.is_single_market_per_event===true &&
+  return (collections||[]).find(c=>c.is_all_yes===true && (c.is_single_market_per_event===false || c.is_single_market_per_event===true && new Set(legs.map(l=>l.event.event_ticker)).size===legs.length) &&
     Number(c.size_min)<=legs.length && (!Number(c.size_max)||Number(c.size_max)>=legs.length) &&
     legs.every(l=>(c.associated_event_tickers||[]).includes(l.event.event_ticker)));
 }
