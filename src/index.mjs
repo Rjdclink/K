@@ -560,6 +560,7 @@ async function executeCombo(group,account,bankroll,overRemaining,scoreboardCache
   return {filled:false,pending:false};
 }
 async function exitComebacks(games,events,positions){
+  if(process.env.AUTO_EXIT_ENABLED!=='true')return; // Temporarily disable automatic exits; manual sells remain available.
   const byGame=new Map(games.map(g=>[g.milestone.id,g.state]));
   const markets=new Map([...events.values()].flatMap(e=>(e.markets||[]).map(m=>[m.ticker,m])));
   const marketGames=new Map(games.flatMap(g=>linkedEventTickers(g.milestone).flatMap(t=>(events.get(t)?.markets||[]).map(m=>[m.ticker,g.milestone.id]))));
