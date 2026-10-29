@@ -909,7 +909,7 @@ export default {async fetch(req){const url=new URL(req.url);
     const now=Date.now();const until=Math.min(now+55000,(Math.floor(now/60000)+1)*60000-2000);let cached=null,cycles=0,last={};
     while(Date.now()<until){const begun=Date.now();last=await scan(cached);cycles++;
       if(last.next)cached=last.next;if(last.error && !/Kalshi 429 /.test(last.error) || !last.error && !last.active)break;
-      const pause=Math.max(0,3000-(Date.now()-begun));if(Date.now()+pause>=until)break;
+      const pause=Math.max(0,7000-(Date.now()-begun));if(Date.now()+pause>=until)break;
       await new Promise(resolve=>setTimeout(resolve,pause));
     }
     await weatherJob;
