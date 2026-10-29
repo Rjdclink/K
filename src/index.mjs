@@ -34,7 +34,7 @@ const credentials=()=>({key:process.env.KALSHI_API_KEY||process.env.KALSHI_API_K
 const pushIdentity=()=>vapidIdentity(process.env.KALSHI_PRIVATE_KEY);
 const response=(body,type)=>new Response(body,{headers:{'content-type':type,'cache-control':'no-store','x-content-type-options':'nosniff'}});
 const dashboardAuth=req=>authorized(req,process.env.DASHBOARD_PASSWORD);
-const kalshiRateLimit=async(method)=>{
+const kalshiRateLimit=async(method,backoffMs=0)=>{
   const kind=method==='GET'?'read':'write';
   const spacing=method==='GET'?70:130;
   const client=await pool.connect();
@@ -50,6 +50,11 @@ const kalshiRateLimit=async(method)=>{
   finally{client.release()}
   if(wait>0)await new Promise(resolve=>setTimeout(resolve,wait));
 };
+const kalshiBackoff=async(ms)=>{
+  const delay=Math.min(60000,Math.max(1000,ms));
+  await pool.query(`UPDATE kalshi_rate_limits SET next_at=GREATEST(next_at,clock_timestamp()+($1 * interval '1 millisecond')) WHERE kind='read'`,[delay]);
+};
+const retryDelay=(header,attempt)=>{const seconds=Number(header);const date=Date.parse(header||'');return Number.isFinite(seconds)&&seconds>=0?seconds*1000:Number.isFinite(date)?Math.max(0,date-Date.now()):500*2**attempt};
 async function kalshi(path,opts={}){
   const method=opts.method||'GET';const headers={'accept':'application/json'};
   if(opts.auth){const {key,privateKey}=credentials();if(!key||!privateKey)throw Error('Kalshi credentials unavailable');const timestamp=String(Date.now());const unsignedPath='/trade-api/v2'+path.split('?')[0];const signature=kalshiSignature(privateKey,timestamp,method,unsignedPath);Object.assign(headers,{'KALSHI-ACCESS-KEY':key,'KALSHI-ACCESS-TIMESTAMP':timestamp,'KALSHI-ACCESS-SIGNATURE':signature})}
@@ -58,7 +63,7 @@ async function kalshi(path,opts={}){
     await kalshiRateLimit(method);
     const response=await fetch(API+path,{method,headers,body:opts.body?JSON.stringify(opts.body):undefined,signal:AbortSignal.timeout(12000)});
     const data=await response.json().catch(()=>({}));
-    if(response.status===429 && method==='GET' && attempt<4){await new Promise(resolve=>setTimeout(resolve,500*2**attempt));continue}
+    if(response.status===429 && method==='GET'){await kalshiBackoff(retryDelay(response.headers.get('retry-after'),attempt));if(attempt<4)continue}
     if(!response.ok){const detail=data.message||data.error?.message||data.error?.code||data.error||data.code||'request failed';throw Error(`Kalshi ${response.status} ${method} ${path.split('?')[0]}: ${String(typeof detail==='object'?JSON.stringify(detail):detail).slice(0,140)}`)}
     return data;
   }
@@ -267,12 +272,13 @@ async function liveMilestone(id){
   try{return (await kalshi(path+'?include_player_stats=true')).live_data}
   catch(e){if(!/^Kalshi (400|404) /.test(String(e.message)))throw e;return (await kalshi(path)).live_data}
 }
+const eventCache=new Map();
 async function marketMap(tickers){
-  const map=new Map();const list=[...new Set(tickers)].filter(Boolean);
+  const map=new Map();const list=[...new Set(tickers)].filter(Boolean).filter(t=>{const cached=eventCache.get(t);if(cached&&Date.now()-cached.at<7000){map.set(t,cached.event);return false}return true});
   for(let i=0;i<list.length;i+=70){const chunks=[list.slice(i,i+35),list.slice(i+35,i+70)].filter(c=>c.length);
     const results=await Promise.all(chunks.map(chunk=>kalshi('/events?'+new URLSearchParams({tickers:chunk.join(','),with_nested_markets:'true',limit:'200',status:'open'}))));
-    for(const result of results)for(const e of result.events||[])map.set(e.event_ticker,e);
-  }return map;
+    for(const result of results)for(const e of result.events||[]){map.set(e.event_ticker,e);eventCache.set(e.event_ticker,{event:e,at:Date.now()})}
+  }for(const [ticker,item] of eventCache)if(Date.now()-item.at>30000)eventCache.delete(ticker);return map;
 }
 async function reserve(signal,game,event,market,count,price,balance){
   const id=randomUUID();
@@ -719,6 +725,8 @@ async function scan(cachedMilestones){
     // Make the live score and clock visible before slower order preflights.
     await pool.query(`UPDATE scan_status SET last_scan=$1,scanned=$2,signals=$3 WHERE id=1`,[scanStarted,scanned,signals]);
     opportunities.sort((a,b)=>{
+      const executable=c=>hasAsk(c.market)&&!filled.has(signalKey(c))&&profitableCount(executableCount(c,balance,bankroll,overRemaining),Number(c.market.yes_ask_dollars),feeReserve(c.event,c.market),c.signal.strategy,bankroll,c.state.type,c.state.remainingSeconds)>0;
+      if(executable(a)!==executable(b))return executable(a)?-1:1;
       if(a.signal.strategy!==b.signal.strategy)return a.signal.strategy==='over'?-1:1;
       const profit=c=>netSettlementProfitCents(executableCount(c,balance,bankroll,overRemaining),Number(c.market.yes_ask_dollars),feeReserve(c.event,c.market));
       return profit(b)-profit(a) || (a.signal.strategy==='lead'?Number(tieRefundPreference(b.market))-Number(tieRefundPreference(a.market)):0);
