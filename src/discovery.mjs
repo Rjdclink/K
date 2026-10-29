@@ -1,24 +1,24 @@
 // Only fetch event families used by the two entry strategies and comeback exits.
 // The exchange remains authoritative: a guessed ticker is ignored unless an
 // open event and its market are actually returned by Kalshi.
-const supportedType=type=>/basketball|baseball|football|hockey|soccer|tennis|golf/.test(String(type||'').toLowerCase()) &&
+const supportedType=type=>/basketball|baseball|football|hockey|soccer|tennis|golf|handball|rugby|lacrosse|volleyball|darts/.test(String(type||'').toLowerCase()) &&
   !/esports/.test(String(type||'').toLowerCase());
 
 export function eligibleForMarkets(game){return game?.verifiedLive && game.scoreKnown && supportedType(game.type)}
 
 export function linkedEventTickers(milestone){
   if(milestone.type==='golf_tournament')return [milestone.details?.main_game_event_ticker].filter(Boolean);
-  const source=[...(milestone.related_event_tickers||[]),...(milestone.primary_event_tickers||[]),milestone.details?.main_game_event_ticker].filter(Boolean);
+  const source=[...(milestone.related_event_tickers||[]),...(milestone.primary_event_tickers||[]),...(milestone.events||[]),milestone.details?.main_game_event_ticker].filter(Boolean);
   const main=ticker=>{
     const series=String(ticker).split('-')[0].toUpperCase();
     if(!String(ticker).includes('-')||!/(?:TEAMTOTAL|TOTAL|GAME|MATCH)$/.test(series))return false;
     if(/(?:1H|2H|[1-4]Q|[1-3]P|[1-9]INNING|HALF|SET)(?:GAME|MATCH)$/.test(series))return false;
-    return !series.endsWith('MATCH')||/tennis/.test(String(milestone.type||''));
+    return !series.endsWith('MATCH')||/tennis|darts|volleyball|handball|rugby|lacrosse/.test(String(milestone.type||''));
   };
   // Kalshi links player props and other score markets directly to the game.
   // Keep those actual tickers; the strategy still rejects any metric it
   // cannot independently verify.
-  const listed=source.filter(t=>String(t).includes('-') && (main(t) || /(?:PTS|REB|AST|3PT|PRA|STL|BLK|GTOTAL)$/.test(String(t).split('-')[0])));
+  const listed=source.filter(t=>String(t).includes('-') && (main(t) || /(?:PTS|REB|AST|3PT|PRA|STL|BLK|GOALS|SAVES|SOG|HITS|RBI|HR|RUSHYDS|PASSYDS|RECYDS|RRYDS|RECPROT|PASSATT|PASSCOMP|PASSINT|PASSTDS|GTOTAL)(?:PROT)?$/.test(String(t).split('-')[0])));
   const derived=listed.filter(ticker=>ticker.split('-')[0].endsWith('GAME')).flatMap(ticker=>{
     const [series,...rest]=ticker.split('-'),suffix=rest.join('-'),prefix=series.slice(0,-4);
     // These are only discovery candidates. The exchange must return an open

@@ -20,6 +20,9 @@ ALTER TABLE game_snapshots ADD COLUMN IF NOT EXISTS sport_family text;
 ALTER TABLE game_snapshots ADD COLUMN IF NOT EXISTS clock_seconds integer;
 ALTER TABLE game_snapshots ADD COLUMN IF NOT EXISTS clock_label text;
 ALTER TABLE game_snapshots ADD COLUMN IF NOT EXISTS clock_observed_at timestamptz;
+ALTER TABLE game_snapshots ADD COLUMN IF NOT EXISTS possession_side text;
+ALTER TABLE game_snapshots ADD COLUMN IF NOT EXISTS home_team_id text;
+ALTER TABLE game_snapshots ADD COLUMN IF NOT EXISTS away_team_id text;
 CREATE TABLE IF NOT EXISTS trade_attempts (
   id uuid PRIMARY KEY,
   market_ticker text NOT NULL,
@@ -60,6 +63,17 @@ CREATE TABLE IF NOT EXISTS scan_status (
 );
 ALTER TABLE scan_status ADD COLUMN IF NOT EXISTS clock_refresh_at timestamptz;
 INSERT INTO scan_status(id) VALUES(1) ON CONFLICT DO NOTHING;
+CREATE TABLE IF NOT EXISTS weather_scan_status (
+  id integer PRIMARY KEY CHECK (id=1),
+  last_scan timestamptz,
+  series integer NOT NULL DEFAULT 0,
+  events integer NOT NULL DEFAULT 0,
+  eligible integer NOT NULL DEFAULT 0,
+  verified integer NOT NULL DEFAULT 0,
+  failures integer NOT NULL DEFAULT 0,
+  orders_submitted integer NOT NULL DEFAULT 0
+);
+INSERT INTO weather_scan_status(id) VALUES(1) ON CONFLICT DO NOTHING;
 CREATE TABLE IF NOT EXISTS funding_transfers (
   id uuid PRIMARY KEY,
   market_ticker text NOT NULL,

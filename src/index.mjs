@@ -4,7 +4,7 @@ import pg from 'pg';
 import { page } from './ui.mjs';
 import { historyPage } from './history_ui.mjs';
 import { completedTrade } from './history.mjs';
-import { gameState, overSignal, confirmedOver, leadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, overBudget, profitableCount, netSettlementProfitCents, comeback } from './strategy.mjs';
+import { gameState, overSignal, confirmedOver, leadSignal, additionalLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, overBudget, profitableCount, netSettlementProfitCents, comeback } from './strategy.mjs';
 import { reviewMiss } from './ai.mjs';
 import { kalshiSignature } from './auth.mjs';
 import { marketShard, shardCash, transferPlan } from './funding.mjs';
@@ -16,9 +16,12 @@ import { authorized, checkCredentials, sessionCookie, loginPage } from './dashbo
 import { eligibleForMarkets, linkedEventTickers, gameTimeLabel, storedClockSeconds } from './discovery.mjs';
 import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOver, verifyIndependentTableTennisLead } from './score_verification.mjs';
-import { COMBO_WINDOW_MS, comboCollection, comboLegs, filledComboWindow, quoteForYes } from './combos.mjs';
+import { COMBO_WINDOW_MS, compatibleComboGroups, comboLegs, filledComboWindow, quoteForYes } from './combos.mjs';
+import { estimatedSaleProfitCents } from './positions.mjs';
+import { weatherContract, observedWeather } from './weather.mjs';
+import { scanWeatherMarkets } from './weather_scanner.mjs';
 import { sellQuote } from './sell.mjs';
-import { yesDepthAtAsk } from './orderbook.mjs';
+import { yesDepthAtAsk, bestYesAsk } from './orderbook.mjs';
 
 const API='https://external-api.kalshi.com/trade-api/v2';
 const pool = new pg.Pool({connectionString:process.env.DATABASE_URL, max:4, idleTimeoutMillis:15000});
@@ -232,15 +235,20 @@ async function milestones(){
 }
 async function liveBatch(ms){
   const map=new Map();for(let i=0;i<ms.length;i+=40){const groups=[ms.slice(i,i+20),ms.slice(i+20,i+40)].filter(g=>g.length);
-    const results=await Promise.all(groups.map(async group=>{const q=new URLSearchParams();group.forEach(m=>q.append('milestone_ids',m.id));if(group.some(m=>/basketball/.test(m.type)))q.set('include_player_stats','true');
+    const results=await Promise.all(groups.map(async group=>{const q=new URLSearchParams();group.forEach(m=>q.append('milestone_ids',m.id));q.set('include_player_stats','true');
     let list=[];try{list=(await kalshi('/live_data/batch?'+q)).live_datas||[]}catch(e){
       if(!/^Kalshi (400|404|405) /.test(String(e.message)))throw e;
       console.warn('Live batch unsupported; using bounded individual requests:',e.message);
-      for(const m of group){try{const result=await kalshi('/live_data/milestone/'+encodeURIComponent(m.id)+(/basketball/.test(m.type)?'?include_player_stats=true':''));if(result.live_data)list.push(result.live_data)}catch(error){if(/Kalshi 429 /.test(String(error.message)))throw error}}
+      for(const m of group){try{let result;try{result=await kalshi('/live_data/milestone/'+encodeURIComponent(m.id)+'?include_player_stats=true')}catch(error){if(!/^Kalshi (400|404) /.test(String(error.message)))throw error;result=await kalshi('/live_data/milestone/'+encodeURIComponent(m.id))}if(result.live_data)list.push(result.live_data)}catch(error){if(/Kalshi 429 /.test(String(error.message)))throw error}}
     }
     return {list,observedAt:new Date().toISOString()};}));
     results.forEach(({list,observedAt})=>list.forEach(d=>map.set(d.milestone_id,{...d,_observed_at:observedAt})));}
   return map;
+}
+async function liveMilestone(id){
+  const path='/live_data/milestone/'+encodeURIComponent(id);
+  try{return (await kalshi(path+'?include_player_stats=true')).live_data}
+  catch(e){if(!/^Kalshi (400|404) /.test(String(e.message)))throw e;return (await kalshi(path)).live_data}
 }
 async function marketMap(tickers){
   const map=new Map();const list=[...new Set(tickers)].filter(Boolean);
@@ -274,6 +282,19 @@ async function executableQuote(market){
   const {orderbook_fp}=await kalshi('/markets/'+encodeURIComponent(market.ticker)+'/orderbook');
   const available=yesDepthAtAsk(orderbook_fp,market.yes_ask_dollars,market.yes_ask_size_fp);
   return available>=minimumCount(market)?{...market,yes_ask_size_fp:String(available)}:null;
+}
+const askProbe=new Map();
+async function recoverSummaryAsk(market){
+  if(hasAsk(market))return market;
+  const cached=askProbe.get(market.ticker);
+  if(cached&&Date.now()-cached.at<10000)return cached.quote?{...market,...cached.quote}:market;
+  try{
+    const {orderbook_fp}=await kalshi('/markets/'+encodeURIComponent(market.ticker)+'/orderbook');
+    const best=bestYesAsk(orderbook_fp);
+    const quote=best?{yes_ask_dollars:best.price.toFixed(4),yes_ask_size_fp:best.size.toFixed(2)}:null;
+    askProbe.set(market.ticker,{at:Date.now(),quote});
+    return quote?{...market,...quote}:market;
+  }catch(e){console.warn('Ask depth probe unavailable:',market.ticker,e.message);return market}
 }
 function contractCount(balance,market,fraction,bankroll,budget,fees){
   const count=orderSize(balance,market.yes_ask_dollars,market.yes_ask_size_fp,fraction,Number(process.env.MAX_YES_PRICE||1),bankroll,budget,fees);
@@ -340,7 +361,7 @@ async function reconcileFundingTransfers(){
 }
 async function submit(signal,game,event,market,balance,bankroll,budgetCents=Infinity,availableCents=bankroll){
   const price=Number(market.yes_ask_dollars);const count=profitableCount(contractCount(balance,market,signal.fraction,bankroll,budgetCents,feeReserve(event,market)),price,feeReserve(event,market),signal.strategy,availableCents,game.type,game.remainingSeconds);if(!count)return false;
-  if(signal.strategy==='over'&&!game.verificationId)return false;
+  if(['over','weather'].includes(signal.strategy)&&!game.verificationId)return false;
   const id=await reserve(signal,game,event,market,count,price,balance);if(!id)return false;
   await pool.query(`CREATE TABLE IF NOT EXISTS order_verifications(order_id uuid PRIMARY KEY,verification_id uuid NOT NULL,created_at timestamptz DEFAULT now())`);
   if(game.verificationId)await pool.query('INSERT INTO order_verifications(order_id,verification_id) VALUES($1,$2) ON CONFLICT DO NOTHING',[id,game.verificationId]);
@@ -412,13 +433,20 @@ async function executeCombo(group,account,bankroll,overRemaining,scoreboardCache
   // The verification window begins with a fresh observation of every leg.
   const verified=await Promise.all(group.map(async c=>{
     try{
+      if(c.weatherEvidence){
+        const evidence=c.weatherEvidence;
+        if(Date.now()-evidence.secondAt.getTime()>45000)return null;
+        const market=(await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market;
+        if(!market||market.rules_primary!==evidence.second.rules_primary||!weatherContract(c.event,market,{id:evidence.contract.station,timezone:evidence.contract.timezone}))return null;
+        return {...c,market};
+      }
       if(c.signal.strategy==='over'){
         const dwell=COMBO_WINDOW_MS;
         const remaining=dwell-(Date.now()-c.state.observedAt);
         if(!Number.isFinite(remaining))return null;
         if(remaining>0)await new Promise(resolve=>setTimeout(resolve,remaining));
       }
-      const liveData=(await kalshi('/live_data/milestone/'+encodeURIComponent(c.milestone.id)+(/basketball/.test(c.milestone.type)?'?include_player_stats=true':''))).live_data;
+      const liveData=await liveMilestone(c.milestone.id);
       if(!liveData)return null;
       liveData._observed_at=new Date().toISOString();
       const state=gameState(c.milestone,liveData);
@@ -428,34 +456,33 @@ async function executeCombo(group,account,bankroll,overRemaining,scoreboardCache
       const market=(await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market;
       if(!market||market.ticker!==c.market.ticker||market.event_ticker!==c.event.event_ticker)return null;
       if(state.golf&&!await verifyGolf(state,c.milestone,c.event))return null;
-      const signal=c.signal.strategy==='over'?overSignal(state,market):golfSignal(state,market)||leadSignal(state,market)||tennisSignal(state,market);
+      const signal=c.signal.strategy==='over'?overSignal(state,market):golfSignal(state,market)||leadSignal(state,market)||additionalLeadSignal(state,market)||tennisSignal(state,market)||tableTennisSignal(state,market);
       return signal?{...c,state,market,signal}:null;
     }catch(e){console.warn('Combo leg verification:',c.market.ticker,e.message);return null}
   }));
-  const seenMarkets=new Set();
+  const seenGames=new Set(),seenEvents=new Set();
   const eligible=verified.filter(Boolean).filter(c=>{
-    if(seenMarkets.has(c.market.ticker))return false;
-    seenMarkets.add(c.market.ticker);return true;
-  }).slice(0,6);
+    if(seenGames.has(c.milestone.id)||seenEvents.has(c.event.event_ticker))return false;
+    seenGames.add(c.milestone.id);seenEvents.add(c.event.event_ticker);return true;
+  }).slice(0,10);
   if(eligible.length<2)return {filled:false,pending:false};
   // Prefer all available verified legs, then smaller valid combinations.
-  const collections=(await kalshi('/multivariate_event_collections?'+new URLSearchParams({status:'open',associated_event_ticker:eligible[0].event.event_ticker,limit:'100'}))).multivariate_contracts||[];
+  const collections=(await kalshi('/multivariate_event_collections?'+new URLSearchParams({status:'open',limit:'100'}))).multivariate_contracts||[];
   const deadline=Date.now()+COMBO_WINDOW_MS;
   const plans=[],funding=[];
   // Request executable quotes for all available ticket sizes in the same
   // bounded window. A six-pick market may have no maker while a three-pick does.
-  await Promise.all(Array.from({length:eligible.length-1},(_,i)=>eligible.length-i).map(async n=>{
-    const legs=eligible.slice(0,n),collection=comboCollection(collections,legs);
-    if(!collection)return;
+  await Promise.all(compatibleComboGroups(collections,eligible).map(async ({legs,collection})=>{
+    const n=legs.length;
     try{
       const identifiers=legs.map(c=>({event_ticker:c.event.event_ticker,market_ticker:c.market.ticker}));
       const created=await kalshi('/multivariate_event_collections/'+encodeURIComponent(collection.collection_ticker),{auth:true,method:'POST',body:{selected_markets:identifiers,with_market_payload:true}});
       const ticker=created.market_ticker,combo=created.market;
       if(!ticker||!combo||combo.ticker!==ticker||combo.event_ticker!==created.event_ticker||!['active','open'].includes(combo.status))return;
-      const strategy=legs.every(c=>c.signal.strategy==='over')?'over':'lead';
+      const strategy=legs.some(c=>c.signal.strategy==='over')?'over':legs.every(c=>c.signal.strategy==='weather')?'weather':'lead';
       const fraction=.10; // A separate bounded combo budget preserves cash for mixed tickets.
       const shard=marketShard({exchange_index:collection.exchange_index},combo),local=shardCash(account,shard);
-      const desired=Math.floor(Math.min(Number(account.balance),bankroll*fraction));
+      const desired=Math.floor(Math.min(Number(account.balance),bankroll*fraction,strategy==='over'?overRemaining:Infinity));
       if(local===null||desired<100)return;
       if(local<desired&&transferPlan(account,shard,desired)){funding.push({strategy,created,combo,desired});return}
       const budget=Math.floor(Math.min(desired,local));
@@ -482,16 +509,27 @@ async function executeCombo(group,account,bankroll,overRemaining,scoreboardCache
         const {q,terms,plan,fees}=offers[0],{legs,ticker,strategy,fraction,shard,rfq,created}=plan;
         // Refresh every leg immediately before accepting a quote. A goal correction
         // or changed leader invalidates the entire combination.
-        const fresh=await liveBatch(legs.map(c=>c.milestone));
+        const fresh=await liveBatch(legs.filter(c=>!c.weatherEvidence).map(c=>c.milestone));
         if(legs.some(c=>{
+          if(c.weatherEvidence)return !weatherContract(c.event,c.market,{id:c.weatherEvidence.contract.station,timezone:c.weatherEvidence.contract.timezone})||Date.now()-c.weatherEvidence.secondAt.getTime()>45000;
           const d=fresh.get(c.milestone.id),s=gameState(c.milestone,d);
           return c.signal.strategy==='over'?!overSignal(s,c.market)||s.home!==c.state.home||s.away!==c.state.away||
-            s.period<c.state.period||s.soccerMinute<c.state.soccerMinute||/^tennis_/.test(s.type)&&s.tennisTotal!==c.state.tennisTotal:!(golfSignal(s,c.market)||leadSignal(s,c.market)||tennisSignal(s,c.market));
+            s.period<c.state.period||s.soccerMinute<c.state.soccerMinute||/^tennis_/.test(s.type)&&s.tennisTotal!==c.state.tennisTotal:!(golfSignal(s,c.market)||leadSignal(s,c.market)||additionalLeadSignal(s,c.market)||tennisSignal(s,c.market)||tableTennisSignal(s,c.market));
         }))break;
         const checks=await Promise.all(legs.filter(c=>c.signal.strategy==='over'||c.state.golf).map(c=>c.state.golf?verifyGolf(gameState(c.milestone,fresh.get(c.milestone.id)),c.milestone,c.event):auditedOver(gameState(c.milestone,fresh.get(c.milestone.id)),c.milestone,{market:c.market,firstObservation:c.state,cache:scoreboardCache})));
         if(checks.some(ok=>!ok)||Date.now()>=deadline)break;
+        const weatherChecks=await Promise.all(legs.filter(c=>c.weatherEvidence).map(async c=>{
+          const evidence=c.weatherEvidence,market=(await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market;
+          const contract=weatherContract(c.event,market,{id:evidence.contract.station,timezone:evidence.contract.timezone});
+          if(!contract||market.rules_primary!==evidence.second.rules_primary)return false;
+          const observations=await nws('/stations/'+contract.station+'/observations?'+new URLSearchParams({start:new Date(contract.start).toISOString(),end:new Date(contract.end).toISOString(),limit:'500'}));
+          return Boolean(observedWeather(contract,observations.features));
+        }));
+        if(weatherChecks.some(ok=>!ok)||Date.now()>=deadline)break;
         const latest=await accountBalance({fresh:true});
         if(Number(latest.balance)<terms.debitCents || (shardCash(latest,shard)??0)<terms.debitCents ||
+          terms.debitCents>Math.floor((Number(latest.balance)+Number(latest.portfolio_value))*fraction) ||
+          strategy==='over'&&terms.debitCents>overRemaining ||
           !profitableCount(terms.count,terms.yesCost,fees,strategy,Number(latest.balance)+Number(latest.portfolio_value),legs[0].state.type,legs[0].state.remainingSeconds))break;
         const id=randomUUID(),reason=`${legs.length}-pick ${strategy} combo: ${legs.map(c=>c.state.title).join(' / ')}`;
         const inserted=await pool.query(`INSERT INTO trade_attempts(id,market_ticker,event_ticker,game_id,sport,strategy,reason,fraction,count,limit_price,available_cents,status,combo_legs,combo_rfq_id,combo_quote_id)
@@ -568,6 +606,53 @@ async function exitComebacks(games,events,positions){
     }catch(e){console.error('Comeback exit deferred:',position.ticker,e.message)}
   }
 }
+async function nws(path){
+  const response=await fetch('https://api.weather.gov'+path,{headers:{accept:'application/geo+json','user-agent':'K-Kalshi-weather-verification (station observations)'},signal:AbortSignal.timeout(9000)});
+  if(!response.ok)throw Error(`NWS ${response.status}`);
+  return response.json();
+}
+let weatherCandidates=[];
+async function executeVerifiedWeather(verified){
+  weatherCandidates=weatherCandidates.filter(c=>c.event.event_ticker!==verified[0].event.event_ticker&&Date.now()-c.weatherEvidence.secondAt.getTime()<45000);
+  for(const item of verified){
+    const state={id:'weather:'+item.event.event_ticker,title:item.event.title,sport:'Weather',type:'weather',verifiedLive:true,scoreKnown:true};
+    weatherCandidates.push({milestone:{id:state.id,type:'weather'},state,market:item.market,event:item.event,
+      signal:{strategy:'weather',fraction:.15,reason:`${item.contract.type} observed at ${item.contract.station}`},weatherEvidence:item});
+  }
+  if(!live())return;
+  const event=verified[0].event;
+  const duplicate=await pool.query(`SELECT 1 FROM trade_attempts WHERE event_ticker=$1 AND strategy='weather' AND status IN ('filled','reserved','check_order','retrying') LIMIT 1`,[event.event_ticker]);
+  if(duplicate.rowCount)return;
+  const account=await accountBalance({fresh:true}),balance=Number(account.balance),bankroll=balance+Number(account.portfolio_value);
+  const ranked=verified.map(item=>{
+    const fee=feeReserve(event,item.market);
+    const count=profitableCount(contractCount(balance,item.market,.15,bankroll,Infinity,fee),Number(item.market.yes_ask_dollars),fee,'weather',bankroll);
+    return {...item,profit:netSettlementProfitCents(count,Number(item.market.yes_ask_dollars),fee)};
+  }).sort((a,b)=>b.profit-a.profit);
+  for(const item of ranked){
+    if(item.profit<50)continue;
+    const latestMarket=(await kalshi('/markets/'+encodeURIComponent(item.market.ticker))).market;
+    if(!latestMarket||latestMarket.rules_primary!==item.market.rules_primary||latestMarket.close_time!==item.market.close_time||
+      !weatherContract(event,latestMarket,{id:item.contract.station,timezone:item.contract.timezone}))continue;
+    const recovered=await recoverSummaryAsk(latestMarket);
+    const quote=hasAsk(recovered)?await executableQuote(recovered):null;
+    if(!quote)continue;
+    const fresh=await accountBalance({fresh:true}),cash=Number(fresh.balance),total=cash+Number(fresh.portfolio_value);
+    const fee=feeReserve(event,quote),count=profitableCount(contractCount(cash,quote,.15,total,Infinity,fee),Number(quote.yes_ask_dollars),fee,'weather',total);
+    if(!count)continue;
+    const shard=marketShard(event,quote),local=shardCash(fresh,shard),cost=estimatedCostCents(count,Number(quote.yes_ask_dollars),fee);
+    if(local===null)continue;
+    const signal={strategy:'weather',fraction:.15,reason:`${item.contract.type} ${item.observed.value.toFixed(2)} at ${item.contract.station} on ${item.contract.localDate}; ${item.contract.comparison} ${item.contract.threshold}`};
+    if(local<cost){if(transferPlan(fresh,shard,cost))await ensureShardFunding(signal,event,quote,fresh,cost);continue}
+    await auditTable();const verificationId=randomUUID();
+    await pool.query('INSERT INTO verification_records(id,market_ticker,passed,evidence) VALUES($1,$2,true,$3)',[verificationId,quote.ticker,JSON.stringify({contract:item.contract,kalshiFirst:{at:item.firstAt,market:item.first},kalshiSecond:{at:item.secondAt,market:item.second},external:item.observed,executable:{price:quote.yes_ask_dollars,size:quote.yes_ask_size_fp,count,feeReserve:fee,projectedNetCents:netSettlementProfitCents(count,Number(quote.yes_ask_dollars),fee)}})]);
+    const game={id:'weather:'+event.event_ticker,sport:'Weather',type:'weather',verificationId};
+    await pool.query(`INSERT INTO game_snapshots(id,title,sport,sport_family,status,scanned_at,signals) VALUES($1,$2,'Weather','weather','live',now(),'[]')
+      ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,scanned_at=now()`,[game.id,event.title]);
+    if(await submit(signal,game,event,quote,Math.min(cash,local),total))await pool.query('UPDATE weather_scan_status SET orders_submitted=orders_submitted+1 WHERE id=1');
+    break;
+  }
+}
 async function scan(cachedMilestones){
   // A transaction-scoped lock is released by Postgres even if an invocation is terminated.
   // Snapshot writes use other pool connections so the dashboard sees each completed cycle.
@@ -607,8 +692,9 @@ async function scan(cachedMilestones){
     for(const {milestone,state} of games){
       const candidates=[];
       if(eligibleForMarkets(state))for(const ticker of linkedEventTickers(milestone)){const event=events.get(ticker);if(!event || event.category!=='Sports')continue;
-        for(const market of event.markets||[]){if(market.event_ticker!==event.event_ticker)continue;const signal=overSignal(state,market)||golfSignal(state,market)||leadSignal(state,market)||tennisSignal(state,market)||tableTennisSignal(state,market);if(signal&&!filled.has(`${market.ticker}:${signal.strategy}`))candidates.push({signal,event,market,state,milestone})}}
+        for(const market of event.markets||[]){if(market.event_ticker!==event.event_ticker)continue;const signal=overSignal(state,market)||golfSignal(state,market)||leadSignal(state,market)||additionalLeadSignal(state,market)||tennisSignal(state,market)||tableTennisSignal(state,market);if(signal&&!filled.has(`${market.ticker}:${signal.strategy}`))candidates.push({signal,event,market,state,milestone})}}
       allCandidates.push(...candidates);
+      await Promise.all(candidates.filter(c=>!hasAsk(c.market)).slice(0,20).map(async c=>{c.market=await recoverSummaryAsk(c.market)}));
       if(state.verifiedLive)scanned++;
       const baseball=/baseball/.test(state.type),tennis=/tennis/.test(state.type),soccer=/soccer/.test(state.type);
       const timeLeft=gameTimeLabel(state);
@@ -616,7 +702,7 @@ async function scan(cachedMilestones){
       const clockSeconds=storedClockSeconds(preciseClockSeconds,state.clockRunning);
       const clockLabel=soccer?Number.isFinite(state.matchRemainingSeconds)?'Match time left':state.soccerMinute>=90?'Stoppage time':'Regulation left':baseball?'Inning progress':tennis?'Set progress':['NCAAB','NCAAW'].includes(state.sport)? `Half ${state.period||'?'} left`:/hockey/.test(state.type)?`Period ${state.period||'?'} left`:/football|basketball/.test(state.type)?`Quarter ${state.period||'?'} left`:'Game clock';
       const displayClockLabel=clockSeconds!=null&&state.clockRunning===false?`${clockLabel} · paused`:clockLabel;
-      snapshotRows.set(state.id,[state.id,state.title||'Sports game',state.sport,state.type,state.scoreKnown?state.home:null,state.scoreKnown?state.away:null,state.verifiedLive?'live':/^(final|finished|complete|completed|closed|ended)$/.test(state.status)?'final':'inactive',Number.isFinite(state.progress)?state.progress:null,String(state.period||''),timeLeft,clockSeconds,displayClockLabel,liveMap.get(milestone.id)?._observed_at||null,scanStarted,JSON.stringify(candidates.map(c=>({strategy:c.signal.strategy,reason:c.signal.reason,ticker:c.market.ticker,execution:signalExecution(c,filled,account,balance,bankroll,overRemaining)}))) ]);
+      snapshotRows.set(state.id,[state.id,state.title||'Sports game',state.sport,state.type,state.scoreKnown?state.home:null,state.scoreKnown?state.away:null,state.verifiedLive?'live':/^(final|finished|complete|completed|closed|ended)$/.test(state.status)?'final':'inactive',Number.isFinite(state.progress)?state.progress:null,String(state.period||''),timeLeft,clockSeconds,displayClockLabel,liveMap.get(milestone.id)?._observed_at||null,scanStarted,JSON.stringify(candidates.map(c=>({strategy:c.signal.strategy,reason:c.signal.reason,ticker:c.market.ticker,execution:signalExecution(c,filled,account,balance,bankroll,overRemaining)}))),state.possessionSide,state.homeTeamId||null,state.awayTeamId||null ]);
     }
     for(let i=0;i<allCandidates.length;i+=100){const batch=allCandidates.slice(i,i+100);if(!batch.length)continue;
       const values=batch.map((_,n)=>`($${2*n+1},$${2*n+2})`).join(',');
@@ -626,14 +712,12 @@ async function scan(cachedMilestones){
     // still-live market to enter a new window on a later scan, including when
     // ask liquidity appears after an earlier unfilled window.
     const aged=await pool.query(`DELETE FROM candidate_windows WHERE first_seen<now()-interval '10 minutes' RETURNING market_ticker,strategy`);
-    const expired=new Set(aged.rows.map(r=>`${r.market_ticker}:${r.strategy}`));
-    for(const row of snapshotRows.values())row[14]=JSON.stringify(JSON.parse(row[14]).filter(s=>!expired.has(`${s.ticker}:${s.strategy}`)));
-    opportunities.push(...allCandidates.filter(c=>!expired.has(signalKey(c))));signals=opportunities.length;
+    opportunities.push(...allCandidates);signals=opportunities.length;
     const snapshots=[...snapshotRows.values()];
     for(let i=0;i<snapshots.length;i+=100){
       const batch=snapshots.slice(i,i+100);
-      const values=batch.map((_,row)=>'('+Array.from({length:15},(_,field)=>'$'+(row*15+field+1)).join(',')+')').join(',');
-      await pool.query(`INSERT INTO game_snapshots(id,title,sport,sport_family,home,away,status,progress,period,time_left,clock_seconds,clock_label,clock_observed_at,scanned_at,signals) VALUES ${values} ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,sport=EXCLUDED.sport,sport_family=EXCLUDED.sport_family,home=EXCLUDED.home,away=EXCLUDED.away,status=EXCLUDED.status,progress=EXCLUDED.progress,period=EXCLUDED.period,time_left=EXCLUDED.time_left,clock_seconds=EXCLUDED.clock_seconds,clock_label=EXCLUDED.clock_label,clock_observed_at=CASE WHEN game_snapshots.clock_seconds IS NOT DISTINCT FROM EXCLUDED.clock_seconds AND game_snapshots.period=EXCLUDED.period AND game_snapshots.status=EXCLUDED.status AND game_snapshots.clock_label=EXCLUDED.clock_label THEN game_snapshots.clock_observed_at ELSE EXCLUDED.clock_observed_at END,scanned_at=EXCLUDED.scanned_at,signals=EXCLUDED.signals WHERE game_snapshots.status IS DISTINCT FROM 'live' OR EXCLUDED.status IS DISTINCT FROM 'live' OR game_snapshots.period IS DISTINCT FROM EXCLUDED.period OR game_snapshots.clock_seconds IS NULL OR EXCLUDED.clock_seconds IS NULL OR EXCLUDED.clock_seconds<=game_snapshots.clock_seconds`,batch.flat());
+      const values=batch.map((_,row)=>'('+Array.from({length:18},(_,field)=>'$'+(row*18+field+1)).join(',')+')').join(',');
+      await pool.query(`INSERT INTO game_snapshots(id,title,sport,sport_family,home,away,status,progress,period,time_left,clock_seconds,clock_label,clock_observed_at,scanned_at,signals,possession_side,home_team_id,away_team_id) VALUES ${values} ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,sport=EXCLUDED.sport,sport_family=EXCLUDED.sport_family,home=EXCLUDED.home,away=EXCLUDED.away,status=EXCLUDED.status,progress=EXCLUDED.progress,period=EXCLUDED.period,time_left=EXCLUDED.time_left,clock_seconds=EXCLUDED.clock_seconds,clock_label=EXCLUDED.clock_label,clock_observed_at=CASE WHEN game_snapshots.clock_seconds IS NOT DISTINCT FROM EXCLUDED.clock_seconds AND game_snapshots.period=EXCLUDED.period AND game_snapshots.status=EXCLUDED.status AND game_snapshots.clock_label=EXCLUDED.clock_label THEN game_snapshots.clock_observed_at ELSE EXCLUDED.clock_observed_at END,scanned_at=EXCLUDED.scanned_at,signals=EXCLUDED.signals,possession_side=EXCLUDED.possession_side,home_team_id=EXCLUDED.home_team_id,away_team_id=EXCLUDED.away_team_id WHERE game_snapshots.status IS DISTINCT FROM 'live' OR EXCLUDED.status IS DISTINCT FROM 'live' OR game_snapshots.period IS DISTINCT FROM EXCLUDED.period OR game_snapshots.clock_seconds IS NULL OR EXCLUDED.clock_seconds IS NULL OR EXCLUDED.clock_seconds<=game_snapshots.clock_seconds`,batch.flat());
     }
     // Make the live score and clock visible before slower order preflights.
     await pool.query(`UPDATE scan_status SET last_scan=$1,scanned=$2,signals=$3 WHERE id=1`,[scanStarted,scanned,signals]);
@@ -656,7 +740,7 @@ async function scan(cachedMilestones){
           const remaining=COMBO_WINDOW_MS-(Date.now()-c.state.observedAt);
           if(!Number.isFinite(remaining))continue;
           if(remaining>0)await new Promise(resolve=>setTimeout(resolve,remaining));
-          const latest=(await kalshi('/live_data/milestone/'+encodeURIComponent(c.milestone.id)+(/basketball/.test(c.milestone.type)?'?include_player_stats=true':''))).live_data;
+          const latest=await liveMilestone(c.milestone.id);
           if(!latest)continue;
           latest._observed_at=new Date().toISOString();
           const state=gameState(c.milestone,latest);
@@ -678,7 +762,7 @@ async function scan(cachedMilestones){
         }
         // Refresh available cash before every order. If the account cannot afford one contract plus
         // the fee reserve, orderSize returns zero and no order is sent to Kalshi.
-        const latest=await accountBalance();balance=Number(latest.balance);bankroll=balance+Number(latest.portfolio_value);
+        const latest=await accountBalance({fresh:true});balance=Number(latest.balance);bankroll=balance+Number(latest.portfolio_value);
         // A confirmed over preflight expires quickly; never submit on a stale
         // score. Lead games still require a fresh check before the quote.
         if(c.signal.strategy==='over'&&overReady.has(signalKey(c)))await overReady.get(signalKey(c));
@@ -688,7 +772,7 @@ async function scan(cachedMilestones){
         if(c.signal.strategy==='over'&&Date.now()-freshState.observedAt>10000){
           const remaining=COMBO_WINDOW_MS-(Date.now()-freshState.observedAt);
           if(remaining>0)await new Promise(resolve=>setTimeout(resolve,remaining));
-          const next=(await kalshi('/live_data/milestone/'+encodeURIComponent(c.milestone.id)+(/basketball/.test(c.milestone.type)?'?include_player_stats=true':''))).live_data;
+          const next=await liveMilestone(c.milestone.id);
           if(!next)continue;
           next._observed_at=new Date().toISOString();const rechecked=gameState(c.milestone,next);
           if(!confirmedOver(freshState,rechecked,c.market)||!await auditedOver(rechecked,c.milestone,{cache:scoreboardCache,market:c.market,firstObservation:freshState}))continue;
@@ -697,10 +781,10 @@ async function scan(cachedMilestones){
         if(c.signal.strategy==='lead' && /basketball/.test(state.type) &&
           (freshState.period!==state.period || !freshState.periodConsistent ||
             freshState.remainingSeconds>state.remainingSeconds))continue;
-        const rawQuote=(await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market;
+        const rawQuote=await recoverSummaryAsk((await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market);
         const quote=rawQuote&&hasAsk(rawQuote)?await executableQuote(rawQuote):null;
         if(!quote||quote.ticker!==c.market.ticker||quote.event_ticker!==c.event.event_ticker||!hasAsk(quote))continue;
-        const stillQualifies=c.signal.strategy==='over'?overSignal(freshState,quote):golfSignal(freshState,quote)||leadSignal(freshState,quote)||tennisSignal(freshState,quote)||tableTennisSignal(freshState,quote);
+        const stillQualifies=c.signal.strategy==='over'?overSignal(freshState,quote):golfSignal(freshState,quote)||leadSignal(freshState,quote)||additionalLeadSignal(freshState,quote)||tennisSignal(freshState,quote)||tableTennisSignal(freshState,quote);
         if(!stillQualifies)continue;
         if(freshState.golf&&!await verifyGolf(freshState,c.milestone,c.event))continue;
         if(tableTennisSignal(freshState,quote)&&!await verifyIndependentTableTennisLead(freshState,c.milestone))continue;
@@ -738,17 +822,17 @@ async function scan(cachedMilestones){
       ]);
       const held=new Set((currentPositions.market_positions||[]).filter(p=>Number(p.position_fp??p.position??0)>0).map(p=>p.ticker));
       const singles=filledComboWindow(currentFills.rows,held,last?.created_at);
-      if(singles.length>=2||opportunities.length>=2){
+      if(singles.length>=2||opportunities.length+weatherCandidates.length>=2){
         const gameById=new Map(games.map(g=>[g.milestone.id,g]));
         const comboCandidates=singles.flatMap(r=>{
           const g=gameById.get(r.game_id),event=events.get(r.event_ticker),market=(event?.markets||[]).find(m=>m.ticker===r.market_ticker);
           if(!g?.state.verifiedLive||!market)return [];
-          const signal=r.strategy==='over'?overSignal(g.state,market):golfSignal(g.state,market)||leadSignal(g.state,market)||tennisSignal(g.state,market);
+          const signal=r.strategy==='over'?overSignal(g.state,market):golfSignal(g.state,market)||leadSignal(g.state,market)||additionalLeadSignal(g.state,market)||tennisSignal(g.state,market)||tableTennisSignal(g.state,market);
           return signal?[{...g,market,event,signal,state:g.state}]:[];
         });
-        const group=[],seenMarkets=new Set();
-        for(const c of [...comboCandidates,...opportunities]){if(seenMarkets.has(c.market.ticker))continue;
-          group.push(c);seenMarkets.add(c.market.ticker);if(group.length===6)break}
+        const group=[],seenGames=new Set(),seenEvents=new Set();
+        for(const c of [...comboCandidates,...opportunities,...weatherCandidates.filter(c=>Date.now()-c.weatherEvidence.secondAt.getTime()<45000)]){if(seenGames.has(c.milestone.id)||seenEvents.has(c.event.event_ticker))continue;
+          group.push(c);seenGames.add(c.milestone.id);seenEvents.add(c.event.event_ticker);if(group.length===10)break}
         if(group.length>=2)try{
           const result=await executeCombo(group,currentAccount,Number(currentAccount.balance)+Number(currentAccount.portfolio_value),overRemaining,scoreboardCache);
           if(result.filled)submitted++;
@@ -768,11 +852,11 @@ async function refreshOpenClocks(){
     AND (clock_refresh_at IS NULL OR clock_refresh_at<now()-interval '5 seconds') RETURNING id`);
   if(!claim.rowCount)return;
   try{
-    const {rows}=await pool.query(`SELECT DISTINCT g.id,g.title,g.sport,g.sport_family FROM trade_attempts a
+    const {rows}=await pool.query(`SELECT DISTINCT g.id,g.title,g.sport,g.sport_family,g.home_team_id,g.away_team_id FROM trade_attempts a
       JOIN game_snapshots g ON g.id=a.game_id WHERE a.status='filled' AND g.status='live'
       ORDER BY g.id LIMIT 40`);
     if(!rows.length)return;
-    const milestones=rows.map(g=>({id:g.id,title:g.title,type:g.sport_family,details:{league:g.sport}}));
+    const milestones=rows.map(g=>({id:g.id,title:g.title,type:g.sport_family,details:{league:g.sport,home_team_id:g.home_team_id,away_team_id:g.away_team_id}}));
     const data=await liveBatch(milestones);
     await Promise.all(milestones.map(async m=>{
       const item=data.get(m.id);if(!item)return;
@@ -784,21 +868,22 @@ async function refreshOpenClocks(){
         soccer&&Number.isFinite(s.soccerMinute)&&s.soccerMinute<90?(90-s.soccerMinute)*60:
         !baseball&&!tennis&&!soccer&&Number.isFinite(s.remainingSeconds)?s.remainingSeconds:null):null;
       const label=soccer?'Regulation left':baseball?'Inning progress':tennis?'Set progress':['NCAAB','NCAAW'].includes(s.sport)?`Half ${s.period||'?'} left`:/hockey/.test(s.type)?`Period ${s.period||'?'} left`:/football|basketball/.test(s.type)?`Quarter ${s.period||'?'} left`:'Game clock';
-      await pool.query(`UPDATE game_snapshots SET home=$2,away=$3,status=$4,time_left=$5,
+      await pool.query(`UPDATE game_snapshots SET home=$2,away=$3,status=$4,time_left=$5,possession_side=$9,
         clock_observed_at=CASE WHEN clock_seconds IS DISTINCT FROM $6::integer OR period IS DISTINCT FROM $8::text OR status IS DISTINCT FROM $4::text
           THEN clock_timestamp() ELSE clock_observed_at END,
         clock_seconds=$6,clock_label=$7,period=$8,scanned_at=clock_timestamp()
         WHERE id=$1 AND (scanned_at<clock_timestamp() OR status='live')
           AND (status IS DISTINCT FROM 'live' OR $4::text IS DISTINCT FROM 'live' OR period IS DISTINCT FROM $8::text OR clock_seconds IS NULL OR $6::integer IS NULL OR $6::integer<=clock_seconds)`,
         [m.id,s.scoreKnown?s.home:null,s.scoreKnown?s.away:null,s.verifiedLive?'live':'final',
-          gameTimeLabel(s),storedClockSeconds(seconds,s.clockRunning),s.clockRunning===false?`${label} · paused`:label,String(s.period||'')]);
+          gameTimeLabel(s),storedClockSeconds(seconds,s.clockRunning),s.clockRunning===false?`${label} · paused`:label,String(s.period||''),s.possessionSide]);
     }));
   }catch(e){console.warn('Dashboard clock refresh deferred:',e.message)}
 }
-async function state(){const [snap,stats,attempts]=await Promise.all([
-  pool.query(`SELECT id,title,sport,home,away,status,time_left,signals FROM game_snapshots WHERE status IN ('live','inprogress','started') AND scanned_at>=(SELECT COALESCE(last_scan,now()-interval '1 minute') FROM scan_status WHERE id=1) ORDER BY jsonb_array_length(signals) DESC,title`),
+async function state(){const [snap,stats,attempts,weatherStatus]=await Promise.all([
+  pool.query(`SELECT id,title,sport,home,away,possession_side,status,time_left,signals FROM game_snapshots WHERE status IN ('live','inprogress','started') AND scanned_at>=(SELECT COALESCE(last_scan,now()-interval '1 minute') FROM scan_status WHERE id=1) ORDER BY jsonb_array_length(signals) DESC,title`),
   pool.query('SELECT * FROM scan_status WHERE id=1'),
-  pool.query(`SELECT a.market_ticker,a.game_id,a.sport,a.strategy,a.reason,a.combo_legs,a.fill_count,a.limit_price,g.status AS game_status,g.title AS game_title,g.sport_family,g.home AS home_score,g.away AS away_score,g.scanned_at AS score_scanned_at,g.clock_seconds,g.clock_label,g.clock_observed_at,g.time_left FROM trade_attempts a LEFT JOIN game_snapshots g ON g.id=a.game_id WHERE a.status='filled' ORDER BY a.created_at DESC`)
+  pool.query(`SELECT a.market_ticker,a.game_id,a.sport,a.strategy,a.reason,a.combo_legs,a.fill_count,a.limit_price,g.status AS game_status,g.title AS game_title,g.sport_family,g.possession_side,g.home AS home_score,g.away AS away_score,g.scanned_at AS score_scanned_at,g.clock_seconds,g.clock_label,g.clock_observed_at,g.time_left FROM trade_attempts a LEFT JOIN game_snapshots g ON g.id=a.game_id WHERE a.status='filled' ORDER BY a.created_at DESC`),
+  pool.query('SELECT * FROM weather_scan_status WHERE id=1')
 ]);
   let balance=null,positions=null,accountError=null,positionsError=null;
   if(configured()){
@@ -815,11 +900,15 @@ async function state(){const [snap,stats,attempts]=await Promise.all([
   }else accountError='Kalshi credentials are missing from the Neon function environment';
   const open=new Set((positions?.market_positions||[]).filter(p=>Number(p.position_fp??p.position??0)!==0).map(p=>p.ticker));
   const orders=positions?attempts.rows.filter(o=>open.has(o.market_ticker)).map(o=>{
-    const count=Math.min(Number(o.fill_count),Number((positions.market_positions||[]).find(p=>p.ticker===o.market_ticker)?.position_fp||0));
-    return {...o,allocated_cents:Math.ceil(count*Number(o.limit_price)*100),potential_profit_cents:netSettlementProfitCents(count,Number(o.limit_price),2)};
+    const position=(positions.market_positions||[]).find(p=>p.ticker===o.market_ticker);
+    const count=Math.min(Number(o.fill_count),Number(position?.position_fp||0));
+    return {...o,position,allocated_cents:Math.ceil(count*Number(o.limit_price)*100),potential_profit_cents:netSettlementProfitCents(count,Number(o.limit_price),2)};
   }):[];
-  await Promise.all(orders.map(async o=>{try{o.sell_quote=await currentSell(o.market_ticker)}catch{o.sell_quote=null}}));
-  return {live:live(),exitOnly:exitOnly(),credentials:configured(),aiConfigured:Boolean(process.env.AI_API_KEY),balance,accountError,positionsError,games:snap.rows,scan:stats.rows[0],orders};
+  await Promise.all(orders.map(async o=>{try{
+    o.sell_quote=await currentSell(o.market_ticker);
+    if(o.sell_quote)o.sell_profit_cents=estimatedSaleProfitCents(o.position,o.sell_quote,o.limit_price);
+  }catch{o.sell_quote=null}delete o.position}));
+  return {live:live(),exitOnly:exitOnly(),credentials:configured(),aiConfigured:Boolean(process.env.AI_API_KEY),balance,accountError,positionsError,games:snap.rows,scan:stats.rows[0],weather:weatherStatus.rows[0],orders};
 }
 async function settlementAlerts(since){
   const {rows}=await pool.query(`SELECT id,ticker,profit_cents,settled_time,created_at FROM settlement_alerts WHERE id>$1 AND created_at>now()-interval '2 days' ORDER BY id LIMIT 50`,[since]);
@@ -832,6 +921,9 @@ export default {async fetch(req){const url=new URL(req.url);
   if(req.method==='GET'&&/^\/icon-(192|512)\.png$/.test(url.pathname))return response(Buffer.from(icons[Number(url.pathname.match(/\d+/)[0])],'base64'),'image/png');
   if(req.method==='POST'&&url.pathname==='/tick'){
     if(!req.headers.get('x-neon-trigger-invocation-id'))return json({error:'Forbidden'},403);
+    const weatherJob=scanWeatherMarkets({kalshi,nws,onVerified:executeVerifiedWeather}).then(async stats=>{
+      await pool.query(`UPDATE weather_scan_status SET last_scan=now(),series=$1,events=$2,eligible=$3,verified=$4,failures=$5 WHERE id=1`,[stats.series,stats.events,stats.eligible,stats.verified,stats.failures]);
+    }).catch(e=>console.warn('Weather discovery deferred:',e.message));
     // Neon cron has minute resolution. Short invocations keep the three-second loop alive
     // without relying on one function instance surviving for a full quarter hour.
     const now=Date.now();const until=Math.min(now+55000,(Math.floor(now/60000)+1)*60000-2000);let cached=null,cycles=0,last={};
@@ -839,6 +931,11 @@ export default {async fetch(req){const url=new URL(req.url);
       if(last.next)cached=last.next;if(last.error && !/Kalshi 429 /.test(last.error) || !last.error && !last.active)break;
       const pause=Math.max(0,3000-(Date.now()-begun));if(Date.now()+pause>=until)break;
       await new Promise(resolve=>setTimeout(resolve,pause));
+    }
+    await weatherJob;
+    if(live()&&weatherCandidates.some(c=>Date.now()-c.weatherEvidence.secondAt.getTime()<45000)){
+      const followup=await scan(last.next).catch(e=>({error:e.message}));
+      if(followup.submitted)last.submitted=(last.submitted||0)+followup.submitted;
     }
     const {next,...summary}=last;return json({...summary,cycles});
   }
