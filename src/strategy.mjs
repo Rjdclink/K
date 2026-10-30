@@ -1,4 +1,5 @@
 import { golfState } from './golf.mjs';
+export const KALSHI_ONLY_FRACTION=.10;
 const N = v => v === null || v === undefined || v === '' ? NaN : Number(v);
 const pick = (obj, names) => names.map(k => obj?.[k]).find(v => Number.isFinite(N(v)));
 export function sportName(m) {
