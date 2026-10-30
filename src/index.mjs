@@ -270,7 +270,9 @@ async function allOpenPositions(){
   throw Error('Open positions exceed the pagination safety limit');
 }
 async function milestones(){
-  return discoverCurrentMilestones(kalshi);
+  const started=Date.now(),found=await discoverCurrentMilestones(kalshi);
+  console.info('Sports discovery:',JSON.stringify({milestones:found.length,elapsedMs:Date.now()-started}));
+  return found;
 }
 async function liveBatch(ms){
   const map=new Map();for(let i=0;i<ms.length;i+=40){const groups=[ms.slice(i,i+20),ms.slice(i+20,i+40)].filter(g=>g.length);
@@ -1189,7 +1191,7 @@ async function settlementAlerts(since){
   return rows;
 }
 export default {async fetch(req){const url=new URL(req.url);
-  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'sports-universe-fallbacks-20261030'});
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'sports-universe-fallbacks-20261030b'});
   if(req.method==='GET'&&url.pathname==='/manifest.webmanifest')return response(manifest,'application/manifest+json');
   if(req.method==='GET'&&url.pathname==='/sw.js')return new Response(worker,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','service-worker-allowed':'/','x-content-type-options':'nosniff'}});
   if(req.method==='GET'&&/^\/icon-(192|512)\.png$/.test(url.pathname))return response(Buffer.from(icons[Number(url.pathname.match(/\d+/)[0])],'base64'),'image/png');
