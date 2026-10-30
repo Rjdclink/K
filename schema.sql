@@ -75,6 +75,27 @@ CREATE TABLE IF NOT EXISTS fallback_verifications (
   first_verified_at timestamptz NOT NULL DEFAULT now(),
   verified_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS combo_diagnostics (
+  id bigserial PRIMARY KEY,
+  checked_at timestamptz NOT NULL DEFAULT now(),
+  leg_tickers jsonb NOT NULL,
+  collection_ticker text,
+  status text NOT NULL,
+  detail text
+);
+CREATE TABLE IF NOT EXISTS combo_upgrades (
+  market_ticker text PRIMARY KEY,
+  original_id uuid NOT NULL,
+  verification_ids jsonb NOT NULL,
+  status text NOT NULL,
+  rfq_id text NOT NULL,
+  quote_id text NOT NULL,
+  order_id text,
+  fill_count numeric NOT NULL DEFAULT 0,
+  error text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
 
 ALTER TABLE trade_attempts ALTER COLUMN count TYPE numeric(12,2) USING count::numeric;
 CREATE TABLE IF NOT EXISTS scan_status (

@@ -39,7 +39,7 @@ function sameTeam(expected,aliases){
   const hockey={Carolina:'Carolina Hurricanes',Columbus:'Columbus Blue Jackets',Dallas:'Dallas Stars',Montreal:'Montreal Canadiens',
     Minnesota:'Minnesota Wild','New York I':'New York Islanders','New York R':'New York Rangers',Pittsburgh:'Pittsburgh Penguins',
     Utah:'Utah Mammoth','St. Louis':'St Louis Blues',Boston:'Boston Bruins','Tampa Bay':'Tampa Bay Lightning',Winnipeg:'Winnipeg Jets'};
-  const soccer={'Atletico Mineiro':'Atletico MG'};
+  const soccer={'Atletico Mineiro':'Atletico MG','Al Ahli Saudi':'Al Ahli'};
   const parts=String(expected||'').match(/^([A-Z]{2,3})\s+(.+)$/);
   const alternate=parts&&alias[parts[1]]?clean(alias[parts[1]]+' '+parts[2]):null;
   const franchise=hockey[expected]?clean(hockey[expected]):soccer[expected]?clean(soccer[expected]):null;

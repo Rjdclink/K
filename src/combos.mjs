@@ -5,9 +5,16 @@ export const COMBO_WINDOW_MS=12000;
 // RFQ maker can take longer than the quote freshness window.
 export const COMBO_ATTEMPT_MS=45000;
 export const VERIFY_DWELL_MS=6000;
-export function comboAllocation(completedCombos){return Math.max(2,10-2*Math.max(0,Math.floor(completedCombos)))/100;}
+export function comboAllocation(){return .35;}
 export function comboLegAllocation(legs,verifiedFraction){
-  return legs.some(c=>c.signal?.kalshiOnly&&!c.signal?.externallyVerified)?Math.min(.05,verifiedFraction):verifiedFraction;
+  return legs.some(c=>c.signal?.kalshiOnly&&!c.signal?.externallyVerified)?.20:verifiedFraction;
+}
+export function remainingVerifiedComboCents(position,bankroll){
+  const held=Number(position?.position_fp),exposure=Number(position?.market_exposure_dollars),fees=Number(position?.fees_paid_dollars);
+  if(!Number.isFinite(held)||held<=0||position?.market_exposure_dollars==null||
+    position?.fees_paid_dollars==null||!Number.isFinite(exposure)||exposure<0||
+    !Number.isFinite(fees)||fees<0||!Number.isFinite(bankroll)||bankroll<=0)return 0;
+  return Math.max(0,Math.floor(bankroll*.35)-Math.ceil(exposure*100)-Math.ceil(fees*100));
 }
 export function availableComboFills(fills,usedLegTickers){
   return fills.filter(r=>!/Kalshi-only/i.test(r.reason||'')||r.externally_verified===true||!usedLegTickers.has(r.market_ticker));
@@ -68,6 +75,14 @@ export function compatibleComboGroups(collections,candidates,maxGroups=6){
   }
   return groups.sort((a,b)=>b.legs.length-a.legs.length).slice(0,maxGroups);
 }
+export function comboPairDiagnostics(collections,candidates){
+  const pairs=[];
+  for(let i=0;i<candidates.length;i++)for(let j=i+1;j<candidates.length;j++){
+    const legs=[candidates[i],candidates[j]];
+    pairs.push({tickers:legs.map(c=>c.market.ticker).sort(),collection:comboCollection(collections,legs)?.collection_ticker||null});
+  }
+  return pairs;
+}
 export function selectedComboMarkets(legs){
   return legs.map(c=>({event_ticker:c.event.event_ticker,market_ticker:c.market.ticker,side:'yes'}));
 }
@@ -93,5 +108,5 @@ export function quoteForYes(quote,ticker,budgetCents,feeMultiplier=2,bankrollCen
   if(debitCents>budgetCents||profitCents<=0)return null;
   return {count,yesCost,debitCents,profitCents};
 }
-export function comboLegs(legs){return legs.map(c=>({game_id:c.milestone.id,event_ticker:c.event.event_ticker,market_ticker:c.market.ticker,strategy:c.signal.strategy,title:c.state.title,sport:c.state.sport}));}
+export function comboLegs(legs){return legs.map(c=>({game_id:c.milestone.id,event_ticker:c.event.event_ticker,market_ticker:c.market.ticker,strategy:c.signal.strategy,title:c.state.title,sport:c.state.sport,kalshiOnly:c.signal.kalshiOnly===true}));}
 
