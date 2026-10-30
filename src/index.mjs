@@ -18,6 +18,7 @@ import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOver, verifyIndependentTableTennisLead } from './score_verification.mjs';
 import { COMBO_WINDOW_MS, compatibleComboGroups, comboLegs, filledComboWindow, quoteForYes } from './combos.mjs';
 import { estimatedSaleProfitCents } from './positions.mjs';
+import { eligibleProfitExit } from './profit_exits.mjs';
 import { weatherContract } from './weather.mjs';
 import { scanWeatherMarkets } from './weather_scanner.mjs';
 import { sellQuote } from './sell.mjs';
@@ -560,7 +561,6 @@ async function executeCombo(group,account,bankroll,overRemaining,scoreboardCache
   return {filled:false,pending:false};
 }
 async function exitComebacks(games,events,positions){
-  if(process.env.AUTO_EXIT_ENABLED!=='true')return; // Temporarily disable automatic exits; manual sells remain available.
   const byGame=new Map(games.map(g=>[g.milestone.id,g.state]));
   const markets=new Map([...events.values()].flatMap(e=>(e.markets||[]).map(m=>[m.ticker,m])));
   const marketGames=new Map(games.flatMap(g=>linkedEventTickers(g.milestone).flatMap(t=>(events.get(t)?.markets||[]).map(m=>[m.ticker,g.milestone.id]))));
@@ -574,15 +574,9 @@ async function exitComebacks(games,events,positions){
     if(original?.strategy!=='lead'||/TOTAL/i.test(position.ticker))continue;
     const strategy='lead';
     const combo=Array.isArray(original.combo_legs)&&original.combo_legs.length>=2;
-    const reversed=combo?original.combo_legs.some(leg=>{
-      if(leg.strategy!=='lead')return false;
-      const legState=byGame.get(leg.game_id),legMarket=(events.get(leg.event_ticker)?.markets||[]).find(m=>m.ticker===leg.market_ticker);
-      return legState&&legMarket&&comeback(legState,legMarket,strategy);
-    }):state?.verifiedLive&&nested&&comeback(state,nested,strategy);
-    if(!reversed)continue;
     try{
       const market=(await kalshi('/markets/'+encodeURIComponent(position.ticker))).market;
-      if(!market||!['active','open'].includes(market.status)||!combo&&!comeback(state,market,strategy))continue;
+      if(!market||!['active','open'].includes(market.status))continue;
       const bid=Number(market.yes_bid_dollars),bidSize=Number(market.yes_bid_size_fp),heldCount=Number(position.position_fp??position.position);
       if(!Number.isFinite(bid)||bid<=0||!Number.isFinite(bidSize)||bidSize<minimumCount(market))continue;
       let prior=(await pool.query('SELECT * FROM exit_attempts WHERE market_ticker=$1',[position.ticker])).rows[0];
@@ -597,7 +591,7 @@ async function exitComebacks(games,events,positions){
         }catch(e){console.warn('Exit reconciliation deferred:',position.ticker,e.message);continue}
       }
       const count=market.fractional_trading_enabled===false?Math.floor(Math.min(heldCount,bidSize)):Math.floor(Math.min(heldCount,bidSize)*100+1e-7)/100;
-      if(count<minimumCount(market))continue;
+      if(count<minimumCount(market)||!eligibleProfitExit(strategy,position,{price:bid,count},combo?original.combo_legs:[]))continue;
       const id=randomUUID();
       const claim=await pool.query(`INSERT INTO exit_attempts(id,market_ticker,game_id,requested_count,limit_price,status)
         VALUES($1,$2,$3,$4,$5,'pending')
