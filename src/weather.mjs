@@ -43,7 +43,7 @@ export function weatherContract(event,market,station,now=new Date()){
   if(dayKey(now,zone)!==label)return null;
   const close=Date.parse(market.close_time||'');
   const cutoff=Math.min(close,finalLocalMinute(label,zone));
-  if(!Number.isFinite(cutoff)||now.getTime()<cutoff-2*3600000||now.getTime()>=cutoff)return null;
+  if(!Number.isFinite(cutoff)||now.getTime()<localMidnight(label,zone)||now.getTime()>=cutoff)return null;
   const hourly=/\bat \d{1,2}\s*(?:am|pm)\s+[A-Z]{2,5}\b/i.test(title);
   let start,end;
   if(hourly){
