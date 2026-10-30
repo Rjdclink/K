@@ -4,7 +4,7 @@ import {weatherSeries,weatherContract,weatherDate,weatherStationId,stationTimezo
 // queried, including cities not known when the function was deployed.
 export async function scanWeatherMarkets({kalshi,nws,twc,onVerified,now=()=>new Date(),pause=ms=>new Promise(resolve=>setTimeout(resolve,ms))}){
   const catalog=(await kalshi('/series?category=Climate%20and%20Weather')).series?.filter(weatherSeries)||[];
-  const stats={series:catalog.length,events:0,eligible:0,verified:0,failures:0,
+  const stats={series:catalog.length,events:0,eligible:0,verified:0,failures:0,companyProbe:null,
     sources:{},rejections:{dateMissing:0,dateOutsideWindow:0,stationMissing:0,stationIdUnsupported:0,stationUnavailable:0,contractRules:0,noAsk:0,noObservation:0}};
   let cursor=0;const stations=new Map(),climateDays=new Map(),metarWeeks=new Map();
   const companyDay=label=>{
@@ -29,6 +29,12 @@ export async function scanWeatherMarkets({kalshi,nws,twc,onVerified,now=()=>new 
             stats.events++;
             const source=event.settlement_sources?.[0]?.name||'unspecified';
             stats.sources[source]=(stats.sources[source]||0)+1;
+            if(source==='The Weather Company'&&stats.companyProbe===null){
+              // Probe the actual station catalog even outside an entry window,
+              // so a blocked feed is visible before the next eligible market.
+              const report=await companyDay(now().toISOString().slice(0,10));
+              stats.companyProbe={available:Array.isArray(report?.results),stations:report?.results?.length||0};
+            }
             const date=weatherDate(event);
             if(!date){stats.rejections.dateMissing++;continue}
             const eventDate=new Date(date+' 12:00:00 GMT');
