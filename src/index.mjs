@@ -4,7 +4,7 @@ import pg from 'pg';
 import { page } from './ui.mjs';
 import { historyPage } from './history_ui.mjs';
 import { completedTrade } from './history.mjs';
-import { gameState, overSignal, confirmedOver, leadSignal, additionalLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, overBudget, profitableCount, netSettlementProfitCents, comeback } from './strategy.mjs';
+import { gameState, overSignal, confirmedOver, leadSignal, additionalLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, overBudget, overSingleBudget, profitableCount, netSettlementProfitCents, comeback } from './strategy.mjs';
 import { reviewMiss } from './ai.mjs';
 import { kalshiSignature } from './auth.mjs';
 import { marketShard, shardCash, transferPlan } from './funding.mjs';
@@ -331,9 +331,9 @@ function contractCount(balance,market,fraction,bankroll,budget,fees){
   const count=orderSize(balance,market.yes_ask_dollars,market.yes_ask_size_fp,fraction,Number(process.env.MAX_YES_PRICE||1),bankroll,budget,fees);
   return market.fractional_trading_enabled===false?Math.floor(count):count;
 }
-function executableCount(c,balance,bankroll,overRemaining){
+function executableCount(c,balance,bankroll,overRemaining,overSpendCents=overRemaining){
   const fees=feeReserve(c.event,c.market),price=Number(c.market.yes_ask_dollars);
-  const count=contractCount(balance,c.market,c.signal.fraction,bankroll,c.signal.strategy==='over'?overRemaining:Infinity,fees);
+  const count=contractCount(balance,c.market,c.signal.fraction,bankroll,c.signal.strategy==='over'?overSpendCents:Infinity,fees);
   return profitableCount(count,price,fees,c.signal.strategy,bankroll,c.state.type,c.state.remainingSeconds);
 }
 const signalKey=c=>`${c.market.ticker}:${c.signal.strategy}`;
@@ -715,7 +715,7 @@ async function scan(cachedMilestones){
     const games=ms.map(m=>({milestone:m,state:gameState(m,liveMap.get(m.id))}));
     const active=games.filter(g=>g.state.verifiedLive && g.state.scoreKnown);
     const events=await marketMap(active.filter(g=>eligibleForMarkets(g.state)).flatMap(g=>linkedEventTickers(g.milestone)));
-    let balance=0,bankroll=0,overRemaining=0,account=null;
+    let balance=0,bankroll=0,overRemaining=0,heldSingleCount=0,account=null;
     const existingFills=await pool.query(`SELECT market_ticker,event_ticker,game_id,strategy,fill_count,limit_price,created_at,updated_at,combo_legs FROM trade_attempts WHERE status='filled'`);
     let filled=new Set(existingFills.rows.map(r=>`${r.market_ticker}:${r.strategy}`));
     const pendingLegs=await pool.query(`SELECT combo_legs FROM trade_attempts WHERE status='combo_pending' AND combo_legs IS NOT NULL`);
@@ -729,6 +729,7 @@ async function scan(cachedMilestones){
       account=currentAccount;balance=Number(account.balance);
       bankroll=balance+Number(account.portfolio_value);
       const open=new Set((positions.market_positions||[]).filter(p=>Number(p.position_fp??p.position??0)!==0).map(p=>p.ticker));
+      heldSingleCount=existingFills.rows.filter(r=>!r.combo_legs&&open.has(r.market_ticker)).length;
       const exposure=existingFills.rows.reduce((sum,r)=>sum+(r.strategy==='over'&&open.has(r.market_ticker)?estimatedCostCents(Number(r.fill_count),Number(r.limit_price),2):0),0);
       overRemaining=overBudget(balance,account.portfolio_value,exposure);
     }
@@ -737,12 +738,20 @@ async function scan(cachedMilestones){
     await candidateTable();
     const opportunities=[],snapshotRows=new Map(),scoreboardCache=new Map();
     const allCandidates=[];
+    let askProbeBudget=20;
     for(const {milestone,state} of games){
       const candidates=[];
       if(eligibleForMarkets(state))for(const ticker of linkedEventTickers(milestone)){const event=events.get(ticker);if(!event || event.category!=='Sports')continue;
         for(const market of event.markets||[]){if(market.event_ticker!==event.event_ticker)continue;const signal=overSignal(state,market)||golfSignal(state,market)||leadSignal(state,market)||additionalLeadSignal(state,market)||tennisSignal(state,market)||tableTennisSignal(state,market);if(signal&&!filled.has(`${market.ticker}:${signal.strategy}`))candidates.push({signal,event,market,state,milestone})}}
       allCandidates.push(...candidates);
-      await Promise.all(candidates.filter(c=>!hasAsk(c.market)).slice(0,20).map(async c=>{c.market=await recoverSummaryAsk(c.market)}));
+      // Summary depth recovery is exploratory. Bound it across the whole scan;
+      // final execution still fetches an authoritative fresh orderbook.
+      const missing=candidates.filter(c=>!hasAsk(c.market));
+      const sample=missing.filter(c=>Number(c.market.yes_ask_dollars)<1)
+        .concat(missing.filter(c=>Number(c.market.yes_ask_dollars)>=1));
+      const probes=sample.slice(0,Math.min(2,askProbeBudget));
+      askProbeBudget-=probes.length;
+      await Promise.all(probes.map(async c=>{c.market=await recoverSummaryAsk(c.market)}));
       if(state.verifiedLive)scanned++;
       const baseball=/baseball/.test(state.type),tennis=/tennis/.test(state.type),soccer=/soccer/.test(state.type);
       const timeLeft=gameTimeLabel(state);
@@ -776,6 +785,12 @@ async function scan(cachedMilestones){
       const profit=c=>netSettlementProfitCents(executableCount(c,balance,bankroll,overRemaining),Number(c.market.yes_ask_dollars),feeReserve(c.event,c.market));
       return profit(b)-profit(a) || (a.signal.strategy==='lead'?Number(tieRefundPreference(b.market))-Number(tieRefundPreference(a.market)):0);
     });
+    const overSlots=new Set(opportunities.filter(c=>c.signal.strategy==='over'&&hasAsk(c.market)&&
+      !filled.has(signalKey(c))&&executableCount(c,balance,bankroll,overRemaining)>0).map(signalKey));
+    let overSlotsLeft=overSlots.size;
+    // The 30% total over exposure includes the possible combination. When a
+    // pair can form, hold back 10% and share the rest across the single legs.
+    const comboReserve=overSlotsLeft+heldSingleCount>=2?Math.min(overRemaining,Math.floor(bankroll*.10)):0;
     // Verify independent over scoreboards in parallel. A dozen sequential 12s
     // dwells used to freeze the dashboard for minutes and miss later games.
     const overPreflights=new Map(),overReady=new Map(),overs=live()?opportunities.filter(c=>c.signal.strategy==='over'&&hasAsk(c.market)):[];
@@ -799,7 +814,12 @@ async function scan(cachedMilestones){
         finally{c.preflightDone()}
       }
     }));
-    for(const c of opportunities){let state=c.state;try{
+    for(const c of opportunities){let state=c.state;
+      const overSlot=overSlots.has(signalKey(c));
+      const singleBudget=c.signal.strategy==='over'?
+        overSingleBudget(overRemaining,comboReserve,Math.max(1,overSlotsLeft)):Infinity;
+      if(overSlot)overSlotsLeft--;
+      try{
         if(!live())continue;
         if(filled.has(signalKey(c)))continue;
         // A confirmed fill is final for this market and strategy. Check before moving
@@ -856,8 +876,8 @@ async function scan(cachedMilestones){
         c.signal=stillQualifies;
         c.market=quote;
         c.state=state=freshState;
-        const budget=c.signal.strategy==='over'?overRemaining:Infinity;
-        const wanted=executableCount(c,balance,bankroll,overRemaining);
+        const budget=c.signal.strategy==='over'?singleBudget:Infinity;
+        const wanted=executableCount(c,balance,bankroll,overRemaining,budget);
         if(!wanted)continue;
         const shard=marketShard(c.event,c.market),localCash=shardCash(latest,shard);
         if(localCash===null){executionErrors.push(`${c.market.ticker}: Kalshi shard balance unavailable`);continue}

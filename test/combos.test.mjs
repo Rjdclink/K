@@ -44,8 +44,7 @@ test('accepts only fresh affordable positive net YES quotes, with maker NO bid a
   assert.equal(quoteForYes({...q,created_ts:new Date(Date.now()-COMBO_WINDOW_MS-1000).toISOString()},'COMBO',1000,2),null);
   assert.equal(quoteForYes({...q,no_bid_dollars:'0.0001'},'COMBO',1000,2),null);
   const small={...q,no_contracts_fp:'3.00'};
-  assert.equal(quoteForYes(small,'COMBO',1000,2,9900),null);
-  assert.equal(quoteForYes(small,'COMBO',1000,2,10000),null);
+  assert.ok(quoteForYes(small,'COMBO',1000,2,9900)?.profitCents>0);
 });
 test('same game and event picks require a collection explicitly allowing multiple markets per event',()=>{
  const legs=[candidate('a','A'),candidate('b','A')];

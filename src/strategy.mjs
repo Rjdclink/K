@@ -417,4 +417,9 @@ export function overBudget(balanceCents, portfolioValueCents, openOverExposureCe
   if (![cash,value,exposure].every(Number.isFinite) || Math.min(cash,value,exposure)<0) return 0;
   return Math.max(0,Math.floor((cash+value)*0.30)-Math.ceil(exposure));
 }
+export function overSingleBudget(remainingCents,reservedComboCents,unfilledSingles){
+  if(![remainingCents,reservedComboCents,unfilledSingles].every(Number.isFinite)||
+    remainingCents<0||reservedComboCents<0||unfilledSingles<1)return 0;
+  return Math.floor(Math.max(0,remainingCents-reservedComboCents)/unfilledSingles);
+}
 
