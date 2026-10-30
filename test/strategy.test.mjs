@@ -298,16 +298,17 @@ test('spread contracts are not game winner contracts',()=>{
   assert.equal(leadSignal(g,spread),null);
   assert.equal(leadSignal(g,{...spread,event_ticker:'KXKBOGAME-26OCT260530KIASAM',title:'Samsung Lions wins',yes_sub_title:'Samsung Lions'} )?.fraction,.15);
 });
-test('soccer starts at 85:00 and excludes extra time or ambiguous stoppage scores',()=>{
+test('two-goal soccer leads remain late; three-goal leads enter in the second half',()=>{
   const m={id:'soccer',title:'Abha vs Al-Faisaly',type:'soccer_tournament_multi_leg',details:{league:'Saudi Pro League',home_team_id:'abha',away_team_id:'faisaly'}};
   const board=(home,away,time,half='2nd')=>gameState(m,{details:{status:'live',home_same_game_score:home,away_same_game_score:away,time,half,possession:'home'}});
   const market={status:'active',event_ticker:'KXSAUDIPLGAME-26OCT27ABHFAI',title:'Abha wins',yes_sub_title:'Abha',custom_strike:{soccer_team:'abha'},rules_primary:'If Abha wins after 90 minutes plus stoppage time (does not include extra time or penalties), then Yes.'};
   assert.equal(leadSignal(board(2,0,"82'"),market),null);
   assert.equal(leadSignal(board(2,0,"83'"),market),null);
   assert.equal(leadSignal(board(2,0,"85'"),market),null);
-  assert.equal(leadSignal(board(3,0,"85'"),market)?.fraction,.15);
-  assert.equal(leadSignal(board(3,0,"88'"),market)?.fraction,.15);
-  assert.equal(leadSignal(board(3,0,"89'"),market)?.fraction,.15);
+  assert.equal(leadSignal(board(3,0,"46'"),market)?.fraction,.20);
+  assert.equal(leadSignal(board(3,0,"85'"),market)?.fraction,.20);
+  assert.equal(leadSignal(board(3,0,"88'"),market)?.fraction,.20);
+  assert.equal(leadSignal(board(3,0,"89'"),market)?.fraction,.20);
   assert.equal(leadSignal(gameState(m,{details:{status:'live',home_same_game_score:2,away_same_game_score:0,time:"89'",half:'2nd',match_remaining_seconds:119}}),market)?.fraction,.15);
   assert.equal(leadSignal(gameState(m,{details:{status:'live',home_same_game_score:2,away_same_game_score:0,time:"89'",half:'2nd',match_remaining_seconds:120}}),market),null);
   assert.equal(leadSignal(board(3,1,"90+4'"),market),null);
@@ -318,6 +319,26 @@ test('soccer starts at 85:00 and excludes extra time or ambiguous stoppage score
   assert.equal(leadSignal(finalSeconds(44),market)?.fraction,.10);
   assert.equal(leadSignal(finalSeconds(45),market),null);
   assert.equal(leadSignal(board(2,1,"89:30"),market),null);
+});
+test('clockless second-half soccer needs a stable three-goal lead and retains the ten-percent fallback',()=>{
+  const m={id:'clockless-soccer',type:'soccer_match',title:'Abha vs Al-Faisaly',details:{home_team_id:'abha',away_team_id:'faisaly'}};
+  const market={status:'active',event_ticker:'KXSAUDIPLGAME-26OCT27ABHFAI',title:'Abha wins',yes_sub_title:'Abha',custom_strike:{soccer_team:'abha'},rules_primary:'If Abha wins after 90 minutes plus stoppage time, then Yes.',yes_ask_dollars:'0.91'};
+  const now=Date.now();
+  const state=(when,home=3,away=0,half='2nd',other={})=>gameState(m,{milestone_id:m.id,_observed_at:new Date(when).toISOString(),details:{status:'live',home_same_game_score:home,away_same_game_score:away,half,...other}});
+  const first=state(now-7000),second=state(now,3,0,'2nd',{possession:'away'});
+  assert.equal(Number.isNaN(first.soccerMinute),true);
+  assert.equal(leadSignal(first,market)?.fraction,.20);
+  assert.match(leadSignal(first,market).reason,/second half \(no clock\)/);
+  assert.equal(kalshiOnlyLead(first,second,market),true,'ball possession is not required for a three-goal lead');
+  assert.equal(Math.min(leadSignal(second,market).fraction,KALSHI_ONLY_FRACTION),.10);
+  assert.equal(leadSignal(state(now,2,0),market),null);
+  assert.equal(leadSignal(state(now,3,0,'1st'),market),null);
+  assert.equal(leadSignal(state(now,3,0,'1st',{period:2}),market),null,'a conflicting half label cannot authorize entry');
+  assert.equal(leadSignal(state(now,3,0,'2nd',{time:"90+2'"}),market),null);
+  assert.equal(leadSignal(state(now,3,0,'2nd',{home_goals:2}),market),null,'inconsistent score aliases cannot authorize entry');
+  assert.equal(leadSignal(first,{...market,custom_strike:{soccer_team:'faisaly'}}),null);
+  assert.equal(kalshiOnlyLead(first,state(now,2,0),market),false);
+  assert.equal(kalshiOnlyLead(state(now-3000),second,market),false,'the two Kalshi reads still need six seconds');
 });
 test('one-goal soccer winner requires a final-whistle countdown and stable possession for higher tiers',()=>{
   const m={id:'soccer-close',title:'Abha vs Al-Faisaly',type:'soccer_tournament_multi_leg',details:{home_team_id:'abha',away_team_id:'faisaly'}};

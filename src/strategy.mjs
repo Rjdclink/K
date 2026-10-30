@@ -302,9 +302,8 @@ export function kalshiOnlyLead(first,second,market){
     !/^table_tennis_/.test(first.type)&&Number.isFinite(first.remainingSeconds)&&Number.isFinite(second.remainingSeconds)&&second.remainingSeconds>first.remainingSeconds||
     Number.isFinite(first.soccerMinute)&&Number.isFinite(second.soccerMinute)&&second.soccerMinute<first.soccerMinute||
     !confirmedSoccerOneGoalClock(first,second))return false;
-  // A changing soccer possession still permits its lower one-goal tier.
-  if(first.possessionSide!==second.possessionSide&&
-    !(/soccer/.test(second.type)&&Math.abs(second.home-second.away)===1))return false;
+  // Soccer possession is required only for the higher one-goal tiers.
+  if(first.possessionSide!==second.possessionSide&&!/soccer/.test(second.type))return false;
   for(const key of ['tennis','tableTennis','volleyball','darts']){
     if(JSON.stringify(first[key])!==JSON.stringify(second[key]))return false;
   }
@@ -343,10 +342,11 @@ export function leadSignal(game, market) {
   const football=/football/.test(game.type);
   const hockey=/hockey/.test(game.type);
   const soccer=/soccer/.test(game.type);
+  if(soccer&&/^(?:1st|first)$/.test(game.soccerHalf))return null;
   const segments=/baseball/.test(game.type)?9:/hockey/.test(game.type)?3:/soccer/.test(game.type)?2:basketball&&['NCAAB','NCAAW'].includes(game.sport)?2:/basketball|football/.test(game.type)?4:Infinity;
   const baseball=/baseball/.test(game.type);
-  const finalTime=baseball?game.period===9:soccer?game.period===2 && Number.isFinite(game.soccerMinute) && game.soccerMinute>=83:game.period===segments && game.periodConsistent && Number.isFinite(game.remainingSeconds) && game.remainingSeconds>0 && (basketball?game.remainingSeconds<=60:hockey?game.remainingSeconds<=390:game.remainingSeconds<420);
-  if (!game.verifiedLive || !game.scoreKnown || !finalTime || market.status!=='active' && market.status!=='open') return null;
+  const finalTime=baseball?game.period===9:soccer?game.period===2&&(!Number.isFinite(game.soccerMinute)||game.soccerMinute<90):game.period===segments && game.periodConsistent && Number.isFinite(game.remainingSeconds) && game.remainingSeconds>0 && (basketball?game.remainingSeconds<=60:hockey?game.remainingSeconds<=390:game.remainingSeconds<420);
+  if (!game.verifiedLive || !game.scoreKnown || soccer&&!game.scoreConsistent || !finalTime || market.status!=='active' && market.status!=='open') return null;
   const h=game.homeUnits,a=game.awayUnits;
   if (!Number.isFinite(h)||!Number.isFinite(a)) return null;
   const margin=Math.abs(h-a),trailerScore=Math.min(h,a);
@@ -364,7 +364,7 @@ export function leadSignal(game, market) {
   if (!/win|winner|victory/i.test(description) || /wins? by|spread|handicap|margin of victory/i.test(description) || market.event_ticker && !/GAME(?:-|$)/i.test(market.event_ticker) || !identityMatches) return null;
   if(soccer && !/after 90 minutes plus stoppage time/i.test(market.rules_primary||''))return null;
   const fraction=leadFraction(game,margin,minimum);
-  const timing=baseball?'9th inning':soccer?`${game.soccerMinute}' of regulation plus stoppage`:`${basketball?`period ${game.period}, `:''}${game.clock} remaining`;
+  const timing=baseball?'9th inning':soccer?Number.isFinite(game.soccerMinute)?`${game.soccerMinute}' of regulation plus stoppage`:'second half (no clock)':`${basketball?`period ${game.period}, `:''}${game.clock} remaining`;
   return {strategy:'lead', reason:`${leader||market.yes_sub_title} leads ${h}–${a} ${game.unit} (${margin} ${game.unit} ahead); ${timing}`, fraction};
 }
 export function leadFraction(game,margin,minimum){
@@ -372,6 +372,7 @@ export function leadFraction(game,margin,minimum){
     const leaderHasBall=game.possessionSide===(game.homeUnits>game.awayUnits?'home':'away');
     return game.matchRemainingSeconds<20?(leaderHasBall?.40:.35):(leaderHasBall?.15:.10);
   }
+  if(/soccer/.test(game.type)&&margin>=3)return .20;
   return .15;
 }
 export function stableSoccerLeadFraction(first,second,signal){

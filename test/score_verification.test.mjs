@@ -44,6 +44,12 @@ test('NBA scoreboard recognizes exact New Orleans abbreviation variants',()=>{
   assert.equal(espnMatches(fixture,state,milestone).length,1);
   assert.equal(espnMatches(fixture,{...state,homeName:'NOP Lakers'},milestone).length,0);
 });
+test('provider abbreviations match across sports without accepting the wrong team',()=>{
+  const milestone={...m,title:'BKN at BOS'};
+  const state={...game,homeName:'BOS',awayName:'BKN'};
+  assert.equal(espnMatches(espn(),state,milestone).length,1);
+  assert.equal(espnMatches(espn(),{...state,awayName:'NYK'},milestone).length,0);
+});
 test('NHL city labels match the exact franchise but not a same-city rival',()=>{
   const milestone={...m,title:'New York I at Minnesota'};
   const state={...game,homeName:'Minnesota',awayName:'New York I'};
@@ -65,6 +71,33 @@ test('Saudi soccer alias matches one exact live fixture and its score',()=>{
   assert.equal(scoreAgreement(state,[espnMatches(fixture,state,milestone)]),true);
   assert.equal(scoreAgreement(state,[espnMatches({...fixture,events:fixture.events.map(e=>({...e,competitions:[{competitors:[e.competitions[0].competitors[0],{homeAway:'away',score:'1',team:{displayName:'Al Ahli'}}]}]}))},state,milestone)]),false);
   assert.equal(espnMatches({...fixture,events:fixture.events.map(e=>({...e,competitions:[{competitors:[e.competitions[0].competitors[0],{homeAway:'away',score:'0',team:{displayName:'Al Ahli Doha'}}]}]}))},state,milestone).length,0);
+});
+test('clockless three-goal soccer lead still vetoes an ESPN score conflict',async()=>{
+  const milestone={id:'saudi-clockless',type:'soccer_match',title:'Al-Shabab vs Al Ahli Saudi',start_date:start};
+  const state=gameState(milestone,{details:{status:'live',home_score:3,away_score:0,half:'2nd'}});
+  const fixture={events:[{date:start,status:{type:{state:'in'},period:2,displayClock:"67'"},competitions:[{competitors:[
+    {homeAway:'home',score:'2',team:{displayName:'Al Shabab'}},
+    {homeAway:'away',score:'0',team:{displayName:'Al Ahli'}}]}]}]};
+  const fetcher=async url=>{
+    assert.match(url,/espn\.com/,'a conflicting ESPN fixture must veto without seeking another source');
+    return {ok:true,json:async()=>fixture};
+  };
+  assert.equal(await verifyIndependentOverDecision(state,milestone,{fetcher}),false);
+});
+test('club suffixes and provider abbreviations verify Le Havre versus PSG exactly',()=>{
+  const milestone={id:'havre-psg',type:'soccer_match',title:'Le Havre vs PSG',start_date:start};
+  const state=gameState(milestone,{details:{status:'live',home_score:1,away_score:5,half:'2nd',time:"73'"}});
+  const fixture={events:[{date:start,status:{type:{state:'in'},period:2,displayClock:"77'"},competitions:[{competitors:[
+    {homeAway:'home',score:'1',team:{displayName:'Le Havre AC',shortDisplayName:'Le Havre AC',abbreviation:'HAC'}},
+    {homeAway:'away',score:'5',team:{displayName:'Paris Saint-Germain',shortDisplayName:'PSG',abbreviation:'PSG'}}]}]}]};
+  assert.equal(scoreAgreement(state,[espnMatches(fixture,state,milestone)]),true);
+  assert.equal(scoreAgreement(state,[espnMatches({...fixture,events:[{...fixture.events[0],competitions:[{competitors:[
+    fixture.events[0].competitions[0].competitors[0],
+    {...fixture.events[0].competitions[0].competitors[1],score:'4'}]}]}]},state,milestone)]),false);
+  const rival={...fixture,events:[{...fixture.events[0],competitions:[{competitors:[
+    {...fixture.events[0].competitions[0].competitors[0],team:{displayName:'Le Havre United',abbreviation:'LHU'}},
+    fixture.events[0].competitions[0].competitors[1]]}]}]};
+  assert.equal(espnMatches(rival,state,milestone).length,0);
 });
 
 test('independent scoreboards must match the exact live fixture and both team scores',()=>{
