@@ -865,7 +865,8 @@ async function scan(cachedMilestones){
     // and the current quote remain separate execution gates.
     // Verify independent over scoreboards in parallel. A dozen sequential 12s
     // dwells used to freeze the dashboard for minutes and miss later games.
-    const overPreflights=new Map(),overReady=new Map(),overs=live()?opportunities.filter(c=>c.signal.strategy==='over'&&hasAsk(c.market)):[];
+    const overPreflights=new Map(),overReady=new Map(),overs=live()&&cashAfterComboReserve(balance,bankroll,comboCount)>0?
+      opportunities.filter(c=>c.signal.strategy==='over'&&hasAsk(c.market)):[];
     for(const c of overs)overReady.set(signalKey(c),new Promise(resolve=>{c.preflightDone=resolve}));
     let cursor=0;
     const workersDone=Promise.all(Array.from({length:Math.min(20,overs.length)},async()=>{
@@ -889,6 +890,9 @@ async function scan(cachedMilestones){
     for(const c of opportunities){let state=c.state;
       try{
         if(!live())continue;
+        // Every single must leave the next combo allocation in cash. When no
+        // spendable cash remains, move straight to held-leg combo attempts.
+        if(cashAfterComboReserve(balance,bankroll,comboCount)<=0)break;
         if(filled.has(signalKey(c)))continue;
         // A confirmed fill is final for this market and strategy. Check before moving
         // cash between shards, not only inside the order reservation.
