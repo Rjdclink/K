@@ -11,14 +11,16 @@ function offsetHours(zone,at){
   return found?(found[1]==='-'?-1:1)*(Number(found[2]||0)+Number(found[3]||0)/60):NaN;
 }
 function standardOffset(zone,year){return Math.min(offsetHours(zone,new Date(Date.UTC(year,0,15))),offsetHours(zone,new Date(Date.UTC(year,6,15))))}
-export function weatherSeries(series){return /rain|highest temperature|lowest temperature|hourly directional|city temperature/i.test(String(series?.title||''))}
+export function weatherSeries(series){return /rain|precipitation|(?:highest|maximum|max|lowest|minimum|low|high)\s+(?:temperature|temp)|(?:temperature|temp)\s+(?:high|low)|hourly directional|city temperature/i.test(String(series?.title||''))}
 export function weatherContract(event,market,station,now=new Date()){
   if(event?.category!=='Climate and Weather'||!['active','open'].includes(market?.status)||market?.result)return null;
   const rule=String(market.rules_primary||''),title=String(event.title||'');
   const date=title.match(/\bon (\w+ \d{1,2}, 20\d{2})\b/i)?.[1];
   const stationId=rule.match(/\(([A-Z][A-Z0-9]{2,7})\)/)?.[1];
   const source=event.settlement_sources?.[0]?.name;
-  if(!date||!stationId||station?.id!==stationId||!station?.timezone||!['National Weather Service','The Weather Company'].includes(source))return null;
+  // NWS station observations cannot establish a different provider's official
+  // settlement value. Those contracts need their own provider-specific proof.
+  if(!date||!stationId||station?.id!==stationId||!station?.timezone||source!=='National Weather Service')return null;
   const declared=new Date(`${date} 12:00:00 GMT`);
   if(!Number.isFinite(declared.getTime()))return null;
   const label=declared.toISOString().slice(0,10),zone=station.timezone;
@@ -74,3 +76,4 @@ export function observedWeather(contract,observations,now=new Date()){
   const passed=contract.comparison.startsWith('greater')?chosen.value>contract.threshold+buffer:chosen.value<contract.threshold-buffer;
   return passed?{...chosen,source:'National Weather Service',station:contract.station}:null;
 }
+
