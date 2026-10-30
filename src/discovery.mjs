@@ -2,7 +2,7 @@
 // The exchange remains authoritative: a guessed ticker is ignored unless an
 // open event and its market are actually returned by Kalshi.
 const supportedType=type=>/basketball|baseball|football|hockey|soccer|tennis|golf|handball|rugby|lacrosse|volleyball|darts/.test(String(type||'').toLowerCase()) &&
-  !/esports/.test(String(type||'').toLowerCase());
+  !/esports/.test(String(type||'').toLowerCase()); // Esports require a competition-specific live verifier before entry.
 
 export function eligibleForMarkets(game){return game?.verifiedLive && game.scoreKnown && supportedType(game.type)}
 
@@ -52,3 +52,4 @@ export function gameTimeLabel(game){
 export function storedClockSeconds(value,running=true){
   return Number.isFinite(value)?Math.max(0,running===false?Math.floor(value):Math.ceil(value)):null;
 }
+
