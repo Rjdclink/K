@@ -7,7 +7,7 @@ import { completedTrade } from './history.mjs';
 import { gameState, overSignal, confirmedOver, leadSignal, additionalLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, netSettlementProfitCents, comeback } from './strategy.mjs';
 import { reviewMiss } from './ai.mjs';
 import { kalshiSignature } from './auth.mjs';
-import { marketShard, shardCash, transferPlan, shouldFundCombo } from './funding.mjs';
+import { marketShard, shardCash, transferPlan, comboShardBudget } from './funding.mjs';
 import { icons } from './icons.mjs';
 import { manifest, worker } from './pwa.mjs';
 import { vapidIdentity, validateSubscription, deliverPush } from './push.mjs';
@@ -525,8 +525,8 @@ async function reconcileCombos(){
       const shard=marketShard({exchange_index:collection.exchange_index},combo),local=shardCash(account,shard);
       const desired=Math.floor(Math.min(Number(account.balance),bankroll*fraction));
       if(local===null||desired<100)return;
-      if(local<desired&&shouldFundCombo(local,desired)&&transferPlan(account,shard,desired)){funding.push({strategy,created,combo,desired});return}
-      const budget=Math.floor(Math.min(desired,local));
+      if(local<100&&transferPlan(account,shard,desired)){funding.push({strategy,created,combo,desired});return}
+      const budget=comboShardBudget(local,desired);
       if(budget<100)return;
       const existing=await pool.query(`SELECT status FROM trade_attempts WHERE market_ticker=$1`,[ticker]);
       if(existing.rows.some(r=>['filled','combo_pending','reserved','check_order'].includes(r.status)))return;
@@ -536,6 +536,7 @@ async function reconcileCombos(){
      }catch(e){console.warn('Combo size unavailable:',n,collection.collection_ticker,legs.map(c=>[c.event.event_ticker,c.market.ticker]),e.message)}
   }));
   if(!plans.length){console.warn('Combo no executable RFQ plan:',newTicker,'groups',groups.length,'funding',funding.length);if(funding.length){const p=funding[0];await ensureShardFunding({strategy:p.strategy},p.created,p.combo,account,p.desired)}return {filled:false,pending:false}}
+  const quoteStats=new Map(plans.map(p=>[p.ticker,{received:0,eligible:0}]));
   try{
     const communicationsId=(await kalshi('/communications/id',{auth:true})).communications_id;
     if(!communicationsId)throw new Error('Kalshi communications ID missing');
@@ -545,8 +546,10 @@ async function reconcileCombos(){
         try{
           const list=(await kalshi('/communications/quotes?'+new URLSearchParams({rfq_id:plan.rfq,rfq_creator_user_id:communicationsId,rfq_user_filter:'self',limit:'100'}),{auth:true})).quotes||[];
           const fees=feeReserve({fee_multiplier_override:plan.combo.fee_multiplier_override},plan.combo);
-          return list.map(q=>({plan,q,terms:quoteForYes(q,plan.ticker,plan.budget,fees,bankroll),fees})).filter(x=>x.terms&&
+          const eligible=list.map(q=>({plan,q,terms:quoteForYes(q,plan.ticker,plan.budget,fees,bankroll),fees})).filter(x=>x.terms&&
             profitableCount(x.terms.count,x.terms.yesCost,fees,plan.strategy,bankroll,plan.legs[0].state.type,plan.legs[0].state.remainingSeconds));
+          const stats=quoteStats.get(plan.ticker);stats.received=Math.max(stats.received,list.length);stats.eligible=Math.max(stats.eligible,eligible.length);
+          return eligible;
         }catch(e){console.warn('Combo quotes unavailable:',plan.ticker,e.message);if(e.message.includes('Kalshi 403 GET /communications/quotes'))throw e;return []}
       }))).flat().sort((a,b)=>b.plan.legs.length-a.plan.legs.length||b.terms.profitCents-a.terms.profitCents);
       if(offers.length){
@@ -582,6 +585,7 @@ async function reconcileCombos(){
       await new Promise(resolve=>setTimeout(resolve,Math.min(500,Math.max(0,deadline-Date.now()))));
     }
   }finally{await Promise.all(plans.map(p=>kalshi('/communications/rfqs/'+encodeURIComponent(p.rfq),{auth:true,method:'DELETE'}).catch(e=>console.warn('RFQ cancellation deferred:',e.message))))}
+  console.info('Combo quote counts:',JSON.stringify([...quoteStats]));
   console.info('Combo maker quote unavailable:',newTicker,'RFQs',plans.map(p=>p.rfq));
   return {filled:false,pending:false};
 }
