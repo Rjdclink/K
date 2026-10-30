@@ -828,11 +828,6 @@ async function scan(cachedMilestones){
     }
     // Exits are assessed before any new risk is added.
     if(live()||exitOnly())await exitComebacks(games,events,openPositions);
-    if(live()&&account)try{
-      const combo=await checkHeldCombinations(existingFills.rows,comboCount);
-      if(combo.pending){comboCount++;account=await accountBalance({fresh:true});balance=Number(account.balance);bankroll=balance+Number(account.portfolio_value)}
-      if(combo.filled)submitted++;
-    }catch(e){executionErrors.push('Combo: '+String(e.message).slice(0,180));console.error('Combo execution deferred:',e)}
     await candidateTable();
     const opportunities=[],snapshotRows=new Map(),scoreboardCache=new Map();
     const allCandidates=[];
@@ -883,6 +878,13 @@ async function scan(cachedMilestones){
     }
     // Make the live score and clock visible before slower order preflights.
     await pool.query(`UPDATE scan_status SET last_scan=$1,scanned=$2,signals=$3 WHERE id=1`,[scanStarted,scanned,signals]);
+    // A maker's RFQ window can last 45 seconds. Publish current player props
+    // first, then give held fills their combination chance before singles.
+    if(live()&&account)try{
+      const combo=await checkHeldCombinations(existingFills.rows,comboCount);
+      if(combo.pending){comboCount++;account=await accountBalance({fresh:true});balance=Number(account.balance);bankroll=balance+Number(account.portfolio_value)}
+      if(combo.filled)submitted++;
+    }catch(e){executionErrors.push('Combo: '+String(e.message).slice(0,180));console.error('Combo execution deferred:',e)}
     opportunities.sort((a,b)=>{
       const executable=c=>hasAsk(c.market)&&!filled.has(signalKey(c))&&profitableCount(executableCount(c,cashAfterComboReserve(balance,bankroll,comboCount),bankroll),Number(c.market.yes_ask_dollars),feeReserve(c.event,c.market),c.signal.strategy,bankroll,c.state.type,c.state.remainingSeconds)>0;
       if(executable(a)!==executable(b))return executable(a)?-1:1;
@@ -1186,5 +1188,3 @@ export default {async fetch(req){const url=new URL(req.url);
     if(req.method==='GET'&&url.pathname==='/')return new Response(page,{headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store','content-security-policy':"default-src 'self'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self'; manifest-src 'self'; base-uri 'none'; frame-ancestors 'none'",'x-content-type-options':'nosniff'}})
   }catch(e){console.error(e);return json({error:'Service unavailable'},503)}
   return json({error:'Not found'},404);
-}};
-
