@@ -16,7 +16,7 @@ import { authorized, checkCredentials, sessionCookie, loginPage } from './dashbo
 import { discoverCurrentMilestones, eligibleForMarkets, linkedEventTickers, gameTimeLabel, storedClockSeconds, mapBatches } from './discovery.mjs';
 import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOverDecision, verifyIndependentTableTennisLeadDecision, verifyIndependentTableTennisMatch } from './score_verification.mjs';
-import { COMBO_ATTEMPT_MS, COMBO_WINDOW_MS, VERIFY_DWELL_MS, comboAllocation, comboLegAllocation, comboAllowedCents, comboRfqTargetCents, remainingVerifiedComboCents, availableComboFills, compatibleComboGroups, prioritizedComboGroups, comboPairDiagnostics, comboLegs, filledComboWindow, eligibleFillTrigger, heldComboLeg, quoteForYes, collectionsForEvents, selectedComboMarkets } from './combos.mjs';
+import { COMBO_ATTEMPT_MS, COMBO_WINDOW_MS, VERIFY_DWELL_MS, comboAllocation, comboLegAllocation, comboAllowedCents, comboRfqTargetCents, remainingVerifiedComboCents, availableComboFills, compatibleComboGroups, prioritizedComboGroups, comboPairDiagnostics, comboLegs, filledComboWindow, eligibleFillTrigger, heldComboLeg, quoteForYes, collectionsForEvents, selectedComboMarkets, liveComboMarket } from './combos.mjs';
 import { estimatedSaleProfitCents, positiveExitEligible, oneAndHalfExitEligible } from './positions.mjs';
 import { remainingVerifiedOverCents, upgradeEligible } from './upgrades.mjs';
 import { weatherContract } from './weather.mjs';
@@ -869,23 +869,23 @@ async function upgradeVerifiedCombos(scanStarted){
           return eligible;
         }catch(e){console.warn('Combo quotes unavailable:',plan.ticker,e.message);if(e.message.includes('Kalshi 403 GET /communications/quotes'))throw e;return []}
       })).flat().sort((a,b)=>b.plan.legs.length-a.plan.legs.length||Number(b.plan.legs.some(c=>c.market.ticker===newTicker))-Number(a.plan.legs.some(c=>c.market.ticker===newTicker))||b.terms.profitCents-a.terms.profitCents);
-      if(offers.length){
-        const {q,terms,plan,fees}=offers[0],{legs,ticker,strategy,fraction,shard,rfq,created}=plan;
+      for(const {q,terms,plan,fees} of offers){
+        const {legs,ticker,strategy,fraction,shard,rfq,created}=plan;
         // Confirm holdings and tradability immediately before accepting a quote.
-        const [positions,latestCombo]=await Promise.all([allOpenPositions(),kalshi('/markets/'+encodeURIComponent(ticker))]);
+        const [positions,latestCombo]=await Promise.all([allOpenPositions(),liveComboMarket(kalshi,ticker)]);
         const held=new Set((positions.market_positions||[]).filter(p=>Number(p.position_fp??p.position??0)>0).map(p=>p.ticker));
-        if(legs.some(c=>!held.has(c.market.ticker))||!['active','open'].includes(latestCombo.market?.status))break;
+        if(legs.some(c=>!held.has(c.market.ticker))||!latestCombo)continue;
         if(Date.now()>=deadline)break;
         const latest=await accountBalance({fresh:true});
         if(Number(latest.balance)<terms.debitCents || (shardCash(latest,shard)??0)<terms.debitCents ||
           terms.debitCents>comboAllowedCents(fraction,Number(latest.balance)+Number(latest.portfolio_value)) ||
-          !profitableCount(terms.count,terms.yesCost,fees,strategy,Number(latest.balance)+Number(latest.portfolio_value),legs[0].state.type,legs[0].state.remainingSeconds))break;
+          !profitableCount(terms.count,terms.yesCost,fees,strategy,Number(latest.balance)+Number(latest.portfolio_value),legs[0].state.type,legs[0].state.remainingSeconds))continue;
         const id=randomUUID(),reason=`${legs.length}-pick ${strategy} combo: ${legs.map(c=>c.state.title).join(' / ')}`;
         const inserted=await pool.query(`INSERT INTO trade_attempts(id,market_ticker,event_ticker,game_id,sport,strategy,reason,fraction,count,limit_price,available_cents,status,combo_legs,combo_rfq_id,combo_quote_id)
           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'combo_pending',$12,$13,$14)
           ON CONFLICT DO NOTHING RETURNING id`,
           [id,ticker,created.event_ticker,legs[0].milestone.id,legs[0].state.sport,strategy,reason,fraction,terms.count,terms.yesCost,Number(latest.balance),JSON.stringify(comboLegs(legs)),rfq,q.id]);
-        if(!inserted.rowCount)break;
+        if(!inserted.rowCount)continue;
         try{
           // Accepting the maker's NO bid buys YES (the complementary price).
           await kalshi('/communications/rfqs/'+encodeURIComponent(rfq)+'/quotes/'+encodeURIComponent(q.id)+'/accept',{auth:true,method:'PUT',body:{accepted_side:'no'}});

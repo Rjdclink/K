@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {COMBO_WINDOW_MS,VERIFY_DWELL_MS,comboAllocation,comboLegAllocation,comboAllowedCents,comboRfqTargetCents,remainingVerifiedComboCents,availableComboFills,comboCandidates,comboCollection,compatibleComboGroups,prioritizedComboGroups,comboPairDiagnostics,quoteForYes,comboLegs,filledComboWindow,eligibleFillTrigger,heldComboLeg,collectionsForEvents,selectedComboMarkets} from '../src/combos.mjs';
+import {COMBO_WINDOW_MS,VERIFY_DWELL_MS,comboAllocation,comboLegAllocation,comboAllowedCents,comboRfqTargetCents,remainingVerifiedComboCents,availableComboFills,comboCandidates,comboCollection,compatibleComboGroups,prioritizedComboGroups,comboPairDiagnostics,quoteForYes,comboLegs,filledComboWindow,eligibleFillTrigger,heldComboLeg,collectionsForEvents,selectedComboMarkets,liveComboMarket} from '../src/combos.mjs';
 
 test('two held fills qualify for combo without a second live game verification',()=>{
   const rows=['A','B'].map(ticker=>({market_ticker:ticker,event_ticker:'E',game_id:'G',sport:'NFL',strategy:'over',fill_count:'2.00',combo_legs:null,updated_at:new Date().toISOString()}));
@@ -192,5 +192,11 @@ test('all fifteen pairs of six held legs are requested ahead of larger tickets',
   assert.equal(groups.filter(g=>g.legs.length===2).length,15);
   assert.equal(groups.filter(g=>g.legs.length>2).length,5);
   assert.equal(groups[0].legs.length,2);
+});
+test('a newly created combo market 404 is retried while unrelated API errors still surface',async()=>{
+  const ticker='COMBO';
+  assert.equal(await liveComboMarket(async()=>{throw Error('Kalshi 404 GET /markets/COMBO: not found')},ticker),null);
+  assert.equal((await liveComboMarket(async()=>({market:{ticker,status:'active'}}),ticker))?.ticker,ticker);
+  await assert.rejects(liveComboMarket(async()=>{throw Error('Kalshi 403 GET /markets/COMBO: denied')},ticker),/403/);
 });
 
