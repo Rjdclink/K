@@ -1481,7 +1481,7 @@ async function settlementAlerts(since){
   return rows;
 }
 export default {async fetch(req){const url=new URL(req.url);
-  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'combo-pairs-upgrades-20261030'});
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'history-losses-20261030'});
   if(req.method==='GET'&&url.pathname==='/manifest.webmanifest')return response(manifest,'application/manifest+json');
   if(req.method==='GET'&&url.pathname==='/sw.js')return new Response(worker,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','service-worker-allowed':'/','x-content-type-options':'nosniff'}});
   if(req.method==='GET'&&/^\/icon-(192|512)\.png$/.test(url.pathname))return response(Buffer.from(icons[Number(url.pathname.match(/\d+/)[0])],'base64'),'image/png');
@@ -1549,12 +1549,22 @@ export default {async fetch(req){const url=new URL(req.url);
     }
     if(req.method==='GET'&&url.pathname==='/api/history'){
       const beforeTime=url.searchParams.get('before_time'),beforeId=url.searchParams.get('before_id');
+      const filter=url.searchParams.get('filter')||'all';
+      if(!['all','profit','loss'].includes(filter))return json({error:'Invalid history filter'},400);
       if(Boolean(beforeTime)!==Boolean(beforeId)||beforeTime&&(!Number.isFinite(new Date(beforeTime).getTime())||!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(beforeId)))return json({error:'Invalid history cursor'},400);
-      const {rows}=await pool.query(`SELECT id,sport,teams,occurred_at,profit_cents FROM trade_history
-        WHERE ($1::timestamptz IS NULL OR (occurred_at,id)<($1::timestamptz,$2::uuid))
-        ORDER BY occurred_at DESC,id DESC LIMIT 51`,[beforeTime||null,beforeId||null]);
+      const [{rows},{rows:[summary]}]=await Promise.all([
+        pool.query(`SELECT id,sport,teams,occurred_at,profit_cents FROM trade_history
+          WHERE ($1::timestamptz IS NULL OR (occurred_at,id)<($1::timestamptz,$2::uuid))
+            AND ($3::text='all' OR $3::text='profit' AND profit_cents>0 OR $3::text='loss' AND profit_cents<0)
+          ORDER BY occurred_at DESC,id DESC LIMIT 51`,[beforeTime||null,beforeId||null,filter]),
+        pool.query(`SELECT count(*) FILTER (WHERE profit_cents>0) AS profit_count,
+          count(*) FILTER (WHERE profit_cents<0) AS loss_count,
+          COALESCE(sum(profit_cents) FILTER (WHERE profit_cents>0),0) AS profit_cents,
+          COALESCE(sum(profit_cents) FILTER (WHERE profit_cents<0),0) AS loss_cents
+          FROM trade_history`)
+      ]);
       const history=rows.slice(0,50),last=history.at(-1);
-      return json({history:history.map(({sport,teams,occurred_at,profit_cents})=>({sport,teams,occurred_at,profit_cents})),next:rows.length>50?{before_time:last.occurred_at,before_id:last.id}:null});
+      return json({history:history.map(({sport,teams,occurred_at,profit_cents})=>({sport,teams,occurred_at,profit_cents})),summary,next:rows.length>50?{before_time:last.occurred_at,before_id:last.id}:null});
     }
     if(req.method==='GET'&&url.pathname==='/history')return new Response(historyPage,{headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store','content-security-policy':"default-src 'self'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'",'x-content-type-options':'nosniff'}});
     if(req.method==='GET'&&url.pathname==='/')return new Response(page,{headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store','content-security-policy':"default-src 'self'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self'; manifest-src 'self'; base-uri 'none'; frame-ancestors 'none'",'x-content-type-options':'nosniff'}})
