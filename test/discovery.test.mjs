@@ -33,6 +33,12 @@ test('retain linked ATP and WTA full-match game totals',()=>{
   assert.ok(found.includes('KXWTAGTOTAL-DATE'));
   assert.ok(!found.includes('KXWTASETWINNER-DATE'));
 });
+test('esports match event discovers only live exchange-confirmed whole-match total candidates',()=>{
+  const tickers=linkedEventTickers({type:'esports_match',related_event_tickers:['KXESOCCMATCH-DATE']});
+  assert.ok(tickers.includes('KXESOCCMATCH-DATE'));
+  assert.ok(tickers.includes('KXESOCCTOTAL-DATE'));
+  assert.ok(tickers.includes('KXESOCCTEAMTOTAL-DATE'));
+});
 
 test('unsupported feeds keep the scan active but do not fetch markets',()=>{
   const board=(type)=>gameState({id:type,type,title:'Away at Home'},{details:{status:'live',home_score:9,away_score:3}});

@@ -13,14 +13,16 @@ export function linkedEventTickers(milestone){
     const series=String(ticker).split('-')[0].toUpperCase();
     if(!String(ticker).includes('-')||!/(?:TEAMTOTAL|TOTAL|GAME|MATCH)$/.test(series))return false;
     if(/(?:1H|2H|[1-4]Q|[1-3]P|[1-9]INNING|HALF|SET)(?:GAME|MATCH)$/.test(series))return false;
-    return !series.endsWith('MATCH')||/tennis|darts|volleyball|handball|rugby|lacrosse/.test(String(milestone.type||''));
+    return !series.endsWith('MATCH')||/tennis|darts|volleyball|handball|rugby|lacrosse|esports/.test(String(milestone.type||''));
   };
   // Kalshi links player props and other score markets directly to the game.
   // Keep those actual tickers; the strategy still rejects any metric it
   // cannot independently verify.
   const listed=source.filter(t=>String(t).includes('-') && (main(t) || /(?:PTS|REB|AST|3PT|PRA|STL|BLK|GOALS|SAVES|SOG|HITS|RBI|HR|RUSHYDS|PASSYDS|RECYDS|RRYDS|RECPROT|PASSATT|PASSCOMP|PASSINT|PASSTDS|GTOTAL)(?:PROT)?$/.test(String(t).split('-')[0])));
-  const derived=listed.filter(ticker=>ticker.split('-')[0].endsWith('GAME')).flatMap(ticker=>{
+  const derived=listed.filter(ticker=>/(?:GAME|MATCH)$/.test(ticker.split('-')[0])&&
+    (ticker.split('-')[0].endsWith('GAME')||/esports/.test(String(milestone.type||'')))).flatMap(ticker=>{
     const [series,...rest]=ticker.split('-'),suffix=rest.join('-'),prefix=series.slice(0,-4);
+    const totalPrefix=series.endsWith('MATCH')?series.slice(0,-5):prefix;
     // These are only discovery candidates. The exchange must return an open
     // event and the contract-specific score check must still succeed.
     const family=String(milestone.type||'');
@@ -28,7 +30,7 @@ export function linkedEventTickers(milestone){
       /hockey/.test(family)?['1P','2P','3P']:
       /football/.test(family)?['1Q','2Q','3Q','4Q','1H','2H']:
       /baseball/.test(family)?Array.from({length:9},(_,i)=>`${i+1}INNING`):[];
-    return [`${prefix}TOTAL-${suffix}`,`${prefix}TEAMTOTAL-${suffix}`,
+    return [`${totalPrefix}TOTAL-${suffix}`,`${totalPrefix}TEAMTOTAL-${suffix}`,
       ...segments.flatMap(part=>[`${prefix}${part}TOTAL-${suffix}`,`${prefix}${part}TEAMTOTAL-${suffix}`])];
   });
   return [...new Set([...listed,...derived])];
