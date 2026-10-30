@@ -951,7 +951,7 @@ async function scan(cachedMilestones){
         // Kalshi can stop listing a milestone before held contracts settle.
         // Rehydrate its original event link from an audited successful entry,
         // then require a fresh live milestone and open event before combining.
-        const missing=singles.filter(r=>!gameById.has(r.game_id));
+        const missing=singles.filter(r=>!gameById.get(r.game_id)?.state.verifiedLive);
         if(missing.length){
           const {rows}=await pool.query(`SELECT DISTINCT ON (market_ticker) market_ticker,evidence->'milestone' AS milestone
             FROM verification_records WHERE passed=true AND market_ticker=ANY($1::text[])
@@ -959,7 +959,7 @@ async function scan(cachedMilestones){
           const byTicker=new Map(rows.map(r=>[r.market_ticker,r.milestone]));
           for(const r of missing){
             const milestone=byTicker.get(r.market_ticker);
-            if(!milestone?.id||gameById.has(milestone.id))continue;
+            if(!milestone?.id||gameById.get(milestone.id)?.state.verifiedLive)continue;
             try{
               const liveData=await liveMilestone(milestone.id);
               if(!liveData)continue;
