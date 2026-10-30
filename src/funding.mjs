@@ -1,4 +1,5 @@
 export const marketShard=(event,market)=>Number(market.exchange_index??event.exchange_index??0);
+export const shouldFundCombo=(localCents,desiredCents)=>localCents<100||desiredCents-localCents>100;
 export function shardCash(account,index){
   if(!Array.isArray(account?.balance_breakdown))return null;
   const row=account.balance_breakdown.find(b=>Number(b.exchange_index)===index);
@@ -14,3 +15,4 @@ export function transferPlan(account,destination,desiredCents){
   const amountCents=Math.min(Math.max(0,Math.ceil(desiredCents)-current),source.cents);
   return amountCents>0?{sourceShard:source.index,destinationShard:destination,amountCenticents:amountCents*100}:null;
 }
+
