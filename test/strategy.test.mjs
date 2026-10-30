@@ -390,40 +390,46 @@ test('regulation soccer totals reject extra-time goals even when live feed says 
   assert.equal(overSignal(consistent,{...market,yes_ask_dollars:'0.98'})?.fraction,.30);
   assert.equal(overSignal(game("88'",'live'),{...market,yes_ask_dollars:'0.98',result:'no'}),null);
 });
-test('tennis match winner requires clinching set, two-game lead, server and point score',()=>{
+test('tennis match winner requires a deciding-set service game that can clinch the match',()=>{
   const m={id:'tennis',title:'Hurkacz vs Bergs',type:'tennis_tournament_singles',details:{best_of:'3',first_competitor_id:'H',second_competitor_id:'B',main_game_event_ticker:'KXATPMATCH-26OCT26HURBER'}};
   const market={status:'active',event_ticker:'KXATPMATCH-26OCT26HURBER',title:'Hubert Hurkacz wins',rules_primary:'If Hubert Hurkacz wins the tennis match after a ball has been played, Yes.',custom_strike:{tennis_competitor:'H'}};
-  const live=(games=3,sets=1,server='H',p1=30,p2=15,best='3')=>gameState({...m,details:{...m.details,best_of:best}},{details:{status:'live',competitor1_is_home:true,competitor1_round_scores:[{outcome:'winner',score:6},{outcome:'ongoing',score:5}],competitor2_round_scores:[{outcome:'loser',score:3},{outcome:'ongoing',score:games}],competitor1_overall_score:sets,competitor2_overall_score:0,competitor1_current_round_score:p1,competitor2_current_round_score:p2,server,advantage:''}});
+  const live=(ours=5,theirs=4,sets=1,server='H',p1=30,p2=15,best='3')=>gameState({...m,details:{...m.details,best_of:best}},{details:{status:'live',competitor1_is_home:true,competitor1_round_scores:[{outcome:'winner',score:6},{outcome:'loser',score:3},{outcome:'ongoing',score:ours}],competitor2_round_scores:[{outcome:'loser',score:3},{outcome:'winner',score:6},{outcome:'ongoing',score:theirs}],competitor1_overall_score:sets,competitor2_overall_score:sets,competitor1_current_round_score:p1,competitor2_current_round_score:p2,server,advantage:''}});
   assert.equal(tennisSignal(live(),market)?.fraction,.15);
-  assert.equal(tennisSignal(live(2),market)?.fraction,.15);
-  assert.equal(tennisSignal(live(1),market)?.fraction,.15);
-  assert.equal(tennisSignal(live(1,1,'H',40,15),market)?.fraction,.15);
-  assert.equal(tennisSignal(live(4),market),null);
-  assert.equal(tennisSignal(live(3,0),market),null);
-  assert.equal(tennisSignal(live(3,2,'H',30,15,'5'),market)?.fraction,.15);
-  assert.equal(tennisSignal(live(2,2,'H',30,15,'5'),market)?.fraction,.15);
-  assert.equal(tennisSignal(live(3,1,'H',30,15,'5'),market),null);
-  assert.equal(tennisSignal(live(3,1,'B',30,40),market),null);
-  assert.equal(tennisSignal(live(3,1,'H',15,40),market),null);
-  assert.equal(tennisSignal(live(3,1,'unknown'),market),null);
+  assert.equal(tennisSignal(live(6,5),market)?.fraction,.15);
+  assert.equal(tennisSignal(live(3,1),market),null);
+  assert.equal(tennisSignal(live(5,3),market),null);
+  assert.equal(tennisSignal(live(5,5),market),null);
+  assert.equal(tennisSignal(live(6,6),market),null);
+  assert.equal(tennisSignal(live(5,4,0),market),null);
+  assert.equal(tennisSignal(live(5,4,2,'H',30,15,'5'),market)?.fraction,.15);
+  assert.equal(tennisSignal(live(5,4,1,'H',30,15,'5'),market),null);
+  assert.equal(tennisSignal(live(5,4,1,'B',30,40),market),null);
+  assert.equal(tennisSignal(live(5,4,1,'H',15,40),market),null);
+  assert.equal(tennisSignal(live(5,4,1,'unknown'),market),null);
   assert.equal(tennisSignal(live(),{...market,event_ticker:'KXATPSETWINNER-2'}),null);
 });
-test('ITF M15 deciding third set accepts a 3–1 lead only while the leader serves',()=>{
+test('ITF men and women accept only the match-clinching deciding-set service game',()=>{
   const m={id:'covato',title:'Covato vs Delgado',type:'tennis_tournament_singles',details:{tour:'ITF',tournament_name:'M15 Mazatlan',first_competitor_id:'cov',second_competitor_id:'del',main_game_event_ticker:'KXITFMATCH-26OCT28COVDEL'}};
   const market={status:'active',event_ticker:m.details.main_game_event_ticker,title:'Matteo Covato wins',rules_primary:'If Matteo Covato wins the professional tennis match, then Yes.',custom_strike:{tennis_competitor:'cov'},yes_ask_dollars:'0.95'};
   const now=Date.now();
-  const state=(at,first=3,second=1,server='cov',widget='live',milestone=m)=>gameState(milestone,{milestone_id:m.id,_observed_at:new Date(at).toISOString(),details:{status:'started',widget_status:widget,completed_rounds:2,competitor1_is_home:true,competitor1_overall_score:1,competitor2_overall_score:1,competitor1_round_scores:[{outcome:'winner',score:6},{outcome:'loser',score:1},{outcome:'ongoing',score:first}],competitor2_round_scores:[{outcome:'loser',score:4},{outcome:'winner',score:6},{outcome:'ongoing',score:second}],competitor1_current_round_score:40,competitor2_current_round_score:0,server}});
+  const state=(at,first=5,second=4,server='cov',widget='live',milestone=m)=>gameState(milestone,{milestone_id:m.id,_observed_at:new Date(at).toISOString(),details:{status:'started',widget_status:widget,completed_rounds:2,competitor1_is_home:true,competitor1_overall_score:1,competitor2_overall_score:1,competitor1_round_scores:[{outcome:'winner',score:6},{outcome:'loser',score:1},{outcome:'ongoing',score:first}],competitor2_round_scores:[{outcome:'loser',score:4},{outcome:'winner',score:6},{outcome:'ongoing',score:second}],competitor1_current_round_score:40,competitor2_current_round_score:0,server}});
   const first=state(now-7000),next=state(now);
   assert.equal(first.verifiedLive,true);
   assert.equal(first.tennis.bestOf,3);
   assert.equal(tennisSignal(first,market)?.fraction,.15);
   assert.equal(kalshiOnlyLead(first,next,market),true);
-  assert.equal(tennisSignal(state(now,3,1,'del'),market),null);
+  assert.equal(tennisSignal(state(now,5,4,'del'),market),null);
   assert.equal(tennisSignal(state(now,3,2),market),null);
   assert.equal(tennisSignal(state(now,2,0),market),null);
-  assert.equal(tennisSignal(state(now,3,1,'cov','pregame'),market),null);
-  assert.equal(tennisSignal(state(now,3,1,'cov','live',{...m,details:{...m.details,tour:'unknown'}}),market),null);
+  assert.equal(tennisSignal(state(now,5,4,'cov','pregame'),market),null);
+  assert.equal(tennisSignal(state(now,5,4,'cov','live',{...m,details:{...m.details,tour:'unknown'}}),market),null);
   assert.equal(kalshiOnlyLead(first,state(now,3,2),market),false);
+  const women={...m,details:{...m.details,tournament_name:'W75 Toronto',main_game_event_ticker:'KXITFWMATCH-26OCT30BRARYS'}};
+  const womenMarket={...market,event_ticker:women.details.main_game_event_ticker,title:'Reese Brantmeier wins'};
+  assert.equal(tennisSignal(state(now,2,1,'cov','live',women),womenMarket),null,'an early one-game lead is insufficient');
+  assert.equal(tennisSignal(state(now,3,1,'cov','live',women),womenMarket),null,'the former 3–1 entry is removed');
+  assert.equal(tennisSignal(state(now,5,4,'cov','live',women),womenMarket)?.fraction,.15);
+  assert.equal(tennisSignal(state(now,5,4,'del','live',women),womenMarket),null,'the leader must serve');
 });
 test('hockey requires three goals at 6:30 or less in final period',()=>{
   const hockey={...milestone,type:'hockey_match',details:{league:'NHL'}};
@@ -467,6 +473,39 @@ test('basketball requires a five point lead in the last minute with a fifteen pe
     assert.equal(numericConflict.periodConsistent,false);
     assert.equal(leadSignal(numericConflict,market),null);
   }
+});
+test('a four-point basketball lead needs under 21 seconds and stable leader possession for five percent',()=>{
+  const market={status:'active',title:'New York wins',yes_sub_title:'New York',yes_ask_dollars:'0.95'};
+  const now=Date.now();
+  for(const league of ['NBA','WNBA','NCAAW']){
+    const m={...milestone,details:{league}};
+    const final=league==='NCAAW'?2:4;
+    const at=(when,lead,clock='00:20',possession='home',period=final)=>gameState(m,{milestone_id:m.id,_observed_at:new Date(when).toISOString(),details:{...live(100+lead,100,period).details,clock,possession,last_updated_ts:(when-500)/1000}});
+    assert.equal(leadSignal(at(now,4),market)?.fraction,.05);
+    assert.equal(leadSignal(at(now,5),market)?.fraction,.15,'the existing five-point tier remains');
+    assert.equal(leadSignal(at(now,3),market),null);
+    assert.equal(leadSignal(at(now,4,'00:21'),market),null);
+    assert.equal(leadSignal(at(now,4,'00:00'),market),null);
+    assert.equal(leadSignal(at(now,4,'00:20','away'),market),null);
+    assert.equal(leadSignal(at(now,4,'00:20','home',final-1),market),null);
+    assert.equal(kalshiOnlyLead(at(now-7000,4),at(now,4),market),true);
+    assert.equal(kalshiOnlyLead(at(now-7000,4,'00:20','away'),at(now,4),market),false);
+  }
+});
+test('one-goal hockey and seven-point football close leads require possession and five percent',()=>{
+  const market={status:'active',title:'New York wins',yes_sub_title:'New York'};
+  const h={...milestone,type:'hockey_match',details:{league:'NHL'}};
+  const f={...milestone,type:'football_game',details:{league:'NFL'}};
+  const state=(m,home,clock,possession)=>gameState(m,{details:{...live(home,0,m.type==='hockey_match'?3:4).details,clock,puck_possession:possession,possession}});
+  assert.equal(leadSignal(state(h,1,'00:20','home'),market)?.fraction,.05);
+  assert.equal(leadSignal(state(h,2,'00:20','home'),market)?.fraction,.05);
+  assert.equal(leadSignal(state(h,1,'00:21','home'),market),null);
+  assert.equal(leadSignal(state(h,1,'00:20','away'),market),null);
+  assert.equal(leadSignal(state(h,3,'00:20','away'),market)?.fraction,.15);
+  assert.equal(leadSignal(state(f,7,'00:20','home'),market)?.fraction,.05);
+  assert.equal(leadSignal(state(f,6,'00:20','home'),market),null);
+  assert.equal(leadSignal(state(f,7,'00:20','away'),market),null);
+  assert.equal(leadSignal(state(f,10,'00:20','home'),market)?.fraction,.15);
 });
 test('football needs a ten point lead in the final seven minutes',()=>{
   const m={...milestone,type:'football_game',details:{league:'NFL'}};

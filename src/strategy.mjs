@@ -144,7 +144,7 @@ export function gameState(m, live) {
   const homeUnits=home,awayUnits=away;
   const unit=/baseball/.test(family)?'runs':/hockey|soccer/.test(family)?'goals':tennis?'games':'points';
   const itfDecidingThird=tennis&&String(m.details?.tour||'').toUpperCase()==='ITF'&&
-    /^M(?:15|25)\b/i.test(String(m.details?.tournament_name||''))&&d.completed_rounds===2&&
+    /^[MW]\d{2,3}\b/i.test(String(m.details?.tournament_name||''))&&d.completed_rounds===2&&
     d.competitor1_overall_score===1&&d.competitor2_overall_score===1&&
     d.competitor1_round_scores?.length===3&&d.competitor2_round_scores?.length===3&&
     one?.outcome==='ongoing'&&two?.outcome==='ongoing';
@@ -385,8 +385,12 @@ export function leadSignal(game, market) {
   const margin=Math.abs(h-a),trailerScore=Math.min(h,a);
   const finalWhistleSeconds=soccer&&game.soccerMinute>=89&&Number.isFinite(game.matchRemainingSeconds)&&game.matchRemainingSeconds>0?game.matchRemainingSeconds:Infinity;
   const minimum=basketball?5:football?10:hockey?3:baseball?2:soccer?finalWhistleSeconds<45?1:finalWhistleSeconds<120?2:3:null;
+  const closeLeaderPossession=game.possessionSide===(h>a?'home':'away');
+  const closeLeadThreshold=basketball?4:football?7:hockey?1:Infinity;
+  const closeLead=game.remainingSeconds>0&&game.remainingSeconds<21&&
+    margin>=closeLeadThreshold&&margin<minimum&&closeLeaderPossession;
   const ratio=trailerScore>0?Math.max(h,a)/trailerScore:Infinity;
-  if (minimum===null ? trailerScore<=0||ratio<3.5 : margin<minimum) return null;
+  if (minimum===null ? trailerScore<=0||ratio<3.5 : margin<minimum&&!closeLead) return null;
   const leader = h>a ? game.homeName : game.awayName;
   const trailer = h>a ? game.awayName : game.homeName;
   if(!hockey&&!soccer&&!baseball&&game.possessionSide!==(h>a?'home':'away'))return null;
@@ -396,7 +400,7 @@ export function leadSignal(game, market) {
   const identityMatches=teamId&&expectedId?teamId===expectedId:Boolean(leader&&trailer&&norm(description).includes(norm(leader))&&!norm(description).includes(norm(trailer)));
   if (!/win|winner|victory/i.test(description) || /wins? by|spread|handicap|margin of victory/i.test(description) || market.event_ticker && !/GAME(?:-|$)/i.test(market.event_ticker) || !identityMatches) return null;
   if(soccer && !/after 90 minutes plus stoppage time/i.test(market.rules_primary||''))return null;
-  const fraction=leadFraction(game,margin,minimum);
+  const fraction=closeLead?.05:leadFraction(game,margin,minimum);
   const timing=baseball?'9th inning':soccer?Number.isFinite(game.soccerMinute)?`${game.soccerMinute}' of regulation plus stoppage`:'second half (no clock)':`${basketball?`period ${game.period}, `:''}${game.clock} remaining`;
   return {strategy:'lead', reason:`${leader||market.yes_sub_title} leads ${h}–${a} ${game.unit} (${margin} ${game.unit} ahead); ${timing}`, fraction};
 }
@@ -521,8 +525,9 @@ export function tennisSignal(game,market){
   const t=game.tennis;
   if(!game.verifiedLive||!game.scoreKnown||!t||!['active','open'].includes(market.status)||market.event_ticker!==t.mainEvent||!/(?:wins?|winner).*match|wins?\b/i.test(`${market.title||''} ${market.rules_primary||''}`))return null;
   if(![3,5].includes(t.bestOf)||!t.firstId||!t.secondId||!t.server||!t.mainEvent||t.firstRound!=='ongoing'||t.secondRound!=='ongoing')return null;
-  const first=t.firstGames>=3 && t.firstGames-t.secondGames>=2 && t.firstSets===(t.bestOf-1)/2;
-  const second=t.secondGames>=3 && t.secondGames-t.firstGames>=2 && t.secondSets===(t.bestOf-1)/2;
+  // Only a leader serving at 5–4 or 6–5 can clinch the deciding set in this game.
+  const first=[5,6].includes(t.firstGames)&&t.firstGames-t.secondGames===1&&t.firstSets===(t.bestOf-1)/2;
+  const second=[5,6].includes(t.secondGames)&&t.secondGames-t.firstGames===1&&t.secondSets===(t.bestOf-1)/2;
   if(first===second)return null;
   const leaderId=first?t.firstId:t.secondId,opponentId=first?t.secondId:t.firstId;
   if(market.custom_strike?.tennis_competitor!==leaderId||t.server!==leaderId)return null;
