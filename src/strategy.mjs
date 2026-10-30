@@ -255,7 +255,7 @@ export function playerOverSpec(game,market){
 export function confirmedOver(first,second,market){
   if(!overSignal(first,market)||!overSignal(second,market))return false;
   if(first.id!==second.id||first.feedId!==first.id||second.feedId!==second.id)return false;
-  const dwell=3000;
+  const dwell=6000;
   if(!Number.isFinite(first.observedAt)||!Number.isFinite(second.observedAt)||second.observedAt-first.observedAt<dwell)return false;
   if(Number.isFinite(first.updatedAt)&&Number.isFinite(second.updatedAt)&&second.updatedAt<first.updatedAt)return false;
   if([first,second].some(s=>Number.isFinite(s.updatedAt)&&(s.updatedAt>s.observedAt+5000||s.observedAt-s.updatedAt>30000)))return false;
@@ -269,21 +269,37 @@ export function confirmedOver(first,second,market){
   if(Number.isFinite(first.soccerMinute)&&Number.isFinite(second.soccerMinute)&&second.soccerMinute<first.soccerMinute)return false;
   return true;
 }
-// Source-only entry covers exact crossed overs, including identified player
-// statistics. A newer live update and a small allocation bound revision risk.
+// An independently unavailable scoreboard permits the exact over signal only
+// after a second, newer Kalshi update. The same segment and named statistic
+// must remain crossed; a contradictory external source never reaches here.
 export function kalshiOnlyOver(first,second,market){
-  const series=String(market?.event_ticker||'').split('-')[0];
   const player=playerOverSpec(first,market),nextPlayer=playerOverSpec(second,market);
-  const cricket=first?.type==='cricket_match'&&second?.type==='cricket_match'&&
-    Boolean(cricketOverSignal(first,market)&&cricketOverSignal(second,market));
-  const fullGameScore=/(?:TEAMTOTAL|TOTAL)$/.test(series)&&!/[1-9](?:Q|P|H|INNING)(?:TEAM)?TOTAL$/.test(series)&&
-    ((first?.type==='esports_match'&&['eSoccer','eBasketball'].includes(first.sport)&&first.esportsPeriodsValid&&second?.esportsPeriodsValid)||
-      !/esports|tennis/.test(String(first?.type||''))&&/basketball|baseball|football|hockey|soccer/.test(String(first?.type||'')))&&
-    !Object.keys(market?.custom_strike||{}).some(k=>/_player$/.test(k));
-  if(!fullGameScore&&!cricket&&(!player||!nextPlayer||player.id!==nextPlayer.id||player.value!==nextPlayer.value))return false;
+  if(!overSignal(first,market)||!overSignal(second,market))return false;
+  if(player&&(!nextPlayer||player.id!==nextPlayer.id||player.value!==nextPlayer.value))return false;
+  const initialSegment=periodValue(first,market),laterSegment=periodValue(second,market);
+  if(Boolean(initialSegment)!==Boolean(laterSegment)||initialSegment&&
+    (initialSegment.home!==laterSegment.home||initialSegment.away!==laterSegment.away))return false;
   if(!Number.isFinite(first?.updatedAt)||!Number.isFinite(second?.updatedAt)||
     second.updatedAt<=first.updatedAt||second.observedAt-first.observedAt<6000)return false;
   return confirmedOver(first,second,market);
+}
+export function kalshiOnlyLead(first,second,market){
+  const signal=s=>leadSignal(s,market)||additionalLeadSignal(s,market)||tennisSignal(s,market)||tableTennisSignal(s,market);
+  if(Number.isFinite(Number(market?.yes_ask_dollars))&&Number(market.yes_ask_dollars)<.8||
+    !signal(first)||!signal(second)||first.id!==second.id||first.feedId!==first.id||second.feedId!==second.id||
+    !first.scoreConsistent||!second.scoreConsistent||first.home!==second.home||first.away!==second.away||
+    !Object.is(first.period,second.period)||!first.periodConsistent||!second.periodConsistent||
+    !Number.isFinite(first.observedAt)||!Number.isFinite(second.observedAt)||second.observedAt-first.observedAt<6000||
+    !Number.isFinite(first.updatedAt)||!Number.isFinite(second.updatedAt)||second.updatedAt<=first.updatedAt||
+    [first,second].some(s=>s.updatedAt>s.observedAt+5000||s.observedAt-s.updatedAt>30000)||
+    Number.isFinite(first.remainingSeconds)&&Number.isFinite(second.remainingSeconds)&&second.remainingSeconds>first.remainingSeconds||
+    Number.isFinite(first.soccerMinute)&&Number.isFinite(second.soccerMinute)&&second.soccerMinute<first.soccerMinute)return false;
+  // The qualifying phase, possession, and winner still match in both reads.
+  if(first.possessionSide!==second.possessionSide)return false;
+  for(const key of ['tennis','tableTennis','volleyball','darts']){
+    if(JSON.stringify(first[key])!==JSON.stringify(second[key]))return false;
+  }
+  return true;
 }
 const norm = s => String(s||'').toLowerCase().replace(/[^a-z0-9]/g,'');
 export function tableTennisSignal(game,market){

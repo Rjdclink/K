@@ -105,10 +105,10 @@ export function tableTennisMatches(data,game,milestone){
     return [{home,away,homeSets:score(e.homeScore?.current),awaySets:score(e.awayScore?.current),live:e.status?.type==='inprogress'}];
   });
 }
-export async function verifyIndependentTableTennisLead(game,milestone,{fetcher=fetch}={}){
+export async function verifyIndependentTableTennisLeadDecision(game,milestone,{fetcher=fetch}={}){
   if(!game.tableTennis||![3,5,7].includes(game.tableTennis.setNumber)||!game.verifiedLive)return false;
   const start=Date.parse(milestone.start_date||'');
-  if(!Number.isFinite(start))return false;
+  if(!Number.isFinite(start))return null;
   try{
     const dates=dateCandidates(start).map(s=>`${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6)}`);
     const results=await Promise.allSettled(dates.map(day=>json(`https://www.sofascore.com/api/v1/sport/table-tennis/scheduled-events/${day}`,fetcher)));
@@ -117,12 +117,16 @@ export async function verifyIndependentTableTennisLead(game,milestone,{fetcher=f
       const found=tableTennisMatches(r.value,game,milestone),key=JSON.stringify(found);
       if(!seen.has(key)){seen.add(key);matches.push(...found)}
     }
-    if(matches.length!==1)return false;
+    if(matches.length>1)return false;
+    if(!matches.length)return null;
     const m=matches[0];
     return m.live&&m.home===game.home&&m.away===game.away&&
       m.homeSets===(game.tableTennis.firstIsHome?game.tableTennis.firstSets:game.tableTennis.secondSets)&&
       m.awaySets===(game.tableTennis.firstIsHome?game.tableTennis.secondSets:game.tableTennis.firstSets);
-  }catch{return false}
+  }catch{return null}
+}
+export async function verifyIndependentTableTennisLead(game,milestone,options={}){
+  return (await verifyIndependentTableTennisLeadDecision(game,milestone,options))===true;
 }
 export async function verifyIndependentTableTennisMatch(game,milestone,{fetcher=fetch}={}){
   const t=game.tableTennis,start=Date.parse(milestone.start_date||'');

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {gameState,overSignal,confirmedOver,kalshiOnlyOver,leadSignal,tennisSignal,tableTennisSignal,orderSize,estimatedCostCents,overBudget,minimumProfitCents,netSettlementProfitCents,profitableCount,comeback} from '../src/strategy.mjs';
+import {gameState,overSignal,confirmedOver,kalshiOnlyOver,kalshiOnlyLead,leadSignal,tennisSignal,tableTennisSignal,orderSize,estimatedCostCents,overBudget,minimumProfitCents,netSettlementProfitCents,profitableCount,comeback} from '../src/strategy.mjs';
 
 test('each trade has its own percentage of the full bankroll',()=>{
   const bankroll=14600,alreadyHeld=4372;
@@ -81,6 +81,19 @@ test('Kalshi-only game total requires a newer score update six seconds later and
   assert.equal(kalshiOnlyOver(first,second,{...market,event_ticker:'KXKBOGAME-26OCT30KIASAM'}),false);
   assert.equal(kalshiOnlyOver(first,second,{...market,event_ticker:'KXKBO1INNINGTOTAL-26OCT30KIASAM'}),false);
   assert.ok(orderSize(10000,'.94','100',.05,1,15000,Infinity,2)<=8,'fallback is capped at five percent of the full bankroll');
+});
+test('Kalshi-only late baseball lead uses inning state without a clock',()=>{
+  const m={id:'kbo-lead',type:'baseball_game',title:'Kia Tigers vs Samsung Lions',details:{league:'Korea KBO',home_team_id:'kia',away_team_id:'sam'}};
+  const market={status:'active',event_ticker:'KXKBOGAME-26OCT30KIASAM',title:'Kia Tigers wins',yes_sub_title:'Kia Tigers',custom_strike:{baseball_team:'kia'},yes_ask_dollars:'0.92'};
+  const now=Date.now();
+  const state=(at,updated,home=5,inning=9)=>gameState(m,{milestone_id:m.id,_observed_at:new Date(at).toISOString(),details:{status:'live',home_score:home,away_score:2,inning,inning_half:2,last_updated_ts:updated/1000,home_team_name:'Kia Tigers',away_team_name:'Samsung Lions'}});
+  const first=state(now-8000,now-9000),second=state(now,now-1000);
+  assert.equal(Number.isNaN(first.remainingSeconds),true);
+  assert.equal(kalshiOnlyLead(first,second,market),true);
+  assert.equal(kalshiOnlyLead(state(now-5000,now-6000),second,market),false);
+  assert.equal(kalshiOnlyLead(first,state(now,now-9000),market),false);
+  assert.equal(kalshiOnlyLead(first,state(now,now-1000,4),market),false);
+  assert.equal(kalshiOnlyLead(first,state(now,now-1000,5,8),market),false);
 });
 test('Kalshi-only crossed player prop requires the same identified statistic on a newer update',()=>{
   const m={id:'nba-prop',title:'New York Knicks at Chicago Bulls',type:'basketball_game',details:{home_team_id:'chi',away_team_id:'nyk'}};
