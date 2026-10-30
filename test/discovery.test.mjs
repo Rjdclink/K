@@ -42,9 +42,9 @@ test('unsupported feeds keep the scan active but do not fetch markets',()=>{
   assert.equal(sportName({type:'esports_soccer_game'}),'eSoccer');
   assert.equal(sportName({type:'football_game',details:{league:'NCAAFB'}}),'CFB');
   assert.equal(sportName({type:'basketball_game',details:{league:'NCAAW'}}),'NCAAW');
-  assert.equal(gameTimeLabel(board('esports_match')),'Live clock unavailable');
+  assert.equal(gameTimeLabel(board('esports_match')),'esports trading not enabled');
   assert.equal(gameTimeLabel(board('cricket_match')),'Live clock unavailable');
-  assert.equal(gameTimeLabel({...board('cricket_match'),period:2}),'Innings 2 · no countdown clock');
+  assert.equal(gameTimeLabel({...board('cricket_match'),period:2}),'Innings 2 · cricket trading not enabled');
 });
 
 test('show verified phase and parsed clock without fabricating remaining time',()=>{
@@ -83,6 +83,7 @@ test('darts overall scores and esports phase display without an invented clock',
   assert.equal(gameTimeLabel(darts),'1st set · no countdown clock');
   assert.equal(eligibleForMarkets(darts),true);
   const esports=gameState({id:'esports',type:'esports_match',title:'Fede vs Eder',details:{league:'eSoccer'}},{details:{status:'live',home_score:3,away_score:3,period_unit:'half',home_periods:{period_1:3,period_2:0},away_periods:{period_1:2,period_2:1}}});
-  assert.equal(gameTimeLabel(esports),'Half 2 · no live clock supplied');
+  assert.equal(gameTimeLabel(esports),'Half 2 · esports trading not enabled');
   assert.equal(esports.scoreKnown,true);assert.equal(eligibleForMarkets(esports),false);
 });
+

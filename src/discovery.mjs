@@ -37,7 +37,12 @@ export function linkedEventTickers(milestone){
 export function gameTimeLabel(game){
   if(/^(final|finished|complete|completed|closed|ended)$/.test(game?.status||''))return 'Final';
   const family=String(game?.type||'');
-  if(/esports/.test(family)&&game.phase)return `${game.phase} · no live clock supplied`;
+  if(/golf/.test(family)){
+    const holes=game.golf?.board?.map(p=>p.current_round_thru).filter(Number.isInteger)||[];
+    return Number.isInteger(game.period)&&holes.length?`Round ${game.period} · ${Math.min(...holes)}–${Math.max(...holes)} holes completed`:
+      Number.isInteger(game.period)?`Round ${game.period} · hole progress unavailable`:'Round progress unavailable';
+  }
+  if(/esports/.test(family))return `${game.phase?game.phase+' · ':''}esports trading not enabled`;
   if(/darts/.test(family))return `${game.phase?game.phase+' · ':''}no countdown clock`;
   if(/table_tennis/.test(family))return Number.isFinite(game.setNumber)?`Set ${game.setNumber} · no countdown clock`:'Set number unavailable';
   if(/baseball/.test(family))return Number.isFinite(game.period)?`Inning ${game.period}${Number.isFinite(game.outs)?` · ${game.outs} out(s)`:''}`:'Inning unavailable';
@@ -45,7 +50,7 @@ export function gameTimeLabel(game){
   if(/soccer/.test(family)&&Number.isFinite(game.matchRemainingSeconds)&&game.matchRemainingSeconds>=0)return `${String(Math.floor(game.matchRemainingSeconds/60)).padStart(2,'0')}:${String(game.matchRemainingSeconds%60).padStart(2,'0')} match time remaining`;
   if(/soccer/.test(family)&&Number.isFinite(game.soccerMinute))return `${game.soccerMinute}' elapsed`;
   if(Number.isFinite(game.remainingSeconds)){const segment=Number.isFinite(game.period)?/basketball/.test(family)?`${['NCAAB','NCAAW'].includes(game.sport)?'Half':'Quarter'} ${game.period}`:/football/.test(family)?`Quarter ${game.period}`:/hockey/.test(family)?`Period ${game.period}`:'' : '';const seconds=game.clockRunning===false?Math.floor(game.remainingSeconds):Math.ceil(game.remainingSeconds);return `${segment?segment+' · ':''}${String(Math.floor(seconds/60)).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}${game.clockRunning===false?' paused':' remaining'}`}
-  if(/cricket/.test(family)&&Number.isFinite(game.period))return `Innings ${game.period} · no countdown clock`;
+  if(/cricket/.test(family)&&Number.isFinite(game.period))return `Innings ${game.period} · cricket trading not enabled`;
   if(/table_tennis/.test(family))return 'No countdown clock';
   return 'Live clock unavailable';
 }

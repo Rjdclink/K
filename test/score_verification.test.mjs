@@ -127,6 +127,20 @@ test('ESPN player statistic takes precedence over a delayed FOX box score',async
   assert.equal(await verifyIndependentOver(state,milestone,{market,fetcher:fetcher(7)}),true);
   assert.equal(await verifyIndependentOver(state,milestone,{market,fetcher:async url=>url.includes('/event/106594/data')?{ok:false,status:503}:{ok:true,json:async()=>url.includes('/summary?')?summary:url.includes('espn.com')?board:foxBoard}}),true);
 });
+test('a FOX score from the previous quarter cannot veto a current ESPN player stat',async()=>{
+  const state=gameState(m,{details:{status:'live',home_score:85,away_score:96,quarter:4,clock:'09:47',player_stats:{p:{steals:2}}}});
+  const market={event_ticker:'KXNBASTL-DATE',status:'active',yes_sub_title:'Ty Jerome: 2+ steals',custom_strike:{basketball_player:'p'},floor_strike:1.5};
+  const board=espn(85,96,{id:'espn-game',status:{type:{state:'in'},period:4,displayClock:'09:47'}});
+  const summary={boxscore:{players:[{statistics:[{names:['STL'],athletes:[{athlete:{displayName:'Ty Jerome'},stats:['2']}]}]}]}};
+  const delayed=fox(83,91,{statusLine:'END 3RD'});
+  const read=foxBoard=>async url=>{
+    if(url.includes('cdn.nba.com')||url.includes('cbssports.com')||url.includes('yahoo.com'))throw Error('unavailable');
+    return {ok:true,json:async()=>url.includes('/summary?')?summary:url.includes('espn.com')?board:foxBoard};
+  };
+  assert.equal(foxMatches(delayed,state,m)[0]?.stale,true);
+  assert.equal(await verifyIndependentOver(state,m,{market,fetcher:read(delayed)}),true);
+  assert.equal(await verifyIndependentOver(state,m,{market,fetcher:read(fox(83,91,{statusLine:'09:47 4TH'}))}),false,'a same-quarter conflict still vetoes');
+});
 test('WTA game totals need the exact ESPN match and all set games',async()=>{
   const milestone={id:'wta',title:'Rakhimova vs Alexandrova',type:'tennis_tournament_singles',start_date:start,details:{tour:'WTA'}};
   const live={details:{status:'live',competitor1_is_home:true,competitor1_round_scores:[{score:6},{score:4},{score:3}],competitor2_round_scores:[{score:4},{score:6},{score:2}]}};

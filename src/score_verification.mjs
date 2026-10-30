@@ -147,7 +147,12 @@ export function foxMatches(data,game,milestone){
     if(!homeUri||!awayUri||homeUri===awayUri||home===away)return [];
     if(!home||!away||!sameFixture(game,milestone,teamAliases(home,true),teamAliases(away,true),e.eventTime))return [];
     const eventId=String(e.entityLink?.layout?.tokens?.id||'');
-    return [{source:'FOX Sports',eventId:/^\d+$/.test(eventId)?eventId:null,home:score(home.score),away:score(away.score),live:e.eventStatus===1,clockOk:clockCompatible(game,NaN,e.statusLine)}];
+    const endOfPeriod=String(e.statusLine||'').match(/\bEND\s+(\d+)(?:ST|ND|RD|TH)\b/i);
+    const reportedPeriod=endOfPeriod?Number(endOfPeriod[1]):NaN;
+    // A source still showing the previous period cannot veto an exact,
+    // current independent scoreboard. A disagreement in the current period
+    // remains a veto.
+    return [{source:'FOX Sports',eventId:/^\d+$/.test(eventId)?eventId:null,home:score(home.score),away:score(away.score),live:e.eventStatus===1,clockOk:clockCompatible(game,reportedPeriod,e.statusLine),stale:Number.isFinite(game.period)&&Number.isFinite(reportedPeriod)&&reportedPeriod<game.period}];
   }));
 }
 export function scoreAgreement(game,bySource,market){
@@ -242,7 +247,7 @@ async function verifyExistingOver(game,milestone,{fetcher=fetch,cache,market}={}
       const matches=source==='ESPN'?/^tennis_/.test(game.type)?tennisMatches(result.value.data,game,milestone):espnMatches(result.value.data,game,milestone):foxMatches(result.value.data,game,milestone);
       const signature=JSON.stringify(matches);
       if(seen.has(signature))return [];
-      seen.add(signature);return matches;
+      seen.add(signature);return matches.filter(m=>!m.stale);
     });
   });
   // Use the preferred provider for a matched fixture. An absent fixture is
