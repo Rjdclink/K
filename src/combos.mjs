@@ -27,6 +27,11 @@ export function filledComboWindow(fills,heldTickers,lastComboAt,max=6){
     markets.add(r.market_ticker);return true;
   }).slice(0,max);
 }
+export function eligibleFillTrigger(ready,singles,group){
+  const eligible=new Set(group.map(c=>c.market.ticker));
+  const heldById=new Map(singles.map(r=>[r.id,r]));
+  return ready.map(r=>heldById.get(r.id)).find(r=>r&&eligible.has(r.market_ticker))||null;
+}
 export async function collectionsForEvents(eventTickers,get){
   const tickers=[...new Set(eventTickers)].filter(Boolean).slice(0,6);
   const responses=await Promise.all(tickers.map(async ticker=>{

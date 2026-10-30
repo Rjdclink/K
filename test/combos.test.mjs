@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {COMBO_WINDOW_MS,VERIFY_DWELL_MS,comboAllocation,cashAfterComboReserve,comboCandidates,comboCollection,compatibleComboGroups,quoteForYes,comboLegs,filledComboWindow,collectionsForEvents,selectedComboMarkets} from '../src/combos.mjs';
+import {COMBO_WINDOW_MS,VERIFY_DWELL_MS,comboAllocation,cashAfterComboReserve,comboCandidates,comboCollection,compatibleComboGroups,quoteForYes,comboLegs,filledComboWindow,eligibleFillTrigger,collectionsForEvents,selectedComboMarkets} from '../src/combos.mjs';
+
+test('a stale newer fill cannot starve an older live combo trigger',()=>{
+  const singles=[{id:'new',market_ticker:'NBA'},{id:'older',market_ticker:'Hubbard'}];
+  const group=[{market:{ticker:'Hubbard'}},{market:{ticker:'Watson'}}];
+  assert.equal(eligibleFillTrigger([{id:'new'},{id:'older'}],singles,group).market_ticker,'Hubbard');
+});
 
 test('single trades retain their own bankroll cap while cash is reserved for the next combo',()=>{
   assert.equal(cashAfterComboReserve(10227,14599,0),8768);

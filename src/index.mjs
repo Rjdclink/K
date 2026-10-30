@@ -16,7 +16,7 @@ import { authorized, checkCredentials, sessionCookie, loginPage } from './dashbo
 import { eligibleForMarkets, linkedEventTickers, gameTimeLabel, storedClockSeconds } from './discovery.mjs';
 import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOver, verifyIndependentTableTennisLead, verifyIndependentTableTennisMatch } from './score_verification.mjs';
-import { COMBO_ATTEMPT_MS, COMBO_WINDOW_MS, VERIFY_DWELL_MS, comboAllocation, cashAfterComboReserve, compatibleComboGroups, comboLegs, filledComboWindow, quoteForYes, collectionsForEvents, selectedComboMarkets } from './combos.mjs';
+import { COMBO_ATTEMPT_MS, COMBO_WINDOW_MS, VERIFY_DWELL_MS, comboAllocation, cashAfterComboReserve, compatibleComboGroups, comboLegs, filledComboWindow, eligibleFillTrigger, quoteForYes, collectionsForEvents, selectedComboMarkets } from './combos.mjs';
 import { estimatedSaleProfitCents } from './positions.mjs';
 import { weatherContract } from './weather.mjs';
 import { scanWeatherMarkets } from './weather_scanner.mjs';
@@ -984,10 +984,7 @@ async function scan(cachedMilestones){
         WHERE a.status='filled' AND a.combo_legs IS NULL AND a.created_at>now()-interval '24 hours'
           AND t.completed_at IS NULL AND (t.attempted_at IS NULL OR t.attempted_at<now()-interval '20 seconds')
         ORDER BY a.created_at DESC LIMIT 25`);
-      const newlyFilled=ready.rows.map(r=>singles.find(s=>s.id===r.id)).find(Boolean);
-      if(newlyFilled&&singles.length>=2){
-        await pool.query(`INSERT INTO combo_fill_triggers(fill_id,attempted_at) VALUES($1,now())
-          ON CONFLICT(fill_id) DO UPDATE SET attempted_at=EXCLUDED.attempted_at`,[newlyFilled.id]);
+      if(ready.rowCount&&singles.length>=2){
         const gameById=new Map(games.map(g=>[g.milestone.id,g]));
         // Kalshi can stop listing a milestone before held contracts settle.
         // Rehydrate its original event link from an audited successful entry,
@@ -1022,8 +1019,12 @@ async function scan(cachedMilestones){
         const group=[],seenMarkets=new Set();
         for(const c of comboCandidates){if(seenMarkets.has(c.market.ticker))continue;
           group.push(c);seenMarkets.add(c.market.ticker);if(group.length===6)break}
+        const newlyFilled=eligibleFillTrigger(ready.rows,singles,group);
         if(group.length<2)console.warn('Combo fewer than two qualifying held markets:',singles.map(r=>r.market_ticker),group.map(c=>c.market.ticker));
-        if(group.length>=2)try{
+        if(!newlyFilled&&group.length>=2)console.warn('Combo no live eligible fill trigger:',ready.rows.map(r=>r.market_ticker),group.map(c=>c.market.ticker));
+        if(newlyFilled&&group.length>=2)try{
+          await pool.query(`INSERT INTO combo_fill_triggers(fill_id,attempted_at) VALUES($1,now())
+            ON CONFLICT(fill_id) DO UPDATE SET attempted_at=EXCLUDED.attempted_at`,[newlyFilled.id]);
           const result=await executeCombo(group,currentAccount,Number(currentAccount.balance)+Number(currentAccount.portfolio_value),scoreboardCache,comboAllocation(comboCount),newlyFilled.market_ticker);
           if(result.pending)await pool.query('UPDATE combo_fill_triggers SET completed_at=now() WHERE fill_id=$1',[newlyFilled.id]);
           if(result.filled)submitted++;
