@@ -1,6 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {estimatedSaleProfitCents,positiveExitEligible} from '../src/positions.mjs';
+import {estimatedSaleProfitCents,positiveExitEligible,oneAndHalfExitEligible} from '../src/positions.mjs';
+
+test('1.5 times exit compares net proceeds with the full proportional cost',()=>{
+  const held={position_fp:'20',market_exposure_dollars:'10.00',fees_paid_dollars:'0.20'};
+  assert.equal(oneAndHalfExitEligible(held,{count:10,price:.80}),true);
+  assert.equal(oneAndHalfExitEligible(held,{count:10,price:.75}),false);
+  assert.equal(oneAndHalfExitEligible({...held,market_exposure_dollars:'14.00'},{count:10,price:.99}),false);
+  assert.equal(oneAndHalfExitEligible({...held,fees_paid_dollars:null},{count:10,price:.80}),false);
+  assert.equal(oneAndHalfExitEligible(held,{count:21,price:.99}),false);
+});
 
 test('sale P&L uses executable shares, proportional cost basis and both fees',()=>{
   const held={position_fp:'20.00',market_exposure_dollars:'15.00',fees_paid_dollars:'0.20'};

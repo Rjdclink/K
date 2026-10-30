@@ -5,20 +5,21 @@ export const COMBO_WINDOW_MS=12000;
 // RFQ maker can take longer than the quote freshness window.
 export const COMBO_ATTEMPT_MS=45000;
 export const VERIFY_DWELL_MS=6000;
-export function comboAllocation(){return .35;}
-export const COMBO_LEEWAY_CENTS=1000;
-export function comboAllowedCents(fraction,bankrollCents){return Math.floor(fraction*bankrollCents)+COMBO_LEEWAY_CENTS;}
+export function comboAllocation(){return .20;}
+export function comboAllowedCents(fraction,bankrollCents){return Math.floor(fraction*bankrollCents);}
 // Maker RFQs quote close to target cost; leave room for the fee before asking.
 export function comboRfqTargetCents(budgetCents){return Math.max(0,Math.floor(budgetCents*.97));}
 export function comboLegAllocation(legs,verifiedFraction){
-  return legs.some(c=>c.signal?.kalshiOnly&&!c.signal?.externallyVerified)?.20:verifiedFraction;
+  if(legs.length>=2&&legs.every(c=>c.signal?.robustOver===true&&
+    (c.signal?.kalshiOnly!==true||c.signal?.externallyVerified===true)))return .40;
+  return legs.some(c=>c.signal?.kalshiOnly&&!c.signal?.externallyVerified)?.15:verifiedFraction;
 }
 export function remainingVerifiedComboCents(position,bankroll){
   const held=Number(position?.position_fp),exposure=Number(position?.market_exposure_dollars),fees=Number(position?.fees_paid_dollars);
   if(!Number.isFinite(held)||held<=0||position?.market_exposure_dollars==null||
     position?.fees_paid_dollars==null||!Number.isFinite(exposure)||exposure<0||
     !Number.isFinite(fees)||fees<0||!Number.isFinite(bankroll)||bankroll<=0)return 0;
-  return Math.max(0,Math.floor(bankroll*.35)-Math.ceil(exposure*100)-Math.ceil(fees*100));
+  return Math.max(0,Math.floor(bankroll*.20)-Math.ceil(exposure*100)-Math.ceil(fees*100));
 }
 export function availableComboFills(fills,usedLegTickers){
   return fills.filter(r=>!(/Kalshi-only/i.test(r.reason||'')&&r.externally_verified!==true&&usedLegTickers.has(r.market_ticker)));
@@ -79,6 +80,9 @@ export function compatibleComboGroups(collections,candidates,maxGroups=6){
   }
   return groups.sort((a,b)=>b.legs.length-a.legs.length).slice(0,maxGroups);
 }
+export function prioritizedComboGroups(groups,maxLarger=5){
+  return [...groups.filter(g=>g.legs.length===2),...groups.filter(g=>g.legs.length>2).slice(0,maxLarger)];
+}
 export function comboPairDiagnostics(collections,candidates){
   const pairs=[];
   for(let i=0;i<candidates.length;i++)for(let j=i+1;j<candidates.length;j++){
@@ -102,8 +106,14 @@ export function heldComboLeg(row,market,snapshot={}){
       snapshot.home==null||snapshot.away==null||market.floor_strike==null||
       !Number.isFinite(Number(snapshot.home))||!Number.isFinite(Number(snapshot.away))||
       Number(snapshot.home)+Number(snapshot.away)<=Number(market.floor_strike)))return null;
+  const kalshiOnly=/Kalshi-only/i.test(row.reason||'');
+  const freshSnapshot=snapshot.status==='live'&&Date.now()-Date.parse(snapshot.scanned_at||'')<90000;
+  const robustOver=row.strategy==='over'&&Number(row.fraction)===.40&&
+    /still crossed if the latest \d+-unit scoring play is removed/i.test(row.reason||'')&&
+    freshSnapshot&&(snapshot.signals||[]).some(s=>s.ticker===row.market_ticker&&
+      /still crossed if the latest \d+-unit scoring play is removed/i.test(s.reason||''));
   return {milestone:{id:row.game_id},event:{event_ticker:row.event_ticker},market,
-    signal:{strategy:row.strategy,kalshiOnly:/Kalshi-only/i.test(row.reason||''),externallyVerified:row.externally_verified===true},state:{title:snapshot.title||row.sport||row.event_ticker,sport:row.sport||snapshot.sport||'',
+    signal:{strategy:row.strategy,kalshiOnly,externallyVerified:!kalshiOnly||row.externally_verified===true,robustOver},state:{title:snapshot.title||row.sport||row.event_ticker,sport:row.sport||snapshot.sport||'',
       type:snapshot.sport_family||'',remainingSeconds:snapshot.clock_seconds==null?NaN:Number(snapshot.clock_seconds)}};
 }
 export function quoteForYes(quote,ticker,budgetCents,feeMultiplier=2,bankrollCents=budgetCents){

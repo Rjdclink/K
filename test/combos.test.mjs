@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {COMBO_WINDOW_MS,VERIFY_DWELL_MS,comboAllocation,comboLegAllocation,comboAllowedCents,comboRfqTargetCents,remainingVerifiedComboCents,availableComboFills,comboCandidates,comboCollection,compatibleComboGroups,comboPairDiagnostics,quoteForYes,comboLegs,filledComboWindow,eligibleFillTrigger,heldComboLeg,collectionsForEvents,selectedComboMarkets} from '../src/combos.mjs';
+import {COMBO_WINDOW_MS,VERIFY_DWELL_MS,comboAllocation,comboLegAllocation,comboAllowedCents,comboRfqTargetCents,remainingVerifiedComboCents,availableComboFills,comboCandidates,comboCollection,compatibleComboGroups,prioritizedComboGroups,comboPairDiagnostics,quoteForYes,comboLegs,filledComboWindow,eligibleFillTrigger,heldComboLeg,collectionsForEvents,selectedComboMarkets} from '../src/combos.mjs';
 
 test('two held fills qualify for combo without a second live game verification',()=>{
   const rows=['A','B'].map(ticker=>({market_ticker:ticker,event_ticker:'E',game_id:'G',sport:'NFL',strategy:'over',fill_count:'2.00',combo_legs:null,updated_at:new Date().toISOString()}));
@@ -70,9 +70,9 @@ test('combo collection discovery filters by each event and paginates',async()=>{
   assert.deepEqual(requests.sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b))),[['E1','next'],['E1',null],['E2',null]].sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b))));
 });
 const candidate=(id,event,strategy='over')=>({milestone:{id},event:{event_ticker:event},market:{ticker:id+'-YES'},signal:{strategy},state:{title:id,sport:'NBA'}});
-test('verified combinations retain a thirty-five percent maximum regardless of prior combos',()=>{
+test('verified combinations use a twenty percent ceiling regardless of prior combos',()=>{
   assert.equal(VERIFY_DWELL_MS,6000);
-  assert.deepEqual(Array.from({length:7},(_,i)=>comboAllocation(i)),Array(7).fill(.35));
+  assert.deepEqual(Array.from({length:7},(_,i)=>comboAllocation(i)),Array(7).fill(.20));
 });
 test('groups at most six distinct live games and distinct events by strategy',()=>{
   const input=[candidate('a','A'),candidate('a','B'),candidate('b','A'),...Array.from({length:8},(_,i)=>candidate('c'+i,'C'+i)),candidate('z','Z','lead')];
@@ -90,7 +90,7 @@ test('held fills remain eligible; the market ticker prevents a repeated combo or
   const props=Array.from({length:6},(_,i)=>({...row(i+10),game_id:'SAME-GAME',event_ticker:'PROP-'+i}));
   assert.equal(filledComboWindow(props,new Set(props.map(p=>p.market_ticker)),null).length,6);
 });
-test('unverified combination uses twenty percent and a verified combination uses thirty-five percent',()=>{
+test('unverified combination uses fifteen percent and a verified combination uses twenty percent',()=>{
   const rows=[
     {market_ticker:'UNVERIFIED',reason:'Winner; Kalshi-only newer score check, 6 seconds apart',combo_legs:null},
     {market_ticker:'VERIFIED',reason:'Winner; independent score confirmed',combo_legs:null},
@@ -99,11 +99,21 @@ test('unverified combination uses twenty percent and a verified combination uses
   assert.deepEqual(filledComboWindow(rows,new Set(rows.map(r=>r.market_ticker)),null),rows);
   const fallback=heldComboLeg({...rows[0],fill_count:'1',event_ticker:'E'}, {ticker:'UNVERIFIED',event_ticker:'E',status:'active'});
   const verified=heldComboLeg({...rows[1],fill_count:'1',event_ticker:'E'}, {ticker:'VERIFIED',event_ticker:'E',status:'active'});
-  assert.equal(comboLegAllocation([fallback,verified],comboAllocation(0)),.20);
-  assert.equal(comboLegAllocation([fallback,verified],comboAllocation(4)),.20);
-  assert.equal(comboLegAllocation([verified],comboAllocation(0)),.35);
+  assert.equal(comboLegAllocation([fallback,verified],comboAllocation(0)),.15);
+  assert.equal(comboLegAllocation([fallback,verified],comboAllocation(4)),.15);
+  assert.equal(comboLegAllocation([verified],comboAllocation(0)),.20);
   assert.deepEqual(availableComboFills(rows,new Set(['UNVERIFIED'])),[rows[1],rows[2]],'a used unverified leg cannot stack another combo');
   assert.deepEqual(availableComboFills([{...rows[0],externally_verified:true},rows[1]],new Set(['UNVERIFIED'])).map(r=>r.market_ticker),['UNVERIFIED','VERIFIED']);
+});
+test('only fresh independently verified robust overs can form a forty percent combo',()=>{
+  const market={ticker:'A',event_ticker:'E',status:'active'},reason='169 scored; line 139.5 already passed; still crossed if the latest 2-unit scoring play is removed';
+  const snapshot={status:'live',scanned_at:new Date().toISOString(),signals:[{ticker:'A',reason}]};
+  const row={market_ticker:'A',event_ticker:'E',game_id:'G',sport:'Basketball',strategy:'over',fraction:.40,fill_count:'2',reason};
+  const robust=heldComboLeg(row,market,snapshot);
+  assert.equal(robust.signal.robustOver,true);
+  assert.equal(comboLegAllocation([robust,{...robust}],.20),.40);
+  assert.equal(comboLegAllocation([robust,{...robust,signal:{...robust.signal,kalshiOnly:true,externallyVerified:false}}],.20),.15);
+  assert.equal(heldComboLeg(row,market,{...snapshot,scanned_at:'2020-01-01T00:00:00Z'}).signal.robustOver,false);
 });
 test('a Kalshi-only single joins combinations only after current independent verification',()=>{
   const rows=[{id:'a',market_ticker:'A',reason:'Kalshi-only two reads',externally_verified:true,updated_at:'2026-10-30T12:00:00Z'},
@@ -111,12 +121,13 @@ test('a Kalshi-only single joins combinations only after current independent ver
   assert.deepEqual(filledComboWindow(rows,new Set(['A','B']),null).map(r=>r.market_ticker),['A','B']);
   const fallback=heldComboLeg({...rows[0],fill_count:'1',event_ticker:'E'}, {ticker:'A',event_ticker:'E',status:'active'});
   const verified=heldComboLeg({...rows[0],fill_count:'1',event_ticker:'E',externally_verified:false}, {ticker:'A',event_ticker:'E',status:'active'});
-  assert.equal(comboLegAllocation([fallback],.35),.35);
-  assert.equal(comboLegAllocation([verified],.35),.20);
+  assert.equal(comboLegAllocation([fallback],.20),.20);
+  assert.equal(comboLegAllocation([verified],.20),.15);
 });
 test('later verified combo add-on uses only remaining market exposure and fees',()=>{
   const position={position_fp:'20',market_exposure_dollars:'19.80',fees_paid_dollars:'0.20'};
-  assert.equal(remainingVerifiedComboCents(position,10000),1500);
+  assert.equal(remainingVerifiedComboCents(position,10000),0);
+  assert.equal(remainingVerifiedComboCents(position,20000),2000);
   assert.equal(remainingVerifiedComboCents(position,5000),0);
   assert.equal(remainingVerifiedComboCents({...position,fees_paid_dollars:null},10000),0);
 });
@@ -156,8 +167,8 @@ test('RFQ target reserves room for the fee within the full combo allocation',()=
   assert.equal(comboRfqTargetCents(budget),2880);
   const quote={market_ticker:'COMBO',status:'open',no_bid_dollars:'0.0700',no_contracts_fp:'31.77',created_ts:new Date().toISOString()};
   assert.equal(quoteForYes(quote,'COMBO',budget,2),null,'the observed full quote exceeds the fee-inclusive cap');
-  assert.ok(quoteForYes(quote,'COMBO',comboAllowedCents(.20,14850),2),'a fee-inclusive quote 14 cents above the base allocation is within the ten-dollar leeway');
-  assert.equal(comboAllowedCents(.20,14850),3970);
+  assert.equal(quoteForYes(quote,'COMBO',comboAllowedCents(.20,14850),2),null,'the quote cannot exceed the strict allocation');
+  assert.equal(comboAllowedCents(.20,14850),2970);
   assert.equal(quoteForYes(quote,'COMBO',2970+10,2),null,'ten cents is less than the quoted fee difference');
   assert.ok(quoteForYes({...quote,no_contracts_fp:'28.74'},'COMBO',budget,2));
 });
@@ -173,5 +184,13 @@ test('six independently filled player props from one game stay in the six-leg co
  const groups=compatibleComboGroups([collection],candidates,64);
  assert.equal(groups[0].legs.length,6);
  assert.deepEqual(groups[0].legs.map(c=>c.market.ticker),candidates.map(c=>c.market.ticker));
+});
+test('all fifteen pairs of six held legs are requested ahead of larger tickets',()=>{
+  const candidates=Array.from({length:6},(_,i)=>candidate('p'+i,'E'+i));
+  const collection={collection_ticker:'SIX',is_all_yes:true,is_single_market_per_event:true,size_min:2,size_max:6,associated_event_tickers:candidates.map(c=>c.event.event_ticker)};
+  const groups=prioritizedComboGroups(compatibleComboGroups([collection],candidates,64));
+  assert.equal(groups.filter(g=>g.legs.length===2).length,15);
+  assert.equal(groups.filter(g=>g.legs.length>2).length,5);
+  assert.equal(groups[0].legs.length,2);
 });
 

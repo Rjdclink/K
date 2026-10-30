@@ -587,11 +587,12 @@ test('over allocation is a per-trade cap independent of existing positions',()=>
   assert.equal(overBudget(6000,4000,3000),3000);
   assert.equal(overBudget(10000,0,9000),3000);
 });
-test('entry submissions and recovery use full fills while exits cannot target overs',()=>{
+test('entry submissions use full fills and exits require a valid lead or the 1.5 times target',()=>{
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
   assert.equal((source.match(/side:'bid'[^\n]+time_in_force:'fill_or_kill'/g)||[]).length,3);
-  assert.match(source,/if\(original\?\.strategy!=='lead'\|\|\/TOTAL\/i\.test\(position\.ticker\)\)continue/);
-  assert.match(source,/const combo=Array\.isArray\(original\.combo_legs\)&&original\.combo_legs\.length>=2;\s*if\(combo\)continue;/);
+  assert.match(source,/const leadExit=original\.strategy==='lead'&&![^;]+&&!combo;/);
+  assert.match(source,/const targetReached=sale\.count>=heldCount-1e-7&&oneAndHalfExitEligible\(position,sale\);/);
+  assert.match(source,/if\(!leadExit&&!targetReached\)continue;/);
   assert.match(source,/if\(live\(\)\|\|exitOnly\(\)\)await exitComebacks/);
   assert.match(source,/for\(const c of \[\.\.\.upgradeCandidates,\.\.\.opportunities\]\)[^]*?if\(!live\(\)\)continue/);
   assert.match(source,/if\(a\.signal\.strategy!==b\.signal\.strategy\)return a\.signal\.strategy==='over'\?-1:1/);
