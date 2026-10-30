@@ -27,6 +27,30 @@ export function sportName(m) {
   if (/football/.test(s)) return m.details?.league || 'Football';
   return m.details?.league || m.details?.competition || m.type || 'Sports';
 }
+// Cricket innings scores are not the match total in a multi-innings Test.
+// Require every innings to be assigned to the named home/away team.
+function cricketFinalInnings(m,d){
+  if(m.type!=='cricket_match')return null;
+  const board=d.cricket_result?.scoreboard,league=String(m.details?.league||'');
+  const max=cricketOneInningsFormat(league)?2:/\btest\b/i.test(league)?4:NaN;
+  if(!board||![2,4].includes(max)||N(d.current_inning)!==max||N(board['Current Innings'])!==max||
+    !m.details?.home_team_id||!m.details?.away_team_id)return null;
+  const home=String(board.home||''),away=String(board.away||'');
+  if(!home||!away||home===away)return null;
+  const scores={home:0,away:0},counts={home:0,away:0};
+  for(let i=1;i<=max;i++){
+    const side=board['batting.'+i]===home?'home':board['batting.'+i]===away?'away':null;
+    const runs=N(board['runs.'+i]);
+    if(!side||!Number.isInteger(runs)||runs<0)return null;
+    scores[side]+=runs;counts[side]++;
+    if(i===max&&(board['Current Batting Team']!==board['batting.'+i]||d.batting!==side||
+      runs!==N(d[side+'_score'])))return null;
+  }
+  if(counts.home!==max/2||counts.away!==max/2||
+    Number.isFinite(N(d.home_total_runs))&&N(d.home_total_runs)!==scores.home||
+    Number.isFinite(N(d.away_total_runs))&&N(d.away_total_runs)!==scores.away)return null;
+  return {homeTotal:scores.home,awayTotal:scores.away,innings:max,mainEvent:m.details?.main_game_event_ticker};
+}
 export function gameState(m, live) {
   if(m.type==='golf_tournament')return golfState(m,live);
   const d = live?.details || {};
@@ -98,9 +122,11 @@ export function gameState(m, live) {
   const matchRemainingSeconds=/soccer/.test(family)?N(d.match_remaining_seconds):NaN;
   // Soccer feeds include extra-time goals in same-game scores, while the
   // matching Kalshi totals and winner markets settle on regulation only.
-  const soccerExtraTime=/soccer/.test(family) &&
+  const soccerOvertime=/soccer/.test(family) &&
     (/^(?:aet|et|extra.?time|overtime|penalties)$/i.test(String(d.match_status||'')) ||
-      (Array.isArray(d.period_scores)?d.period_scores:[]).some(p=>/overtime|extra/i.test(String(p.type||''))) ||
+      (Array.isArray(d.period_scores)?d.period_scores:[]).some(p=>/overtime|extra/i.test(String(p.type||''))));
+  const soccerExtraTime=/soccer/.test(family) &&
+    (soccerOvertime ||
       Number.isFinite(soccerMinute) && soccerMinute>=90);
   const segmentSeconds=/hockey/.test(family)||['NCAAB','NCAAW'].includes(sport)?1200:/basketball/.test(family)?sport==='WNBA'?600:720:900;
   const clockFraction = parts ? Math.min(1, remainingSeconds / segmentSeconds) : NaN;
@@ -125,7 +151,7 @@ export function gameState(m, live) {
   const tennisData=tennis?{bestOf:Number.isInteger(N(m.details?.best_of))?N(m.details.best_of):itfDecidingThird?3:NaN,firstId:m.details?.first_competitor_id,secondId:m.details?.second_competitor_id,firstGames:N(one?.score),secondGames:N(two?.score),firstSets:N(d.competitor1_overall_score),secondSets:N(d.competitor2_overall_score),firstPoints:N(d.competitor1_current_round_score),secondPoints:N(d.competitor2_current_round_score),firstRound:one?.outcome,secondRound:two?.outcome,server:String(d.server||''),advantage:String(d.advantage||''),mainEvent:m.details?.main_game_event_ticker}:null;
   const tableTennisData=tableTennis?{bestOf:N(m.details?.best_of??d.best_of_sets),firstId:m.details?.first_competitor_id,secondId:m.details?.second_competitor_id,firstIsHome,firstSets:N(d.competitor1_overall_score),secondSets:N(d.competitor2_overall_score),setNumber:N(currentSet?.number),firstPoints:N(currentSet?.competitor1_score),secondPoints:N(currentSet?.competitor2_score)}:null;
   const tennisTotal=tennis?tennisGameTotal(d):NaN;
-  return {id:m.id, feedId:live?.milestone_id, observedAt:Date.parse(live?._observed_at||''), updatedAt:Number.isFinite(updated)?updated*1000:NaN, title:m.title, sport, competition:String(m.details?.league||''), tour:String(m.details?.tour||''), type:family, status, home, away, homeUnits, awayUnits, unit, period, periodScores, playerStats:d.player_stats||null, tennisTotal, tableTennis:tableTennisData, darts:darts?{format:String(d.game_format||m.details?.format||''),bestOf:N(d.best_of_legs),firstIsHome,firstId:m.details?.first_competitor_id,secondId:m.details?.second_competitor_id,firstLegs:N(d.competitor1_overall_score),secondLegs:N(d.competitor2_overall_score),firstRemaining:N(d.competitor1_remaining_points),secondRemaining:N(d.competitor2_remaining_points),nextThrow:String(d.next_throw_competitor_id||''),firstCheckout:d.competitor1_checkout_possible===true,secondCheckout:d.competitor2_checkout_possible===true,firstDouble:d.competitor1_on_double===true,secondDouble:d.competitor2_on_double===true}:null, volleyball:volleyball?{bestOf:N(d.best_of),homeSets:home,awaySets:away,current:periodScores.find(p=>p.number===period)}:null, setNumber:N(currentSet?.number), phase, esportsPeriodsValid, periodConsistent, scoreConsistent, clock, remainingSeconds, clockRunning, soccerMinute, soccerHalf:half, soccerExtraTime, matchRemainingSeconds, possessionSide, tennis:tennisData, inningHalf:N(d.inning_half), outs:N(d.outs), progress, verifiedLive, scoreKnown:Number.isFinite(home)&&Number.isFinite(away), homeName:String(d.home_team?.name||d.home_team_name||d.home?.name||(versus.length===2?versus[0]:names.length===2?names[1]:'')), awayName:String(d.away_team?.name||d.away_team_name||d.away?.name||(versus.length===2?versus[1]:names.length===2?names[0]:'')),homeTeamId:m.details?.home_team_id,awayTeamId:m.details?.away_team_id,eventTickers:m.related_event_tickers||m.events||[]};
+  return {id:m.id, feedId:live?.milestone_id, observedAt:Date.parse(live?._observed_at||''), updatedAt:Number.isFinite(updated)?updated*1000:NaN, title:m.title, sport, competition:String(m.details?.league||''), tour:String(m.details?.tour||''), type:family, status, home, away, homeUnits, awayUnits, unit, period, periodScores, playerStats:d.player_stats||null, tennisTotal, cricket:cricketFinalInnings(m,d), mainEvent:m.details?.main_game_event_ticker||m.primary_event_tickers?.[0], tableTennis:tableTennisData, darts:darts?{format:String(d.game_format||m.details?.format||''),bestOf:N(d.best_of_legs),firstIsHome,firstId:m.details?.first_competitor_id,secondId:m.details?.second_competitor_id,firstLegs:N(d.competitor1_overall_score),secondLegs:N(d.competitor2_overall_score),firstRemaining:N(d.competitor1_remaining_points),secondRemaining:N(d.competitor2_remaining_points),nextThrow:String(d.next_throw_competitor_id||''),firstCheckout:d.competitor1_checkout_possible===true,secondCheckout:d.competitor2_checkout_possible===true,firstDouble:d.competitor1_on_double===true,secondDouble:d.competitor2_on_double===true}:null, volleyball:volleyball?{bestOf:N(d.best_of),homeSets:home,awaySets:away,current:periodScores.find(p=>p.number===period)}:null, setNumber:N(currentSet?.number), phase, esportsPeriodsValid, periodConsistent, scoreConsistent, clock, remainingSeconds, clockRunning, soccerMinute, soccerHalf:half, soccerExtraTime, soccerOvertime, matchRemainingSeconds, possessionSide, tennis:tennisData, inningHalf:baseball?(/bottom/i.test(String(d.inning_half||''))?2:/top/i.test(String(d.inning_half||''))?1:N(d.inning_half)):N(d.inning_half), outs:N(d.outs), progress, verifiedLive, scoreKnown:Number.isFinite(home)&&Number.isFinite(away), homeName:String(d.home_team?.name||d.home_team_name||d.home?.name||(versus.length===2?versus[0]:names.length===2?names[1]:'')), awayName:String(d.away_team?.name||d.away_team_name||d.away?.name||(versus.length===2?versus[1]:names.length===2?names[0]:'')),homeTeamId:m.details?.home_team_id,awayTeamId:m.details?.away_team_id,eventTickers:m.related_event_tickers||m.events||[]};
 }
 export function tennisGameTotal(details){
   const first=details?.competitor1_round_scores,second=details?.competitor2_round_scores;
@@ -297,8 +323,9 @@ export function kalshiOnlyOver(first,second,market){
   return confirmedOver(first,second,market);
 }
 export function kalshiOnlyLead(first,second,market){
-  const signal=s=>leadSignal(s,market)||additionalLeadSignal(s,market)||tennisSignal(s,market)||tableTennisSignal(s,market);
-  if(Number.isFinite(Number(market?.yes_ask_dollars))&&Number(market.yes_ask_dollars)<.8||
+  const signal=s=>leadSignal(s,market)||additionalLeadSignal(s,market)||cricketLeadSignal(s,market)||drawSignal(s,market)||earlyLeadSignal(s,market)||tennisSignal(s,market)||tableTennisSignal(s,market);
+  if(Number.isFinite(Number(market?.yes_ask_dollars))&&Number(market.yes_ask_dollars)<.8&&
+      !drawSignal(first,market)&&!cricketLeadSignal(first,market)||
     !signal(first)||!signal(second)||first.id!==second.id||first.feedId!==first.id||second.feedId!==second.id||
     !first.scoreConsistent||!second.scoreConsistent||first.home!==second.home||first.away!==second.away||
     !Object.is(first.period,second.period)||!first.periodConsistent||!second.periodConsistent||
@@ -310,7 +337,7 @@ export function kalshiOnlyLead(first,second,market){
     !confirmedSoccerOneGoalClock(first,second))return false;
   // Soccer possession is required only for the higher one-goal tiers.
   if(first.possessionSide!==second.possessionSide&&!/soccer/.test(second.type))return false;
-  for(const key of ['tennis','tableTennis','volleyball','darts']){
+  for(const key of ['tennis','tableTennis','volleyball','darts','cricket']){
     if(JSON.stringify(first[key])!==JSON.stringify(second[key]))return false;
   }
   return true;
@@ -436,6 +463,59 @@ export function additionalLeadSignal(game,market){
   if(margin<minimum&&!/volleyball/.test(family))return null;
   const decisive=/volleyball/.test(family)?Math.abs((game.volleyball.current?.home??0)-(game.volleyball.current?.away??0)):margin;
   return {strategy:'lead',reason:`${leader} leads; ${label}; margin ${decisive}`,fraction:decisive>=very?.15:.10};
+}
+export function cricketLeadSignal(game,market){
+  const c=game?.cricket;
+  if(!c||!game.verifiedLive||!game.scoreKnown||!game.scoreConsistent||!['active','open'].includes(market?.status)||
+    market.event_ticker!==c.mainEvent||!/\bwins?\b/i.test(String(market.rules_primary||''))||
+    /\b(?:draw|tie|spread|handicap)\b/i.test(String(market.title||'')))return null;
+  const home=c.homeTotal>c.awayTotal,margin=Math.abs(c.homeTotal-c.awayTotal);
+  if(margin<40||market.custom_strike?.cricket_team!==(home?game.homeTeamId:game.awayTeamId))return null;
+  return {strategy:'lead',fraction:.20,comboEligible:false,reason:`Restricted 20% cricket final innings ${c.innings}; verified match totals ${c.homeTotal}–${c.awayTotal} runs (${margin} ahead)`};
+}
+export function earlyLeadSignal(game,market){
+  const type=String(game?.type||'');
+  if(!game?.verifiedLive||!game.scoreKnown||!game.scoreConsistent||!game.periodConsistent||
+    !['active','open'].includes(market?.status)||market.event_ticker!==game.mainEvent||
+    !/^(?:.+ )?wins?\b/i.test(String(market.title||''))||
+    /\b(?:spread|handicap|draw|tie)\b/i.test(String(market.title||'')))return null;
+  const ncaab=['NCAAB','NCAAW'].includes(game.sport);
+  // Baseline applies throughout the live final segment; the higher threshold
+  // applies in the last minute of the preceding segment.
+  const rule=/basketball/.test(type)?[18,20,ncaab?1:3,ncaab?2:4,ncaab?1200:game.sport==='WNBA'?600:720]:
+    /football/.test(type)?[21,28,3,4,900]:/hockey/.test(type)?[3,4,2,3,1200]:
+    /handball/.test(type)?[11,13,1,2,1800]:/lacrosse/.test(type)?[4,6,3,4,900]:null;
+  const baseball=/baseball/.test(type),soccer=/soccer/.test(type);
+  let minimum=NaN,stage='';
+  if(rule){
+    if(game.period===rule[2]&&Number.isFinite(game.remainingSeconds)&&game.remainingSeconds>=0&&game.remainingSeconds<60){minimum=rule[1];stage='end of penultimate segment'}
+    if(game.period===rule[3]&&Number.isFinite(game.remainingSeconds)&&game.remainingSeconds<=rule[4]&&game.remainingSeconds>0){minimum=rule[0];stage='final segment'}
+  }else if(baseball){
+    if(game.period===8&&game.inningHalf===2&&game.outs>=2){minimum=7;stage='end of eighth inning'}
+    if(game.period===9&&[1,2].includes(game.inningHalf)&&game.outs>=0&&game.outs<=2){minimum=5;stage='ninth inning'}
+  }else if(soccer){
+    if(game.period===1&&Number.isFinite(game.remainingSeconds)&&game.remainingSeconds>0&&game.remainingSeconds<60){minimum=5;stage='end of first half'}
+    if(game.period===2&&!game.soccerExtraTime){minimum=3;stage='second half'}
+  }
+  if(!Number.isFinite(minimum))return null;
+  const margin=Math.abs(game.home-game.away);
+  if(margin<minimum||teamScorePosition(game,market)!==1)return null;
+  return {strategy:'lead',fraction:.02,comboEligible:false,reason:`Restricted 2% lead: ${game.home>game.away?game.homeName:game.awayName} leads ${game.home}–${game.away} ${game.unit}; ${stage}, ${margin} ${game.unit} ahead`};
+}
+export function drawSignal(game,market){
+  const type=String(game?.type||''),soccer=/soccer/.test(type),hockey=/hockey/.test(type);
+  const basketball=/basketball/.test(type),football=/football/.test(type);
+  const final=soccer?2:hockey?3:basketball?['NCAAB','NCAAW'].includes(game.sport)?2:4:
+    football?4:/rugby|handball/.test(type)?2:/lacrosse/.test(type)?4:NaN;
+  const seconds=soccer?game?.matchRemainingSeconds:game?.remainingSeconds;
+  const rules=String(market?.rules_primary||'');
+  if(!game?.verifiedLive||!game.scoreKnown||!game.scoreConsistent||game.home!==game.away||
+    game.period!==final||!Number.isFinite(seconds)||seconds<0||seconds>=20||
+    soccer&&game.soccerOvertime||!['active','open'].includes(market?.status)||
+    market.event_ticker!==game.mainEvent||!/^(?:draw|tie)(?:\b|\/)/i.test(String(market.title||market.yes_sub_title||''))||
+    !/\b(?:draw|tie)\b/i.test(rules)||!/\b(?:yes|settles|resolves)\b/i.test(rules)||
+    (hockey||basketball||football)&&!/regulation/i.test(rules))return null;
+  return {strategy:'lead',fraction:.05,comboEligible:false,reason:`Restricted 5% draw at ${game.home}–${game.away}; final segment, ${seconds.toFixed(1)} seconds remaining`};
 }
 export function tennisSignal(game,market){
   const t=game.tennis;

@@ -17,17 +17,19 @@ export function remainingVerifiedComboCents(position,bankroll){
   return Math.max(0,Math.floor(bankroll*.35)-Math.ceil(exposure*100)-Math.ceil(fees*100));
 }
 export function availableComboFills(fills,usedLegTickers){
-  return fills.filter(r=>!/Kalshi-only/i.test(r.reason||'')||r.externally_verified===true||!usedLegTickers.has(r.market_ticker));
+  return fills.filter(r=>!/^Restricted (?:2% lead|5% draw|20% cricket)/.test(String(r.reason||''))&&
+    (!/Kalshi-only/i.test(r.reason||'')||r.externally_verified===true||!usedLegTickers.has(r.market_ticker)));
 }
 export function comboCandidates(candidates, strategy, max=6){
   const games=new Set(),events=new Set();
   return candidates.filter(c=>{
-    if(c.signal.strategy!==strategy || games.has(c.milestone.id) || events.has(c.event.event_ticker))return false;
+    if(c.signal.strategy!==strategy || c.signal.comboEligible===false || games.has(c.milestone.id) || events.has(c.event.event_ticker))return false;
     games.add(c.milestone.id);events.add(c.event.event_ticker);return true;
   }).slice(0,max);
 }
 export function filledComboWindow(fills,heldTickers,lastComboAt,max=6){
-  const singles=fills.filter(r=>!r.combo_legs&&heldTickers.has(r.market_ticker))
+  const singles=fills.filter(r=>!r.combo_legs&&heldTickers.has(r.market_ticker)&&
+    !/^Restricted (?:2% lead|5% draw|20% cricket)/.test(String(r.reason||'')))
     .sort((a,b)=>new Date(b.updated_at)-new Date(a.updated_at));
   if(singles.length<2)return [];
   const markets=new Set();
@@ -87,7 +89,7 @@ export function selectedComboMarkets(legs){
   return legs.map(c=>({event_ticker:c.event.event_ticker,market_ticker:c.market.ticker,side:'yes'}));
 }
 export function heldComboLeg(row,market,snapshot={}){
-  if(!row||Number(row.fill_count)<=0||!market||market.ticker!==row.market_ticker||market.event_ticker!==row.event_ticker||
+  if(!row||/^Restricted (?:2% lead|5% draw|20% cricket)/.test(String(row.reason||''))||Number(row.fill_count)<=0||!market||market.ticker!==row.market_ticker||market.event_ticker!==row.event_ticker||
     !['active','open'].includes(market.status)||market.result&&!['','not_determined'].includes(String(market.result)))return null;
   return {milestone:{id:row.game_id},event:{event_ticker:row.event_ticker},market,
     signal:{strategy:row.strategy,kalshiOnly:/Kalshi-only/i.test(row.reason||''),externallyVerified:row.externally_verified===true},state:{title:snapshot.title||row.sport||row.event_ticker,sport:row.sport||snapshot.sport||'',

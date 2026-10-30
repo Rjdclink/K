@@ -110,7 +110,7 @@ export function observedWeatherCompany(contract,data,now=new Date()){
   const chosen=values.sort((a,b)=>contract.type==='high'?b.value-a.value:a.value-b.value)[0];
   // Only an already-settled hourly observation well past a directional
   // threshold can establish a same-day high/low. It is never a forecast.
-  const passed=contract.type==='high'?chosen.value>contract.threshold+1:chosen.value<contract.threshold-1;
+  const passed=contract.type==='high'?chosen.value>=contract.threshold+1:chosen.value<=contract.threshold-1;
   return passed?{...chosen,source:'The Weather Company',station:contract.station,icao:contract.icao,status:'settled'}:null;
 }
 

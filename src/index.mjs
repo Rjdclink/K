@@ -4,7 +4,7 @@ import pg from 'pg';
 import { page } from './ui.mjs';
 import { historyPage } from './history_ui.mjs';
 import { completedTrade } from './history.mjs';
-import { gameState, overSignal, confirmedOver, kalshiOnlyOver, kalshiOnlyLead, leadSignal, confirmedSoccerOneGoalClock, soccerOneGoalWindowOpen, stableSoccerLeadFraction, additionalLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, netSettlementProfitCents, comeback, timedProfitExitAllowed, KALSHI_ONLY_FRACTION } from './strategy.mjs';
+import { gameState, overSignal, confirmedOver, kalshiOnlyOver, kalshiOnlyLead, leadSignal, confirmedSoccerOneGoalClock, soccerOneGoalWindowOpen, stableSoccerLeadFraction, additionalLeadSignal, cricketLeadSignal, drawSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, netSettlementProfitCents, comeback, timedProfitExitAllowed, KALSHI_ONLY_FRACTION } from './strategy.mjs';
 import { reviewMiss } from './ai.mjs';
 import { kalshiSignature } from './auth.mjs';
 import { marketShard, shardCash, transferPlan, comboShardBudget } from './funding.mjs';
@@ -140,7 +140,7 @@ async function auditKalshiOnlyLead(first,second,market,milestone){
   if(!kalshiOnlyLead(first,second,market))return false;
   const oneGoalSoccer=/soccer/.test(second.type)&&Math.abs(second.home-second.away)===1;
   const allocation=oneGoalSoccer?stableSoccerLeadFraction(first,second,leadSignal(second,market)):
-    tennisSignal(second,market)?.fraction??KALSHI_ONLY_FRACTION;
+    tennisSignal(second,market)?.fraction??cricketLeadSignal(second,market)?.fraction??drawSignal(second,market)?.fraction??earlyLeadSignal(second,market)?.fraction??KALSHI_ONLY_FRACTION;
   await auditTable();const id=randomUUID();
   await pool.query('INSERT INTO verification_records(id,market_ticker,passed,evidence) VALUES($1,$2,true,$3)',
     [id,market.ticker,JSON.stringify({mode:'kalshi_only_commanding_lead',first,second,milestoneId:milestone.id,dwellMs:second.observedAt-first.observedAt,allocation})]);
@@ -636,7 +636,7 @@ async function verifyHeldLead(c,original,scoreboardCache){
     current.rules_primary!==c.market.rules_primary||current.floor_strike!==c.market.floor_strike||
     current.cap_strike!==c.market.cap_strike||current.close_time!==c.market.close_time||
     JSON.stringify(current.custom_strike||{})!==JSON.stringify(c.market.custom_strike||{})||
-    !(leadSignal(second,current)||additionalLeadSignal(second,current)||tennisSignal(second,current)||tableTennisSignal(second,current)))return false;
+    !(leadSignal(second,current)||additionalLeadSignal(second,current)||cricketLeadSignal(second,current)||drawSignal(second,current)||earlyLeadSignal(second,current)||tennisSignal(second,current)||tableTennisSignal(second,current)))return false;
   const tableTennis=Boolean(tableTennisSignal(second,current));
   const confirmed=tableTennis?await verifyIndependentTableTennisLeadDecision(second,c.milestone):
     await auditedOver(second,c.milestone,{cache:scoreboardCache,market:current,firstObservation:c.state,allowUnavailable:true});
@@ -915,7 +915,7 @@ async function checkHeldCombinations(fills,verifiedSince=null){
   return result;
 }
 async function diagnoseUnfilledCombo(candidates,filled){
-  const unfilled=candidates.filter(c=>hasAsk(c.market)&&!filled.has(signalKey(c)));
+  const unfilled=candidates.filter(c=>c.signal.comboEligible!==false&&hasAsk(c.market)&&!filled.has(signalKey(c)));
   if(unfilled.length<2)return;
   await pool.query(`CREATE TABLE IF NOT EXISTS combo_diagnostics (
     id bigserial PRIMARY KEY,checked_at timestamptz NOT NULL DEFAULT now(),
@@ -1168,7 +1168,7 @@ async function scan(cachedMilestones,discoveryCount){
     for(const {milestone,state} of games){
       const candidates=[];
       if(eligibleForMarkets(state))for(const ticker of linkedEventTickers(milestone)){const event=events.get(ticker);if(!event || !['Sports','Esports'].includes(event.category))continue;
-        for(const market of event.markets||[]){if(market.event_ticker!==event.event_ticker)continue;const signal=overSignal(state,market)||golfSignal(state,market)||leadSignal(state,market)||additionalLeadSignal(state,market)||tennisSignal(state,market)||tableTennisSignal(state,market);if(signal)candidates.push({signal,event,market,state,milestone})}}
+        for(const market of event.markets||[]){if(market.event_ticker!==event.event_ticker)continue;const signal=overSignal(state,market)||golfSignal(state,market)||leadSignal(state,market)||additionalLeadSignal(state,market)||cricketLeadSignal(state,market)||drawSignal(state,market)||earlyLeadSignal(state,market)||tennisSignal(state,market)||tableTennisSignal(state,market);if(signal)candidates.push({signal,event,market,state,milestone})}}
       // Keep crossed, already-filled props visible with their status, but do
       // not send them through order preflight or count them as new candidates.
       allCandidates.push(...candidates.filter(c=>!filled.has(signalKey(c))));
@@ -1353,7 +1353,7 @@ async function scan(cachedMilestones,discoveryCount){
         if(kalshiOnly&&(Date.now()-freshState.observedAt>10000||
           quote.rules_primary!==c.market.rules_primary||quote.floor_strike!==c.market.floor_strike||
           quote.cap_strike!==c.market.cap_strike||quote.close_time!==c.market.close_time))continue;
-        const stillQualifies=c.signal.strategy==='over'?overSignal(freshState,quote):golfSignal(freshState,quote)||leadSignal(freshState,quote)||additionalLeadSignal(freshState,quote)||tennisSignal(freshState,quote)||tableTennisSignal(freshState,quote);
+        const stillQualifies=c.signal.strategy==='over'?overSignal(freshState,quote):golfSignal(freshState,quote)||leadSignal(freshState,quote)||additionalLeadSignal(freshState,quote)||cricketLeadSignal(freshState,quote)||drawSignal(freshState,quote)||earlyLeadSignal(freshState,quote)||tennisSignal(freshState,quote)||tableTennisSignal(freshState,quote);
         if(!stillQualifies)continue;
         if(freshState.golf&&!await verifyGolf(freshState,c.milestone,c.event))continue;
         if(c.signal.strategy==='lead'&&!freshState.golf){
@@ -1373,8 +1373,8 @@ async function scan(cachedMilestones,discoveryCount){
         if(!soccerOneGoalWindowOpen(freshState))continue;
         const verifiedFraction=stableSoccerLeadFraction(c.state,freshState,stillQualifies);
         const oneGoalSoccer=/soccer/.test(freshState.type)&&Math.abs(freshState.home-freshState.away)===1;
-        const decidingTennis=Boolean(tennisSignal(freshState,quote));
-        c.signal=kalshiOnly?{...stillQualifies,fraction:oneGoalSoccer||decidingTennis?verifiedFraction:Math.min(verifiedFraction,KALSHI_ONLY_FRACTION),reason:stillQualifies.reason+'; Kalshi-only two score reads, 6 seconds apart'}:
+        const specificCap=Boolean(tennisSignal(freshState,quote)||cricketLeadSignal(freshState,quote)||drawSignal(freshState,quote));
+        c.signal=kalshiOnly?{...stillQualifies,fraction:oneGoalSoccer||specificCap?verifiedFraction:Math.min(verifiedFraction,KALSHI_ONLY_FRACTION),reason:stillQualifies.reason+'; Kalshi-only two score reads, 6 seconds apart'}:
           {...stillQualifies,fraction:verifiedFraction};
         c.market=quote;
         c.state=state=freshState;
@@ -1530,7 +1530,7 @@ async function settlementAlerts(since){
   return rows;
 }
 export default {async fetch(req){const url=new URL(req.url);
-  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'tennis-timed-exits-positive-profit-20261030'});
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'verified-final-innings-draw-and-segment-leads-20261030'});
   if(req.method==='GET'&&url.pathname==='/manifest.webmanifest')return response(manifest,'application/manifest+json');
   if(req.method==='GET'&&url.pathname==='/sw.js')return new Response(worker,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','service-worker-allowed':'/','x-content-type-options':'nosniff'}});
   if(req.method==='GET'&&/^\/icon-(192|512)\.png$/.test(url.pathname))return response(Buffer.from(icons[Number(url.pathname.match(/\d+/)[0])],'base64'),'image/png');
