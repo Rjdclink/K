@@ -53,6 +53,28 @@ ALTER TABLE trade_attempts ADD COLUMN IF NOT EXISTS combo_rfq_id text;
 ALTER TABLE trade_attempts ADD COLUMN IF NOT EXISTS combo_quote_id text;
 CREATE UNIQUE INDEX IF NOT EXISTS one_active_trade_per_market_idx ON trade_attempts(market_ticker)
   WHERE status IN ('filled','reserved','check_order','retrying','combo_pending');
+CREATE TABLE IF NOT EXISTS position_upgrades (
+  market_ticker text PRIMARY KEY,
+  id uuid NOT NULL UNIQUE,
+  original_id uuid NOT NULL,
+  verification_id uuid NOT NULL,
+  status text NOT NULL,
+  count numeric(12,2) NOT NULL,
+  limit_price numeric NOT NULL,
+  available_cents integer NOT NULL,
+  order_id text,
+  fill_count numeric NOT NULL DEFAULT 0,
+  error text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS fallback_verifications (
+  market_ticker text PRIMARY KEY,
+  original_id uuid NOT NULL,
+  verification_id uuid NOT NULL,
+  first_verified_at timestamptz NOT NULL DEFAULT now(),
+  verified_at timestamptz NOT NULL DEFAULT now()
+);
 
 ALTER TABLE trade_attempts ALTER COLUMN count TYPE numeric(12,2) USING count::numeric;
 CREATE TABLE IF NOT EXISTS scan_status (

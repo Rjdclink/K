@@ -5,14 +5,15 @@ import {weatherContract,observedWeather,observedWeatherCompany,weatherDate,weath
 const station={id:'KNYC',timezone:'America/New_York'};
 const event={event_ticker:'KXRAINDNYC-261102',title:'Rain in New York City on Nov 2, 2026?',category:'Climate and Weather',settlement_sources:[{name:'National Weather Service'}]};
 const market={ticker:'KXRAINDNYC-261102-0',status:'active',result:'',rules_primary:'If the total precipitation at Central Park (KNYC) in New York City on Nov 2, 2026 is strictly greater than 0 inches, then the market resolves to Yes.',strike_type:'greater',floor_strike:0,close_time:'2026-11-03T05:00:00Z'};
-test('daily weather enters only in the last two hours before its same-day trading cutoff',()=>{
+test('daily weather can enter throughout its current local day before the trading cutoff',()=>{
   const now=new Date('2026-11-03T04:55:00Z');
   const c=weatherContract(event,market,station,now);
   assert.equal(c?.localDate,'2026-11-02');
   assert.equal(c?.end,Date.parse('2026-11-03T05:00:00Z'));
   assert.equal(c?.close,Date.parse('2026-11-03T04:59:00Z'));
-  assert.equal(weatherContract(event,market,station,new Date('2026-11-03T02:58:59Z')),null);
-  assert.ok(weatherContract(event,market,station,new Date('2026-11-03T02:59:00Z')));
+  assert.equal(weatherContract(event,market,station,new Date('2026-11-02T04:59:59Z')),null);
+  assert.ok(weatherContract(event,market,station,new Date('2026-11-02T05:00:00Z')));
+  assert.ok(weatherContract(event,market,station,new Date('2026-11-02T18:00:00Z')));
   assert.equal(weatherContract(event,market,station,new Date('2026-11-03T04:59:00Z')),null);
   assert.equal(weatherContract(event,market,station,new Date('2026-11-03T05:00:00Z')),null);
   assert.equal(weatherContract({...event,title:'Rain in New York City on Nov 3, 2026?'},market,station,now),null);
@@ -21,7 +22,9 @@ test('daily weather enters only in the last two hours before its same-day tradin
 test('DST climate day can extend past midnight, while entry remains on the named local day',()=>{
   const e={...event,title:'Rain in New York City on Oct 29, 2026?'};
   const m={...market,rules_primary:market.rules_primary.replace('Nov 2','Oct 29'),close_time:'2026-10-30T05:00:00Z'};
-  assert.equal(weatherContract(e,m,station,new Date('2026-10-30T01:58:59Z')),null);
+  assert.equal(weatherContract(e,m,station,new Date('2026-10-29T03:59:59Z')),null);
+  assert.ok(weatherContract(e,m,station,new Date('2026-10-29T04:00:00Z')));
+  assert.ok(weatherContract(e,m,station,new Date('2026-10-30T01:58:59Z')));
   assert.equal(weatherContract(e,m,station,new Date('2026-10-30T03:55:00Z'))?.end,Date.parse('2026-10-30T05:00:00Z'));
   assert.equal(weatherContract(e,m,station,new Date('2026-10-30T04:55:00Z')),null);
 });

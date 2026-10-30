@@ -11,11 +11,13 @@ export function completedTrade(entry,fills,settlement){
   const valid=fill=>Number.isFinite(numeric(fill.count_fp))&&numeric(fill.count_fp)>0&&
     Number.isFinite(numeric(fill.yes_price_dollars))&&Number.isFinite(numeric(fill.fee_cost))&&numeric(fill.fee_cost)>=0;
   const buys=relevant.filter(fill=>fill.action==='buy');
-  if(buys.some(fill=>!valid(fill)||fill.order_id!==entry.order_id))return null;
+  const permitted=new Set([entry.order_id,entry.upgrade_order_id].filter(Boolean));
+  if(buys.some(fill=>!valid(fill)||!permitted.has(fill.order_id)))return null;
   const entryFills=buys;
   if(!entryFills.length)return null;
   const count=entryFills.reduce((sum,fill)=>sum+numeric(fill.count_fp),0);
-  if(Math.abs(count-numeric(entry.fill_count))>.011)return null;
+  const expected=numeric(entry.fill_count)+(entry.upgrade_order_id?numeric(entry.upgrade_fill_count):0);
+  if(!Number.isFinite(expected)||Math.abs(count-expected)>.011)return null;
   const sells=relevant.filter(fill=>fill.action==='sell');
   if(sells.some(fill=>!valid(fill)))return null;
   const sold=sells.reduce((sum,fill)=>sum+numeric(fill.count_fp),0);
