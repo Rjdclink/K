@@ -24,6 +24,27 @@ const espn=(home=24,away=20,overrides={})=>({events:[{date:start,status:{type:{s
   {homeAway:'away',score:String(away),team:{displayName:'Brooklyn Nets',abbreviation:'BKN',name:'Nets'}}
 ]}],...overrides}]});
 const fox=(home=24,away=20,overrides={})=>({sectionList:[{events:[{eventTime:start,eventStatus:1,statusLine:'05:00',entityLink:{layout:{tokens:{homeUri:'team-bos',awayUri:'team-bkn'}}},upperTeam:{uri:'team-bkn',name:'BKN',longName:'Nets',score:away},lowerTeam:{uri:'team-bos',name:'BOS',longName:'Celtics',score:home},...overrides}]}]});
+test('NBA scoreboard recognizes exact New Orleans abbreviation variants',()=>{
+  const milestone={...m,title:'SAC Kings at NOP Pelicans'};
+  const state={...game,homeName:'NOP Pelicans',awayName:'SAC Kings'};
+  const fixture=espn(24,20,{competitions:[{competitors:[
+    {homeAway:'home',score:'24',team:{displayName:'New Orleans Pelicans',abbreviation:'NO',name:'Pelicans'}},
+    {homeAway:'away',score:'20',team:{displayName:'Sacramento Kings',abbreviation:'SAC',name:'Kings'}}]}]});
+  assert.equal(espnMatches(fixture,state,milestone).length,1);
+  assert.equal(espnMatches(fixture,{...state,homeName:'NOP Lakers'},milestone).length,0);
+});
+test('NHL city labels match the exact franchise but not a same-city rival',()=>{
+  const milestone={...m,title:'New York I at Minnesota'};
+  const state={...game,homeName:'Minnesota',awayName:'New York I'};
+  const fixture=espn(24,20,{competitions:[{competitors:[
+    {homeAway:'home',score:'24',team:{displayName:'Minnesota Wild',abbreviation:'MIN',name:'Wild'}},
+    {homeAway:'away',score:'20',team:{displayName:'New York Islanders',abbreviation:'NYI',name:'Islanders'}}]}]});
+  assert.equal(espnMatches(fixture,state,milestone).length,1);
+  const wrong={...fixture,events:fixture.events.map(e=>({...e,competitions:[{competitors:[
+    fixture.events[0].competitions[0].competitors[0],
+    {homeAway:'away',score:'20',team:{displayName:'New York Rangers',abbreviation:'NYR',name:'Rangers'}}]}]}))};
+  assert.equal(espnMatches(wrong,state,milestone).length,0);
+});
 
 test('independent scoreboards must match the exact live fixture and both team scores',()=>{
   assert.equal(scoreAgreement(game,[espnMatches(espn(),game,m),foxMatches(fox(),game,m)]),true);
@@ -119,3 +140,4 @@ test('women college basketball uses its own ESPN scoreboard for independent veri
   assert.equal(await verifyIndependentOver(state,milestone,{fetcher:async url=>{urls.push(url);return {ok:true,json:async()=>espn()}}}),true);
   assert.ok(urls.some(url=>url.includes('womens-college-basketball')));
 });
+
