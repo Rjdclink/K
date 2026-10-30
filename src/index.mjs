@@ -4,7 +4,7 @@ import pg from 'pg';
 import { page } from './ui.mjs';
 import { historyPage } from './history_ui.mjs';
 import { completedTrade } from './history.mjs';
-import { gameState, overSignal, confirmedOver, kalshiOnlyOver, kalshiOnlyLead, leadSignal, confirmedSoccerOneGoalClock, soccerOneGoalWindowOpen, stableSoccerLeadFraction, additionalLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, netSettlementProfitCents, comeback, KALSHI_ONLY_FRACTION } from './strategy.mjs';
+import { gameState, overSignal, confirmedOver, kalshiOnlyOver, kalshiOnlyLead, leadSignal, confirmedSoccerOneGoalClock, soccerOneGoalWindowOpen, stableSoccerLeadFraction, additionalLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, netSettlementProfitCents, comeback, timedProfitExitAllowed, KALSHI_ONLY_FRACTION } from './strategy.mjs';
 import { reviewMiss } from './ai.mjs';
 import { kalshiSignature } from './auth.mjs';
 import { marketShard, shardCash, transferPlan, comboShardBudget } from './funding.mjs';
@@ -139,7 +139,8 @@ async function auditKalshiOnlyOver(first,second,market,milestone){
 async function auditKalshiOnlyLead(first,second,market,milestone){
   if(!kalshiOnlyLead(first,second,market))return false;
   const oneGoalSoccer=/soccer/.test(second.type)&&Math.abs(second.home-second.away)===1;
-  const allocation=oneGoalSoccer?stableSoccerLeadFraction(first,second,leadSignal(second,market)):KALSHI_ONLY_FRACTION;
+  const allocation=oneGoalSoccer?stableSoccerLeadFraction(first,second,leadSignal(second,market)):
+    tennisSignal(second,market)?.fraction??KALSHI_ONLY_FRACTION;
   await auditTable();const id=randomUUID();
   await pool.query('INSERT INTO verification_records(id,market_ticker,passed,evidence) VALUES($1,$2,true,$3)',
     [id,market.ticker,JSON.stringify({mode:'kalshi_only_commanding_lead',first,second,milestoneId:milestone.id,dwellMs:second.observedAt-first.observedAt,allocation})]);
@@ -372,9 +373,8 @@ function signalExecution(c,filled,account,balance,bankroll){
   const raw=contractCount(spendable,c.market,c.signal.fraction,bankroll,Infinity,fees);
   if(!raw)return 'Insufficient available cash for this trade';
   if(!profitableCount(raw,price,fees,c.signal.strategy,bankroll,c.state.type,c.state.remainingSeconds)){
-    // Overs have no arbitrary profit floor. With a small residual cash amount,
-    // fractional contract and fee rounding can still leave zero net cents.
-    if(c.signal.strategy==='over'&&netSettlementProfitCents(raw,price,fees)<1)
+    // Fractional contracts and fee rounding can still leave zero net cents.
+    if(['over','lead'].includes(c.signal.strategy)&&netSettlementProfitCents(raw,price,fees)<1)
       return 'No positive net profit after fees';
     return 'Below minimum net profit after fees';
   }
@@ -1011,7 +1011,9 @@ async function exitComebacks(games,events,positions){
       const basisKnown=position.market_exposure_dollars!=null&&position.fees_paid_dollars!=null&&
         Number.isFinite(Number(position.market_exposure_dollars))&&Number.isFinite(Number(position.fees_paid_dollars));
       const profit=basisKnown?estimatedSaleProfitCents(position,sale):null;
-      const profitable=positiveExitEligible(original,state?.type,profit);
+      const basketball=/basketball/i.test(state?.type||'')||/^(?:NBA|WNBA|NCAAB|NCAAW|Basketball|eBasketball)$/i.test(String(original.sport||''));
+      const scoreAllowsProfit=!basketball||timedProfitExitAllowed(state,nested);
+      const profitable=scoreAllowsProfit&&positiveExitEligible(original,state?.type,profit);
       if(!profitable&&!reversed)continue;
       const reversing=combo?original.combo_legs.filter(leg=>{
         const g=gameInfo.get(leg.game_id),m=(events.get(leg.event_ticker)?.markets||[]).find(x=>x.ticker===leg.market_ticker);
@@ -1371,7 +1373,8 @@ async function scan(cachedMilestones,discoveryCount){
         if(!soccerOneGoalWindowOpen(freshState))continue;
         const verifiedFraction=stableSoccerLeadFraction(c.state,freshState,stillQualifies);
         const oneGoalSoccer=/soccer/.test(freshState.type)&&Math.abs(freshState.home-freshState.away)===1;
-        c.signal=kalshiOnly?{...stillQualifies,fraction:oneGoalSoccer?verifiedFraction:Math.min(verifiedFraction,KALSHI_ONLY_FRACTION),reason:stillQualifies.reason+'; Kalshi-only two score reads, 6 seconds apart'}:
+        const decidingTennis=Boolean(tennisSignal(freshState,quote));
+        c.signal=kalshiOnly?{...stillQualifies,fraction:oneGoalSoccer||decidingTennis?verifiedFraction:Math.min(verifiedFraction,KALSHI_ONLY_FRACTION),reason:stillQualifies.reason+'; Kalshi-only two score reads, 6 seconds apart'}:
           {...stillQualifies,fraction:verifiedFraction};
         c.market=quote;
         c.state=state=freshState;
@@ -1476,14 +1479,14 @@ async function state(){
   }
   const awaiting=[...new Set(snap.rows.flatMap(g=>(g.signals||[]).filter(s=>s.execution==='Awaiting score verification').map(s=>s.ticker)))];
   if(awaiting.length){
-    const {rows}=await pool.query(`SELECT DISTINCT ON (market_ticker) market_ticker,passed,created_at
+    const {rows}=await pool.query(`SELECT DISTINCT ON (market_ticker) market_ticker,passed,created_at,evidence->>'mode' AS mode
       FROM verification_records WHERE market_ticker=ANY($1) AND created_at>now()-interval '5 minutes'
       ORDER BY market_ticker,created_at DESC`,[awaiting]);
     const checked=new Map(rows.map(r=>[r.market_ticker,r]));
     for(const game of snap.rows)for(const signal of game.signals||[]){
       const result=checked.get(signal.ticker);
-      if(signal.execution==='Awaiting score verification'&&result){
-        signal.execution=result.passed?'Independent score confirmed; final quote pending':'Independent source disagreed or unavailable';
+      if(signal.execution==='Awaiting score verification'&&result&&new Date(result.created_at).getTime()>=new Date(game.scanned_at).getTime()){
+        signal.execution=result.passed?(result.mode==='kalshi_only_crossed_over'?'Two Kalshi score checks passed; checking live ask':'Independent score confirmed; checking live ask'):'Score verification did not pass';
         signal.verification_checked_at=result.created_at;
       }
     }
@@ -1527,7 +1530,7 @@ async function settlementAlerts(since){
   return rows;
 }
 export default {async fetch(req){const url=new URL(req.url);
-  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'soccer-and-immediate-over-upgrade-20261030'});
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'tennis-timed-exits-positive-profit-20261030'});
   if(req.method==='GET'&&url.pathname==='/manifest.webmanifest')return response(manifest,'application/manifest+json');
   if(req.method==='GET'&&url.pathname==='/sw.js')return new Response(worker,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','service-worker-allowed':'/','x-content-type-options':'nosniff'}});
   if(req.method==='GET'&&/^\/icon-(192|512)\.png$/.test(url.pathname))return response(Buffer.from(icons[Number(url.pathname.match(/\d+/)[0])],'base64'),'image/png');

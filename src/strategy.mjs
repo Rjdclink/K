@@ -111,12 +111,18 @@ export function gameState(m, live) {
   if ((sport==='MLB'||/baseball_game/.test(family)) && Number.isFinite(period) && period>=1) progress = Math.min(0.99,(period-1 + (/bottom/.test(periodText)?0.5:0))/9);
   if (sport==='Soccer' && Number.isFinite(period) && period>=1) progress = Math.min(0.99,(period-1)/2);
   const updated=N(d.last_updated_ts);const fresh=!Number.isFinite(updated) || Math.abs(Date.now()-updated*1000)<120000;
-  const verifiedLive = ['live','in_progress','in progress','playing','inprogress'].includes(status) && !d.live_data_delayed && fresh;
+  const verifiedLive = (['live','in_progress','in progress','playing','inprogress'].includes(status)||
+    tennis&&status==='started'&&String(d.widget_status||'').toLowerCase()==='live') && !d.live_data_delayed && fresh;
   const names=String(m.title||'').split(/\s+at\s+/i);
   const versus=tableTennis||darts?String(m.title||'').split(/\s+vs\.?\s+/i):[];
   const homeUnits=home,awayUnits=away;
   const unit=/baseball/.test(family)?'runs':/hockey|soccer/.test(family)?'goals':tennis?'games':'points';
-  const tennisData=tennis?{bestOf:N(m.details?.best_of),firstId:m.details?.first_competitor_id,secondId:m.details?.second_competitor_id,firstGames:N(one?.score),secondGames:N(two?.score),firstSets:N(d.competitor1_overall_score),secondSets:N(d.competitor2_overall_score),firstPoints:N(d.competitor1_current_round_score),secondPoints:N(d.competitor2_current_round_score),firstRound:one?.outcome,secondRound:two?.outcome,server:String(d.server||''),advantage:String(d.advantage||''),mainEvent:m.details?.main_game_event_ticker}:null;
+  const itfDecidingThird=tennis&&String(m.details?.tour||'').toUpperCase()==='ITF'&&
+    /^M(?:15|25)\b/i.test(String(m.details?.tournament_name||''))&&d.completed_rounds===2&&
+    d.competitor1_overall_score===1&&d.competitor2_overall_score===1&&
+    d.competitor1_round_scores?.length===3&&d.competitor2_round_scores?.length===3&&
+    one?.outcome==='ongoing'&&two?.outcome==='ongoing';
+  const tennisData=tennis?{bestOf:Number.isInteger(N(m.details?.best_of))?N(m.details.best_of):itfDecidingThird?3:NaN,firstId:m.details?.first_competitor_id,secondId:m.details?.second_competitor_id,firstGames:N(one?.score),secondGames:N(two?.score),firstSets:N(d.competitor1_overall_score),secondSets:N(d.competitor2_overall_score),firstPoints:N(d.competitor1_current_round_score),secondPoints:N(d.competitor2_current_round_score),firstRound:one?.outcome,secondRound:two?.outcome,server:String(d.server||''),advantage:String(d.advantage||''),mainEvent:m.details?.main_game_event_ticker}:null;
   const tableTennisData=tableTennis?{bestOf:N(m.details?.best_of??d.best_of_sets),firstId:m.details?.first_competitor_id,secondId:m.details?.second_competitor_id,firstIsHome,firstSets:N(d.competitor1_overall_score),secondSets:N(d.competitor2_overall_score),setNumber:N(currentSet?.number),firstPoints:N(currentSet?.competitor1_score),secondPoints:N(currentSet?.competitor2_score)}:null;
   const tennisTotal=tennis?tennisGameTotal(d):NaN;
   return {id:m.id, feedId:live?.milestone_id, observedAt:Date.parse(live?._observed_at||''), updatedAt:Number.isFinite(updated)?updated*1000:NaN, title:m.title, sport, competition:String(m.details?.league||''), tour:String(m.details?.tour||''), type:family, status, home, away, homeUnits, awayUnits, unit, period, periodScores, playerStats:d.player_stats||null, tennisTotal, tableTennis:tableTennisData, darts:darts?{format:String(d.game_format||m.details?.format||''),bestOf:N(d.best_of_legs),firstIsHome,firstId:m.details?.first_competitor_id,secondId:m.details?.second_competitor_id,firstLegs:N(d.competitor1_overall_score),secondLegs:N(d.competitor2_overall_score),firstRemaining:N(d.competitor1_remaining_points),secondRemaining:N(d.competitor2_remaining_points),nextThrow:String(d.next_throw_competitor_id||''),firstCheckout:d.competitor1_checkout_possible===true,secondCheckout:d.competitor2_checkout_possible===true,firstDouble:d.competitor1_on_double===true,secondDouble:d.competitor2_on_double===true}:null, volleyball:volleyball?{bestOf:N(d.best_of),homeSets:home,awaySets:away,current:periodScores.find(p=>p.number===period)}:null, setNumber:N(currentSet?.number), phase, esportsPeriodsValid, periodConsistent, scoreConsistent, clock, remainingSeconds, clockRunning, soccerMinute, soccerHalf:half, soccerExtraTime, matchRemainingSeconds, possessionSide, tennis:tennisData, inningHalf:N(d.inning_half), outs:N(d.outs), progress, verifiedLive, scoreKnown:Number.isFinite(home)&&Number.isFinite(away), homeName:String(d.home_team?.name||d.home_team_name||d.home?.name||(versus.length===2?versus[0]:names.length===2?names[1]:'')), awayName:String(d.away_team?.name||d.away_team_name||d.away?.name||(versus.length===2?versus[1]:names.length===2?names[0]:'')),homeTeamId:m.details?.home_team_id,awayTeamId:m.details?.away_team_id,eventTickers:m.related_event_tickers||m.events||[]};
@@ -435,8 +441,8 @@ export function tennisSignal(game,market){
   const t=game.tennis;
   if(!game.verifiedLive||!game.scoreKnown||!t||!['active','open'].includes(market.status)||market.event_ticker!==t.mainEvent||!/(?:wins?|winner).*match|wins?\b/i.test(`${market.title||''} ${market.rules_primary||''}`))return null;
   if(![3,5].includes(t.bestOf)||!t.firstId||!t.secondId||!t.server||!t.mainEvent||t.firstRound!=='ongoing'||t.secondRound!=='ongoing')return null;
-  const first=t.firstGames===5 && t.secondGames<=2 && t.firstSets===(t.bestOf-1)/2;
-  const second=t.secondGames===5 && t.firstGames<=2 && t.secondSets===(t.bestOf-1)/2;
+  const first=t.firstGames>=3 && t.firstGames-t.secondGames>=2 && t.firstSets===(t.bestOf-1)/2;
+  const second=t.secondGames>=3 && t.secondGames-t.firstGames>=2 && t.secondSets===(t.bestOf-1)/2;
   if(first===second)return null;
   const leaderId=first?t.firstId:t.secondId,opponentId=first?t.secondId:t.firstId;
   if(market.custom_strike?.tennis_competitor!==leaderId||t.server!==leaderId)return null;
@@ -450,9 +456,8 @@ export function tennisSignal(game,market){
 }
 export function minimumProfitCents(strategy,availableCents,sportType='',remainingSeconds=NaN){
   if(strategy==='weather')return 30;
-  // Overs have no bankroll-dependent floor; still require positive expected
-  // settlement proceeds after the fee reserve.
-  if(strategy==='over')return 1;
+  // Leads and overs require positive expected settlement proceeds after fees.
+  if(strategy==='over'||strategy==='lead')return 1;
   if(Number(availableCents)>=20000)return 200;
   return Number(availableCents)>=10000?50:25;
 }
@@ -504,10 +509,28 @@ export function comeback(game,market,strategy){
     const point=game.volleyball.current,ours=first?point?.home:point?.away,theirs=first?point?.away:point?.home;
     return Number.isInteger(ours)&&Number.isInteger(theirs)&&theirs>=14&&theirs>ours;
   }
+  const position=teamScorePosition(game,market);
+  if(position===null||position===1)return false;
+  const type=String(game.type||'');
+  if(!/basketball|football|hockey|soccer/.test(type))return position===-1;
+  const soccer=/soccer/.test(type),basketball=/basketball/.test(type),hockey=/hockey/.test(type);
+  const finalPeriod=soccer?2:hockey?3:basketball?['NCAAB','NCAAW'].includes(game.sport)?2:4:4;
+  const seconds=soccer?game.matchRemainingSeconds:game.remainingSeconds;
+  return game.period===finalPeriod&&(!soccer||!game.soccerExtraTime)&&Number.isFinite(seconds)&&seconds>=0&&
+    seconds<(position===0?30:120);
+}
+export function teamScorePosition(game,market){
+  if(!game?.verifiedLive||!game.scoreKnown||!market)return null;
   const teamId=Object.entries(market.custom_strike||{}).find(([k,v])=>/_team$/.test(k)&&typeof v==='string')?.[1];
   const home=teamId&&game.homeTeamId?teamId===game.homeTeamId:!teamId&&game.homeName&&norm(market.yes_sub_title||market.title).includes(norm(game.homeName));
   const away=teamId&&game.awayTeamId?teamId===game.awayTeamId:!teamId&&game.awayName&&norm(market.yes_sub_title||market.title).includes(norm(game.awayName));
-  return Boolean(home&&!away?game.home<game.away:away&&!home?game.away<game.home:false);
+  const ours=home&&!away?game.home:away&&!home?game.away:NaN;
+  const theirs=home&&!away?game.away:away&&!home?game.home:NaN;
+  return Number.isFinite(ours)&&Number.isFinite(theirs)?Math.sign(ours-theirs):null;
+}
+export function timedProfitExitAllowed(game,market){
+  const position=teamScorePosition(game,market);
+  return position===1||position!==null&&comeback(game,market,'lead');
 }
 // Reserve twice the standard taker fee estimate when checking available cash.
 // The exchange remains authoritative if a market has an exceptional fee schedule.

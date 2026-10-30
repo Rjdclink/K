@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {gameState,overSignal,confirmedOver,kalshiOnlyOver,kalshiOnlyLead,leadSignal,confirmedSoccerOneGoalClock,soccerOneGoalWindowOpen,stableSoccerLeadFraction,tennisSignal,tableTennisSignal,orderSize,estimatedCostCents,overBudget,minimumProfitCents,netSettlementProfitCents,profitableCount,comeback,KALSHI_ONLY_FRACTION} from '../src/strategy.mjs';
+import {gameState,overSignal,confirmedOver,kalshiOnlyOver,kalshiOnlyLead,leadSignal,confirmedSoccerOneGoalClock,soccerOneGoalWindowOpen,stableSoccerLeadFraction,tennisSignal,tableTennisSignal,orderSize,estimatedCostCents,overBudget,minimumProfitCents,netSettlementProfitCents,profitableCount,comeback,timedProfitExitAllowed,KALSHI_ONLY_FRACTION} from '../src/strategy.mjs';
 
 test('each trade has its own percentage of the full bankroll',()=>{
   const bankroll=14600,alreadyHeld=4372;
@@ -394,19 +394,36 @@ test('tennis match winner requires clinching set, two-game lead, server and poin
   const m={id:'tennis',title:'Hurkacz vs Bergs',type:'tennis_tournament_singles',details:{best_of:'3',first_competitor_id:'H',second_competitor_id:'B',main_game_event_ticker:'KXATPMATCH-26OCT26HURBER'}};
   const market={status:'active',event_ticker:'KXATPMATCH-26OCT26HURBER',title:'Hubert Hurkacz wins',rules_primary:'If Hubert Hurkacz wins the tennis match after a ball has been played, Yes.',custom_strike:{tennis_competitor:'H'}};
   const live=(games=3,sets=1,server='H',p1=30,p2=15,best='3')=>gameState({...m,details:{...m.details,best_of:best}},{details:{status:'live',competitor1_is_home:true,competitor1_round_scores:[{outcome:'winner',score:6},{outcome:'ongoing',score:5}],competitor2_round_scores:[{outcome:'loser',score:3},{outcome:'ongoing',score:games}],competitor1_overall_score:sets,competitor2_overall_score:0,competitor1_current_round_score:p1,competitor2_current_round_score:p2,server,advantage:''}});
-  assert.equal(tennisSignal(live(),market),null);
+  assert.equal(tennisSignal(live(),market)?.fraction,.15);
   assert.equal(tennisSignal(live(2),market)?.fraction,.15);
   assert.equal(tennisSignal(live(1),market)?.fraction,.15);
   assert.equal(tennisSignal(live(1,1,'H',40,15),market)?.fraction,.15);
   assert.equal(tennisSignal(live(4),market),null);
   assert.equal(tennisSignal(live(3,0),market),null);
-  assert.equal(tennisSignal(live(3,2,'H',30,15,'5'),market),null);
+  assert.equal(tennisSignal(live(3,2,'H',30,15,'5'),market)?.fraction,.15);
   assert.equal(tennisSignal(live(2,2,'H',30,15,'5'),market)?.fraction,.15);
   assert.equal(tennisSignal(live(3,1,'H',30,15,'5'),market),null);
   assert.equal(tennisSignal(live(3,1,'B',30,40),market),null);
   assert.equal(tennisSignal(live(3,1,'H',15,40),market),null);
   assert.equal(tennisSignal(live(3,1,'unknown'),market),null);
   assert.equal(tennisSignal(live(),{...market,event_ticker:'KXATPSETWINNER-2'}),null);
+});
+test('ITF M15 deciding third set accepts a 3–1 lead only while the leader serves',()=>{
+  const m={id:'covato',title:'Covato vs Delgado',type:'tennis_tournament_singles',details:{tour:'ITF',tournament_name:'M15 Mazatlan',first_competitor_id:'cov',second_competitor_id:'del',main_game_event_ticker:'KXITFMATCH-26OCT28COVDEL'}};
+  const market={status:'active',event_ticker:m.details.main_game_event_ticker,title:'Matteo Covato wins',rules_primary:'If Matteo Covato wins the professional tennis match, then Yes.',custom_strike:{tennis_competitor:'cov'},yes_ask_dollars:'0.95'};
+  const now=Date.now();
+  const state=(at,first=3,second=1,server='cov',widget='live',milestone=m)=>gameState(milestone,{milestone_id:m.id,_observed_at:new Date(at).toISOString(),details:{status:'started',widget_status:widget,completed_rounds:2,competitor1_is_home:true,competitor1_overall_score:1,competitor2_overall_score:1,competitor1_round_scores:[{outcome:'winner',score:6},{outcome:'loser',score:1},{outcome:'ongoing',score:first}],competitor2_round_scores:[{outcome:'loser',score:4},{outcome:'winner',score:6},{outcome:'ongoing',score:second}],competitor1_current_round_score:40,competitor2_current_round_score:0,server}});
+  const first=state(now-7000),next=state(now);
+  assert.equal(first.verifiedLive,true);
+  assert.equal(first.tennis.bestOf,3);
+  assert.equal(tennisSignal(first,market)?.fraction,.15);
+  assert.equal(kalshiOnlyLead(first,next,market),true);
+  assert.equal(tennisSignal(state(now,3,1,'del'),market),null);
+  assert.equal(tennisSignal(state(now,3,2),market),null);
+  assert.equal(tennisSignal(state(now,2,0),market),null);
+  assert.equal(tennisSignal(state(now,3,1,'cov','pregame'),market),null);
+  assert.equal(tennisSignal(state(now,3,1,'cov','live',{...m,details:{...m.details,tour:'unknown'}}),market),null);
+  assert.equal(kalshiOnlyLead(first,state(now,3,2),market),false);
 });
 test('hockey requires three goals at 6:30 or less in final period',()=>{
   const hockey={...milestone,type:'hockey_match',details:{league:'NHL'}};
@@ -516,12 +533,7 @@ test('zero score never creates an over; overs need only positive net profit',()=
   const market={status:'active',title:'Total goals over 0',rules_primary:'Combined total goals scored in the game',strike_type:'greater',floor_strike:-0.5};
   const soccer={...milestone,type:'soccer_tournament_multi_leg'};
   assert.equal(overSignal(gameState(soccer,{details:{status:'live',home_score:0,away_score:0}}),market),null);
-  for(const strategy of ['lead']){
-    for(const cash of [9900,9999])assert.equal(minimumProfitCents(strategy,cash),25);
-    assert.equal(minimumProfitCents(strategy,10000),50);
-    assert.equal(minimumProfitCents(strategy,20000),200);
-  }
-  for(const cash of [9900,10000,20000])assert.equal(minimumProfitCents('over',cash),1);
+  for(const strategy of ['lead','over'])for(const cash of [9900,9999,10000,20000])assert.equal(minimumProfitCents(strategy,cash),1);
   assert.equal(profitableCount(10,.99,2,'over',9900),10);
   assert.equal(profitableCount(10,.99,2,'over',20000),10);
   assert.equal(profitableCount(1,.99,2,'over',9900),0);
@@ -529,24 +541,24 @@ test('zero score never creates an over; overs need only positive net profit',()=
   assert.equal(profitableCount(100,.90,2,'over',9900),100);
   assert.ok(netSettlementProfitCents(100,.99,2)>0);
   assert.equal(profitableCount(1,1,2,'lead',100),0);
-  assert.equal(profitableCount(1,.90,2,'lead',20000,'basketball_game',299),0);
-  assert.equal(profitableCount(1,.90,2,'lead',20000,'football_game'),0);
+  assert.equal(profitableCount(1,.90,2,'lead',20000,'basketball_game',299),1);
+  assert.equal(profitableCount(1,.90,2,'lead',20000,'football_game'),1);
   assert.equal(profitableCount(1,.99,2,'lead',20000,'basketball_game',20),0);
 });
-test('basketball and other sports share the dynamic net floor',()=>{
+test('leads need only positive net profit at all game clock times',()=>{
   for(const type of ['basketball_game','college_basketball_game']){
-    for(const seconds of [300,181,180,61,60,30,1,0])assert.equal(minimumProfitCents('lead',20000,type,seconds),200);
-    assert.equal(profitableCount(12,.90,2,'lead',20000,type,299),0);
-    assert.equal(profitableCount(6,.90,2,'lead',20000,type,61),0);
-    assert.equal(profitableCount(6,.90,2,'lead',20000,type,60),0);
-    assert.equal(profitableCount(3,.90,2,'lead',20000,type,31),0);
-    assert.equal(profitableCount(3,.90,2,'lead',20000,type,30),0);
-    assert.equal(profitableCount(3,.99,2,'lead',20000,type,20),0);
+    for(const seconds of [300,181,180,61,60,30,1,0])assert.equal(minimumProfitCents('lead',20000,type,seconds),1);
+    assert.equal(profitableCount(12,.90,2,'lead',20000,type,299),12);
+    assert.equal(profitableCount(6,.90,2,'lead',20000,type,61),6);
+    assert.equal(profitableCount(6,.90,2,'lead',20000,type,60),6);
+    assert.equal(profitableCount(3,.90,2,'lead',20000,type,31),3);
+    assert.equal(profitableCount(3,.90,2,'lead',20000,type,30),3);
+    assert.equal(profitableCount(3,.99,2,'lead',20000,type,20),3);
   }
-  assert.equal(minimumProfitCents('lead',20000,'football_game',30),200);
+  assert.equal(minimumProfitCents('lead',20000,'football_game',30),1);
   assert.equal(minimumProfitCents('over',20000,'basketball_game',30),1);
 });
-test('late lead respects the 15 percent cap; ties alone do not trigger an exit',()=>{
+test('late lead caps and timed tie/trailing exits retain tennis match-point exit',()=>{
   const m={...milestone,type:'football_game',details:{league:'NFL',home_team_id:'NY',away_team_id:'BOS'}};
   const market={status:'active',title:'New York wins',yes_sub_title:'New York',custom_strike:{football_team:'NY'}};
   const at=(home,away,clock)=>gameState(m,{details:{...live(home,away).details,clock}});
@@ -555,7 +567,15 @@ test('late lead respects the 15 percent cap; ties alone do not trigger an exit',
   assert.equal(leadSignal(at(24,14,'00:30'),market)?.fraction,.15);
   assert.equal(comeback(at(24,14,'02:30'),market,'lead'),false);
   assert.equal(comeback(at(24,24,'02:00'),market,'lead'),false);
+  assert.equal(comeback(at(24,24,'00:30'),market,'lead'),false);
+  assert.equal(comeback(at(24,24,'00:29'),market,'lead'),true);
+  assert.equal(comeback(at(24,25,'02:00'),market,'lead'),false);
+  assert.equal(comeback(at(24,25,'01:59'),market,'lead'),true);
   assert.equal(comeback(at(24,25,'01:00'),market,'lead'),true);
+  assert.equal(timedProfitExitAllowed(at(24,24,'00:30'),market),false);
+  assert.equal(timedProfitExitAllowed(at(24,24,'00:29'),market),true);
+  assert.equal(timedProfitExitAllowed(at(24,25,'02:00'),market),false);
+  assert.equal(timedProfitExitAllowed(at(24,14,'02:30'),market),true);
   assert.equal(comeback(at(24,25,'01:00'),{floor_strike:20},'over'),false);
   const tennis={...milestone,type:'tennis_tournament_singles',details:{best_of:3,first_competitor_id:'A',second_competitor_id:'B'}};
   const tennisState=(a,b)=>gameState(tennis,{details:{status:'live',competitor1_round_scores:[{score:a}],competitor2_round_scores:[{score:b}]}});
@@ -563,5 +583,16 @@ test('late lead respects the 15 percent cap; ties alone do not trigger an exit',
   const point=(a,b,firstPoints,secondPoints,server='B')=>gameState(tennis,{details:{status:'live',competitor1_round_scores:[{score:a}],competitor2_round_scores:[{score:b}],competitor1_current_round_score:firstPoints,competitor2_current_round_score:secondPoints,server}});
   assert.equal(comeback(point(5,6,15,30),{custom_strike:{tennis_competitor:'A'}},'lead'),false);
   assert.equal(comeback(point(5,6,15,40),{custom_strike:{tennis_competitor:'A'}},'lead'),true);
+});
+test('basketball positive exit cannot bypass tie and trailing clock windows',()=>{
+  const m={...milestone,type:'basketball_game',details:{league:'NBA',home_team_id:'NY',away_team_id:'BOS'}};
+  const market={title:'New York wins',yes_sub_title:'New York',custom_strike:{basketball_team:'NY'}};
+  const at=(home,away,period,clock)=>gameState(m,{details:{...live(home,away,period).details,clock}});
+  assert.equal(timedProfitExitAllowed(at(100,100,4,'00:30'),market),false);
+  assert.equal(timedProfitExitAllowed(at(100,100,4,'00:29'),market),true);
+  assert.equal(timedProfitExitAllowed(at(100,101,4,'02:00'),market),false);
+  assert.equal(timedProfitExitAllowed(at(100,101,4,'01:59'),market),true);
+  assert.equal(timedProfitExitAllowed(at(101,100,4,'03:00'),market),true);
+  assert.equal(timedProfitExitAllowed(at(100,101,3,'00:10'),market),false);
 });
 
