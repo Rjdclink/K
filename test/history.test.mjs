@@ -18,9 +18,18 @@ test('history includes wins, losses, and partial exit plus settlement',()=>{
   const partial={...sale,count_fp:'4.00'};
   assert.equal(completedTrade(entry,[buy,partial],yes).profitCents,5);
 });
+test('a winning market does not pay out shares already sold during a comeback',()=>{
+  const kym={...entry,fill_count:'38.76'};
+  const bought={...buy,count_fp:'38.76',yes_price_dollars:'0.97',fee_cost:'0.0828'};
+  const sold={...sale,count_fp:'38.76',yes_price_dollars:'0.32',fee_cost:'0.2132'};
+  const result=completedTrade(kym,[bought,sold],{market_result:'yes',settled_time:'2026-10-28T14:00:00Z'});
+  assert.equal(result.profitCents,Math.round((38.76*.32-.2132-38.76*.97-.0828)*100));
+  assert.equal(result.outcome,'settled');
+});
 test('history refuses incomplete and mixed fills instead of displaying an inaccurate result',()=>{
   assert.equal(completedTrade(entry,[buy,{...buy,order_id:'manual-buy'}],null),null);
   assert.equal(completedTrade(entry,[{...buy,count_fp:'9.00'},sale],null),null);
   assert.equal(completedTrade(entry,[buy,{...sale,fee_cost:null}],null),null);
   assert.equal(completedTrade(entry,[buy],null),null);
 });
+
