@@ -16,7 +16,7 @@ import { authorized, checkCredentials, sessionCookie, loginPage } from './dashbo
 import { eligibleForMarkets, linkedEventTickers, gameTimeLabel, storedClockSeconds } from './discovery.mjs';
 import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOver, verifyIndependentTableTennisLead, verifyIndependentTableTennisMatch } from './score_verification.mjs';
-import { COMBO_ATTEMPT_MS, COMBO_WINDOW_MS, VERIFY_DWELL_MS, comboAllocation, cashAfterComboReserve, compatibleComboGroups, comboLegs, filledComboWindow, eligibleFillTrigger, quoteForYes, collectionsForEvents, selectedComboMarkets } from './combos.mjs';
+import { COMBO_ATTEMPT_MS, COMBO_WINDOW_MS, VERIFY_DWELL_MS, comboAllocation, cashAfterComboReserve, compatibleComboGroups, comboLegs, filledComboWindow, eligibleFillTrigger, heldComboLeg, quoteForYes, collectionsForEvents, selectedComboMarkets } from './combos.mjs';
 import { estimatedSaleProfitCents } from './positions.mjs';
 import { weatherContract } from './weather.mjs';
 import { scanWeatherMarkets } from './weather_scanner.mjs';
@@ -463,38 +463,15 @@ async function reconcileCombos(){
     }catch(e){console.warn('Combo reconciliation deferred:',row.market_ticker,e.message)}
   }
 }
- async function executeCombo(group,account,bankroll,scoreboardCache,fraction,newTicker){
+ async function executeCombo(group,account,bankroll,fraction,newTicker){
   if(group.length<2){console.warn('Combo held legs unavailable:',group.map(c=>c.market.ticker));return {filled:false,pending:false}}
-  // The verification window begins with a fresh observation of every leg.
-  const verified=await Promise.all(group.map(async c=>{
-    try{
-      if(c.signal.strategy==='over'){
-         const dwell=VERIFY_DWELL_MS;
-        const remaining=dwell-(Date.now()-c.state.observedAt);
-        if(!Number.isFinite(remaining))return null;
-        if(remaining>0)await new Promise(resolve=>setTimeout(resolve,remaining));
-      }
-      const liveData=await liveMilestone(c.milestone.id);
-      if(!liveData)return null;
-      liveData._observed_at=new Date().toISOString();
-      const state=gameState(c.milestone,liveData);
-      if(c.signal.strategy==='over'){
-        if(!confirmedOver(c.state,state,c.market)||!await auditedOver(state,c.milestone,{cache:scoreboardCache,market:c.market,firstObservation:c.state}))return null;
-      }else if(/basketball/.test(c.state.type) && (state.period!==c.state.period||!state.periodConsistent||state.remainingSeconds>c.state.remainingSeconds))return null;
-      const market=(await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market;
-      if(!market||market.ticker!==c.market.ticker||market.event_ticker!==c.event.event_ticker)return null;
-      if(state.golf&&!await verifyGolf(state,c.milestone,c.event))return null;
-      const signal=c.signal.strategy==='over'?overSignal(state,market):golfSignal(state,market)||leadSignal(state,market)||additionalLeadSignal(state,market)||tennisSignal(state,market)||tableTennisSignal(state,market);
-      return signal?{...c,state,market,signal}:null;
-    }catch(e){console.warn('Combo leg verification:',c.market.ticker,e.message);return null}
-  }));
   const seenMarkets=new Set();
-  const eligible=verified.filter(Boolean).filter(c=>{
+  const eligible=group.filter(c=>{
     if(seenMarkets.has(c.market.ticker))return false;
     seenMarkets.add(c.market.ticker);return true;
   }).slice(0,6);
-  if(eligible.length<2){console.warn('Combo independently verified fewer than two held legs:',group.map((c,i)=>[c.market.ticker,Boolean(verified[i])]),'trigger',newTicker);return {filled:false,pending:false}}
-  // Prefer all available verified legs, then smaller valid combinations.
+  if(eligible.length<2)return {filled:false,pending:false};
+  // Prefer all held, filled legs, then smaller valid combinations.
   const collections=await collectionsForEvents(eligible.map(c=>c.event.event_ticker),kalshi);
   const deadline=Date.now()+COMBO_ATTEMPT_MS;
   const plans=[],funding=[];
@@ -548,16 +525,11 @@ async function reconcileCombos(){
       }))).flat().sort((a,b)=>b.plan.legs.length-a.plan.legs.length||Number(b.plan.legs.some(c=>c.market.ticker===newTicker))-Number(a.plan.legs.some(c=>c.market.ticker===newTicker))||b.terms.profitCents-a.terms.profitCents);
       if(offers.length){
         const {q,terms,plan,fees}=offers[0],{legs,ticker,strategy,fraction,shard,rfq,created}=plan;
-        // Refresh every leg immediately before accepting a quote. A goal correction
-        // or changed leader invalidates the entire combination.
-        const fresh=await liveBatch(legs.map(c=>c.milestone));
-        if(legs.some(c=>{
-          const d=fresh.get(c.milestone.id),s=gameState(c.milestone,d);
-          return c.signal.strategy==='over'?!overSignal(s,c.market)||s.home!==c.state.home||s.away!==c.state.away||
-            s.period<c.state.period||s.soccerMinute<c.state.soccerMinute||/^tennis_/.test(s.type)&&s.tennisTotal!==c.state.tennisTotal:!(golfSignal(s,c.market)||leadSignal(s,c.market)||additionalLeadSignal(s,c.market)||tennisSignal(s,c.market)||tableTennisSignal(s,c.market));
-        }))break;
-        const checks=await Promise.all(legs.filter(c=>c.signal.strategy==='over'||c.state.golf).map(c=>c.state.golf?verifyGolf(gameState(c.milestone,fresh.get(c.milestone.id)),c.milestone,c.event):auditedOver(gameState(c.milestone,fresh.get(c.milestone.id)),c.milestone,{market:c.market,firstObservation:c.state,cache:scoreboardCache})));
-        if(checks.some(ok=>!ok)||Date.now()>=deadline)break;
+        // Confirm ownership and tradability immediately before accepting;
+        // the filled singles have already passed their sport verification.
+        const [positions,latestCombo]=await Promise.all([allOpenPositions(),kalshi('/markets/'+encodeURIComponent(ticker))]);
+        const held=new Set((positions.market_positions||[]).filter(p=>Number(p.position_fp??p.position??0)>0).map(p=>p.ticker));
+        if(legs.some(c=>!held.has(c.market.ticker))||!['active','open'].includes(latestCombo.market?.status))break;
         if(Date.now()>=deadline)break;
         const latest=await accountBalance({fresh:true});
         if(Number(latest.balance)<terms.debitCents || (shardCash(latest,shard)??0)<terms.debitCents ||
@@ -573,8 +545,8 @@ async function reconcileCombos(){
           // Accepting the maker's NO bid buys YES (the complementary price).
           await kalshi('/communications/rfqs/'+encodeURIComponent(rfq)+'/quotes/'+encodeURIComponent(q.id)+'/accept',{auth:true,method:'PUT',body:{accepted_side:'no'}});
           await reconcileCombos();
-          return {filled:true,pending:true,legs};
-        }catch(e){console.error('Combo accept uncertain; reconciliation required:',ticker,e.message);return {filled:false,pending:true,legs}}
+          return {filled:true,pending:true,legs,ticker};
+        }catch(e){console.error('Combo accept uncertain; reconciliation required:',ticker,e.message);return {filled:false,pending:true,legs,ticker}}
       }
       await new Promise(resolve=>setTimeout(resolve,Math.min(500,Math.max(0,deadline-Date.now()))));
     }
@@ -582,6 +554,40 @@ async function reconcileCombos(){
   console.info('Combo quote counts:',JSON.stringify([...quoteStats]));
   console.info('Combo maker quote unavailable:',newTicker,'RFQs',plans.map(p=>p.rfq));
   return {filled:false,pending:false};
+}
+async function checkHeldCombinations(fills,comboCount){
+  const positions=await allOpenPositions();
+  const held=new Set((positions.market_positions||[]).filter(p=>Number(p.position_fp??p.position??0)>0).map(p=>p.ticker));
+  const singles=filledComboWindow(fills,held,null);
+  if(singles.length<2)return {filled:false,pending:false};
+  await pool.query(`CREATE TABLE IF NOT EXISTS combo_fill_triggers (
+    fill_id uuid PRIMARY KEY, attempted_at timestamptz, completed_at timestamptz, combo_ticker text)`);
+  await pool.query('ALTER TABLE combo_fill_triggers ADD COLUMN IF NOT EXISTS combo_ticker text');
+  await pool.query(`UPDATE combo_fill_triggers t SET completed_at=NULL,combo_ticker=NULL
+    WHERE t.completed_at IS NOT NULL AND t.combo_ticker IS NOT NULL AND EXISTS(
+      SELECT 1 FROM trade_attempts a WHERE a.market_ticker=t.combo_ticker AND a.status IN ('unfilled','rejected'))`);
+  const ready=await pool.query(`SELECT a.id,a.market_ticker FROM trade_attempts a
+    LEFT JOIN combo_fill_triggers t ON t.fill_id=a.id
+    WHERE a.status='filled' AND a.combo_legs IS NULL AND a.market_ticker=ANY($1::text[])
+      AND t.completed_at IS NULL AND (t.attempted_at IS NULL OR t.attempted_at<now()-interval '20 seconds')
+    ORDER BY a.created_at DESC LIMIT 25`,[[...held]]);
+  if(!ready.rowCount)return {filled:false,pending:false};
+  const snapshots=await pool.query('SELECT id,title,sport,sport_family,clock_seconds FROM game_snapshots WHERE id=ANY($1::text[])',
+    [[...new Set(singles.map(r=>r.game_id))]]);
+  const byGame=new Map(snapshots.rows.map(s=>[s.id,s]));
+  const candidates=(await Promise.all(singles.map(async row=>{
+    try{const {market}=await kalshi('/markets/'+encodeURIComponent(row.market_ticker));
+      return heldComboLeg(row,market,byGame.get(row.game_id));
+    }catch(e){console.warn('Held combo market unavailable:',row.market_ticker,e.message);return null}
+  }))).filter(Boolean);
+  const trigger=eligibleFillTrigger(ready.rows,singles,candidates);
+  if(candidates.length<2||!trigger){console.info('Combo fewer than two open held legs:',singles.map(r=>r.market_ticker));return {filled:false,pending:false}}
+  await pool.query(`INSERT INTO combo_fill_triggers(fill_id,attempted_at) VALUES($1,now())
+    ON CONFLICT(fill_id) DO UPDATE SET attempted_at=EXCLUDED.attempted_at`,[trigger.id]);
+  const account=await accountBalance({fresh:true});
+  const result=await executeCombo(candidates,account,Number(account.balance)+Number(account.portfolio_value),comboAllocation(comboCount),trigger.market_ticker);
+  if(result.pending)await pool.query('UPDATE combo_fill_triggers SET completed_at=now(),combo_ticker=$2 WHERE fill_id=$1',[trigger.id,result.ticker]);
+  return result;
 }
 async function diagnoseUnfilledCombo(candidates,filled){
   const unfilled=candidates.filter(c=>hasAsk(c.market)&&!filled.has(signalKey(c)));
@@ -796,7 +802,7 @@ async function scan(cachedMilestones){
     const active=games.filter(g=>g.state.verifiedLive && g.state.scoreKnown);
     const events=await marketMap(active.filter(g=>eligibleForMarkets(g.state)).flatMap(g=>linkedEventTickers(g.milestone)));
     let balance=0,bankroll=0,account=null,comboCount=0;
-    const existingFills=await pool.query(`SELECT market_ticker,event_ticker,game_id,strategy,fill_count,limit_price,created_at,updated_at,combo_legs FROM trade_attempts WHERE status='filled'`);
+    const existingFills=await pool.query(`SELECT id,market_ticker,event_ticker,game_id,sport,strategy,fill_count,limit_price,created_at,updated_at,combo_legs FROM trade_attempts WHERE status='filled'`);
     let filled=new Set(existingFills.rows.map(r=>`${r.market_ticker}:${r.strategy}`));
     const pendingLegs=await pool.query(`SELECT combo_legs FROM trade_attempts WHERE status='combo_pending' AND combo_legs IS NOT NULL`);
     for(const row of pendingLegs.rows)for(const leg of row.combo_legs||[])filled.add(`${leg.market_ticker}:${leg.strategy}`);
@@ -812,6 +818,11 @@ async function scan(cachedMilestones){
     }
     // Exits are assessed before any new risk is added.
     if(live()||exitOnly())await exitComebacks(games,events,openPositions);
+    if(live()&&account)try{
+      const combo=await checkHeldCombinations(existingFills.rows,comboCount);
+      if(combo.pending){comboCount++;account=await accountBalance({fresh:true});balance=Number(account.balance);bankroll=balance+Number(account.portfolio_value)}
+      if(combo.filled)submitted++;
+    }catch(e){executionErrors.push('Combo: '+String(e.message).slice(0,180));console.error('Combo execution deferred:',e)}
     await candidateTable();
     const opportunities=[],snapshotRows=new Map(),scoreboardCache=new Map();
     const allCandidates=[];
@@ -888,6 +899,7 @@ async function scan(cachedMilestones){
         finally{c.preflightDone()}
       }
     }));
+    let singlesFilledThisPass=0;
     for(const c of opportunities){let state=c.state;
       try{
         if(!live())continue;
@@ -966,71 +978,18 @@ async function scan(cachedMilestones){
           continue;
         }
         if(await submit(c.signal,state,c.event,c.market,Math.min(spendable,localCash),bankroll,budget,bankroll)||await recoverPending(c.signal,state,c.event,c.market,Math.min(spendable,localCash),bankroll,budget,bankroll)){
-          submitted++;filled.add(signalKey(c));const account=await accountBalance({fresh:true});balance=Number(account.balance);bankroll=balance+Number(account.portfolio_value);
+          submitted++;singlesFilledThisPass++;filled.add(signalKey(c));const account=await accountBalance({fresh:true});balance=Number(account.balance);bankroll=balance+Number(account.portfolio_value);
         }
       }catch(e){const message=`${c.market.ticker}: ${String(e.message).slice(0,170)}`;executionErrors.push(message);console.error('Candidate execution failed:',message)}
     }
     await workersDone;
-    // Each newly filled single triggers a new combination attempt with held legs.
-    if(live()&&account){
-      await pool.query(`CREATE TABLE IF NOT EXISTS combo_fill_triggers (
-        fill_id uuid PRIMARY KEY, attempted_at timestamptz, completed_at timestamptz)`);
-      const [currentPositions,currentAccount,currentFills]=await Promise.all([
-        allOpenPositions(),accountBalance({fresh:true}),pool.query(`SELECT id,market_ticker,event_ticker,game_id,strategy,fill_count,limit_price,created_at,updated_at,combo_legs FROM trade_attempts WHERE status='filled'`)
-      ]);
-      const held=new Set((currentPositions.market_positions||[]).filter(p=>Number(p.position_fp??p.position??0)>0).map(p=>p.ticker));
-      const singles=filledComboWindow(currentFills.rows,held,null);
-      const ready=await pool.query(`SELECT a.id,a.market_ticker FROM trade_attempts a
-        LEFT JOIN combo_fill_triggers t ON t.fill_id=a.id
-        WHERE a.status='filled' AND a.combo_legs IS NULL AND a.created_at>now()-interval '24 hours'
-          AND t.completed_at IS NULL AND (t.attempted_at IS NULL OR t.attempted_at<now()-interval '20 seconds')
-        ORDER BY a.created_at DESC LIMIT 25`);
-      if(ready.rowCount&&singles.length>=2){
-        const gameById=new Map(games.map(g=>[g.milestone.id,g]));
-        // Kalshi can stop listing a milestone before held contracts settle.
-        // Rehydrate its original event link from an audited successful entry,
-        // then require a fresh live milestone and open event before combining.
-        const missing=singles.filter(r=>!gameById.get(r.game_id)?.state.verifiedLive);
-        if(missing.length){
-          const {rows}=await pool.query(`SELECT DISTINCT ON (market_ticker) market_ticker,evidence->'milestone' AS milestone
-            FROM verification_records WHERE passed=true AND market_ticker=ANY($1::text[])
-              AND created_at>now()-interval '24 hours' ORDER BY market_ticker,created_at DESC`,[missing.map(r=>r.market_ticker)]);
-          const byTicker=new Map(rows.map(r=>[r.market_ticker,r.milestone]));
-          for(const r of missing){
-            const milestone=byTicker.get(r.market_ticker);
-            if(!milestone?.id||gameById.get(milestone.id)?.state.verifiedLive)continue;
-            try{
-              const liveData=await liveMilestone(milestone.id);
-              if(!liveData)continue;
-              liveData._observed_at=new Date().toISOString();
-              const state=gameState(milestone,liveData);
-              if(state.verifiedLive)gameById.set(milestone.id,{milestone,state});
-            }catch(e){console.warn('Combo held milestone refresh unavailable:',milestone.id,e.message)}
-          }
-          const restored=await marketMap(missing.filter(r=>gameById.has(r.game_id)).map(r=>r.event_ticker));
-          for(const [ticker,event] of restored)events.set(ticker,event);
-        }
-        const comboCandidates=singles.flatMap(r=>{
-          const g=gameById.get(r.game_id),event=events.get(r.event_ticker),market=(event?.markets||[]).find(m=>m.ticker===r.market_ticker);
-          if(!g?.state.verifiedLive||!market){console.warn('Combo held market unavailable:',r.market_ticker,{gameLive:!!g?.state.verifiedLive,eventFound:!!event,marketFound:!!market});return []}
-          const signal=r.strategy==='over'?overSignal(g.state,market):golfSignal(g.state,market)||leadSignal(g.state,market)||additionalLeadSignal(g.state,market)||tennisSignal(g.state,market)||tableTennisSignal(g.state,market);
-          if(!signal)console.warn('Combo held market current signal unavailable:',r.market_ticker,r.strategy);
-          return signal?[{...g,market,event,signal,state:g.state}]:[];
-        });
-        const group=[],seenMarkets=new Set();
-        for(const c of comboCandidates){if(seenMarkets.has(c.market.ticker))continue;
-          group.push(c);seenMarkets.add(c.market.ticker);if(group.length===6)break}
-        const newlyFilled=eligibleFillTrigger(ready.rows,singles,group);
-        if(group.length<2)console.warn('Combo fewer than two qualifying held markets:',singles.map(r=>r.market_ticker),group.map(c=>c.market.ticker));
-        if(!newlyFilled&&group.length>=2)console.warn('Combo no live eligible fill trigger:',ready.rows.map(r=>r.market_ticker),group.map(c=>c.market.ticker));
-        if(newlyFilled&&group.length>=2)try{
-          await pool.query(`INSERT INTO combo_fill_triggers(fill_id,attempted_at) VALUES($1,now())
-            ON CONFLICT(fill_id) DO UPDATE SET attempted_at=EXCLUDED.attempted_at`,[newlyFilled.id]);
-          const result=await executeCombo(group,currentAccount,Number(currentAccount.balance)+Number(currentAccount.portfolio_value),scoreboardCache,comboAllocation(comboCount),newlyFilled.market_ticker);
-          if(result.pending)await pool.query('UPDATE combo_fill_triggers SET completed_at=now() WHERE fill_id=$1',[newlyFilled.id]);
-          if(result.filled)submitted++;
-        }catch(e){executionErrors.push('Combo: '+String(e.message).slice(0,180));console.error('Combo execution deferred:',e)}
-      }
+    if(live()&&singlesFilledThisPass){
+      try{
+        const currentFills=await pool.query(`SELECT id,market_ticker,event_ticker,game_id,sport,strategy,fill_count,limit_price,created_at,updated_at,combo_legs FROM trade_attempts WHERE status='filled'`);
+        const combo=await checkHeldCombinations(currentFills.rows,comboCount);
+        if(combo.pending)comboCount++;
+        if(combo.filled)submitted++;
+      }catch(e){executionErrors.push('Combo: '+String(e.message).slice(0,180));console.error('Post-fill combo execution deferred:',e)}
     }
     if(live()){
       try{await diagnoseHeldCombinations(existingFills.rows,openPositions)}catch(e){console.warn('Held combo diagnostic deferred:',e.message)}

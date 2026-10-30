@@ -1,6 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {COMBO_WINDOW_MS,VERIFY_DWELL_MS,comboAllocation,cashAfterComboReserve,comboCandidates,comboCollection,compatibleComboGroups,quoteForYes,comboLegs,filledComboWindow,eligibleFillTrigger,collectionsForEvents,selectedComboMarkets} from '../src/combos.mjs';
+import {COMBO_WINDOW_MS,VERIFY_DWELL_MS,comboAllocation,cashAfterComboReserve,comboCandidates,comboCollection,compatibleComboGroups,quoteForYes,comboLegs,filledComboWindow,eligibleFillTrigger,heldComboLeg,collectionsForEvents,selectedComboMarkets} from '../src/combos.mjs';
+
+test('two held fills qualify for combo without a second live game verification',()=>{
+  const rows=['A','B'].map(ticker=>({market_ticker:ticker,event_ticker:'E',game_id:'G',sport:'NFL',strategy:'over',fill_count:'2.00',combo_legs:null,updated_at:new Date().toISOString()}));
+  const held=new Set(['A','B']);
+  const legs=filledComboWindow(rows,held,null).map(row=>heldComboLeg(row,{ticker:row.market_ticker,event_ticker:'E',status:'active'},{}));
+  assert.equal(legs.length,2);
+  assert.ok(legs.every(Boolean));
+  assert.equal(heldComboLeg(rows[0],{ticker:'A',event_ticker:'E',status:'closed'}),null);
+  assert.equal(heldComboLeg({...rows[0],fill_count:'0'},{ticker:'A',event_ticker:'E',status:'active'}),null);
+  assert.deepEqual(filledComboWindow(rows,new Set(['A']),null),[]);
+});
 
 test('a stale newer fill cannot starve an older live combo trigger',()=>{
   const singles=[{id:'new',market_ticker:'NBA'},{id:'older',market_ticker:'Hubbard'}];
