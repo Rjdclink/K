@@ -20,6 +20,7 @@ ALTER TABLE game_snapshots ADD COLUMN IF NOT EXISTS sport_family text;
 ALTER TABLE game_snapshots ADD COLUMN IF NOT EXISTS clock_seconds integer;
 ALTER TABLE game_snapshots ADD COLUMN IF NOT EXISTS clock_label text;
 ALTER TABLE game_snapshots ADD COLUMN IF NOT EXISTS clock_observed_at timestamptz;
+ALTER TABLE game_snapshots ADD COLUMN IF NOT EXISTS score_observed_at timestamptz;
 ALTER TABLE game_snapshots ADD COLUMN IF NOT EXISTS possession_side text;
 ALTER TABLE game_snapshots ADD COLUMN IF NOT EXISTS home_team_id text;
 ALTER TABLE game_snapshots ADD COLUMN IF NOT EXISTS away_team_id text;
