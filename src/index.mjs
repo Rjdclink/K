@@ -948,6 +948,29 @@ async function scan(cachedMilestones){
         await pool.query(`INSERT INTO combo_fill_triggers(fill_id,attempted_at) VALUES($1,now())
           ON CONFLICT(fill_id) DO UPDATE SET attempted_at=EXCLUDED.attempted_at`,[newlyFilled.id]);
         const gameById=new Map(games.map(g=>[g.milestone.id,g]));
+        // Kalshi can stop listing a milestone before held contracts settle.
+        // Rehydrate its original event link from an audited successful entry,
+        // then require a fresh live milestone and open event before combining.
+        const missing=singles.filter(r=>!gameById.has(r.game_id));
+        if(missing.length){
+          const {rows}=await pool.query(`SELECT DISTINCT ON (market_ticker) market_ticker,evidence->'milestone' AS milestone
+            FROM verification_records WHERE passed=true AND market_ticker=ANY($1::text[])
+              AND created_at>now()-interval '24 hours' ORDER BY market_ticker,created_at DESC`,[missing.map(r=>r.market_ticker)]);
+          const byTicker=new Map(rows.map(r=>[r.market_ticker,r.milestone]));
+          for(const r of missing){
+            const milestone=byTicker.get(r.market_ticker);
+            if(!milestone?.id||gameById.has(milestone.id))continue;
+            try{
+              const liveData=await liveMilestone(milestone.id);
+              if(!liveData)continue;
+              liveData._observed_at=new Date().toISOString();
+              const state=gameState(milestone,liveData);
+              if(state.verifiedLive)gameById.set(milestone.id,{milestone,state});
+            }catch(e){console.warn('Combo held milestone refresh unavailable:',milestone.id,e.message)}
+          }
+          const restored=await marketMap(missing.filter(r=>gameById.has(r.game_id)).map(r=>r.event_ticker));
+          for(const [ticker,event] of restored)events.set(ticker,event);
+        }
         const comboCandidates=singles.flatMap(r=>{
           const g=gameById.get(r.game_id),event=events.get(r.event_ticker),market=(event?.markets||[]).find(m=>m.ticker===r.market_ticker);
           if(!g?.state.verifiedLive||!market){console.warn('Combo held market unavailable:',r.market_ticker,{gameLive:!!g?.state.verifiedLive,eventFound:!!event,marketFound:!!market});return []}
