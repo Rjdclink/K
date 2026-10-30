@@ -16,7 +16,7 @@ import { authorized, checkCredentials, sessionCookie, loginPage } from './dashbo
 import { eligibleForMarkets, linkedEventTickers, gameTimeLabel, storedClockSeconds } from './discovery.mjs';
 import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOver, verifyIndependentTableTennisLead, verifyIndependentTableTennisMatch } from './score_verification.mjs';
-import { COMBO_ATTEMPT_MS, COMBO_WINDOW_MS, VERIFY_DWELL_MS, comboAllocation, compatibleComboGroups, comboLegs, filledComboWindow, quoteForYes, collectionsForEvents } from './combos.mjs';
+import { COMBO_ATTEMPT_MS, COMBO_WINDOW_MS, VERIFY_DWELL_MS, comboAllocation, compatibleComboGroups, comboLegs, filledComboWindow, quoteForYes, collectionsForEvents, selectedComboMarkets } from './combos.mjs';
 import { estimatedSaleProfitCents } from './positions.mjs';
 import { weatherContract } from './weather.mjs';
 import { scanWeatherMarkets } from './weather_scanner.mjs';
@@ -504,7 +504,7 @@ async function reconcileCombos(){
   await Promise.all(groups.filter(({legs})=>legs.length===largest).map(async ({legs,collection})=>{
     const n=legs.length;
     try{
-      const identifiers=legs.map(c=>({event_ticker:c.event.event_ticker,market_ticker:c.market.ticker}));
+      const identifiers=selectedComboMarkets(legs);
       const created=await kalshi('/multivariate_event_collections/'+encodeURIComponent(collection.collection_ticker),{auth:true,method:'POST',body:{selected_markets:identifiers,with_market_payload:true}});
       const ticker=created.market_ticker,combo=created.market;
       if(!ticker||!combo||combo.ticker!==ticker||combo.event_ticker!==created.event_ticker||!['initialized','active','open'].includes(combo.status))return;
@@ -587,7 +587,7 @@ async function diagnoseUnfilledCombo(candidates,filled){
     const group=compatibleComboGroups(collections,legs,64)[0];
     if(group){
       collection=group.collection.collection_ticker;
-      const selected_markets=group.legs.map(c=>({event_ticker:c.event.event_ticker,market_ticker:c.market.ticker}));
+      const selected_markets=selectedComboMarkets(group.legs);
       try{
         const created=await kalshi('/multivariate_event_collections/'+encodeURIComponent(collection),
           {auth:true,method:'POST',body:{selected_markets,with_market_payload:true}});
