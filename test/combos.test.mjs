@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {COMBO_WINDOW_MS,VERIFY_DWELL_MS,comboAllocation,comboCandidates,comboCollection,compatibleComboGroups,quoteForYes,comboLegs,filledComboWindow,collectionsForEvents,selectedComboMarkets} from '../src/combos.mjs';
+import {COMBO_WINDOW_MS,VERIFY_DWELL_MS,comboAllocation,cashAfterComboReserve,comboCandidates,comboCollection,compatibleComboGroups,quoteForYes,comboLegs,filledComboWindow,collectionsForEvents,selectedComboMarkets} from '../src/combos.mjs';
+
+test('single trades retain their own bankroll cap while cash is reserved for the next combo',()=>{
+  assert.equal(cashAfterComboReserve(10227,14599,0),8768);
+  assert.equal(cashAfterComboReserve(1478,14599,0),19);
+  assert.equal(cashAfterComboReserve(1,14599,0),0);
+  assert.equal(cashAfterComboReserve(10000,14599,1),8833);
+});
 
 test('Kalshi combo creation includes the side required by the live validator',()=>{
   const legs=[{event:{event_ticker:'E1'},market:{ticker:'M1'}},{event:{event_ticker:'E2'},market:{ticker:'M2'}}];
