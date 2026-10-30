@@ -43,11 +43,14 @@ function sameTeam(expected,aliases){
   const parts=String(expected||'').match(/^([A-Z]{2,3})\s+(.+)$/);
   const alternate=parts&&alias[parts[1]]?clean(alias[parts[1]]+' '+parts[2]):null;
   const franchise=hockey[expected]?clean(hockey[expected]):soccer[expected]?clean(soccer[expected]):null;
-  return key.length>=3 && aliases.some(name=>clean(name)===key||alternate&&clean(name)===alternate||franchise&&clean(name)===franchise);
+  const clubName=name=>clean(String(name||'').replace(/^(?:AC|FC|CF|SC|AFC)\s+/i,'').replace(/\s+(?:AC|FC|CF|SC|AFC)$/i,''));
+  const stripped=clubName(expected);
+  return key.length>=3 && aliases.some(name=>clean(name)===key||alternate&&clean(name)===alternate||franchise&&clean(name)===franchise||
+    stripped.length>=5&&clubName(name)===stripped);
 }
 function teamAliases(t,fox=false){
-  if(fox)return [t?.imageAltText,t?.longName,t?.stackedNameBottom,`${t?.name||''} ${t?.longName||''}`,`${t?.stackedNameTop||''} ${t?.stackedNameBottom||''}`];
-  return [t?.displayName,t?.shortDisplayName,t?.name,`${t?.abbreviation||''} ${t?.name||''}`,`${t?.location||''} ${t?.name||''}`];
+  if(fox)return [t?.imageAltText,t?.longName,t?.stackedNameBottom,t?.abbreviation,t?.shortName,`${t?.name||''} ${t?.longName||''}`,`${t?.stackedNameTop||''} ${t?.stackedNameBottom||''}`];
+  return [t?.displayName,t?.shortDisplayName,t?.name,t?.abbreviation,`${t?.abbreviation||''} ${t?.name||''}`,`${t?.location||''} ${t?.name||''}`];
 }
 function clockCompatible(game,period,clock){
   if(Number.isFinite(game.period)&&Number.isFinite(Number(period))&&Number(period)>0&&game.period!==Number(period))return false;

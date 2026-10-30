@@ -599,6 +599,28 @@ async function upgradeHeldOver(c,preflight,original,scoreboardCache){
     return {verified:true,filled:false};
   }
 }
+async function immediatelyUpgradeFilledOver(c,scoreboardCache){
+  const firstLive=await liveMilestone(c.milestone.id);
+  if(!firstLive)return false;
+  firstLive._observed_at=new Date().toISOString();
+  const first=gameState(c.milestone,firstLive);
+  if(!overSignal(first,c.market)||await auditedOver(first,c.milestone,{cache:scoreboardCache,market:c.market,allowUnavailable:true})!==true)return false;
+  const wait=VERIFY_DWELL_MS-(Date.now()-first.observedAt);
+  if(wait>0)await new Promise(resolve=>setTimeout(resolve,wait));
+  const nextLive=await liveMilestone(c.milestone.id);
+  if(!nextLive)return false;
+  nextLive._observed_at=new Date().toISOString();
+  const second=gameState(c.milestone,nextLive);
+  if(!confirmedOver(first,second,c.market)||
+    await auditedOver(second,c.milestone,{cache:scoreboardCache,market:c.market,firstObservation:first,allowUnavailable:true})!==true)return false;
+  const verifiedSignal=overSignal(second,c.market);
+  if(!verifiedSignal||verifiedSignal.fraction!==.30)return false;
+  const {rows:[fill]}=await pool.query(`SELECT id,market_ticker,event_ticker,game_id,sport,strategy,reason,status,combo_legs
+    FROM trade_attempts WHERE market_ticker=$1 AND status='filled'`,[c.market.ticker]);
+  if(!fill)return false;
+  const result=await upgradeHeldOver({...c,state:second,signal:verifiedSignal},{state:second,kalshiOnly:false},fill,scoreboardCache);
+  return result.filled;
+}
 async function verifyHeldLead(c,original,scoreboardCache){
   const first=tableTennisSignal(c.state,c.market)?
     await verifyIndependentTableTennisLeadDecision(c.state,c.milestone):
@@ -1253,6 +1275,7 @@ async function scan(cachedMilestones,discoveryCount){
         finally{c.leadDone()}
       }
     }));
+    const immediateUpgradeJobs=[];
     for(const c of [...upgradeCandidates,...opportunities]){let state=c.state;
       try{
         if(!live())continue;
@@ -1371,11 +1394,15 @@ async function scan(cachedMilestones,discoveryCount){
         // affordable in this shard while any top-up settles asynchronously.
         if(!soccerOneGoalWindowOpen(state))continue;
         if(await submit(c.signal,state,c.event,c.market,Math.min(spendable,localCash),bankroll,budget,bankroll)||await recoverPending(c.signal,state,c.event,c.market,Math.min(spendable,localCash),bankroll,budget,bankroll)){
-          submitted++;filled.add(signalKey(c));const account=await accountBalance({fresh:true});balance=Number(account.balance);bankroll=balance+Number(account.portfolio_value);
+          submitted++;filled.add(signalKey(c));
+          if(c.signal.strategy==='over'&&kalshiOnly)immediateUpgradeJobs.push(immediatelyUpgradeFilledOver(c,scoreboardCache)
+            .then(upgraded=>{if(upgraded)submitted++})
+            .catch(e=>console.warn('Immediate over verification deferred:',c.market.ticker,e.message)));
+          const account=await accountBalance({fresh:true});balance=Number(account.balance);bankroll=balance+Number(account.portfolio_value);
         }
       }catch(e){const message=`${c.market.ticker}: ${String(e.message).slice(0,170)}`;executionErrors.push(message);console.error('Candidate execution failed:',message)}
     }
-    await Promise.all([workersDone,leadWorkers]);
+    await Promise.all([workersDone,leadWorkers,...immediateUpgradeJobs]);
     if(live()){
       try{
         const currentFills=await pool.query(`SELECT a.id,a.market_ticker,a.event_ticker,a.game_id,a.sport,a.strategy,a.reason,a.fill_count,a.limit_price,a.created_at,a.updated_at,a.combo_legs,
@@ -1500,7 +1527,7 @@ async function settlementAlerts(since){
   return rows;
 }
 export default {async fetch(req){const url=new URL(req.url);
-  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'soccer-last-seconds-20261030'});
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'soccer-and-immediate-over-upgrade-20261030'});
   if(req.method==='GET'&&url.pathname==='/manifest.webmanifest')return response(manifest,'application/manifest+json');
   if(req.method==='GET'&&url.pathname==='/sw.js')return new Response(worker,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','service-worker-allowed':'/','x-content-type-options':'nosniff'}});
   if(req.method==='GET'&&/^\/icon-(192|512)\.png$/.test(url.pathname))return response(Buffer.from(icons[Number(url.pathname.match(/\d+/)[0])],'base64'),'image/png');
