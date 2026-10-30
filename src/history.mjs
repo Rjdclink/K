@@ -20,6 +20,7 @@ export function completedTrade(entry,fills,settlement){
   if(sells.some(fill=>!valid(fill)))return null;
   const sold=sells.reduce((sum,fill)=>sum+numeric(fill.count_fp),0);
   if(sold>count+.011)return null;
+  if(Number.isFinite(numeric(entry.expected_sold))&&sold+0.011<numeric(entry.expected_sold))return null;
   const settled=settlement&&['yes','no'].includes(settlement.market_result)&&time(settlement.settled_time);
   if(!settled&&sold<count-.011)return null;
   const buyCost=entryFills.reduce((sum,fill)=>sum+numeric(fill.count_fp)*numeric(fill.yes_price_dollars)+numeric(fill.fee_cost),0);
@@ -29,3 +30,4 @@ export function completedTrade(entry,fills,settlement){
   if(!occurredAt)return null;
   return {occurredAt:occurredAt.toISOString(),profitCents:Math.round((saleRevenue+payout-buyCost)*100),outcome:settled?'settled':'closed'};
 }
+

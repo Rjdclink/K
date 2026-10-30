@@ -187,7 +187,7 @@ export function overSignal(game, market) {
     if(!team||!norm(market.title).includes(norm(team)))return null;
   }
   if (!Number.isFinite(strike) || strike<0 || !Number.isFinite(scored) || scored<=strike) return null;
-  return {strategy:'over', reason:`${scored} ${player?.metric||'scored'}${team?` by ${team}`:''}; line ${strike} already passed${segment?`; segment ${segment[1]}`:''}`, fraction:0.15};
+  return {strategy:'over', reason:`${scored} ${player?.metric||'scored'}${team?` by ${team}`:''}; line ${strike} already passed${segment?`; segment ${segment[1]}`:''}`, fraction:0.30};
 }
 export function playerOverSpec(game,market){
   const family=String(game?.type||'');
@@ -205,15 +205,14 @@ export function playerOverSpec(game,market){
   if(!Number.isInteger(value)||value<0)return null;
   return {id,name,metric:suffix,value};
 }
-// A preflight over needs two distinct exchange updates after the line was
-// crossed. An identical cached response, reversed clock, or corrected score
-// cannot authorize an order even if both HTTP requests succeeded.
+// Two separate exchange reads three seconds apart must retain the qualifying
+// score. The feed may legitimately have no new update between reads.
 export function confirmedOver(first,second,market){
   if(!overSignal(first,market)||!overSignal(second,market))return false;
   if(first.id!==second.id||first.feedId!==first.id||second.feedId!==second.id)return false;
-  const dwell=12000;
+  const dwell=3000;
   if(!Number.isFinite(first.observedAt)||!Number.isFinite(second.observedAt)||second.observedAt-first.observedAt<dwell)return false;
-  if(Number.isFinite(first.updatedAt)&&Number.isFinite(second.updatedAt)&&second.updatedAt<=first.updatedAt)return false;
+  if(Number.isFinite(first.updatedAt)&&Number.isFinite(second.updatedAt)&&second.updatedAt<first.updatedAt)return false;
   if([first,second].some(s=>Number.isFinite(s.updatedAt)&&(s.updatedAt>s.observedAt+5000||s.observedAt-s.updatedAt>30000)))return false;
   if(first.home!==second.home||first.away!==second.away||!first.periodConsistent||!second.periodConsistent)return false;
   if(/^KX(?:ATP|WTA)GTOTAL$/.test(String(market.event_ticker||'').split('-')[0])&&first.tennisTotal!==second.tennisTotal)return false;
@@ -265,7 +264,7 @@ export function leadSignal(game, market) {
   if (!Number.isFinite(h)||!Number.isFinite(a)) return null;
   const margin=Math.abs(h-a),trailerScore=Math.min(h,a);
   const soccerLastSeconds=soccer&&game.soccerMinute>=89&&game.matchRemainingSeconds>0&&game.matchRemainingSeconds<45;
-  const minimum=basketball?5:football?10:hockey?3:baseball?2:soccer?2:null;
+  const minimum=basketball?5:football?10:hockey?3:baseball?2:soccer?(Number.isFinite(game.matchRemainingSeconds)&&game.matchRemainingSeconds>0&&game.matchRemainingSeconds<120?2:3):null;
   const ratio=trailerScore>0?Math.max(h,a)/trailerScore:Infinity;
   if (minimum===null ? trailerScore<=0||ratio<3.5 : margin<minimum) return null;
   const leader = h>a ? game.homeName : game.awayName;
@@ -340,7 +339,12 @@ export function tennisSignal(game,market){
   return {strategy:'lead',reason:`Tennis match-clinching set ${leaderGames}–${opponentGames}; leader serves, points ${leaderPoints}–${opponentPoints}${t.advantage===leaderId?' advantage':''}`,fraction:.15};
 }
 export function minimumProfitCents(strategy,availableCents,sportType='',remainingSeconds=NaN){
-  return 50;
+  if(strategy==='weather')return 30;
+  // Overs have no bankroll-dependent floor; still require positive expected
+  // settlement proceeds after the fee reserve.
+  if(strategy==='over')return 1;
+  if(Number(availableCents)>=20000)return 200;
+  return Number(availableCents)>=10000?50:25;
 }
 export function netSettlementProfitCents(count,price,feeMultiplier=2){
   if(!Number.isFinite(count)||count<=0||!Number.isFinite(price)||price<=0||price>=1)return 0;
@@ -354,15 +358,46 @@ export function profitableCount(count,price,feeMultiplier,strategy,availableCent
 export function comeback(game,market,strategy){
   if(!game?.verifiedLive||!game.scoreKnown)return false;
   if(strategy==='over')return false;
-  if(game.tableTennis)return false;
   if(game.tennis){
-    const t=game.tennis,leader=t.firstId===market.custom_strike?.tennis_competitor?0:t.secondId===market.custom_strike?.tennis_competitor?1:-1;
-    return leader===0?t.firstGames<=t.secondGames:leader===1?t.secondGames<=t.firstGames:false;
+    const t=game.tennis,chosen=market.custom_strike?.tennis_competitor;
+    if(![3,5].includes(t.bestOf)||![t.firstId,t.secondId].includes(chosen))return false;
+    const first=chosen===t.firstId,opponentId=first?t.secondId:t.firstId;
+    const ours=first?t.firstGames:t.secondGames,theirs=first?t.secondGames:t.firstGames;
+    const ourPoints=first?t.firstPoints:t.secondPoints,theirPoints=first?t.secondPoints:t.firstPoints;
+    // A tie, a broken serve, or 5–6 by itself is not a match point.
+    return ours===5&&theirs===6&&t.server===opponentId&&
+      (theirPoints===40&&ourPoints<40||theirPoints===40&&ourPoints===40&&t.advantage===opponentId);
+  }
+  if(game.tableTennis){
+    const t=game.tableTennis,chosen=market.custom_strike?.table_tennis_competitor;
+    if(![t.firstId,t.secondId].includes(chosen)||t.setNumber!==t.bestOf)return false;
+    const first=chosen===t.firstId,ours=first?t.firstPoints:t.secondPoints,theirs=first?t.secondPoints:t.firstPoints;
+    return t.firstSets===t.secondSets&&theirs>=10&&theirs>ours;
+  }
+  if(game.golf){
+    const board=game.golf.board||[],chosen=market.custom_strike?.golf_competitor;
+    const player=board.find(p=>p.competitor_id===chosen);
+    return Boolean(player&&board.some(p=>p.competitor_id!==chosen&&Number.isFinite(p.total_score)&&p.total_score<player.total_score)&&
+      board.every(p=>p.current_round_thru>=17));
+  }
+  if(game.darts){
+    const d=game.darts,chosen=market.custom_strike?.darts_competitor,first=chosen===d.firstId;
+    if(![d.firstId,d.secondId].includes(chosen)||!Number.isInteger(d.bestOf))return false;
+    const theirs=first?d.secondLegs:d.firstLegs,ours=first?d.firstLegs:d.secondLegs;
+    return theirs>ours&&theirs===Math.ceil(d.bestOf/2)-1&&
+      (first?d.secondCheckout&&d.secondDouble&&d.nextThrow===d.secondId:d.firstCheckout&&d.firstDouble&&d.nextThrow===d.firstId);
+  }
+  if(game.volleyball){
+    const chosen=Object.entries(market.custom_strike||{}).find(([k,v])=>/_team$/.test(k)&&typeof v==='string')?.[1];
+    const first=chosen===game.homeTeamId,second=chosen===game.awayTeamId;
+    if(first===second||game.period!==game.volleyball.bestOf)return false;
+    const point=game.volleyball.current,ours=first?point?.home:point?.away,theirs=first?point?.away:point?.home;
+    return Number.isInteger(ours)&&Number.isInteger(theirs)&&theirs>=14&&theirs>ours;
   }
   const teamId=Object.entries(market.custom_strike||{}).find(([k,v])=>/_team$/.test(k)&&typeof v==='string')?.[1];
   const home=teamId&&game.homeTeamId?teamId===game.homeTeamId:!teamId&&game.homeName&&norm(market.yes_sub_title||market.title).includes(norm(game.homeName));
   const away=teamId&&game.awayTeamId?teamId===game.awayTeamId:!teamId&&game.awayName&&norm(market.yes_sub_title||market.title).includes(norm(game.awayName));
-  return Boolean(home&&!away?game.home<=game.away:away&&!home?game.away<=game.home:false);
+  return Boolean(home&&!away?game.home<game.away:away&&!home?game.away<game.home:false);
 }
 // Reserve twice the standard taker fee estimate when checking available cash.
 // The exchange remains authoritative if a market has an exceptional fee schedule.
@@ -380,5 +415,6 @@ export function orderSize(balanceCents, askDollars, askSize, fraction, cap=1, ba
 export function overBudget(balanceCents, portfolioValueCents, openOverExposureCents) {
   const cash=N(balanceCents), value=N(portfolioValueCents), exposure=N(openOverExposureCents);
   if (![cash,value,exposure].every(Number.isFinite) || Math.min(cash,value,exposure)<0) return 0;
-  return Math.max(0,Math.floor((cash+value)*0.15)-Math.ceil(exposure));
+  return Math.max(0,Math.floor((cash+value)*0.30)-Math.ceil(exposure));
 }
+

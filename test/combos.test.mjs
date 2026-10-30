@@ -1,7 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {COMBO_WINDOW_MS,comboCandidates,comboCollection,compatibleComboGroups,quoteForYes,comboLegs,filledComboWindow} from '../src/combos.mjs';
+import {COMBO_WINDOW_MS,VERIFY_DWELL_MS,comboAllocation,comboCandidates,comboCollection,compatibleComboGroups,quoteForYes,comboLegs,filledComboWindow} from '../src/combos.mjs';
 const candidate=(id,event,strategy='over')=>({milestone:{id},event:{event_ticker:event},market:{ticker:id+'-YES'},signal:{strategy},state:{title:id,sport:'NBA'}});
+test('each new filled combination lowers its bankroll allocation to a two percent floor',()=>{
+  assert.equal(VERIFY_DWELL_MS,3000);
+  assert.deepEqual(Array.from({length:7},(_,i)=>comboAllocation(i)),[.10,.08,.06,.04,.02,.02,.02]);
+});
 test('groups at most six distinct live games and distinct events by strategy',()=>{
   const input=[candidate('a','A'),candidate('a','B'),candidate('b','A'),...Array.from({length:8},(_,i)=>candidate('c'+i,'C'+i)),candidate('z','Z','lead')];
   assert.deepEqual(comboCandidates(input,'over').map(c=>c.milestone.id),['a','c0','c1','c2','c3','c4']);
@@ -15,6 +19,8 @@ test('held fills remain eligible; the market ticker prevents a repeated combo or
   assert.deepEqual(filledComboWindow([...rows,row(4)],new Set([...held,'M4']),at(3)).map(r=>r.market_ticker),['M4','M3','M2','M1']);
   assert.deepEqual(filledComboWindow([...rows,row(4),row(5)],new Set([...held,'M4','M5']),at(3)).map(r=>r.market_ticker),['M5','M4','M3','M2','M1']);
   assert.equal(filledComboWindow(Array.from({length:9},(_,i)=>row(i+1)),new Set(Array.from({length:9},(_,i)=>'M'+(i+1))),null).length,6);
+  const props=Array.from({length:6},(_,i)=>({...row(i+10),game_id:'SAME-GAME',event_ticker:'PROP-'+i}));
+  assert.equal(filledComboWindow(props,new Set(props.map(p=>p.market_ticker)),null).length,6);
 });
 test('combo searches compatible non-prefix pairs when the first candidate is outside a collection',()=>{
   const candidates=[candidate('a','A'),candidate('b','B'),candidate('c','C')];
@@ -46,3 +52,12 @@ test('same game and event picks require a collection explicitly allowing multipl
  const c={is_all_yes:true,is_single_market_per_event:false,size_min:2,size_max:6,associated_event_tickers:['A']};
  assert.ok(comboCollection([c],legs));assert.equal(comboCollection([{...c,is_single_market_per_event:true}],legs),undefined);
 });
+test('six independently filled player props from one game stay in the six-leg combo when the collection allows them',()=>{
+ const candidates=Array.from({length:6},(_,i)=>candidate('same-game','PROP'+i));
+ candidates.forEach((c,i)=>{c.market.ticker='PROP'+i+'-YES'});
+ const collection={collection_ticker:'SIX',is_all_yes:true,is_single_market_per_event:true,size_min:2,size_max:6,associated_event_tickers:candidates.map(c=>c.event.event_ticker)};
+ const groups=compatibleComboGroups([collection],candidates,64);
+ assert.equal(groups[0].legs.length,6);
+ assert.deepEqual(groups[0].legs.map(c=>c.market.ticker),candidates.map(c=>c.market.ticker));
+});
+

@@ -3,6 +3,19 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {page} from '../src/ui.mjs';
 
+test('crossed player props show the actual statistic, ask, and execution blocker',()=>{
+  const element={classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){}};
+  const document={getElementById:()=>element,querySelectorAll:()=>[],createElement:()=>({children:[],append(...items){this.children.push(...items)}})};
+  const context=vm.createContext({document,window:{addEventListener(){}},navigator:{},localStorage:{getItem(){return null},setItem(){}},fetch:()=>new Promise(()=>{}),AbortSignal,setInterval(){}});
+  vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],context);
+  const make=vm.runInContext('propItem',context);
+  const row=make({title:'Cleveland at Atlanta'},{ticker:'KXNBAREB-26OCT29-PLAYER-4',title:'Okongwu over 3.5 rebounds',reason:'4 REB; line 3.5 already passed',ask:'0.9800',ask_size:'25.00',execution:'Awaiting independent score confirmation'});
+  assert.equal(row.children[0].textContent,'Okongwu over 3.5 rebounds');
+  assert.match(row.children[1].textContent,/4 REB; line 3.5 already passed/);
+  assert.match(row.children[2].textContent,/98.00¢ ask · 25 available · Awaiting independent score confirmation/);
+  assert.match(page,/id="props"/);
+});
+
 test('score possession and net sale result refresh with the order display',()=>{
   const refresh={classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){}};
   const document={getElementById:()=>refresh,querySelectorAll:()=>[],createElement:()=>({children:[],append(...items){this.children.push(...items)}})};
@@ -124,7 +137,7 @@ test('dashboard refresh carries alerts, with fallback only when alerts stop arri
   vm.runInContext('consumeAlerts([{id:3}])',context);
   assert.deepEqual(sounds,['ching','ching']);
   assert.equal(stored.get('kAlertCursor'),'3');
-  assert.ok(intervals.some(({ms})=>ms===30000));
+  assert.ok(intervals.some(({ms})=>ms===10000));
   assert.ok(intervals.some(({ms})=>ms===5000));
 });
 
@@ -144,3 +157,4 @@ test('a successful dashboard refresh consumes alerts without a separate request'
   await vm.runInContext('pollAlertsFallback()',context);
   assert.equal(requests.length,1);
 });
+

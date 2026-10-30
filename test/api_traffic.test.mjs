@@ -15,5 +15,6 @@ test('recent event results are cached without caching final order quotes',()=>{
 });
 test('executable opportunities take priority over nonexecutable signals',()=>{
  assert.match(source,/if\(executable\(a\)!==executable\(b\)\)return executable\(a\)\?-1:1/);
- assert.match(source,/const pause=Math.max\(0,7000-/);
+ assert.match(source,/const pause=Math.max\(0,3000-/);
 });
+
