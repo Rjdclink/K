@@ -24,6 +24,15 @@ const espn=(home=24,away=20,overrides={})=>({events:[{date:start,status:{type:{s
   {homeAway:'away',score:String(away),team:{displayName:'Brooklyn Nets',abbreviation:'BKN',name:'Nets'}}
 ]}],...overrides}]});
 const fox=(home=24,away=20,overrides={})=>({sectionList:[{events:[{eventTime:start,eventStatus:1,statusLine:'05:00',entityLink:{layout:{tokens:{homeUri:'team-bos',awayUri:'team-bkn'}}},upperTeam:{uri:'team-bkn',name:'BKN',longName:'Nets',score:away},lowerTeam:{uri:'team-bos',name:'BOS',longName:'Celtics',score:home},...overrides}]}]});
+test('NFL ESPN labels verify only the named receiving yard statistic',()=>{
+  const athlete={athlete:{displayName:'Chuba Hubbard'},stats:['3','15','5.0','0','11','4']};
+  const receiving={name:'receiving',labels:['REC','YDS','AVG','TD','LONG','TGTS'],athletes:[athlete]};
+  const rushing={name:'rushing',labels:['CAR','YDS','AVG','TD','LONG'],athletes:[{athlete:{displayName:'Chuba Hubbard'},stats:['9','30','3.3','1','9']}]};
+  const summary={boxscore:{players:[{statistics:[rushing,receiving]}]}};
+  assert.equal(playerStatAgreement(summary,{name:'Chuba Hubbard',metric:'RECYDS',value:15}),true);
+  assert.equal(playerStatAgreement(summary,{name:'Chuba Hubbard',metric:'RUSHYDS',value:30}),true);
+  assert.equal(playerStatAgreement(summary,{name:'Chuba Hubbard',metric:'RECYDS',value:30}),false);
+});
 test('NBA scoreboard recognizes exact New Orleans abbreviation variants',()=>{
   const milestone={...m,title:'SAC Kings at NOP Pelicans'};
   const state={...game,homeName:'NOP Pelicans',awayName:'SAC Kings'};
