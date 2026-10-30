@@ -5,7 +5,7 @@ import {weatherSeries,weatherContract,weatherDate,weatherStationId,stationTimezo
 export async function scanWeatherMarkets({kalshi,nws,twc,onVerified,now=()=>new Date(),pause=ms=>new Promise(resolve=>setTimeout(resolve,ms))}){
   const catalog=(await kalshi('/series?category=Climate%20and%20Weather')).series?.filter(weatherSeries)||[];
   const stats={series:catalog.length,events:0,eligible:0,verified:0,failures:0,companyProbe:null,companyObservationFeed:null,
-    sources:{},rejections:{dateMissing:0,dateOutsideWindow:0,stationMissing:0,stationIdUnsupported:0,stationUnavailable:0,contractRules:0,noAsk:0,noObservation:0}};
+    sources:{},rejections:{dateMissing:0,dateOutsideWindow:0,stationMissing:0,stationIdUnsupported:0,stationUnavailable:0,contractRules:0,noAsk:0,noObservation:0,observationFeedUnavailable:0,observationStationMissing:0,observationNotSettled:0,thresholdNotCrossed:0}};
   let cursor=0;const stations=new Map(),climateDays=new Map(),metarWeeks=new Map();
   const companyDay=label=>{
     if(!climateDays.has(label))climateDays.set(label,twc('/api/climate/primary?date='+label).catch(()=>null));
@@ -73,9 +73,21 @@ export async function scanWeatherMarkets({kalshi,nws,twc,onVerified,now=()=>new 
                 const current=weatherContract(event,second,station,secondAt);
                 if(!current||first.rules_primary!==second.rules_primary||first.close_time!==second.close_time||
                   first.floor_strike!==second.floor_strike||first.cap_strike!==second.cap_strike)return;
-                const observed=company?observedWeatherCompany(current,await companyObservations(current.localDate),now()):
+                const feed=company?await companyObservations(current.localDate):null;
+                const observed=company?observedWeatherCompany(current,feed,now()):
                   observedWeather(current,(await nws('/stations/'+id+'/observations?'+new URLSearchParams({start:new Date(current.start).toISOString(),end:new Date(current.end).toISOString(),limit:'500'}))).features,now());
-                if(!observed){stats.rejections.noObservation++;return}
+                if(!observed){
+                  stats.rejections.noObservation++;
+                  if(company){
+                    const fetched=Date.parse(feed?.fetchedAt||''),time=now().getTime();
+                    const stationFeed=feed?.stations?.filter(s=>s.icaoId===current.icao&&s.timezone===current.timezone);
+                    if(feed?.source!=='live'||!Number.isFinite(fetched)||fetched>time+30000||time-fetched>20*60000)stats.rejections.observationFeedUnavailable++;
+                    else if(stationFeed?.length!==1)stats.rejections.observationStationMissing++;
+                    else if(!(stationFeed[0].observations||[]).some(o=>o.icaoId===current.icao&&o.localDate===current.localDate&&o.status==='settled'&&Number.isFinite(o.tempF)&&Date.parse(o.reportTimeUTC)>=current.start&&Date.parse(o.reportTimeUTC)<current.end&&Date.parse(o.reportTimeUTC)<=time))stats.rejections.observationNotSettled++;
+                    else stats.rejections.thresholdNotCrossed++;
+                  }
+                  return;
+                }
                 stats.verified++;
                 verified.push({event,market:second,contract:current,observed,firstAt,secondAt,first,second});
               }catch(e){stats.failures++}

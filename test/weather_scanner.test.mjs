@@ -35,5 +35,12 @@ test('Weather Company candidate checks two Kalshi quotes and a settled same-day 
   assert.equal(stats.eligible,1);assert.equal(stats.verified,1);assert.equal(reads,2);
   assert.equal(verified[0].secondAt-verified[0].firstAt,3000);
   assert.equal(verified[0].observed.source,'The Weather Company');assert.equal(verified[0].observed.icao,'KMDW');
+  assert.equal(stats.companyProbe.available,true);
+  assert.equal(stats.companyObservationFeed.available,true);
+  const below=await scanWeatherMarkets({kalshi,nws:async()=>{throw Error('wrong source')},twc:async path=>{
+    const data=await twc(path);
+    return path.startsWith('/api/metar?')?{...data,stations:data.stations.map(s=>({...s,observations:s.observations.map(o=>({...o,tempF:67}))}))}:data;
+  },now:()=>new Date(time),pause:async ms=>{time+=ms},onVerified:async()=>{throw Error('not crossed')}});
+  assert.equal(below.rejections.thresholdNotCrossed,1);
 });
 
