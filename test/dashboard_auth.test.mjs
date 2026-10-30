@@ -106,3 +106,32 @@ test('in-page login avoids repeated browser Basic Auth challenges',async()=>{
   }
 });
 
+test('history returns losses with signed totals and supports a loss-only view',async()=>{
+  const originalQuery=pg.Pool.prototype.query,previousPassword=process.env.DASHBOARD_PASSWORD;
+  process.env.DASHBOARD_PASSWORD=secret;
+  const id='00000000-0000-4000-8000-000000000001',calls=[];
+  pg.Pool.prototype.query=async function(sql,params){
+    calls.push({sql,params});
+    if(sql.includes('FROM trade_history')&&sql.includes('LIMIT 51'))return {rows:[{id,sport:'Soccer',teams:'Cottbus vs Bochum',occurred_at:'2026-10-30T19:00:00Z',profit_cents:-478}]};
+    if(sql.includes('FROM trade_history')&&sql.includes('profit_count'))return {rows:[{profit_count:'49',loss_count:'2',profit_cents:'1245',loss_cents:'-1284'}]};
+    throw Error('Unexpected history query');
+  };
+  try{
+    const headers={cookie:sessionCookie(secret,Date.now())};
+    const response=await app.fetch(new Request(base+'/api/history?filter=loss',{headers}));
+    assert.equal(response.status,200);
+    const body=await response.json();
+    assert.equal(body.history[0].profit_cents,-478);
+    assert.equal(body.summary.loss_cents,'-1284');
+    assert.deepEqual(calls.find(call=>call.sql.includes('LIMIT 51')).params,[null,null,'loss']);
+    assert.equal((await app.fetch(new Request(base+'/api/history?filter=unknown',{headers}))).status,400);
+    const page=await app.fetch(new Request(base+'/history',{headers}));
+    const html=await page.text();
+    assert.match(html,/data-filter="loss"/);
+    assert.match(html,/No realized losses since history began/);
+  }finally{
+    pg.Pool.prototype.query=originalQuery;
+    if(previousPassword===undefined)delete process.env.DASHBOARD_PASSWORD;else process.env.DASHBOARD_PASSWORD=previousPassword;
+  }
+});
+
