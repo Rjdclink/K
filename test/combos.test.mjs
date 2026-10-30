@@ -48,7 +48,7 @@ test('combo collection discovery filters by each event and paginates',async()=>{
 });
 const candidate=(id,event,strategy='over')=>({milestone:{id},event:{event_ticker:event},market:{ticker:id+'-YES'},signal:{strategy},state:{title:id,sport:'NBA'}});
 test('each new filled combination lowers its bankroll allocation to a two percent floor',()=>{
-  assert.equal(VERIFY_DWELL_MS,3000);
+  assert.equal(VERIFY_DWELL_MS,6000);
   assert.deepEqual(Array.from({length:7},(_,i)=>comboAllocation(i)),[.10,.08,.06,.04,.02,.02,.02]);
 });
 test('groups at most six distinct live games and distinct events by strategy',()=>{
@@ -66,6 +66,14 @@ test('held fills remain eligible; the market ticker prevents a repeated combo or
   assert.equal(filledComboWindow(Array.from({length:9},(_,i)=>row(i+1)),new Set(Array.from({length:9},(_,i)=>'M'+(i+1))),null).length,6);
   const props=Array.from({length:6},(_,i)=>({...row(i+10),game_id:'SAME-GAME',event_ticker:'PROP-'+i}));
   assert.equal(filledComboWindow(props,new Set(props.map(p=>p.market_ticker)),null).length,6);
+});
+test('unverified singles cannot increase their exposure through a combination',()=>{
+  const rows=[
+    {market_ticker:'UNVERIFIED',reason:'Winner; Kalshi-only newer score check, 6 seconds apart',combo_legs:null},
+    {market_ticker:'VERIFIED',reason:'Winner; independent score confirmed',combo_legs:null},
+    {market_ticker:'VERIFIED2',reason:'Winner; independent score confirmed',combo_legs:null}
+  ];
+  assert.deepEqual(filledComboWindow(rows,new Set(rows.map(r=>r.market_ticker)),null),[rows[1],rows[2]]);
 });
 test('combo searches compatible non-prefix pairs when the first candidate is outside a collection',()=>{
   const candidates=[candidate('a','A'),candidate('b','B'),candidate('c','C')];

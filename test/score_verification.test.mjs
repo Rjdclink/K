@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { gameState } from '../src/strategy.mjs';
-import { espnMatches, foxMatches, tennisMatches, scoreAgreement, verifyIndependentOver, verifyIndependentOverDecision, playerStatAgreement, foxPlayerStat, tableTennisMatches, verifyIndependentTableTennisLead } from '../src/score_verification.mjs';
+import { espnMatches, foxMatches, tennisMatches, scoreAgreement, verifyIndependentOver, verifyIndependentOverDecision, playerStatAgreement, foxPlayerStat, tableTennisMatches, verifyIndependentTableTennisLead, verifyIndependentTableTennisLeadDecision } from '../src/score_verification.mjs';
 
 test('Liga Pro table tennis lead requires an exact independent live set score and fixture',async()=>{
   const milestone={id:'liga',type:'table_tennis_match',title:'Oleg Moshnikov vs Iurii Krivenkii',start_date:start,details:{league:'Russia Liga Pro',best_of:5,first_competitor_id:'oleg',second_competitor_id:'iurii'}};
@@ -14,6 +14,8 @@ test('Liga Pro table tennis lead requires an exact independent live set score an
   assert.equal(await verifyIndependentTableTennisLead(state,milestone,{fetcher:async()=>({ok:true,json:async()=>({events:[{...match,startTimestamp:match.startTimestamp+86400}]})})}),false);
   assert.equal(await verifyIndependentTableTennisLead(state,milestone,{fetcher:async()=>({ok:true,json:async()=>({events:[match,match]})})}),false);
   assert.equal(await verifyIndependentTableTennisLead(state,milestone,{fetcher:async()=>{throw Error('unavailable')}}),false);
+  assert.equal(await verifyIndependentTableTennisLeadDecision(state,milestone,{fetcher:async()=>{throw Error('unavailable')}}),null);
+  assert.equal(await verifyIndependentTableTennisLeadDecision(state,milestone,{fetcher:async()=>({ok:true,json:async()=>({events:[{...match,awayScore:{current:2,period5:5}}]})})}),false);
 });
 
 const start=new Date(Date.now()-20*60000).toISOString();

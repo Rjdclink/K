@@ -1,7 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {eligibleForMarkets,linkedEventTickers,gameTimeLabel,storedClockSeconds} from '../src/discovery.mjs';
+import {discoverCurrentMilestones,eligibleForMarkets,linkedEventTickers,gameTimeLabel,storedClockSeconds} from '../src/discovery.mjs';
 import {gameState,overSignal,sportName} from '../src/strategy.mjs';
+
+test('sports discovery traverses pages and includes esports and older live tournaments',async()=>{
+  const now=Date.parse('2026-10-30T13:00:00Z'),at=days=>new Date(now+days*86400000).toISOString();
+  const requests=[];
+  const get=async path=>{
+    const query=new URL(path,'https://kalshi.test').searchParams,category=query.get('category'),cursor=query.get('cursor');
+    requests.push([category,cursor,query.get('minimum_start_date')]);
+    if(category==='Sports'&&!cursor)return {milestones:[{id:'old-golf',start_date:at(-5),end_date:at(1)},
+      {id:'finished',start_date:at(-2),end_date:at(-2)}],cursor:'next'};
+    if(category==='Sports'&&cursor==='future')return {milestones:[{id:'later',start_date:at(3)}],cursor:'unused'};
+    if(category==='Sports')return {milestones:[{id:'live-baseball',start_date:at(-.1)},
+      {id:'upcoming',start_date:at(2)}],cursor:'future'};
+    return {milestones:[{id:'live-esports',start_date:at(-.1)}],cursor:''};
+  };
+  const games=await discoverCurrentMilestones(get,now);
+  assert.deepEqual(games.map(m=>m.id),['old-golf','live-baseball','live-esports']);
+  assert.deepEqual(requests.map(([category,cursor])=>[category,cursor]).sort(),[['Sports',null],['Sports','next'],['Sports','future'],['Esports',null]].sort());
+  assert.ok(requests.every(([, ,min])=>min===at(-7)));
+});
 
 test('find game and both total families from a game-only milestone',()=>{
   const m={type:'basketball_game',related_event_tickers:['KXNBAGAME-26OCT28BOSBKN']};
@@ -45,7 +64,7 @@ test('limited-over cricket discovers team-run markets from match events without 
   assert.equal(eligibleForMarkets(game),true);
   assert.ok(linkedEventTickers(milestone).includes('KXIPLTEAMTOTAL-DATE'));
   assert.ok(linkedEventTickers({...milestone,related_event_tickers:['KXCPLMATCH-DATE']}).includes('KXCPLTEAMTOTAL-DATE'));
-  assert.equal(gameTimeLabel(game),'Innings 1 · no countdown clock');
+  assert.equal(gameTimeLabel(game),'Innings 1');
   const shield=gameState({...milestone,details:{league:'Sheffield Shield'}},{details:{status:'live',home_score:170,away_score:0,inning:1}});
   assert.equal(eligibleForMarkets(shield),false);
 });
@@ -59,8 +78,8 @@ test('unsupported feeds keep the scan active but do not fetch markets',()=>{
   assert.equal(sportName({type:'football_game',details:{league:'NCAAFB'}}),'CFB');
   assert.equal(sportName({type:'basketball_game',details:{league:'NCAAW'}}),'NCAAW');
   assert.equal(gameTimeLabel(board('esports_match')),'period scores unavailable');
-  assert.equal(gameTimeLabel(board('cricket_match')),'Live clock unavailable');
-  assert.equal(gameTimeLabel({...board('cricket_match'),period:2}),'Innings 2 · no countdown clock');
+  assert.equal(gameTimeLabel(board('cricket_match')),'Innings unavailable');
+  assert.equal(gameTimeLabel({...board('cricket_match'),period:2}),'Innings 2');
 });
 
 test('show verified phase and parsed clock without fabricating remaining time',()=>{

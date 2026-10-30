@@ -60,10 +60,12 @@ CREATE TABLE IF NOT EXISTS scan_status (
   last_scan timestamptz,
   last_error text,
   scanned integer NOT NULL DEFAULT 0,
+  discovered integer NOT NULL DEFAULT 0,
   signals integer NOT NULL DEFAULT 0,
   orders_submitted integer NOT NULL DEFAULT 0
 );
 ALTER TABLE scan_status ADD COLUMN IF NOT EXISTS clock_refresh_at timestamptz;
+ALTER TABLE scan_status ADD COLUMN IF NOT EXISTS discovered integer NOT NULL DEFAULT 0;
 INSERT INTO scan_status(id) VALUES(1) ON CONFLICT DO NOTHING;
 CREATE TABLE IF NOT EXISTS weather_scan_status (
   id integer PRIMARY KEY CHECK (id=1),

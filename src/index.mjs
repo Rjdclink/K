@@ -4,7 +4,7 @@ import pg from 'pg';
 import { page } from './ui.mjs';
 import { historyPage } from './history_ui.mjs';
 import { completedTrade } from './history.mjs';
-import { gameState, overSignal, confirmedOver, kalshiOnlyOver, leadSignal, additionalLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, netSettlementProfitCents, comeback } from './strategy.mjs';
+import { gameState, overSignal, confirmedOver, kalshiOnlyOver, kalshiOnlyLead, leadSignal, additionalLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, netSettlementProfitCents, comeback } from './strategy.mjs';
 import { reviewMiss } from './ai.mjs';
 import { kalshiSignature } from './auth.mjs';
 import { marketShard, shardCash, transferPlan, comboShardBudget } from './funding.mjs';
@@ -13,9 +13,9 @@ import { manifest, worker } from './pwa.mjs';
 import { vapidIdentity, validateSubscription, deliverPush } from './push.mjs';
 import { favorableSettlement } from './settlements.mjs';
 import { authorized, checkCredentials, sessionCookie, loginPage } from './dashboard_auth.mjs';
-import { eligibleForMarkets, linkedEventTickers, gameTimeLabel, storedClockSeconds } from './discovery.mjs';
+import { discoverCurrentMilestones, eligibleForMarkets, linkedEventTickers, gameTimeLabel, storedClockSeconds } from './discovery.mjs';
 import { tieRefundPreference } from './settlement_preference.mjs';
-import { verifyIndependentOverDecision, verifyIndependentTableTennisLead, verifyIndependentTableTennisMatch } from './score_verification.mjs';
+import { verifyIndependentOverDecision, verifyIndependentTableTennisLeadDecision, verifyIndependentTableTennisMatch } from './score_verification.mjs';
 import { COMBO_ATTEMPT_MS, COMBO_WINDOW_MS, VERIFY_DWELL_MS, comboAllocation, compatibleComboGroups, comboLegs, filledComboWindow, eligibleFillTrigger, heldComboLeg, quoteForYes, collectionsForEvents, selectedComboMarkets } from './combos.mjs';
 import { estimatedSaleProfitCents, positiveExitEligible } from './positions.mjs';
 import { weatherContract } from './weather.mjs';
@@ -75,6 +75,8 @@ async function kalshi(path,opts={}){
 let balanceQueue=Promise.resolve();
 let candidateTableReady;
 function candidateTable(){return candidateTableReady??=pool.query(`CREATE TABLE IF NOT EXISTS candidate_windows (market_ticker text NOT NULL, strategy text NOT NULL, first_seen timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(market_ticker,strategy))`).catch(e=>{candidateTableReady=null;throw e})}
+let scanStatusReady;
+function ensureScanStatus(){return scanStatusReady??=pool.query('ALTER TABLE scan_status ADD COLUMN IF NOT EXISTS discovered integer NOT NULL DEFAULT 0').catch(e=>{scanStatusReady=null;throw e})}
 function accountBalance({fresh=false}={}){
   const job=balanceQueue.catch(()=>{}).then(async()=>{
     const client=await pool.connect();
@@ -124,6 +126,14 @@ async function auditKalshiOnlyOver(first,second,market,milestone){
   await auditTable();const id=randomUUID();
   await pool.query('INSERT INTO verification_records(id,market_ticker,passed,evidence) VALUES($1,$2,true,$3)',
     [id,market.ticker,JSON.stringify({mode:'kalshi_only_crossed_over',first,second,milestoneId:milestone.id,dwellMs:second.observedAt-first.observedAt,allocation:.05})]);
+  second.verificationId=id;
+  return true;
+}
+async function auditKalshiOnlyLead(first,second,market,milestone){
+  if(!kalshiOnlyLead(first,second,market))return false;
+  await auditTable();const id=randomUUID();
+  await pool.query('INSERT INTO verification_records(id,market_ticker,passed,evidence) VALUES($1,$2,true,$3)',
+    [id,market.ticker,JSON.stringify({mode:'kalshi_only_commanding_lead',first,second,milestoneId:milestone.id,dwellMs:second.observedAt-first.observedAt,allocation:.05})]);
   second.verificationId=id;
   return true;
 }
@@ -260,17 +270,7 @@ async function allOpenPositions(){
   throw Error('Open positions exceed the pagination safety limit');
 }
 async function milestones(){
-  const found=[];let cursor='';const now=Date.now(),min=new Date(now-36*3600000).toISOString();
-  for(let i=0;i<20;i++){
-    const q=new URLSearchParams({category:'Sports',limit:'500',minimum_start_date:min});if(cursor)q.set('cursor',cursor);
-    const x=await kalshi('/milestones?'+q),page=x.milestones||[];found.push(...page);cursor=x.cursor;
-    // Milestones are returned by start time. Stop once the next page is future-only.
-    if(!cursor||page.length&&new Date(page.at(-1).start_date).getTime()>now+3600000)break;
-    if(i===19)throw Error('Sports milestones exceed the pagination safety limit before current games');
-  }
-  const golf=await kalshi('/milestones?'+new URLSearchParams({category:'Sports',type:'golf_tournament',minimum_start_date:new Date(now-7*86400000).toISOString(),limit:'100'})).catch(e=>{console.warn('Golf discovery unavailable:',e.message);return {milestones:[]}});
-  const ids=new Set(found.map(m=>m.id));for(const m of golf.milestones||[])if(!ids.has(m.id))found.push(m);
-  return found.filter(m=>m.id && new Date(m.start_date).getTime()<now+3600000 && (!m.end_date||new Date(m.end_date).getTime()>now-3600000));
+  return discoverCurrentMilestones(kalshi);
 }
 async function liveBatch(ms){
   const map=new Map();for(let i=0;i<ms.length;i+=40){const groups=[ms.slice(i,i+20),ms.slice(i+20,i+40)].filter(g=>g.length);
@@ -426,6 +426,16 @@ async function reconcileFundingTransfers(){
 async function submit(signal,game,event,market,balance,bankroll,budgetCents=Infinity,availableCents=bankroll){
   const price=Number(market.yes_ask_dollars);const count=profitableCount(contractCount(balance,market,signal.fraction,bankroll,budgetCents,feeReserve(event,market)),price,feeReserve(event,market),signal.strategy,availableCents,game.type,game.remainingSeconds);if(!count)return false;
   if(['over','weather'].includes(signal.strategy)&&!game.verificationId)return false;
+  if(/Kalshi-only/i.test(signal.reason||'')){
+    // A provisional position consumes the entire 5% allowance for this game.
+    // Filled historical trades count only while their market is still held.
+    const positions=await allOpenPositions();
+    const held=(positions.market_positions||[]).filter(p=>Number(p.position_fp??p.position??0)>0).map(p=>p.ticker);
+    const existing=await pool.query(`SELECT 1 FROM trade_attempts WHERE game_id=$1
+      AND status IN ('filled','reserved','check_order','retrying') AND reason ILIKE '%Kalshi-only%'
+      AND (status<>'filled' OR market_ticker=ANY($2::text[])) LIMIT 1`,[game.id,held]);
+    if(existing.rowCount)return false;
+  }
   const active=await pool.query(`SELECT 1 FROM trade_attempts WHERE market_ticker=$1 AND status IN ('filled','reserved','check_order','retrying','combo_pending') LIMIT 1`,[market.ticker]);
   if(active.rowCount)return false;
   const id=await reserve(signal,game,event,market,count,price,balance);if(!id)return false;
@@ -599,7 +609,7 @@ async function checkHeldCombinations(fills,comboCount){
       SELECT 1 FROM trade_attempts a WHERE a.market_ticker=t.combo_ticker AND a.status IN ('unfilled','rejected'))`);
   const ready=await pool.query(`SELECT a.id,a.market_ticker FROM trade_attempts a
     LEFT JOIN combo_fill_triggers t ON t.fill_id=a.id
-    WHERE a.status='filled' AND a.combo_legs IS NULL AND a.market_ticker=ANY($1::text[])
+    WHERE a.status='filled' AND a.combo_legs IS NULL AND a.reason NOT ILIKE '%Kalshi-only%' AND a.market_ticker=ANY($1::text[])
       AND t.completed_at IS NULL AND (t.attempted_at IS NULL OR t.attempted_at<now()-interval '20 seconds')
     ORDER BY a.created_at DESC LIMIT 25`,[[...held]]);
   if(!ready.rowCount)return {filled:false,pending:false};
@@ -836,7 +846,7 @@ async function scan(cachedMilestones){
   try{
     if(live()||exitOnly())await reconcileCombos();
     if(live()&&!cachedMilestones)try{await reconcileFundingTransfers()}catch(e){console.warn('Transfer history unavailable:',e.message)}
-    ms=cachedMilestones||await milestones();const liveMap=await liveBatch(ms);
+    ms=cachedMilestones||await milestones();await ensureScanStatus();const liveMap=await liveBatch(ms);
     const games=ms.map(m=>({milestone:m,state:gameState(m,liveMap.get(m.id))}));
     const active=games.filter(g=>g.state.verifiedLive && g.state.scoreKnown);
     const events=await marketMap(active.filter(g=>eligibleForMarkets(g.state)).flatMap(g=>linkedEventTickers(g.milestone)));
@@ -845,7 +855,7 @@ async function scan(cachedMilestones){
     const currentLive=await liveBatch(active.map(g=>g.milestone));
     for(const game of active){const latest=currentLive.get(game.milestone.id);if(latest){liveMap.set(game.milestone.id,latest);game.state=gameState(game.milestone,latest)}}
     let balance=0,bankroll=0,account=null,comboCount=0;
-    const existingFills=await pool.query(`SELECT id,market_ticker,event_ticker,game_id,sport,strategy,fill_count,limit_price,created_at,updated_at,combo_legs FROM trade_attempts WHERE status='filled'`);
+    const existingFills=await pool.query(`SELECT id,market_ticker,event_ticker,game_id,sport,strategy,reason,fill_count,limit_price,created_at,updated_at,combo_legs FROM trade_attempts WHERE status='filled'`);
     let filled=new Set(existingFills.rows.map(r=>`${r.market_ticker}:${r.strategy}`));
     const pendingLegs=await pool.query(`SELECT combo_legs FROM trade_attempts WHERE status='combo_pending' AND combo_legs IS NOT NULL`);
     for(const row of pendingLegs.rows)for(const leg of row.combo_legs||[])filled.add(`${leg.market_ticker}:${leg.strategy}`);
@@ -868,7 +878,7 @@ async function scan(cachedMilestones){
     let askProbeBudget=20;
     for(const {milestone,state} of games){
       const candidates=[];
-      if(eligibleForMarkets(state))for(const ticker of linkedEventTickers(milestone)){const event=events.get(ticker);if(!event || event.category!=='Sports')continue;
+      if(eligibleForMarkets(state))for(const ticker of linkedEventTickers(milestone)){const event=events.get(ticker);if(!event || !['Sports','Esports'].includes(event.category))continue;
         for(const market of event.markets||[]){if(market.event_ticker!==event.event_ticker)continue;const signal=overSignal(state,market)||golfSignal(state,market)||leadSignal(state,market)||additionalLeadSignal(state,market)||tennisSignal(state,market)||tableTennisSignal(state,market);if(signal)candidates.push({signal,event,market,state,milestone})}}
       // Keep crossed, already-filled props visible with their status, but do
       // not send them through order preflight or count them as new candidates.
@@ -911,7 +921,7 @@ async function scan(cachedMilestones){
         FROM (VALUES ${signalValues}) AS v(id,signals) WHERE g.id=v.id`,batch.flatMap(row=>[row[0],row[14]]));
     }
     // Make the live score and clock visible before slower order preflights.
-    await pool.query(`UPDATE scan_status SET last_scan=$1,scanned=$2,signals=$3 WHERE id=1`,[scanStarted,scanned,signals]);
+    await pool.query(`UPDATE scan_status SET last_scan=$1,scanned=$2,signals=$3,discovered=$4 WHERE id=1`,[scanStarted,scanned,signals,ms.length]);
     // A maker's RFQ window can last 45 seconds. Publish current player props
     // first, then give held fills their combination chance before singles.
     if(live()&&account)try{
@@ -942,7 +952,7 @@ async function scan(cachedMilestones){
           const independentFirst=auditedOver(c.state,c.milestone,{cache:scoreboardCache,market:c.market,allowUnavailable:true}).catch(()=>false);
           const firstDecision=await independentFirst;
           if(firstDecision===false)continue;
-          const dwell=firstDecision===null?6000:VERIFY_DWELL_MS;
+          const dwell=VERIFY_DWELL_MS;
            const remaining=dwell-(Date.now()-c.state.observedAt);
           if(!Number.isFinite(remaining))continue;
           if(remaining>0)await new Promise(resolve=>setTimeout(resolve,remaining));
@@ -986,7 +996,7 @@ async function scan(cachedMilestones){
           gameState(c.milestone,(await liveBatch([c.milestone])).get(c.milestone.id));
         if(!freshState)continue;
         if(c.signal.strategy==='over'&&Date.now()-freshState.observedAt>10000){
-           const remaining=(kalshiOnly?6000:VERIFY_DWELL_MS)-(Date.now()-freshState.observedAt);
+           const remaining=VERIFY_DWELL_MS-(Date.now()-freshState.observedAt);
           if(remaining>0)await new Promise(resolve=>setTimeout(resolve,remaining));
           const next=await liveMilestone(c.milestone.id);
           if(!next)continue;
@@ -1000,6 +1010,13 @@ async function scan(cachedMilestones){
         if(c.signal.strategy==='lead' && /basketball/.test(state.type) &&
           (freshState.period!==state.period || !freshState.periodConsistent ||
             freshState.remainingSeconds>state.remainingSeconds))continue;
+        let leadFirstDecision=null;
+        if(c.signal.strategy==='lead'&&!freshState.golf){
+          leadFirstDecision=tableTennisSignal(c.state,c.market)?
+            await verifyIndependentTableTennisLeadDecision(c.state,c.milestone):
+            await auditedOver(c.state,c.milestone,{cache:scoreboardCache,market:c.market,allowUnavailable:true});
+          if(leadFirstDecision===false)continue;
+        }
         if(c.signal.strategy==='lead'){
           const wait=VERIFY_DWELL_MS-(Date.now()-c.state.observedAt);
           if(wait>0)await new Promise(resolve=>setTimeout(resolve,wait));
@@ -1022,9 +1039,20 @@ async function scan(cachedMilestones){
         const stillQualifies=c.signal.strategy==='over'?overSignal(freshState,quote):golfSignal(freshState,quote)||leadSignal(freshState,quote)||additionalLeadSignal(freshState,quote)||tennisSignal(freshState,quote)||tableTennisSignal(freshState,quote);
         if(!stillQualifies)continue;
         if(freshState.golf&&!await verifyGolf(freshState,c.milestone,c.event))continue;
-        if(tableTennisSignal(freshState,quote)&&!await verifyIndependentTableTennisLead(freshState,c.milestone))continue;
-        if(c.signal.strategy==='lead'&&!freshState.golf&&!tableTennisSignal(freshState,quote)&&
-          !await auditedOver(freshState,c.milestone,{cache:scoreboardCache,market:quote,firstObservation:c.state}))continue;
+        if(c.signal.strategy==='lead'&&!freshState.golf){
+          const decision=tableTennisSignal(freshState,quote)?
+            await verifyIndependentTableTennisLeadDecision(freshState,c.milestone):
+            await auditedOver(freshState,c.milestone,{cache:scoreboardCache,market:quote,firstObservation:c.state,allowUnavailable:true});
+          if(decision===false)continue;
+          if(decision===null){
+            if(leadFirstDecision!==null||Date.now()-freshState.observedAt>10000||
+              quote.rules_primary!==c.market.rules_primary||quote.close_time!==c.market.close_time||
+              quote.floor_strike!==c.market.floor_strike||quote.cap_strike!==c.market.cap_strike||
+              JSON.stringify(quote.custom_strike||{})!==JSON.stringify(c.market.custom_strike||{})||
+              !await auditKalshiOnlyLead(c.state,freshState,quote,c.milestone))continue;
+            kalshiOnly=true;
+          }
+        }
         c.signal=kalshiOnly?{...stillQualifies,fraction:.05,reason:stillQualifies.reason+'; Kalshi-only newer score check, 6 seconds apart'}:stillQualifies;
         c.market=quote;
         c.state=state=freshState;
@@ -1052,7 +1080,7 @@ async function scan(cachedMilestones){
     await workersDone;
     if(live()&&singlesFilledThisPass){
       try{
-        const currentFills=await pool.query(`SELECT id,market_ticker,event_ticker,game_id,sport,strategy,fill_count,limit_price,created_at,updated_at,combo_legs FROM trade_attempts WHERE status='filled'`);
+        const currentFills=await pool.query(`SELECT id,market_ticker,event_ticker,game_id,sport,strategy,reason,fill_count,limit_price,created_at,updated_at,combo_legs FROM trade_attempts WHERE status='filled'`);
         const combo=await checkHeldCombinations(currentFills.rows,comboCount);
         if(combo.pending)comboCount++;
         if(combo.filled)submitted++;
@@ -1062,7 +1090,7 @@ async function scan(cachedMilestones){
       try{await diagnoseHeldCombinations(existingFills.rows,openPositions)}catch(e){console.warn('Held combo diagnostic deferred:',e.message)}
       try{await diagnoseUnfilledCombo(opportunities,filled)}catch(e){console.warn('Unfilled combo diagnostic deferred:',e.message)}
     }
-    await pool.query('UPDATE scan_status SET last_scan=$5,last_error=$4,scanned=$1,signals=$2,orders_submitted=orders_submitted+$3 WHERE id=1',[scanned,signals,submitted,executionErrors.length?executionErrors.slice(0,2).join('; ').slice(0,250):null,scanStarted]);
+    await pool.query('UPDATE scan_status SET last_scan=$5,last_error=$4,scanned=$1,signals=$2,discovered=$6,orders_submitted=orders_submitted+$3 WHERE id=1',[scanned,signals,submitted,executionErrors.length?executionErrors.slice(0,2).join('; ').slice(0,250):null,scanStarted,ms.length]);
     try{await syncSettlementAlerts()}catch(e){console.error('Settlement alert scan failed:',e)}
     return {scanned,signals,submitted,active:active.length,next:games.filter(g=>g.state.verifiedLive || (new Date(g.milestone.start_date).getTime()>Date.now()-3600000 && new Date(g.milestone.start_date).getTime()<Date.now()+3600000)).map(g=>g.milestone)};
   }catch(e){console.error('Scan failed:',e);await pool.query('UPDATE scan_status SET last_scan=now(),last_error=$1,scanned=$2,signals=$3 WHERE id=1',[String(e.message).slice(0,250),scanned,signals]);return {error:e.message,scanned,signals,next:ms}}
@@ -1159,7 +1187,7 @@ async function settlementAlerts(since){
   return rows;
 }
 export default {async fetch(req){const url=new URL(req.url);
-  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'cricket-bounded-overs-20261030'});
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'sports-universe-fallbacks-20261030'});
   if(req.method==='GET'&&url.pathname==='/manifest.webmanifest')return response(manifest,'application/manifest+json');
   if(req.method==='GET'&&url.pathname==='/sw.js')return new Response(worker,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','service-worker-allowed':'/','x-content-type-options':'nosniff'}});
   if(req.method==='GET'&&/^\/icon-(192|512)\.png$/.test(url.pathname))return response(Buffer.from(icons[Number(url.pathname.match(/\d+/)[0])],'base64'),'image/png');

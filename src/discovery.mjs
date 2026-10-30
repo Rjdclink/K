@@ -8,6 +8,28 @@ export function eligibleForMarkets(game){return game?.verifiedLive && game.score
   (supportedType(game.type)||game.type==='cricket_match'&&cricketOneInningsFormat(game.competition)||
     game.type==='esports_match'&&['eSoccer','eBasketball'].includes(game.sport)&&game.esportsPeriodsValid)}
 
+export async function discoverCurrentMilestones(get,now=Date.now()){
+  const cutoff=now+3600000,min=new Date(now-7*86400000).toISOString();
+  const categories=await Promise.all(['Sports','Esports'].map(async category=>{
+    const found=[],seen=new Set();let cursor='';
+    for(;;){
+      const query=new URLSearchParams({category,limit:'500',minimum_start_date:min});
+      if(cursor)query.set('cursor',cursor);
+      const response=await get('/milestones?'+query),page=response.milestones||[];
+      found.push(...page.filter(m=>m.id&&Date.parse(m.start_date||'')<cutoff&&
+        (!m.end_date||Date.parse(m.end_date)>now-36*3600000||
+          /^(?:live|inprogress|in_progress|playing)$/.test(String(m.details?.status||'').toLowerCase()))));
+      // Kalshi lists milestones in start-date order. The next page of an
+      // entirely future page cannot contain a game that is live now.
+      if(!response.cursor||page.length&&page.every(m=>Date.parse(m.start_date||'')>=cutoff))break;
+      if(seen.has(response.cursor)||!page.length)throw Error(`${category} milestone pagination did not advance`);
+      seen.add(response.cursor);cursor=response.cursor;
+    }
+    return found;
+  }));
+  return [...new Map(categories.flat().map(m=>[m.id,m])).values()];
+}
+
 export function linkedEventTickers(milestone){
   if(milestone.type==='golf_tournament')return [milestone.details?.main_game_event_ticker].filter(Boolean);
   const source=[...(milestone.related_event_tickers||[]),...(milestone.primary_event_tickers||[]),...(milestone.events||[]),milestone.details?.main_game_event_ticker].filter(Boolean);
@@ -54,7 +76,7 @@ export function gameTimeLabel(game){
   if(/soccer/.test(family)&&Number.isFinite(game.matchRemainingSeconds)&&game.matchRemainingSeconds>=0)return `${String(Math.floor(game.matchRemainingSeconds/60)).padStart(2,'0')}:${String(game.matchRemainingSeconds%60).padStart(2,'0')} match time remaining`;
   if(/soccer/.test(family)&&Number.isFinite(game.soccerMinute))return `${game.soccerMinute}' elapsed`;
   if(Number.isFinite(game.remainingSeconds)){const segment=Number.isFinite(game.period)?/basketball/.test(family)?`${['NCAAB','NCAAW'].includes(game.sport)?'Half':'Quarter'} ${game.period}`:/football/.test(family)?`Quarter ${game.period}`:/hockey/.test(family)?`Period ${game.period}`:'' : '';const seconds=game.clockRunning===false?Math.floor(game.remainingSeconds):Math.ceil(game.remainingSeconds);return `${segment?segment+' · ':''}${String(Math.floor(seconds/60)).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}${game.clockRunning===false?' paused':' remaining'}`}
-  if(/cricket/.test(family)&&Number.isFinite(game.period))return `Innings ${game.period} · no countdown clock`;
+  if(/cricket/.test(family))return Number.isFinite(game.period)?`Innings ${game.period}`:'Innings unavailable';
   if(/table_tennis/.test(family))return 'No countdown clock';
   return 'Live clock unavailable';
 }
