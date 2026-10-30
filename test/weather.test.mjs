@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {weatherContract,observedWeather,stationTimezone} from '../src/weather.mjs';
+import {weatherContract,observedWeather,observedWeatherCompany,weatherDate,weatherStationId,stationTimezone} from '../src/weather.mjs';
 
 const station={id:'KNYC',timezone:'America/New_York'};
 const event={event_ticker:'KXRAINDNYC-261102',title:'Rain in New York City on Nov 2, 2026?',category:'Climate and Weather',settlement_sources:[{name:'National Weather Service'}]};
@@ -39,5 +39,25 @@ test('predictive rain, unresolved ranges and wrong source fail closed',()=>{
   assert.equal(weatherContract(event,{...market,strike_type:'less'},station,at),null);
   assert.equal(weatherContract(event,{...market,cap_strike:1},station,at),null);
   assert.equal(weatherContract({...event,settlement_sources:[{name:'Synoptic Data'}]},market,station,at),null);
+});
+test('Weather Company station and same-day settled observations verify directional temperature only',()=>{
+  const at=new Date('2026-10-30T03:15:00Z'),twcStation={id:'CLIMDW',icao:'KMDW',timezone:'America/Chicago'};
+  const e={event_ticker:'KXHIGHCHI-26OCT29',title:'Highest temperature in Chicago today?',category:'Climate and Weather',settlement_sources:[{name:'The Weather Company'}]};
+  const m={ticker:'KXHIGHCHI-26OCT29-T67',status:'active',result:'',rules_primary:'The maximum temperature recorded at Chicago (CLIMDW) for Oct 29, 2026 is greater than 67 degrees Fahrenheit according to The Weather Company.',strike_type:'greater',floor_strike:67,close_time:'2026-10-30T04:00:00Z'};
+  assert.equal(weatherDate(e),'Oct 29, 2026');assert.equal(weatherStationId(m.rules_primary),'CLIMDW');
+  const c=weatherContract(e,m,twcStation,at);
+  assert.equal(c?.source,'The Weather Company');assert.equal(c?.start,Date.parse('2026-10-29T05:00:00Z'));
+  assert.equal(weatherContract(e,m,twcStation,new Date('2026-10-30T04:00:00Z')),null);
+  const reading={icaoId:'KMDW',localDate:'2026-10-29',reportTimeUTC:'2026-10-29T20:00:00Z',tempF:70,status:'settled'};
+  const feed={source:'live',fetchedAt:at.toISOString(),stations:[{icaoId:'KMDW',timezone:'America/Chicago',observations:[reading]}]};
+  assert.equal(observedWeatherCompany(c,feed,at)?.value,70);
+  assert.equal(observedWeatherCompany(c,{...feed,stations:[{...feed.stations[0],observations:[{...reading,status:'preliminary'}]}]},at),null);
+  assert.equal(observedWeatherCompany(c,{...feed,stations:[{...feed.stations[0],observations:[{...reading,localDate:'2026-10-28'}]}]},at),null);
+  assert.equal(observedWeatherCompany(c,{...feed,stations:[{...feed.stations[0],observations:[{...reading,icaoId:'KORD'}]}]},at),null);
+  assert.equal(observedWeatherCompany(c,{...feed,stations:[{...feed.stations[0],observations:[{...reading,tempF:68}]}]},at),null);
+  assert.equal(observedWeatherCompany(c,{forecast:[{tempF:70}]},at),null);
+  assert.equal(weatherContract({...e,settlement_sources:[{name:'National Weather Service'}]},m,twcStation,at),null);
+  assert.equal(weatherContract(e,{...m,rules_primary:m.rules_primary.replace('CLIMDW','CLIORD')},twcStation,at),null);
+  assert.equal(weatherContract(e,{...m,rules_primary:'The total precipitation at CLIMDW in Chicago in Oct 29, 2026 is strictly greater than 0 inches.',floor_strike:0},twcStation,at),null);
 });
 

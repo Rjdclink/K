@@ -757,6 +757,12 @@ async function nws(path){
   if(!response.ok)throw Error(`NWS ${response.status}`);
   return response.json();
 }
+async function twc(path){
+  if(!/^\/api\/(?:climate\/primary\?date=\d{4}-\d{2}-\d{2}|metar\?primary=true&weekStart=\d{4}-\d{2}-\d{2})$/.test(path))throw Error('Unsupported weather data request');
+  const response=await fetch('https://weather.com/kalshi'+path,{headers:{accept:'application/json'},signal:AbortSignal.timeout(10000)});
+  if(!response.ok)throw Error(`Weather Company ${response.status}`);
+  return response.json();
+}
 async function executeVerifiedWeather(verified){
   if(!live())return;
   const event=verified[0].event;
@@ -1117,7 +1123,7 @@ export default {async fetch(req){const url=new URL(req.url);
     if(!req.headers.get('x-neon-trigger-invocation-id'))return json({error:'Forbidden'},403);
     const weatherClaim=await pool.query(`UPDATE weather_scan_status SET last_scan=now() WHERE id=1
       AND (last_scan IS NULL OR last_scan<now()-interval '90 seconds') RETURNING id`);
-    const weatherJob=weatherClaim.rowCount?scanWeatherMarkets({kalshi,nws,onVerified:executeVerifiedWeather}).then(async stats=>{
+    const weatherJob=weatherClaim.rowCount?scanWeatherMarkets({kalshi,nws,twc,onVerified:executeVerifiedWeather}).then(async stats=>{
       console.info('Weather scan funnel:',JSON.stringify({series:stats.series,events:stats.events,eligible:stats.eligible,verified:stats.verified,sources:stats.sources,rejections:stats.rejections}));
       await pool.query(`UPDATE weather_scan_status SET last_scan=now(),series=$1,events=$2,eligible=$3,verified=$4,failures=$5 WHERE id=1`,[stats.series,stats.events,stats.eligible,stats.verified,stats.failures]);
     }).catch(e=>console.warn('Weather discovery deferred:',e.message)):Promise.resolve();

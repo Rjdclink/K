@@ -1,12 +1,22 @@
-import {weatherSeries,weatherContract,stationTimezone,observedWeather} from './weather.mjs';
+import {weatherSeries,weatherContract,weatherDate,weatherStationId,stationTimezone,observedWeather,observedWeatherCompany} from './weather.mjs';
 
 // Discovery is separated from the sports live-data feed. Every series is
 // queried, including cities not known when the function was deployed.
-export async function scanWeatherMarkets({kalshi,nws,onVerified,now=()=>new Date(),pause=ms=>new Promise(resolve=>setTimeout(resolve,ms))}){
+export async function scanWeatherMarkets({kalshi,nws,twc,onVerified,now=()=>new Date(),pause=ms=>new Promise(resolve=>setTimeout(resolve,ms))}){
   const catalog=(await kalshi('/series?category=Climate%20and%20Weather')).series?.filter(weatherSeries)||[];
   const stats={series:catalog.length,events:0,eligible:0,verified:0,failures:0,
     sources:{},rejections:{dateMissing:0,dateOutsideWindow:0,stationMissing:0,stationIdUnsupported:0,stationUnavailable:0,contractRules:0,noAsk:0,noObservation:0}};
-  let cursor=0;const stations=new Map();
+  let cursor=0;const stations=new Map(),climateDays=new Map(),metarWeeks=new Map();
+  const companyDay=label=>{
+    if(!climateDays.has(label))climateDays.set(label,twc('/api/climate/primary?date='+label).catch(()=>null));
+    return climateDays.get(label);
+  };
+  const companyObservations=label=>{
+    const day=new Date(label+'T00:00:00Z');day.setUTCDate(day.getUTCDate()-(day.getUTCDay()+6)%7);
+    const monday=day.toISOString().slice(0,10);
+    if(!metarWeeks.has(monday))metarWeeks.set(monday,twc('/api/metar?primary=true&weekStart='+monday).catch(()=>null));
+    return metarWeeks.get(monday);
+  };
   await Promise.all(Array.from({length:Math.min(8,catalog.length)},async()=>{
     while(cursor<catalog.length){const series=catalog[cursor++];
       try{
@@ -19,14 +29,18 @@ export async function scanWeatherMarkets({kalshi,nws,onVerified,now=()=>new Date
             stats.events++;
             const source=event.settlement_sources?.[0]?.name||'unspecified';
             stats.sources[source]=(stats.sources[source]||0)+1;
-            const date=String(event.title||'').match(/\bon (\w+ \d{1,2}, 20\d{2})\b/i)?.[1];
+            const date=weatherDate(event);
             if(!date){stats.rejections.dateMissing++;continue}
             const eventDate=new Date(date+' 12:00:00 GMT');
             if(!Number.isFinite(eventDate.getTime())||Math.abs(eventDate.getTime()-now().getTime())>36*3600000){stats.rejections.dateOutsideWindow++;continue}
-            const id=event.markets?.[0]?.rules_primary?.match(/\(([A-Z][A-Z0-9]{2,7})\)/)?.[1];
+            const id=weatherStationId(event.markets?.[0]?.rules_primary);
             if(!id){stats.rejections.stationMissing++;continue}
-            if(!/^K[A-Z0-9]{3}$/.test(id)){stats.rejections.stationIdUnsupported++;continue}
-            if(!stations.has(id))stations.set(id,nws('/stations/'+id).then(data=>{
+            const company=source==='The Weather Company';
+            if(company?!/^CLI[A-Z0-9]{3,5}$/.test(id):!/^K[A-Z0-9]{3}$/.test(id)){stats.rejections.stationIdUnsupported++;continue}
+            if(!stations.has(id))stations.set(id,company?companyDay(eventDate.toISOString().slice(0,10)).then(data=>{
+              const matches=(data?.results||[]).filter(x=>x.station?.cliId&&'CLI'+x.station.cliId===id&&x.station.icao==='K'+x.station.cliId);
+              return matches.length===1?{id,icao:matches[0].station.icao,timezone:matches[0].station.timezone}:null;
+            }):nws('/stations/'+id).then(data=>{
               if(data.properties?.stationIdentifier&&data.properties.stationIdentifier!==id)return null;
               return {id,timezone:stationTimezone(data)};
             }).catch(()=>null));
@@ -44,14 +58,14 @@ export async function scanWeatherMarkets({kalshi,nws,onVerified,now=()=>new Date
               try{
                 const firstAt=now();const first=(await kalshi('/markets/'+encodeURIComponent(candidate.market.ticker))).market;
                 if(!first||!weatherContract(event,first,station,firstAt))return;
-                await pause(20000);
+                await pause(3000);
                 const secondAt=now();const second=(await kalshi('/markets/'+encodeURIComponent(candidate.market.ticker))).market;
-                if(secondAt.getTime()-firstAt.getTime()<20000)return;
+                if(secondAt.getTime()-firstAt.getTime()<3000)return;
                 const current=weatherContract(event,second,station,secondAt);
                 if(!current||first.rules_primary!==second.rules_primary||first.close_time!==second.close_time||
                   first.floor_strike!==second.floor_strike||first.cap_strike!==second.cap_strike)return;
-                const observations=await nws('/stations/'+id+'/observations?'+new URLSearchParams({start:new Date(current.start).toISOString(),end:new Date(current.end).toISOString(),limit:'500'}));
-                const observed=observedWeather(current,observations.features,now());
+                const observed=company?observedWeatherCompany(current,await companyObservations(current.localDate),now()):
+                  observedWeather(current,(await nws('/stations/'+id+'/observations?'+new URLSearchParams({start:new Date(current.start).toISOString(),end:new Date(current.end).toISOString(),limit:'500'}))).features,now());
                 if(!observed){stats.rejections.noObservation++;return}
                 stats.verified++;
                 verified.push({event,market:second,contract:current,observed,firstAt,secondAt,first,second});
