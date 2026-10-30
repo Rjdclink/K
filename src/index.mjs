@@ -539,10 +539,11 @@ async function reconcileCombos(){
   try{
     const communicationsId=(await kalshi('/communications/id',{auth:true})).communications_id;
     if(!communicationsId)throw new Error('Kalshi communications ID missing');
+    console.info('Combo quote owner filter ready:',plans.length,'RFQs');
     while(Date.now()<deadline){
       const offers=(await Promise.all(plans.map(async plan=>{
         try{
-          const list=(await kalshi('/communications/quotes?'+new URLSearchParams({rfq_id:plan.rfq,rfq_creator_user_id:communicationsId,limit:'100'}),{auth:true})).quotes||[];
+          const list=(await kalshi('/communications/quotes?'+new URLSearchParams({rfq_id:plan.rfq,rfq_creator_user_id:communicationsId,rfq_user_filter:'self',limit:'100'}),{auth:true})).quotes||[];
           const fees=feeReserve({fee_multiplier_override:plan.combo.fee_multiplier_override},plan.combo);
           return list.map(q=>({plan,q,terms:quoteForYes(q,plan.ticker,plan.budget,fees,bankroll),fees})).filter(x=>x.terms&&
             profitableCount(x.terms.count,x.terms.yesCost,fees,plan.strategy,bankroll,plan.legs[0].state.type,plan.legs[0].state.remainingSeconds));
