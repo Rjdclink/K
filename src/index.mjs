@@ -953,11 +953,32 @@ async function refreshOpenClocks(){
   }catch(e){console.warn('Dashboard clock refresh deferred:',e.message)}
 }
 async function state(){const [snap,stats,attempts,weatherStatus]=await Promise.all([
-  pool.query(`SELECT id,title,sport,home,away,possession_side,status,time_left,signals FROM game_snapshots WHERE status IN ('live','inprogress','started') AND scanned_at>=(SELECT COALESCE(last_scan,now()-interval '1 minute') FROM scan_status WHERE id=1) ORDER BY jsonb_array_length(signals) DESC,title`),
+  pool.query(`SELECT id,title,sport,home,away,possession_side,status,time_left,scanned_at,signals FROM game_snapshots
+    WHERE status IN ('live','inprogress','started') AND scanned_at>now()-interval '5 minutes'
+    ORDER BY jsonb_array_length(signals) DESC,title`),
   pool.query('SELECT * FROM scan_status WHERE id=1'),
   pool.query(`SELECT a.market_ticker,a.game_id,a.sport,a.strategy,a.reason,a.combo_legs,a.fill_count,a.limit_price,g.status AS game_status,g.title AS game_title,g.sport_family,g.possession_side,g.home AS home_score,g.away AS away_score,g.scanned_at AS score_scanned_at,g.clock_seconds,g.clock_label,g.clock_observed_at,g.time_left FROM trade_attempts a LEFT JOIN game_snapshots g ON g.id=a.game_id WHERE a.status='filled' ORDER BY a.created_at DESC`),
   pool.query('SELECT * FROM weather_scan_status WHERE id=1')
 ]);
+  for(const game of snap.rows){
+    game.stale=new Date(game.scanned_at).getTime()<new Date(stats.rows[0]?.last_scan||0).getTime()-2000 ||
+      Date.now()-new Date(game.scanned_at).getTime()>30000;
+    if(game.stale)for(const signal of game.signals||[])signal.execution='Rechecking live game; last status: '+signal.execution;
+  }
+  const awaiting=[...new Set(snap.rows.flatMap(g=>(g.signals||[]).filter(s=>s.execution==='Awaiting independent score confirmation').map(s=>s.ticker)))];
+  if(awaiting.length){
+    const {rows}=await pool.query(`SELECT DISTINCT ON (market_ticker) market_ticker,passed,created_at
+      FROM verification_records WHERE market_ticker=ANY($1) AND created_at>now()-interval '5 minutes'
+      ORDER BY market_ticker,created_at DESC`,[awaiting]);
+    const checked=new Map(rows.map(r=>[r.market_ticker,r]));
+    for(const game of snap.rows)for(const signal of game.signals||[]){
+      const result=checked.get(signal.ticker);
+      if(signal.execution==='Awaiting independent score confirmation'&&result){
+        signal.execution=result.passed?'Independent score confirmed; final quote pending':'Independent source disagreed or unavailable';
+        signal.verification_checked_at=result.created_at;
+      }
+    }
+  }
   let balance=null,positions=null,accountError=null,positionsError=null;
   if(configured()){
     const [balanceResult,positionsResult]=await Promise.allSettled([
