@@ -1,5 +1,5 @@
 export const marketShard=(event,market)=>Number(market.exchange_index??event.exchange_index??0);
-export const shouldFundCombo=(localCents,desiredCents)=>localCents<100||desiredCents-localCents>100;
+export const comboShardBudget=(localCents,capCents)=>localCents===null?0:Math.max(0,Math.floor(Math.min(localCents,capCents)));
 export function shardCash(account,index){
   if(!Array.isArray(account?.balance_breakdown))return null;
   const row=account.balance_breakdown.find(b=>Number(b.exchange_index)===index);
