@@ -92,8 +92,8 @@ export function observedWeather(contract,observations,now=new Date()){
   if(!values.length)return null;
   const chosen=contract.comparison.startsWith('greater')?values.sort((a,b)=>b.value-a.value)[0]:values.sort((a,b)=>a.value-b.value)[0];
   // For rain a single verified hourly amount above the daily threshold suffices.
-  // A directional temperature must clear the threshold beyond rounding noise.
-  const buffer=contract.type==='rain'?1e-8:0.5;
+  // Directional temperature follows the contract's strict comparison.
+  const buffer=contract.type==='rain'?1e-8:0;
   const passed=contract.comparison.startsWith('greater')?chosen.value>contract.threshold+buffer:chosen.value<contract.threshold-buffer;
   return passed?{...chosen,source:'National Weather Service',station:contract.station}:null;
 }
@@ -108,9 +108,8 @@ export function observedWeatherCompany(contract,data,now=new Date()){
     .map(o=>({at:o.reportTimeUTC,value:o.tempF}));
   if(!values.length)return null;
   const chosen=values.sort((a,b)=>contract.type==='high'?b.value-a.value:a.value-b.value)[0];
-  // Only an already-settled hourly observation well past a directional
-  // threshold can establish a same-day high/low. It is never a forecast.
-  const passed=contract.type==='high'?chosen.value>=contract.threshold+1:chosen.value<=contract.threshold-1;
+  // Only a settled observation strictly beyond the contract line qualifies.
+  const passed=contract.type==='high'?chosen.value>contract.threshold:chosen.value<contract.threshold;
   return passed?{...chosen,source:'The Weather Company',station:contract.station,icao:contract.icao,status:'settled'}:null;
 }
 

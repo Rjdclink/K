@@ -41,6 +41,14 @@ test('history includes an independently verified second buy, its fees, and all h
   assert.equal(completedTrade(upgraded,[buy],yes),null,'missing upgrade fills must not produce a misleading profit');
   assert.equal(completedTrade(upgraded,[buy,{...second,order_id:'unknown'}],yes),null);
 });
+test('history includes a later robust-over top-up alongside an earlier verification upgrade',()=>{
+  const upgraded={...entry,upgrade_order_id:'verification-buy',upgrade_fill_count:'5.00',robust_upgrade_order_id:'robust-buy',robust_upgrade_fill_count:'2.00'};
+  const second={...buy,order_id:'verification-buy',count_fp:'5.00',created_time:'2026-10-28T13:05:00Z'};
+  const third={...buy,order_id:'robust-buy',count_fp:'2.00',created_time:'2026-10-28T13:06:00Z'};
+  const yes={ticker:entry.market_ticker,market_result:'yes',settled_time:'2026-10-28T14:00:00Z'};
+  assert.equal(completedTrade(upgraded,[buy,second,third],yes)?.profitCents,310);
+  assert.equal(completedTrade(upgraded,[buy,second],yes),null);
+});
 test('history includes a later verified combo add-on only after its actual fill',()=>{
   const combo={...entry,combo_upgrade_order_id:'combo-add-on',combo_upgrade_fill_count:'5.00'};
   const second={...buy,order_id:'combo-add-on',count_fp:'5.00',yes_price_dollars:'0.90',fee_cost:'0.15',created_time:'2026-10-28T13:05:00Z'};

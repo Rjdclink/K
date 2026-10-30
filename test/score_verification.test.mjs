@@ -26,6 +26,21 @@ const espn=(home=24,away=20,overrides={})=>({events:[{date:start,status:{type:{s
   {homeAway:'away',score:String(away),team:{displayName:'Brooklyn Nets',abbreviation:'BKN',name:'Nets'}}
 ]}],...overrides}]});
 const fox=(home=24,away=20,overrides={})=>({sectionList:[{events:[{eventTime:start,eventStatus:1,statusLine:'05:00',entityLink:{layout:{tokens:{homeUri:'team-bos',awayUri:'team-bkn'}}},upperTeam:{uri:'team-bkn',name:'BKN',longName:'Nets',score:away},lowerTeam:{uri:'team-bos',name:'BOS',longName:'Celtics',score:home},...overrides}]}]});
+test('ESPN last scoring play is used only with a complete verified scoring list',async()=>{
+  const soccer={id:'goal-1',type:'soccer_match',title:'Boston vs Brooklyn',start_date:start};
+  const state=gameState(soccer,{details:{status:'live',home_score:2,away_score:1,time:"65'",home_team_name:'Boston',away_team_name:'Brooklyn'}});
+  const event=(plays)=>({events:[{id:'espn-1',date:start,status:{type:{state:'in'},period:2,displayClock:"65'"},competitions:[{status:{type:{state:'in'},period:2,displayClock:"65'"},competitors:[
+    {homeAway:'home',score:'2',team:{displayName:'Boston'}},{homeAway:'away',score:'1',team:{displayName:'Brooklyn'}}],details:plays.map(scoreValue=>({scoringPlay:true,scoreValue}))}]}]});
+  const valid=event([1,1,1]);
+  assert.equal(espnMatches(valid,state,soccer)[0].lastScoringPlay,1);
+  assert.equal(await verifyIndependentOverDecision(state,soccer,{fetcher:async()=>({ok:true,json:async()=>valid})}),true);
+  assert.equal(state.lastScoringPlay,1);
+  const incomplete=event([1,1]);
+  assert.equal(espnMatches(incomplete,state,soccer)[0].lastScoringPlay,null);
+  const second=gameState(soccer,{details:{status:'live',home_score:2,away_score:1,time:"65'",home_team_name:'Boston',away_team_name:'Brooklyn'}});
+  assert.equal(await verifyIndependentOverDecision(second,soccer,{fetcher:async()=>({ok:true,json:async()=>incomplete})}),true);
+  assert.equal(second.lastScoringPlay,undefined);
+});
 test('NFL ESPN labels verify only the named receiving yard statistic',()=>{
   const athlete={athlete:{displayName:'Chuba Hubbard'},stats:['3','15','5.0','0','11','4']};
   const receiving={name:'receiving',labels:['REC','YDS','AVG','TD','LONG','TGTS'],athletes:[athlete]};

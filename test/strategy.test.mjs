@@ -56,6 +56,20 @@ test('over requires strict threshold exceeded and whole-game contract',()=>{
   assert.ok(overSignal(gameState(milestone,{details:{...live(103,101).details,clock:'03:01'}}),market));
   assert.equal(overSignal(gameState(milestone,live(103,101)),{...market,title:'First half total points'}),null);
 });
+test('a whole-game over gets 40% only when removing the independently recorded last play leaves it crossed',()=>{
+  const market={status:'active',event_ticker:'KXNBATOTAL-26OCT30BOSNYK',title:'Over 139.5 total points',rules_primary:'Combined total points scored in the full game',floor_strike:139.5,strike_type:'greater',yes_ask_dollars:'0.98'};
+  assert.equal(overSignal(gameState(milestone,live(81,88)),market)?.fraction,.30,'a large margin does not substitute for the actual last play');
+  assert.equal(overSignal({...gameState(milestone,live(81,88)),lastScoringPlay:3},market)?.fraction,.40);
+  assert.equal(overSignal({...gameState(milestone,live(74,71)),lastScoringPlay:6},market)?.fraction,.30);
+  assert.equal(overSignal({...gameState(milestone,live(74,72)),lastScoringPlay:2},market)?.fraction,.40);
+  const soccer={id:'s',type:'soccer_match',title:'Home vs Away'};
+  const soccerMarket={...market,event_ticker:'KXSOCCERTOTAL-26OCT30HOMEAWAY',title:'Over 0.5 total goals',floor_strike:.5};
+  const score=(home,away)=>gameState(soccer,{details:{status:'live',home_score:home,away_score:away,time:"65'"}});
+  assert.equal(overSignal(score(1,0),soccerMarket)?.fraction,.30);
+  assert.equal(overSignal({...score(2,0),lastScoringPlay:1},soccerMarket)?.fraction,.40);
+  const player={...market,event_ticker:'KXNBAPTS-26OCT30BOSNYK',title:'Player: 20+ points',yes_sub_title:'Player: 20+',floor_strike:19.5,custom_strike:{basketball_player:'p'}};
+  assert.equal(overSignal(gameState({...milestone,details:{...milestone.details,home_team_id:'ny',away_team_id:'bos'}},{details:{...live(81,88).details,player_stats:{p:{points:30}}}}),player)?.fraction,.30);
+});
 test('over preflight requires stable scores from a newer, fresh milestone update',()=>{
   const m={id:'soccer-1',title:'Dolomiti Bellunesi vs Desenzano',type:'soccer_match'};
   const market={status:'active',event_ticker:'KXSERIECTOTAL-26OCT28BELLDESE',title:'Over 0.5 goals',rules_primary:'Combined total goals scored in the game',floor_strike:.5,yes_ask_dollars:'0.99'};
