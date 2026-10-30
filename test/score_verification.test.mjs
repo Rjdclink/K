@@ -56,6 +56,16 @@ test('NHL city labels match the exact franchise but not a same-city rival',()=>{
     {homeAway:'away',score:'20',team:{displayName:'New York Rangers',abbreviation:'NYR',name:'Rangers'}}]}]}))};
   assert.equal(espnMatches(wrong,state,milestone).length,0);
 });
+test('Saudi soccer alias matches one exact live fixture and its score',()=>{
+  const milestone={id:'saudi',type:'soccer_match',title:'Al-Shabab vs Al Ahli Saudi',start_date:start};
+  const state=gameState(milestone,{details:{status:'live',home_score:1,away_score:0,time:"20'"}});
+  const fixture={events:[{date:start,status:{type:{state:'in'},period:1,displayClock:"20'"},competitions:[{competitors:[
+    {homeAway:'home',score:'1',team:{displayName:'Al Shabab'}},
+    {homeAway:'away',score:'0',team:{displayName:'Al Ahli'}}]}]}]};
+  assert.equal(scoreAgreement(state,[espnMatches(fixture,state,milestone)]),true);
+  assert.equal(scoreAgreement(state,[espnMatches({...fixture,events:fixture.events.map(e=>({...e,competitions:[{competitors:[e.competitions[0].competitors[0],{homeAway:'away',score:'1',team:{displayName:'Al Ahli'}}]}]}))},state,milestone)]),false);
+  assert.equal(espnMatches({...fixture,events:fixture.events.map(e=>({...e,competitions:[{competitors:[e.competitions[0].competitors[0],{homeAway:'away',score:'0',team:{displayName:'Al Ahli Doha'}}]}]}))},state,milestone).length,0);
+});
 
 test('independent scoreboards must match the exact live fixture and both team scores',()=>{
   assert.equal(scoreAgreement(game,[espnMatches(espn(),game,m),foxMatches(fox(),game,m)]),true);
