@@ -424,6 +424,11 @@ test('ITF M15 deciding third set accepts a 3–1 lead only while the leader serv
   assert.equal(tennisSignal(state(now,3,1,'cov','pregame'),market),null);
   assert.equal(tennisSignal(state(now,3,1,'cov','live',{...m,details:{...m.details,tour:'unknown'}}),market),null);
   assert.equal(kalshiOnlyLead(first,state(now,3,2),market),false);
+  const women={...m,details:{...m.details,tournament_name:'W75 Toronto',main_game_event_ticker:'KXITFWMATCH-26OCT30BRARYS'}};
+  const womenMarket={...market,event_ticker:women.details.main_game_event_ticker,title:'Reese Brantmeier wins'};
+  assert.equal(tennisSignal(state(now,2,1,'cov','live',women),womenMarket),null,'one-game lead is insufficient');
+  assert.equal(tennisSignal(state(now,3,1,'cov','live',women),womenMarket)?.fraction,.15);
+  assert.equal(tennisSignal(state(now,3,1,'del','live',women),womenMarket),null,'the leader must serve');
 });
 test('hockey requires three goals at 6:30 or less in final period',()=>{
   const hockey={...milestone,type:'hockey_match',details:{league:'NHL'}};

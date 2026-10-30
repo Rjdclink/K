@@ -144,7 +144,7 @@ export function gameState(m, live) {
   const homeUnits=home,awayUnits=away;
   const unit=/baseball/.test(family)?'runs':/hockey|soccer/.test(family)?'goals':tennis?'games':'points';
   const itfDecidingThird=tennis&&String(m.details?.tour||'').toUpperCase()==='ITF'&&
-    /^M(?:15|25)\b/i.test(String(m.details?.tournament_name||''))&&d.completed_rounds===2&&
+    /^[MW]\d{2,3}\b/i.test(String(m.details?.tournament_name||''))&&d.completed_rounds===2&&
     d.competitor1_overall_score===1&&d.competitor2_overall_score===1&&
     d.competitor1_round_scores?.length===3&&d.competitor2_round_scores?.length===3&&
     one?.outcome==='ongoing'&&two?.outcome==='ongoing';
