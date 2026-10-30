@@ -549,6 +549,9 @@ async function reconcileCombos(){
           const eligible=list.map(q=>({plan,q,terms:quoteForYes(q,plan.ticker,plan.budget,fees,bankroll),fees})).filter(x=>x.terms&&
             profitableCount(x.terms.count,x.terms.yesCost,fees,plan.strategy,bankroll,plan.legs[0].state.type,plan.legs[0].state.remainingSeconds));
           const stats=quoteStats.get(plan.ticker);stats.received=Math.max(stats.received,list.length);stats.eligible=Math.max(stats.eligible,eligible.length);
+          if(list.length&&!stats.sample){const q=list[0],terms=quoteForYes(q,plan.ticker,plan.budget,fees,bankroll);
+            stats.sample={status:q.status,no_bid_dollars:q.no_bid_dollars,yes_bid_dollars:q.yes_bid_dollars,no_contracts_fp:q.no_contracts_fp,contracts_fp:q.contracts_fp,age_seconds:Math.round((Date.now()-Date.parse(q.created_ts))/1000),budget_cents:plan.budget,terms,profit_passed:!!terms&&!!profitableCount(terms.count,terms.yesCost,fees,plan.strategy,bankroll,plan.legs[0].state.type,plan.legs[0].state.remainingSeconds)};
+          }
           return eligible;
         }catch(e){console.warn('Combo quotes unavailable:',plan.ticker,e.message);if(e.message.includes('Kalshi 403 GET /communications/quotes'))throw e;return []}
       }))).flat().sort((a,b)=>b.plan.legs.length-a.plan.legs.length||b.terms.profitCents-a.terms.profitCents);
