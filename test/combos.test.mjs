@@ -9,6 +9,13 @@ test('Kalshi combo creation includes the side required by the live validator',()
     {event_ticker:'E2',market_ticker:'M2',side:'yes'}
   ]);
 });
+test('three held markets expose all three pairings and the full three-leg ticket',()=>{
+  const legs=['Watson','Williams','Hubbard'].map(name=>({event:{event_ticker:'NFL-EVENT'},market:{ticker:name},milestone:{id:'NFL-GAME'},signal:{strategy:'over'}}));
+  const collection={collection_ticker:'NFL-COMBO',is_all_yes:true,is_single_market_per_event:false,size_min:2,size_max:3,associated_event_tickers:['NFL-EVENT']};
+  assert.deepEqual(compatibleComboGroups([collection],legs).map(g=>g.legs.map(l=>l.market.ticker)),[
+    ['Watson','Williams','Hubbard'],['Watson','Williams'],['Watson','Hubbard'],['Williams','Hubbard']
+  ]);
+});
 
 test('combo collection discovery filters by each event and paginates',async()=>{
   const requests=[];

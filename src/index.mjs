@@ -463,7 +463,7 @@ async function reconcileCombos(){
   }
 }
  async function executeCombo(group,account,bankroll,scoreboardCache,fraction,newTicker){
-  if(group.length<2)return {filled:false,pending:false};
+  if(group.length<2){console.warn('Combo held legs unavailable:',group.map(c=>c.market.ticker));return {filled:false,pending:false}}
   // The verification window begins with a fresh observation of every leg.
   const verified=await Promise.all(group.map(async c=>{
     try{
@@ -492,20 +492,31 @@ async function reconcileCombos(){
     if(seenMarkets.has(c.market.ticker))return false;
     seenMarkets.add(c.market.ticker);return true;
   }).slice(0,6);
-  if(eligible.length<2)return {filled:false,pending:false};
+  if(eligible.length<2){console.warn('Combo independently verified fewer than two held legs:',group.map((c,i)=>[c.market.ticker,Boolean(verified[i])]),'trigger',newTicker);return {filled:false,pending:false}}
   // Prefer all available verified legs, then smaller valid combinations.
   const collections=await collectionsForEvents(eligible.map(c=>c.event.event_ticker),kalshi);
   const deadline=Date.now()+COMBO_ATTEMPT_MS;
   const plans=[],funding=[];
   // Request executable quotes for all available ticket sizes in the same
   // bounded window. A six-pick market may have no maker while a three-pick does.
-  const groups=compatibleComboGroups(collections,eligible,64).filter(({legs})=>legs.some(c=>c.market.ticker===newTicker));
-  const largest=groups[0]?.legs.length;
-  await Promise.all(groups.filter(({legs})=>legs.length===largest).map(async ({legs,collection})=>{
+  const allGroups=compatibleComboGroups(collections,eligible,64);
+  const groups=allGroups.filter(({legs})=>legs.some(c=>c.market.ticker===newTicker));
+  if(!groups.length)console.warn('Combo no compatible collection for trigger:',newTicker,eligible.map(c=>[c.event.event_ticker,c.market.ticker]),'collections',collections.length);
+  // Probe the remaining held pair as a creation-only diagnostic. It must not
+  // turn into an order because this trigger belongs to the newly filled leg.
+  await Promise.all(allGroups.filter(({legs})=>eligible.length===3&&legs.length===2&&!legs.some(c=>c.market.ticker===newTicker)).slice(0,3).map(async ({legs,collection})=>{
+    try{
+      const created=await kalshi('/multivariate_event_collections/'+encodeURIComponent(collection.collection_ticker),
+        {auth:true,method:'POST',body:{selected_markets:selectedComboMarkets(legs),with_market_payload:true}});
+      console.info('Combo alternative pair market created:',legs.map(c=>c.market.ticker),created.market_ticker);
+    }catch(e){console.warn('Combo alternative pair creation failed:',legs.map(c=>c.market.ticker),e.message)}
+  }));
+  await Promise.all(groups.slice(0,10).map(async ({legs,collection})=>{
     const n=legs.length;
     try{
       const identifiers=selectedComboMarkets(legs);
       const created=await kalshi('/multivariate_event_collections/'+encodeURIComponent(collection.collection_ticker),{auth:true,method:'POST',body:{selected_markets:identifiers,with_market_payload:true}});
+      console.info('Combo held-leg market creation:',legs.map(c=>c.market.ticker),created.market_ticker||'missing ticker');
       const ticker=created.market_ticker,combo=created.market;
       if(!ticker||!combo||combo.ticker!==ticker||combo.event_ticker!==created.event_ticker||!['initialized','active','open'].includes(combo.status))return;
       const strategy=legs.some(c=>c.signal.strategy==='over')?'over':'lead';
@@ -523,7 +534,7 @@ async function reconcileCombos(){
       if(rfq)plans.push({legs,created,ticker,combo,strategy,fraction,shard,budget,rfq});
      }catch(e){console.warn('Combo size unavailable:',n,collection.collection_ticker,legs.map(c=>[c.event.event_ticker,c.market.ticker]),e.message)}
   }));
-  if(!plans.length){if(funding.length){const p=funding[0];await ensureShardFunding({strategy:p.strategy},p.created,p.combo,account,p.desired)}return {filled:false,pending:false}}
+  if(!plans.length){console.warn('Combo no executable RFQ plan:',newTicker,'groups',groups.length,'funding',funding.length);if(funding.length){const p=funding[0];await ensureShardFunding({strategy:p.strategy},p.created,p.combo,account,p.desired)}return {filled:false,pending:false}}
   try{
     while(Date.now()<deadline){
       const offers=(await Promise.all(plans.map(async plan=>{
@@ -533,7 +544,7 @@ async function reconcileCombos(){
           return list.map(q=>({plan,q,terms:quoteForYes(q,plan.ticker,plan.budget,fees,bankroll),fees})).filter(x=>x.terms&&
             profitableCount(x.terms.count,x.terms.yesCost,fees,plan.strategy,bankroll,plan.legs[0].state.type,plan.legs[0].state.remainingSeconds));
         }catch(e){console.warn('Combo quotes unavailable:',plan.ticker,e.message);return []}
-      }))).flat().sort((a,b)=>b.terms.profitCents-a.terms.profitCents||b.plan.legs.length-a.plan.legs.length);
+      }))).flat().sort((a,b)=>b.plan.legs.length-a.plan.legs.length||b.terms.profitCents-a.terms.profitCents);
       if(offers.length){
         const {q,terms,plan,fees}=offers[0],{legs,ticker,strategy,fraction,shard,rfq,created}=plan;
         // Refresh every leg immediately before accepting a quote. A goal correction
@@ -567,6 +578,7 @@ async function reconcileCombos(){
       await new Promise(resolve=>setTimeout(resolve,Math.min(500,Math.max(0,deadline-Date.now()))));
     }
   }finally{await Promise.all(plans.map(p=>kalshi('/communications/rfqs/'+encodeURIComponent(p.rfq),{auth:true,method:'DELETE'}).catch(e=>console.warn('RFQ cancellation deferred:',e.message))))}
+  console.info('Combo maker quote unavailable:',newTicker,'RFQs',plans.map(p=>p.rfq));
   return {filled:false,pending:false};
 }
 async function diagnoseUnfilledCombo(candidates,filled){
@@ -938,13 +950,15 @@ async function scan(cachedMilestones){
         const gameById=new Map(games.map(g=>[g.milestone.id,g]));
         const comboCandidates=singles.flatMap(r=>{
           const g=gameById.get(r.game_id),event=events.get(r.event_ticker),market=(event?.markets||[]).find(m=>m.ticker===r.market_ticker);
-          if(!g?.state.verifiedLive||!market)return [];
+          if(!g?.state.verifiedLive||!market){console.warn('Combo held market unavailable:',r.market_ticker,{gameLive:!!g?.state.verifiedLive,eventFound:!!event,marketFound:!!market});return []}
           const signal=r.strategy==='over'?overSignal(g.state,market):golfSignal(g.state,market)||leadSignal(g.state,market)||additionalLeadSignal(g.state,market)||tennisSignal(g.state,market)||tableTennisSignal(g.state,market);
+          if(!signal)console.warn('Combo held market current signal unavailable:',r.market_ticker,r.strategy);
           return signal?[{...g,market,event,signal,state:g.state}]:[];
         });
         const group=[],seenMarkets=new Set();
         for(const c of comboCandidates){if(seenMarkets.has(c.market.ticker))continue;
           group.push(c);seenMarkets.add(c.market.ticker);if(group.length===6)break}
+        if(group.length<2)console.warn('Combo fewer than two qualifying held markets:',singles.map(r=>r.market_ticker),group.map(c=>c.market.ticker));
         if(group.length>=2)try{
           const result=await executeCombo(group,currentAccount,Number(currentAccount.balance)+Number(currentAccount.portfolio_value),scoreboardCache,comboAllocation(comboCount),newlyFilled.market_ticker);
           if(result.pending)await pool.query('UPDATE combo_fill_triggers SET completed_at=now() WHERE fill_id=$1',[newlyFilled.id]);
