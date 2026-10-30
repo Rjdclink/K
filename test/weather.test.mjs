@@ -54,10 +54,15 @@ test('Weather Company station and same-day settled observations verify direction
   const reading={icaoId:'KMDW',localDate:'2026-10-29',reportTimeUTC:'2026-10-29T20:00:00Z',tempF:70,status:'settled'};
   const feed={source:'live',fetchedAt:at.toISOString(),stations:[{icaoId:'KMDW',timezone:'America/Chicago',observations:[reading]}]};
   assert.equal(observedWeatherCompany(c,feed,at)?.value,70);
+  const observation=tempF=>({...feed,stations:[{...feed.stations[0],observations:[{...reading,tempF}]}]});
+  assert.equal(observedWeatherCompany(c,observation(68),at)?.value,68,'one full degree past a high line qualifies');
+  assert.equal(observedWeatherCompany(c,observation(67.9),at),null);
+  const low={...c,type:'low',comparison:'less',threshold:67};
+  assert.equal(observedWeatherCompany(low,observation(66),at)?.value,66,'one full degree below a low line qualifies');
+  assert.equal(observedWeatherCompany(low,observation(66.1),at),null);
   assert.equal(observedWeatherCompany(c,{...feed,stations:[{...feed.stations[0],observations:[{...reading,status:'preliminary'}]}]},at),null);
   assert.equal(observedWeatherCompany(c,{...feed,stations:[{...feed.stations[0],observations:[{...reading,localDate:'2026-10-28'}]}]},at),null);
   assert.equal(observedWeatherCompany(c,{...feed,stations:[{...feed.stations[0],observations:[{...reading,icaoId:'KORD'}]}]},at),null);
-  assert.equal(observedWeatherCompany(c,{...feed,stations:[{...feed.stations[0],observations:[{...reading,tempF:68}]}]},at),null);
   assert.equal(observedWeatherCompany(c,{forecast:[{tempF:70}]},at),null);
   assert.equal(weatherContract({...e,settlement_sources:[{name:'National Weather Service'}]},m,twcStation,at),null);
   assert.equal(weatherContract(e,{...m,rules_primary:m.rules_primary.replace('CLIMDW','CLIORD')},twcStation,at),null);

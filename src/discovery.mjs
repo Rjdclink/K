@@ -5,7 +5,7 @@ import { cricketOneInningsFormat } from './strategy.mjs';
 const supportedType=type=>/basketball|baseball|football|hockey|soccer|tennis|golf|handball|rugby|lacrosse|volleyball|darts/.test(String(type||'').toLowerCase());
 
 export function eligibleForMarkets(game){return game?.verifiedLive && game.scoreKnown &&
-  (supportedType(game.type)||game.type==='cricket_match'&&cricketOneInningsFormat(game.competition)||
+  (supportedType(game.type)||game.type==='cricket_match'&&(cricketOneInningsFormat(game.competition)||game.cricket?.innings===4)||
     game.type==='esports_match'&&['eSoccer','eBasketball'].includes(game.sport)&&game.esportsPeriodsValid)}
 
 export async function discoverCurrentMilestones(get,now=Date.now()){

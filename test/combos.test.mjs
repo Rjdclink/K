@@ -12,6 +12,20 @@ test('two held fills qualify for combo without a second live game verification',
   assert.equal(heldComboLeg({...rows[0],fill_count:'0'},{ticker:'A',event_ticker:'E',status:'active'}),null);
   assert.deepEqual(filledComboWindow(rows,new Set(['A']),null),[]);
 });
+test('restricted 2, 5 and 20 percent singles cannot become larger combination tickets',()=>{
+  const rows=[
+    {market_ticker:'A',reason:'Restricted 2% lead: Alpha leads',strategy:'lead',fill_count:1,event_ticker:'E'},
+    {market_ticker:'B',reason:'Restricted 5% draw at 0–0',strategy:'lead',fill_count:1,event_ticker:'E'},
+    {market_ticker:'C',reason:'Restricted 20% cricket final innings 4',strategy:'lead',fill_count:1,event_ticker:'E'},
+    {market_ticker:'D',reason:'Ordinary lead',strategy:'lead',fill_count:1,event_ticker:'E'},
+    {market_ticker:'E',reason:'Ordinary lead',strategy:'lead',fill_count:1,event_ticker:'E'}
+  ];
+  assert.deepEqual(availableComboFills(rows,new Set()),rows.slice(3));
+  assert.deepEqual(filledComboWindow(rows,new Set(rows.map(r=>r.market_ticker)),null),rows.slice(3));
+  for(const row of rows.slice(0,3))assert.equal(heldComboLeg(row,{ticker:row.market_ticker,event_ticker:'E',status:'active'}),null);
+  const candidates=rows.map((row,i)=>({milestone:{id:'G'+i},event:{event_ticker:'E'+i},market:{ticker:row.market_ticker},signal:{strategy:'lead',comboEligible:i>=3}}));
+  assert.deepEqual(comboCandidates(candidates,'lead'),candidates.slice(3));
+});
 
 test('a stale newer fill cannot starve an older live combo trigger',()=>{
   const singles=[{id:'new',market_ticker:'NBA'},{id:'older',market_ticker:'Hubbard'}];
