@@ -412,14 +412,11 @@ export function orderSize(balanceCents, askDollars, askSize, fraction, cap=1, ba
   while(low<high){const mid=Math.ceil((low+high)/2);if(estimatedCostCents(mid/100,price,feeMultiplier)<=budget)low=mid;else high=mid-1}
   return low/100;
 }
-export function overBudget(balanceCents, portfolioValueCents, openOverExposureCents) {
-  const cash=N(balanceCents), value=N(portfolioValueCents), exposure=N(openOverExposureCents);
-  if (![cash,value,exposure].every(Number.isFinite) || Math.min(cash,value,exposure)<0) return 0;
-  return Math.max(0,Math.floor((cash+value)*0.30)-Math.ceil(exposure));
-}
-export function overSingleBudget(remainingCents,reservedComboCents,unfilledSingles){
-  if(![remainingCents,reservedComboCents,unfilledSingles].every(Number.isFinite)||
-    remainingCents<0||reservedComboCents<0||unfilledSingles<1)return 0;
-  return Math.floor(Math.max(0,remainingCents-reservedComboCents)/unfilledSingles);
+export function overBudget(balanceCents, portfolioValueCents) {
+  const cash=N(balanceCents), value=N(portfolioValueCents);
+  if (![cash,value].every(Number.isFinite) || Math.min(cash,value)<0) return 0;
+  // Each single has its own 30% bankroll limit. Existing positions do not
+  // reduce another trade's limit; cash availability is checked separately.
+  return Math.floor((cash+value)*0.30);
 }
 
