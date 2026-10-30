@@ -1,7 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {gameState,overSignal,confirmedOver,leadSignal,tennisSignal,tableTennisSignal,orderSize,estimatedCostCents,overBudget,minimumProfitCents,netSettlementProfitCents,profitableCount,comeback} from '../src/strategy.mjs';
+import {gameState,overSignal,confirmedOver,leadSignal,tennisSignal,tableTennisSignal,orderSize,estimatedCostCents,overBudget,overSingleBudget,minimumProfitCents,netSettlementProfitCents,profitableCount,comeback} from '../src/strategy.mjs';
+
+test('six singles share the 30% over pool while preserving 10% for a combo',()=>{
+  const bankroll=14600,initial=overBudget(bankroll,0,0),reserve=Math.floor(bankroll*.10);
+  let remaining=initial,allocated=0;
+  for(let left=6;left>0;left--){const spend=overSingleBudget(remaining,reserve,left);allocated+=spend;remaining-=spend}
+  assert.equal(allocated,initial-reserve);
+  assert.equal(remaining,reserve);
+  assert.equal(overSingleBudget(initial,reserve,6),486);
+  assert.equal(overSingleBudget(200,1460,2),0);
+});
 
 test('table tennis deciding set uses four and six point tiers without a clock',()=>{
   const m={id:'liga',type:'table_tennis_match',title:'Oleg Moshnikov vs Iurii Krivenkii',details:{league:'Russia Liga Pro',best_of:5,first_competitor_id:'oleg',second_competitor_id:'iurii'},related_event_tickers:['KXLIGAPROMATCH-DATE']};
