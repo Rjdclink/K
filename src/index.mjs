@@ -36,7 +36,9 @@ const response=(body,type)=>new Response(body,{headers:{'content-type':type,'cac
 const dashboardAuth=req=>authorized(req,process.env.DASHBOARD_PASSWORD);
 const kalshiRateLimit=async(method,backoffMs=0)=>{
   const kind=method==='GET'?'read':'write';
-  const spacing=method==='GET'?110:130;
+  // Leave headroom for endpoints with non-default token costs and other
+  // clients sharing the account's read bucket.
+  const spacing=method==='GET'?250:150;
   const client=await pool.connect();
   let wait=0;
   try{
@@ -1009,15 +1011,17 @@ async function settlementAlerts(since){
   return rows;
 }
 export default {async fetch(req){const url=new URL(req.url);
-  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'parallel-sources-golf-combos-20261029'});
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'props-combos-verification-20261030b'});
   if(req.method==='GET'&&url.pathname==='/manifest.webmanifest')return response(manifest,'application/manifest+json');
   if(req.method==='GET'&&url.pathname==='/sw.js')return new Response(worker,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','service-worker-allowed':'/','x-content-type-options':'nosniff'}});
   if(req.method==='GET'&&/^\/icon-(192|512)\.png$/.test(url.pathname))return response(Buffer.from(icons[Number(url.pathname.match(/\d+/)[0])],'base64'),'image/png');
   if(req.method==='POST'&&url.pathname==='/tick'){
     if(!req.headers.get('x-neon-trigger-invocation-id'))return json({error:'Forbidden'},403);
-    const weatherJob=scanWeatherMarkets({kalshi,nws,onVerified:executeVerifiedWeather}).then(async stats=>{
+    const weatherClaim=await pool.query(`UPDATE weather_scan_status SET last_scan=now() WHERE id=1
+      AND (last_scan IS NULL OR last_scan<now()-interval '90 seconds') RETURNING id`);
+    const weatherJob=weatherClaim.rowCount?scanWeatherMarkets({kalshi,nws,onVerified:executeVerifiedWeather}).then(async stats=>{
       await pool.query(`UPDATE weather_scan_status SET last_scan=now(),series=$1,events=$2,eligible=$3,verified=$4,failures=$5 WHERE id=1`,[stats.series,stats.events,stats.eligible,stats.verified,stats.failures]);
-    }).catch(e=>console.warn('Weather discovery deferred:',e.message));
+    }).catch(e=>console.warn('Weather discovery deferred:',e.message)):Promise.resolve();
     // Neon cron has minute resolution. Short invocations keep the three-second loop alive
     // without relying on one function instance surviving for a full quarter hour.
     const now=Date.now();const until=Math.min(now+55000,(Math.floor(now/60000)+1)*60000-2000);let cached=null,cycles=0,last={};
