@@ -14,6 +14,15 @@ for(const [family,needed,very,window,period] of [['handball',5,8,'03:00',2],['ru
   assert.equal(additionalLeadSignal(clockGame(family,very,'09:00',period),winner(family)),null);
   assert.equal(additionalLeadSignal(clockGame(family,very,'',period),winner(family)),null);
 });
+test('rugby fixture with competitor IDs and a vs title matches its named Kalshi winner',()=>{
+  const m={id:'101dedc0-3605-4c3f-ab71-378d1e93c46d',type:'rugby_match',title:'Glasgow Warriors vs Lions',details:{league:'United Rugby Championship',home_competitor_id:'glasgow-id',away_competitor_id:'lions-id'},related_event_tickers:['KXURCMATCH-26OCT301545LIOGLA']};
+  const state=gameState(m,{milestone_id:m.id,details:{status:'live',home_points:19,away_points:3,period:2,period_remaining_time:'00:15'}});
+  const market={status:'active',event_ticker:'KXURCMATCH-26OCT301545LIOGLA',title:'Glasgow Warriors wins',yes_sub_title:'Glasgow Warriors',custom_strike:{rugby_team:'glasgow-id'}};
+  assert.equal(state.homeName,'Glasgow Warriors');
+  assert.equal(state.homeTeamId,'glasgow-id');
+  assert.equal(additionalLeadSignal(state,market)?.fraction,.10);
+  assert.equal(additionalLeadSignal(state,{...market,custom_strike:{rugby_team:'lions-id'}}),null,'the other team cannot borrow this lead');
+});
 test('volleyball deciding set uses live set points and has no clock prerequisite',()=>{
   const m={id:'v',type:'volleyball_match',title:'Away at Home',details:{home_team_id:'home',away_team_id:'away'},related_event_tickers:['KXVOLLEYBALLMATCH-26OCT29']};
   const board=(home,away,period=5)=>gameState(m,{details:{status:'live',home_points:2,away_points:2,best_of:5,period,period_scores:[{type:'regular_period',number:period,home_score:home,away_score:away}]}});
