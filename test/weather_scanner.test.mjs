@@ -42,5 +42,7 @@ test('Weather Company candidate checks two Kalshi quotes and a settled same-day 
     return path.startsWith('/api/metar?')?{...data,stations:data.stations.map(s=>({...s,observations:s.observations.map(o=>({...o,tempF:67}))}))}:data;
   },now:()=>new Date(time),pause:async ms=>{time+=ms},onVerified:async()=>{throw Error('not crossed')}});
   assert.equal(below.rejections.thresholdNotCrossed,1);
+  assert.equal(below.thresholdSamples[0].settledExtremeF,67);
+  assert.equal(below.thresholdSamples[0].threshold,67);
 });
 

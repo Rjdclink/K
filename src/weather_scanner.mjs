@@ -4,7 +4,7 @@ import {weatherSeries,weatherContract,weatherDate,weatherStationId,stationTimezo
 // queried, including cities not known when the function was deployed.
 export async function scanWeatherMarkets({kalshi,nws,twc,onVerified,now=()=>new Date(),pause=ms=>new Promise(resolve=>setTimeout(resolve,ms))}){
   const catalog=(await kalshi('/series?category=Climate%20and%20Weather')).series?.filter(weatherSeries)||[];
-  const stats={series:catalog.length,events:0,eligible:0,verified:0,failures:0,companyProbe:null,companyObservationFeed:null,
+  const stats={series:catalog.length,events:0,eligible:0,verified:0,failures:0,companyProbe:null,companyObservationFeed:null,thresholdSamples:[],
     sources:{},rejections:{dateMissing:0,dateOutsideWindow:0,stationMissing:0,stationIdUnsupported:0,stationUnavailable:0,contractRules:0,noAsk:0,noObservation:0,observationFeedUnavailable:0,observationStationMissing:0,observationNotSettled:0,thresholdNotCrossed:0}};
   let cursor=0;const stations=new Map(),climateDays=new Map(),metarWeeks=new Map();
   const companyDay=label=>{
@@ -84,7 +84,14 @@ export async function scanWeatherMarkets({kalshi,nws,twc,onVerified,now=()=>new 
                     if(feed?.source!=='live'||!Number.isFinite(fetched)||fetched>time+30000||time-fetched>20*60000)stats.rejections.observationFeedUnavailable++;
                     else if(stationFeed?.length!==1)stats.rejections.observationStationMissing++;
                     else if(!(stationFeed[0].observations||[]).some(o=>o.icaoId===current.icao&&o.localDate===current.localDate&&o.status==='settled'&&Number.isFinite(o.tempF)&&Date.parse(o.reportTimeUTC)>=current.start&&Date.parse(o.reportTimeUTC)<current.end&&Date.parse(o.reportTimeUTC)<=time))stats.rejections.observationNotSettled++;
-                    else stats.rejections.thresholdNotCrossed++;
+                    else{
+                      stats.rejections.thresholdNotCrossed++;
+                      if(stats.thresholdSamples.length<5){
+                        const readings=stationFeed[0].observations.filter(o=>o.icaoId===current.icao&&o.localDate===current.localDate&&o.status==='settled'&&Number.isFinite(o.tempF)&&Date.parse(o.reportTimeUTC)>=current.start&&Date.parse(o.reportTimeUTC)<current.end&&Date.parse(o.reportTimeUTC)<=time);
+                        const extreme=current.type==='high'?Math.max(...readings.map(o=>o.tempF)):Math.min(...readings.map(o=>o.tempF));
+                        stats.thresholdSamples.push({ticker:current.ticker,station:current.station,type:current.type,threshold:current.threshold,settledExtremeF:extreme});
+                      }
+                    }
                   }
                   return;
                 }

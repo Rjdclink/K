@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import vm from 'node:vm';
 import {createECDH,createDecipheriv,hkdfSync,verify,createPublicKey} from 'node:crypto';
 import {favorableSettlement} from '../src/settlements.mjs';
 import {vapidIdentity,validateSubscription,encryptedPush,deliverPush} from '../src/push.mjs';
@@ -46,4 +47,56 @@ test('standalone install controls and opt-in push are wired without caching acco
   assert.match(worker,/showNotification/);assert.doesNotMatch(worker,/caches\.open/);
   assert.match(page,/id="install"/);assert.match(page,/id="notifyToggle"/);assert.match(page,/id="soundToggle"/);
   assert.match(page,/beforeinstallprompt/);assert.match(page,/requestPermission\(\)/);assert.match(page,/pushManager\.subscribe/);
+});
+
+test('a previously granted browser push subscription is restored to the server on opening the dashboard',async()=>{
+  const requests=[];
+  const element={style:{},classList:{toggle(){},add(){},remove(){}},addEventListener(){},setAttribute(){}};
+  const subscription={endpoint:'https://fcm.googleapis.com/fcm/send/test',keys:{p256dh:'key',auth:'secret'}};
+  const notifications={permission:'granted'};
+  const context=vm.createContext({
+    document:{getElementById:()=>element,querySelectorAll:()=>[]},
+    window:{Notification:notifications,addEventListener(){}},Notification:notifications,
+    navigator:{serviceWorker:{register:async()=>({pushManager:{getSubscription:async()=>subscription}})}},
+    localStorage:{getItem(){return null},setItem(){}},AbortSignal,setInterval(){},
+    fetch:(url,options)=>{requests.push({url,options});return url==='/api/push-subscription'?Promise.resolve({ok:true}):new Promise(()=>{})}
+  });
+  vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],context);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(requests.filter(r=>r.url==='/api/push-subscription'&&r.options?.method==='POST').length,1);
+});
+
+test('service worker presents a delivered test push as a visible device notification',async()=>{
+  const handlers={},shown=[];
+  const self={addEventListener:(event,handler)=>handlers[event]=handler,
+    skipWaiting(){},clients:{claim(){}},registration:{showNotification:async(title,options)=>shown.push({title,options})}};
+  vm.runInNewContext(worker,{self});
+  let settled;
+  handlers.push({data:{json:()=>({type:'test-notification',id:'test',body:'Device test'})},waitUntil:p=>settled=p});
+  await settled;
+  assert.equal(shown.length,1);
+  assert.match(shown[0].title,/test|working/i);
+  assert.equal(shown[0].options.body,'Device test');
+});
+
+test('the open-app cha-ching has two percussive strikes and a louder limited bell',()=>{
+  const events={oscillators:0,clatters:0,gains:[]};
+  const parameter=()=>({value:0,setValueAtTime(){},linearRampToValueAtTime(){},exponentialRampToValueAtTime(){}});
+  const node=()=>({connect(target){return target}});
+  class AudioContext{
+    state='running';currentTime=0;sampleRate=22050;destination=node();
+    createGain(){const result={...node(),gain:parameter()};events.gains.push(result);return result}
+    createDynamicsCompressor(){return {...node(),threshold:parameter(),ratio:parameter()}}
+    createOscillator(){events.oscillators++;return {...node(),frequency:parameter(),start(){},stop(){}}}
+    createBuffer(_channels,size){return {getChannelData:()=>new Float32Array(size)}}
+    createBufferSource(){events.clatters++;return {...node(),start(){}}}
+    createBiquadFilter(){return {...node(),frequency:parameter()}}
+  }
+  const element={classList:{toggle(){},add(){},remove(){}},addEventListener(){},setAttribute(){}};
+  const context=vm.createContext({document:{getElementById:()=>element,querySelectorAll:()=>[]},window:{AudioContext,addEventListener(){}},navigator:{},localStorage:{getItem:key=>key==='kSoundEnabled'?'true':null,setItem(){}},fetch:()=>new Promise(()=>{}),AbortSignal,setInterval(){},Math});
+  vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],context);
+  vm.runInContext('ching()',context);
+  assert.equal(events.clatters,2);
+  assert.ok(events.oscillators>=12);
+  assert.ok(events.gains.some(g=>g.gain.value>=.8));
 });

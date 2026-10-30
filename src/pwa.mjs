@@ -4,8 +4,8 @@ export const worker=`self.addEventListener('install',()=>self.skipWaiting());
 self.addEventListener('activate',event=>event.waitUntil(self.clients.claim()));
 self.addEventListener('push',event=>{
   let data={};try{data=event.data?.json()||{}}catch{}
-  if(data.type!=='profitable-settlement')return;
-  event.waitUntil(self.registration.showNotification('Cha-ching · favorable settlement',{
+  if(!['profitable-settlement','test-notification'].includes(data.type))return;
+  event.waitUntil(self.registration.showNotification(data.type==='test-notification'?'K notification test':'Cha-ching · favorable settlement',{
     body:data.body||'A K trade settled profitably.',icon:'/icon-192.png',badge:'/icon-192.png',
     tag:'k-settlement-'+String(data.id||''),data:{url:'/'},renotify:true,vibrate:[120,50,120]
   }));
