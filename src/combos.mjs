@@ -1,6 +1,11 @@
 // Kalshi combinations are separate YES markets. A quote is executable only while
 // every component still qualifies; an RFQ alone is never a fill.
 export const COMBO_WINDOW_MS=12000;
+// A fresh quote lives only briefly, but creating markets and waiting for an
+// RFQ maker can take longer than the quote freshness window.
+export const COMBO_ATTEMPT_MS=45000;
+export const VERIFY_DWELL_MS=3000;
+export function comboAllocation(completedCombos){return Math.max(2,10-2*Math.max(0,Math.floor(completedCombos)))/100;}
 export function comboCandidates(candidates, strategy, max=6){
   const games=new Set(),events=new Set();
   return candidates.filter(c=>{
@@ -12,10 +17,10 @@ export function filledComboWindow(fills,heldTickers,lastComboAt,max=6){
   const singles=fills.filter(r=>!r.combo_legs&&heldTickers.has(r.market_ticker))
     .sort((a,b)=>new Date(b.updated_at)-new Date(a.updated_at));
   if(singles.length<2)return [];
-  const games=new Set(),events=new Set();
+  const markets=new Set();
   return singles.filter(r=>{
-    if(games.has(r.game_id)||events.has(r.event_ticker))return false;
-    games.add(r.game_id);events.add(r.event_ticker);return true;
+    if(markets.has(r.market_ticker))return false;
+    markets.add(r.market_ticker);return true;
   }).slice(0,max);
 }
 export function comboCollection(collections,legs){
@@ -48,7 +53,8 @@ export function quoteForYes(quote,ticker,budgetCents,feeMultiplier=2,bankrollCen
   const feeCents=Math.ceil(feeMultiplier*7*count*yesCost*(1-yesCost));
   const debitCents=Math.ceil(100*count*yesCost)+feeCents;
   const profitCents=Math.floor(100*count-debitCents);
-  if(debitCents>budgetCents||profitCents<50)return null;
+  if(debitCents>budgetCents||profitCents<30)return null;
   return {count,yesCost,debitCents,profitCents};
 }
 export function comboLegs(legs){return legs.map(c=>({game_id:c.milestone.id,event_ticker:c.event.event_ticker,market_ticker:c.market.ticker,strategy:c.signal.strategy,title:c.state.title,sport:c.state.sport}));}
+
