@@ -16,3 +16,14 @@ export function estimatedSaleProfitCents(position, sale, fallbackPrice) {
   const saleFees=Math.ceil(14*count*price*(1-price)-1e-8);
   return Math.floor(count*price*100-basis-fees-saleFees+1e-8);
 }
+
+// A positive executable sale is an early exit only for fast-moving single
+// match winners. Combinations and crossed overs are never auto-sold.
+export function positiveExitEligible(trade, gameType, profitCents) {
+  if (trade?.strategy !== 'lead' || !Number.isFinite(profitCents) || profitCents <= 0) return false;
+  if (Array.isArray(trade.combo_legs) && trade.combo_legs.length >= 2) return false;
+  const fast = (sport, type = '') => /basketball|^tennis(?:_|$)/i.test(String(type)) ||
+    /^(?:NBA|WNBA|NCAAB|NCAAW|Basketball|eBasketball|Tennis)$/i.test(String(sport));
+  return fast(trade.sport, gameType);
+}
+

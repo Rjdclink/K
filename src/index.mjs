@@ -16,8 +16,8 @@ import { authorized, checkCredentials, sessionCookie, loginPage } from './dashbo
 import { eligibleForMarkets, linkedEventTickers, gameTimeLabel, storedClockSeconds } from './discovery.mjs';
 import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOver, verifyIndependentTableTennisLead, verifyIndependentTableTennisMatch } from './score_verification.mjs';
-import { COMBO_ATTEMPT_MS, COMBO_WINDOW_MS, VERIFY_DWELL_MS, comboAllocation, cashAfterComboReserve, compatibleComboGroups, comboLegs, filledComboWindow, eligibleFillTrigger, heldComboLeg, quoteForYes, collectionsForEvents, selectedComboMarkets } from './combos.mjs';
-import { estimatedSaleProfitCents } from './positions.mjs';
+import { COMBO_ATTEMPT_MS, COMBO_WINDOW_MS, VERIFY_DWELL_MS, comboAllocation, compatibleComboGroups, comboLegs, filledComboWindow, eligibleFillTrigger, heldComboLeg, quoteForYes, collectionsForEvents, selectedComboMarkets } from './combos.mjs';
+import { estimatedSaleProfitCents, positiveExitEligible } from './positions.mjs';
 import { weatherContract } from './weather.mjs';
 import { scanWeatherMarkets } from './weather_scanner.mjs';
 import { sellQuote } from './sell.mjs';
@@ -337,20 +337,20 @@ function executableCount(c,balance,bankroll){
   return profitableCount(count,price,fees,c.signal.strategy,bankroll,c.state.type,c.state.remainingSeconds);
 }
 const signalKey=c=>`${c.market.ticker}:${c.signal.strategy}`;
-function signalExecution(c,filled,account,balance,bankroll,comboCount=0){
+function signalExecution(c,filled,account,balance,bankroll){
   if(filled.has(signalKey(c)))return 'Already filled';
   if(!hasAsk(c.market))return 'No ask liquidity';
   if(!account)return 'Trading paused';
   const price=Number(c.market.yes_ask_dollars),fees=feeReserve(c.event,c.market);
   if(price>Number(process.env.MAX_YES_PRICE||1))return 'Ask above maximum YES price';
-  const spendable=cashAfterComboReserve(balance,bankroll,comboCount);
+  const spendable=balance;
   const raw=contractCount(spendable,c.market,c.signal.fraction,bankroll,Infinity,fees);
-  if(!raw)return spendable<balance?'Cash reserved for combination':'Insufficient available cash for this trade';
+  if(!raw)return 'Insufficient available cash for this trade';
   if(!profitableCount(raw,price,fees,c.signal.strategy,bankroll,c.state.type,c.state.remainingSeconds)){
     // Overs have no arbitrary profit floor. With a small residual cash amount,
     // fractional contract and fee rounding can still leave zero net cents.
     if(c.signal.strategy==='over'&&netSettlementProfitCents(raw,price,fees)<1)
-      return spendable<balance?'Cash reserved for combination; remaining size has no net profit after fees':'No positive net profit after fees';
+      return 'No positive net profit after fees';
     return 'Below minimum net profit after fees';
   }
   const local=shardCash(account,marketShard(c.event,c.market));
@@ -666,7 +666,7 @@ async function exitComebacks(games,events,positions){
   const marketGames=new Map(games.flatMap(g=>linkedEventTickers(g.milestone).flatMap(t=>(events.get(t)?.markets||[]).map(m=>[m.ticker,g.milestone.id]))));
   const held=(positions.market_positions||[]).filter(p=>Number(p.position_fp??p.position??0)>0);
   if(!held.length)return;
-  const recorded=await pool.query(`SELECT DISTINCT ON (market_ticker) market_ticker,game_id,strategy,status,combo_legs FROM trade_attempts WHERE status='filled' ORDER BY market_ticker,updated_at DESC`);
+  const recorded=await pool.query(`SELECT DISTINCT ON (market_ticker) market_ticker,game_id,sport,strategy,status,combo_legs FROM trade_attempts WHERE status='filled' ORDER BY market_ticker,updated_at DESC`);
   const ownership=new Map(recorded.rows.map(r=>[r.market_ticker,r]));
   for(const position of held){
     const original=ownership.get(position.ticker),gameId=original?.game_id||marketGames.get(position.ticker),state=byGame.get(gameId),nested=markets.get(position.ticker);
@@ -674,6 +674,7 @@ async function exitComebacks(games,events,positions){
     if(original?.strategy!=='lead'||/TOTAL/i.test(position.ticker))continue;
     const strategy='lead';
     const combo=Array.isArray(original.combo_legs)&&original.combo_legs.length>=2;
+    if(combo)continue;
     const reversed=combo?original.combo_legs.some(leg=>{
       if(leg.strategy!=='lead')return false;
       const legState=byGame.get(leg.game_id),legMarket=(events.get(leg.event_ticker)?.markets||[]).find(m=>m.ticker===leg.market_ticker);
@@ -691,7 +692,7 @@ async function exitComebacks(games,events,positions){
       const basisKnown=position.market_exposure_dollars!=null&&position.fees_paid_dollars!=null&&
         Number.isFinite(Number(position.market_exposure_dollars))&&Number.isFinite(Number(position.fees_paid_dollars));
       const profit=basisKnown?estimatedSaleProfitCents(position,sale):null;
-      const profitable=profit!==null&&profit>0;
+      const profitable=positiveExitEligible(original,state?.type,profit);
       if(!profitable&&!reversed)continue;
       const reversing=combo?original.combo_legs.filter(leg=>{
         const g=gameInfo.get(leg.game_id),m=(events.get(leg.event_ticker)?.markets||[]).find(x=>x.ticker===leg.market_ticker);
@@ -762,10 +763,9 @@ async function executeVerifiedWeather(verified){
   const duplicate=await pool.query(`SELECT 1 FROM trade_attempts WHERE event_ticker=$1 AND strategy='weather' AND status IN ('filled','reserved','check_order','retrying') LIMIT 1`,[event.event_ticker]);
   if(duplicate.rowCount)return;
   const account=await accountBalance({fresh:true}),balance=Number(account.balance),bankroll=balance+Number(account.portfolio_value);
-  const comboCount=Number((await pool.query(`SELECT count(*) AS n FROM trade_attempts WHERE combo_legs IS NOT NULL AND status IN ('filled','combo_pending')`)).rows[0].n);
   const ranked=verified.map(item=>{
     const fee=feeReserve(event,item.market);
-    const count=profitableCount(contractCount(cashAfterComboReserve(balance,bankroll,comboCount),item.market,.25,bankroll,Infinity,fee),Number(item.market.yes_ask_dollars),fee,'weather',bankroll);
+    const count=profitableCount(contractCount(balance,item.market,.25,bankroll,Infinity,fee),Number(item.market.yes_ask_dollars),fee,'weather',bankroll);
     return {...item,profit:netSettlementProfitCents(count,Number(item.market.yes_ask_dollars),fee)};
   }).sort((a,b)=>b.profit-a.profit);
   for(const item of ranked){
@@ -777,7 +777,7 @@ async function executeVerifiedWeather(verified){
     const quote=hasAsk(recovered)?await executableQuote(recovered):null;
     if(!quote)continue;
     const fresh=await accountBalance({fresh:true}),cash=Number(fresh.balance),total=cash+Number(fresh.portfolio_value);
-     const spendable=cashAfterComboReserve(cash,total,comboCount);
+     const spendable=cash;
      const fee=feeReserve(event,quote),count=profitableCount(contractCount(spendable,quote,.25,total,Infinity,fee),Number(quote.yes_ask_dollars),fee,'weather',total);
     if(!count)continue;
     const shard=marketShard(event,quote),local=shardCash(fresh,shard),cost=estimatedCostCents(count,Number(quote.yes_ask_dollars),fee);
@@ -854,7 +854,7 @@ async function scan(cachedMilestones){
       const clockSeconds=storedClockSeconds(preciseClockSeconds,state.clockRunning);
       const clockLabel=soccer?Number.isFinite(state.matchRemainingSeconds)?'Match time left':state.soccerMinute>=90?'Stoppage time':'Regulation left':baseball?'Inning progress':tennis?'Set progress':['NCAAB','NCAAW'].includes(state.sport)? `Half ${state.period||'?'} left`:/hockey/.test(state.type)?`Period ${state.period||'?'} left`:/football|basketball/.test(state.type)?`Quarter ${state.period||'?'} left`:'Game clock';
       const displayClockLabel=clockSeconds!=null&&state.clockRunning===false?`${clockLabel} · paused`:clockLabel;
-      snapshotRows.set(state.id,[state.id,state.title||'Sports game',state.sport,state.type,state.scoreKnown?state.home:null,state.scoreKnown?state.away:null,state.verifiedLive?'live':/^(final|finished|complete|completed|closed|ended)$/.test(state.status)?'final':'inactive',Number.isFinite(state.progress)?state.progress:null,String(state.period||''),timeLeft,clockSeconds,displayClockLabel,liveMap.get(milestone.id)?._observed_at||null,scanStarted,JSON.stringify(candidates.map(c=>({strategy:c.signal.strategy,reason:c.signal.reason,ticker:c.market.ticker,title:c.market.title||c.market.yes_sub_title||'',ask:c.market.yes_ask_dollars,ask_size:c.market.yes_ask_size_fp,execution:signalExecution(c,filled,account,balance,bankroll,comboCount)}))),state.possessionSide,state.homeTeamId||null,state.awayTeamId||null ]);
+      snapshotRows.set(state.id,[state.id,state.title||'Sports game',state.sport,state.type,state.scoreKnown?state.home:null,state.scoreKnown?state.away:null,state.verifiedLive?'live':/^(final|finished|complete|completed|closed|ended)$/.test(state.status)?'final':'inactive',Number.isFinite(state.progress)?state.progress:null,String(state.period||''),timeLeft,clockSeconds,displayClockLabel,liveMap.get(milestone.id)?._observed_at||null,scanStarted,JSON.stringify(candidates.map(c=>({strategy:c.signal.strategy,reason:c.signal.reason,ticker:c.market.ticker,title:c.market.title||c.market.yes_sub_title||'',ask:c.market.yes_ask_dollars,ask_size:c.market.yes_ask_size_fp,execution:signalExecution(c,filled,account,balance,bankroll)}))),state.possessionSide,state.homeTeamId||null,state.awayTeamId||null ]);
     }
     for(let i=0;i<allCandidates.length;i+=100){const batch=allCandidates.slice(i,i+100);if(!batch.length)continue;
       const values=batch.map((_,n)=>`($${2*n+1},$${2*n+2})`).join(',');
@@ -886,17 +886,17 @@ async function scan(cachedMilestones){
       if(combo.filled)submitted++;
     }catch(e){executionErrors.push('Combo: '+String(e.message).slice(0,180));console.error('Combo execution deferred:',e)}
     opportunities.sort((a,b)=>{
-      const executable=c=>hasAsk(c.market)&&!filled.has(signalKey(c))&&profitableCount(executableCount(c,cashAfterComboReserve(balance,bankroll,comboCount),bankroll),Number(c.market.yes_ask_dollars),feeReserve(c.event,c.market),c.signal.strategy,bankroll,c.state.type,c.state.remainingSeconds)>0;
+      const executable=c=>hasAsk(c.market)&&!filled.has(signalKey(c))&&profitableCount(executableCount(c,balance,bankroll),Number(c.market.yes_ask_dollars),feeReserve(c.event,c.market),c.signal.strategy,bankroll,c.state.type,c.state.remainingSeconds)>0;
       if(executable(a)!==executable(b))return executable(a)?-1:1;
       if(a.signal.strategy!==b.signal.strategy)return a.signal.strategy==='over'?-1:1;
-      const profit=c=>netSettlementProfitCents(executableCount(c,cashAfterComboReserve(balance,bankroll,comboCount),bankroll),Number(c.market.yes_ask_dollars),feeReserve(c.event,c.market));
+      const profit=c=>netSettlementProfitCents(executableCount(c,balance,bankroll),Number(c.market.yes_ask_dollars),feeReserve(c.event,c.market));
       return profit(b)-profit(a) || (a.signal.strategy==='lead'?Number(tieRefundPreference(b.market))-Number(tieRefundPreference(a.market)):0);
     });
     // Each order has its own fraction of the full bankroll. Cash availability
     // and the current quote remain separate execution gates.
     // Verify independent over scoreboards in parallel. A dozen sequential 12s
     // dwells used to freeze the dashboard for minutes and miss later games.
-    const overPreflights=new Map(),overReady=new Map(),overs=live()&&cashAfterComboReserve(balance,bankroll,comboCount)>0?
+    const overPreflights=new Map(),overReady=new Map(),overs=live()&&balance>0?
       opportunities.filter(c=>c.signal.strategy==='over'&&hasAsk(c.market)):[];
     for(const c of overs)overReady.set(signalKey(c),new Promise(resolve=>{c.preflightDone=resolve}));
     let cursor=0;
@@ -922,9 +922,7 @@ async function scan(cachedMilestones){
     for(const c of opportunities){let state=c.state;
       try{
         if(!live())continue;
-        // Every single must leave the next combo allocation in cash. When no
-        // spendable cash remains, move straight to held-leg combo attempts.
-        if(cashAfterComboReserve(balance,bankroll,comboCount)<=0)break;
+        if(balance<=0)break;
         if(filled.has(signalKey(c)))continue;
         // A confirmed fill is final for this market and strategy. Check before moving
         // cash between shards, not only inside the order reservation.
@@ -937,7 +935,7 @@ async function scan(cachedMilestones){
         // Refresh available cash before every order. If the account cannot afford one contract plus
         // the fee reserve, orderSize returns zero and no order is sent to Kalshi.
         const latest=await accountBalance({fresh:true});balance=Number(latest.balance);bankroll=balance+Number(latest.portfolio_value);
-        const spendable=cashAfterComboReserve(balance,bankroll,comboCount);
+        const spendable=balance;
         // A confirmed over preflight expires quickly; never submit on a stale
         // score. Lead games still require a fresh check before the quote.
         if(c.signal.strategy==='over'&&overReady.has(signalKey(c)))await overReady.get(signalKey(c));
@@ -1188,3 +1186,5 @@ export default {async fetch(req){const url=new URL(req.url);
     if(req.method==='GET'&&url.pathname==='/')return new Response(page,{headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store','content-security-policy':"default-src 'self'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self'; manifest-src 'self'; base-uri 'none'; frame-ancestors 'none'",'x-content-type-options':'nosniff'}})
   }catch(e){console.error(e);return json({error:'Service unavailable'},503)}
   return json({error:'Not found'},404);
+}};
+

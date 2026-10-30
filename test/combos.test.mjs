@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {COMBO_WINDOW_MS,VERIFY_DWELL_MS,comboAllocation,cashAfterComboReserve,comboCandidates,comboCollection,compatibleComboGroups,quoteForYes,comboLegs,filledComboWindow,eligibleFillTrigger,heldComboLeg,collectionsForEvents,selectedComboMarkets} from '../src/combos.mjs';
+import {COMBO_WINDOW_MS,VERIFY_DWELL_MS,comboAllocation,comboCandidates,comboCollection,compatibleComboGroups,quoteForYes,comboLegs,filledComboWindow,eligibleFillTrigger,heldComboLeg,collectionsForEvents,selectedComboMarkets} from '../src/combos.mjs';
 
 test('two held fills qualify for combo without a second live game verification',()=>{
   const rows=['A','B'].map(ticker=>({market_ticker:ticker,event_ticker:'E',game_id:'G',sport:'NFL',strategy:'over',fill_count:'2.00',combo_legs:null,updated_at:new Date().toISOString()}));
@@ -17,13 +17,6 @@ test('a stale newer fill cannot starve an older live combo trigger',()=>{
   const singles=[{id:'new',market_ticker:'NBA'},{id:'older',market_ticker:'Hubbard'}];
   const group=[{market:{ticker:'Hubbard'}},{market:{ticker:'Watson'}}];
   assert.equal(eligibleFillTrigger([{id:'new'},{id:'older'}],singles,group).market_ticker,'Hubbard');
-});
-
-test('single trades retain their own bankroll cap while cash is reserved for the next combo',()=>{
-  assert.equal(cashAfterComboReserve(10227,14599,0),8768);
-  assert.equal(cashAfterComboReserve(1478,14599,0),19);
-  assert.equal(cashAfterComboReserve(1,14599,0),0);
-  assert.equal(cashAfterComboReserve(10000,14599,1),8833);
 });
 
 test('Kalshi combo creation includes the side required by the live validator',()=>{

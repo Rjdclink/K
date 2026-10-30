@@ -349,6 +349,7 @@ test('entry submissions and recovery use full fills while exits cannot target ov
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
   assert.equal((source.match(/side:'bid'[^\n]+time_in_force:'fill_or_kill'/g)||[]).length,2);
   assert.match(source,/if\(original\?\.strategy!=='lead'\|\|\/TOTAL\/i\.test\(position\.ticker\)\)continue/);
+  assert.match(source,/const combo=Array\.isArray\(original\.combo_legs\)&&original\.combo_legs\.length>=2;\s*if\(combo\)continue;/);
   assert.match(source,/if\(live\(\)\|\|exitOnly\(\)\)await exitComebacks/);
   assert.match(source,/for\(const c of opportunities\)[^]*?if\(!live\(\)\)continue/);
   assert.match(source,/if\(a\.signal\.strategy!==b\.signal\.strategy\)return a\.signal\.strategy==='over'\?-1:1/);
