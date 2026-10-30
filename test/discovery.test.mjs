@@ -39,6 +39,16 @@ test('esports match event discovers only live exchange-confirmed whole-match tot
   assert.ok(tickers.includes('KXESOCCTOTAL-DATE'));
   assert.ok(tickers.includes('KXESOCCTEAMTOTAL-DATE'));
 });
+test('limited-over cricket discovers team-run markets from match events without a game clock',()=>{
+  const milestone={id:'ipl',type:'cricket_match',title:'Ajman vs Abu Dhabi',details:{league:'IPL'},related_event_tickers:['KXIPLGAME-DATE']};
+  const game=gameState(milestone,{details:{status:'live',home_score:170,away_score:0,inning:1}});
+  assert.equal(eligibleForMarkets(game),true);
+  assert.ok(linkedEventTickers(milestone).includes('KXIPLTEAMTOTAL-DATE'));
+  assert.ok(linkedEventTickers({...milestone,related_event_tickers:['KXCPLMATCH-DATE']}).includes('KXCPLTEAMTOTAL-DATE'));
+  assert.equal(gameTimeLabel(game),'Innings 1 · no countdown clock');
+  const shield=gameState({...milestone,details:{league:'Sheffield Shield'}},{details:{status:'live',home_score:170,away_score:0,inning:1}});
+  assert.equal(eligibleForMarkets(shield),false);
+});
 
 test('unsupported feeds keep the scan active but do not fetch markets',()=>{
   const board=(type)=>gameState({id:type,type,title:'Away at Home'},{details:{status:'live',home_score:9,away_score:3}});
@@ -50,7 +60,7 @@ test('unsupported feeds keep the scan active but do not fetch markets',()=>{
   assert.equal(sportName({type:'basketball_game',details:{league:'NCAAW'}}),'NCAAW');
   assert.equal(gameTimeLabel(board('esports_match')),'period scores unavailable');
   assert.equal(gameTimeLabel(board('cricket_match')),'Live clock unavailable');
-  assert.equal(gameTimeLabel({...board('cricket_match'),period:2}),'Innings 2 · cricket trading not enabled');
+  assert.equal(gameTimeLabel({...board('cricket_match'),period:2}),'Innings 2 · no countdown clock');
 });
 
 test('show verified phase and parsed clock without fabricating remaining time',()=>{

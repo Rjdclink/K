@@ -1,10 +1,12 @@
 // Only fetch event families used by the two entry strategies and comeback exits.
 // The exchange remains authoritative: a guessed ticker is ignored unless an
 // open event and its market are actually returned by Kalshi.
+import { cricketOneInningsFormat } from './strategy.mjs';
 const supportedType=type=>/basketball|baseball|football|hockey|soccer|tennis|golf|handball|rugby|lacrosse|volleyball|darts/.test(String(type||'').toLowerCase());
 
 export function eligibleForMarkets(game){return game?.verifiedLive && game.scoreKnown &&
-  (supportedType(game.type)||game.type==='esports_match'&&['eSoccer','eBasketball'].includes(game.sport)&&game.esportsPeriodsValid)}
+  (supportedType(game.type)||game.type==='cricket_match'&&cricketOneInningsFormat(game.competition)||
+    game.type==='esports_match'&&['eSoccer','eBasketball'].includes(game.sport)&&game.esportsPeriodsValid)}
 
 export function linkedEventTickers(milestone){
   if(milestone.type==='golf_tournament')return [milestone.details?.main_game_event_ticker].filter(Boolean);
@@ -13,14 +15,14 @@ export function linkedEventTickers(milestone){
     const series=String(ticker).split('-')[0].toUpperCase();
     if(!String(ticker).includes('-')||!/(?:TEAMTOTAL|TOTAL|GAME|MATCH)$/.test(series))return false;
     if(/(?:1H|2H|[1-4]Q|[1-3]P|[1-9]INNING|HALF|SET)(?:GAME|MATCH)$/.test(series))return false;
-    return !series.endsWith('MATCH')||/tennis|darts|volleyball|handball|rugby|lacrosse|esports/.test(String(milestone.type||''));
+    return !series.endsWith('MATCH')||/tennis|darts|volleyball|handball|rugby|lacrosse|esports|cricket/.test(String(milestone.type||''));
   };
   // Kalshi links player props and other score markets directly to the game.
   // Keep those actual tickers; the strategy still rejects any metric it
   // cannot independently verify.
   const listed=source.filter(t=>String(t).includes('-') && (main(t) || /(?:PTS|REB|AST|3PT|PRA|STL|BLK|GOALS|SAVES|SOG|HITS|RBI|HR|RUSHYDS|PASSYDS|RECYDS|RRYDS|RECPROT|PASSATT|PASSCOMP|PASSINT|PASSTDS|GTOTAL)(?:PROT)?$/.test(String(t).split('-')[0])));
   const derived=listed.filter(ticker=>/(?:GAME|MATCH)$/.test(ticker.split('-')[0])&&
-    (ticker.split('-')[0].endsWith('GAME')||/esports/.test(String(milestone.type||'')))).flatMap(ticker=>{
+    (ticker.split('-')[0].endsWith('GAME')||/esports|cricket/.test(String(milestone.type||'')))).flatMap(ticker=>{
     const [series,...rest]=ticker.split('-'),suffix=rest.join('-'),prefix=series.slice(0,-4);
     const totalPrefix=series.endsWith('MATCH')?series.slice(0,-5):prefix;
     // These are only discovery candidates. The exchange must return an open
@@ -52,7 +54,7 @@ export function gameTimeLabel(game){
   if(/soccer/.test(family)&&Number.isFinite(game.matchRemainingSeconds)&&game.matchRemainingSeconds>=0)return `${String(Math.floor(game.matchRemainingSeconds/60)).padStart(2,'0')}:${String(game.matchRemainingSeconds%60).padStart(2,'0')} match time remaining`;
   if(/soccer/.test(family)&&Number.isFinite(game.soccerMinute))return `${game.soccerMinute}' elapsed`;
   if(Number.isFinite(game.remainingSeconds)){const segment=Number.isFinite(game.period)?/basketball/.test(family)?`${['NCAAB','NCAAW'].includes(game.sport)?'Half':'Quarter'} ${game.period}`:/football/.test(family)?`Quarter ${game.period}`:/hockey/.test(family)?`Period ${game.period}`:'' : '';const seconds=game.clockRunning===false?Math.floor(game.remainingSeconds):Math.ceil(game.remainingSeconds);return `${segment?segment+' · ':''}${String(Math.floor(seconds/60)).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}${game.clockRunning===false?' paused':' remaining'}`}
-  if(/cricket/.test(family)&&Number.isFinite(game.period))return `Innings ${game.period} · cricket trading not enabled`;
+  if(/cricket/.test(family)&&Number.isFinite(game.period))return `Innings ${game.period} · no countdown clock`;
   if(/table_tennis/.test(family))return 'No countdown clock';
   return 'Live clock unavailable';
 }

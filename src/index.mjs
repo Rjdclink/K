@@ -369,7 +369,7 @@ function signalExecution(c,filled,account,balance,bankroll){
     const localCount=contractCount(Math.min(spendable,local),c.market,c.signal.fraction,bankroll,Infinity,fees);
     if(!profitableCount(localCount,price,fees,c.signal.strategy,bankroll,c.state.type,c.state.remainingSeconds))return 'Insufficient shard cash';
   }
-  return c.signal.strategy==='over'?'Awaiting independent score confirmation':'Eligible for final verification';
+  return c.signal.strategy==='over'?'Awaiting score verification':'Eligible for final verification';
 }
 async function ensureShardFunding(signal,event,market,account,desiredCents,sourceFloorCents=0){
   const destination=marketShard(event,market);
@@ -886,7 +886,7 @@ async function scan(cachedMilestones){
       const timeLeft=gameTimeLabel(state);
       const preciseClockSeconds=state.verifiedLive?(soccer&&Number.isFinite(state.matchRemainingSeconds)?state.matchRemainingSeconds:soccer&&Number.isFinite(state.soccerMinute)&&state.soccerMinute<90?Math.max(0,(90-state.soccerMinute)*60):!baseball&&!tennis&&!soccer&&Number.isFinite(state.remainingSeconds)?state.remainingSeconds:null):null;
       const clockSeconds=storedClockSeconds(preciseClockSeconds,state.clockRunning);
-      const clockLabel=state.golf?'Round progress':/esports/.test(state.type)?'Match phase':soccer?Number.isFinite(state.matchRemainingSeconds)?'Match time left':state.soccerMinute>=90?'Stoppage time':'Regulation left':baseball?'Inning progress':tennis?'Set progress':['NCAAB','NCAAW'].includes(state.sport)? `Half ${state.period||'?'} left`:/hockey/.test(state.type)?`Period ${state.period||'?'} left`:/football|basketball/.test(state.type)?`Quarter ${state.period||'?'} left`:'Game clock';
+      const clockLabel=state.golf?'Round progress':/esports/.test(state.type)?'Match phase':/cricket/.test(state.type)?'Innings progress':soccer?Number.isFinite(state.matchRemainingSeconds)?'Match time left':state.soccerMinute>=90?'Stoppage time':'Regulation left':baseball?'Inning progress':tennis?'Set progress':['NCAAB','NCAAW'].includes(state.sport)? `Half ${state.period||'?'} left`:/hockey/.test(state.type)?`Period ${state.period||'?'} left`:/football|basketball/.test(state.type)?`Quarter ${state.period||'?'} left`:'Game clock';
       const displayClockLabel=clockSeconds!=null&&state.clockRunning===false?`${clockLabel} · paused`:clockLabel;
       snapshotRows.set(state.id,[state.id,state.title||'Sports game',state.sport,state.type,state.scoreKnown?state.home:null,state.scoreKnown?state.away:null,state.verifiedLive?'live':/^(final|finished|complete|completed|closed|ended)$/.test(state.status)?'final':'inactive',Number.isFinite(state.progress)?state.progress:null,String(state.period||''),timeLeft,clockSeconds,displayClockLabel,liveMap.get(milestone.id)?._observed_at||null,scanStarted,JSON.stringify(candidates.map(c=>({strategy:c.signal.strategy,reason:c.signal.reason,ticker:c.market.ticker,title:c.market.title||c.market.yes_sub_title||'',ask:c.market.yes_ask_dollars,ask_size:c.market.yes_ask_size_fp,execution:signalExecution(c,filled,account,balance,bankroll)}))),state.possessionSide,state.homeTeamId||null,state.awayTeamId||null ]);
     }
@@ -1090,7 +1090,7 @@ async function refreshOpenClocks(){
       const seconds=s.verifiedLive?(soccer&&Number.isFinite(s.matchRemainingSeconds)?s.matchRemainingSeconds:
         soccer&&Number.isFinite(s.soccerMinute)&&s.soccerMinute<90?(90-s.soccerMinute)*60:
         !baseball&&!tennis&&!soccer&&Number.isFinite(s.remainingSeconds)?s.remainingSeconds:null):null;
-      const label=s.golf?'Round progress':/esports/.test(s.type)?'Match phase':soccer?'Regulation left':baseball?'Inning progress':tennis?'Set progress':['NCAAB','NCAAW'].includes(s.sport)?`Half ${s.period||'?'} left`:/hockey/.test(s.type)?`Period ${s.period||'?'} left`:/football|basketball/.test(s.type)?`Quarter ${s.period||'?'} left`:'Game clock';
+      const label=s.golf?'Round progress':/esports/.test(s.type)?'Match phase':/cricket/.test(s.type)?'Innings progress':soccer?'Regulation left':baseball?'Inning progress':tennis?'Set progress':['NCAAB','NCAAW'].includes(s.sport)?`Half ${s.period||'?'} left`:/hockey/.test(s.type)?`Period ${s.period||'?'} left`:/football|basketball/.test(s.type)?`Quarter ${s.period||'?'} left`:'Game clock';
       await pool.query(`UPDATE game_snapshots SET home=$2,away=$3,status=$4,time_left=$5,possession_side=$9,
         clock_observed_at=CASE WHEN clock_seconds IS DISTINCT FROM $6::integer OR period IS DISTINCT FROM $8::text OR status IS DISTINCT FROM $4::text
           THEN clock_timestamp() ELSE clock_observed_at END,
@@ -1115,7 +1115,7 @@ async function state(){const [snap,stats,attempts,weatherStatus]=await Promise.a
       Date.now()-new Date(game.scanned_at).getTime()>30000;
     if(game.stale)for(const signal of game.signals||[])signal.execution='Rechecking live game; last status: '+signal.execution;
   }
-  const awaiting=[...new Set(snap.rows.flatMap(g=>(g.signals||[]).filter(s=>s.execution==='Awaiting independent score confirmation').map(s=>s.ticker)))];
+  const awaiting=[...new Set(snap.rows.flatMap(g=>(g.signals||[]).filter(s=>s.execution==='Awaiting score verification').map(s=>s.ticker)))];
   if(awaiting.length){
     const {rows}=await pool.query(`SELECT DISTINCT ON (market_ticker) market_ticker,passed,created_at
       FROM verification_records WHERE market_ticker=ANY($1) AND created_at>now()-interval '5 minutes'
@@ -1123,7 +1123,7 @@ async function state(){const [snap,stats,attempts,weatherStatus]=await Promise.a
     const checked=new Map(rows.map(r=>[r.market_ticker,r]));
     for(const game of snap.rows)for(const signal of game.signals||[]){
       const result=checked.get(signal.ticker);
-      if(signal.execution==='Awaiting independent score confirmation'&&result){
+      if(signal.execution==='Awaiting score verification'&&result){
         signal.execution=result.passed?'Independent score confirmed; final quote pending':'Independent source disagreed or unavailable';
         signal.verification_checked_at=result.created_at;
       }
@@ -1159,7 +1159,7 @@ async function settlementAlerts(since){
   return rows;
 }
 export default {async fetch(req){const url=new URL(req.url);
-  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'shard-staging-esports-over-20261030'});
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'cricket-bounded-overs-20261030'});
   if(req.method==='GET'&&url.pathname==='/manifest.webmanifest')return response(manifest,'application/manifest+json');
   if(req.method==='GET'&&url.pathname==='/sw.js')return new Response(worker,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','service-worker-allowed':'/','x-content-type-options':'nosniff'}});
   if(req.method==='GET'&&/^\/icon-(192|512)\.png$/.test(url.pathname))return response(Buffer.from(icons[Number(url.pathname.match(/\d+/)[0])],'base64'),'image/png');

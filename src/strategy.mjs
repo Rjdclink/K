@@ -153,6 +153,7 @@ export function endWindow(game){
 }
 export function overSignal(game, market) {
   if (!game.verifiedLive || !game.scoreKnown || !game.scoreConsistent || Math.min(game.home,game.away)<0 || game.home+game.away<=0 || market.status!=='active' && market.status!=='open') return null;
+  if(game.type==='cricket_match')return cricketOverSignal(game,market);
   const player=playerOverSpec(game,market);
   // Scores from these feeds are not comparable to a whole-game contract line.
   const esportsScore=game.type==='esports_match'&&
@@ -201,6 +202,37 @@ export function overSignal(game, market) {
   if (!Number.isFinite(strike) || strike<0 || !Number.isFinite(scored) || scored<=strike) return null;
   return {strategy:'over', reason:`${scored} ${player?.metric||'scored'}${team?` by ${team}`:''}; line ${strike} already passed${segment?`; segment ${segment[1]}`:''}`, fraction:0.30};
 }
+// The live cricket score is a team run total only in limited-over formats
+// with one innings per side. Test/first-class and non-run props need separate
+// contract-specific scoring and cannot borrow this signal.
+export const cricketOneInningsFormat=competition=>/\b(?:T20|D20|ODI|IPL|Pro 50|One Day|Major League Cricket|Caribbean Premier League)\b/i.test(String(competition||''));
+export function cricketOverSignal(game,market){
+  if(game?.type!=='cricket_match'||!game.verifiedLive||!game.scoreKnown||!game.scoreConsistent||
+    !cricketOneInningsFormat(game.competition)||
+    ![1,2].includes(game.period)||!game.homeName||!game.awayName||
+    !['active','open'].includes(market?.status)||market.result&&!['','not_determined'].includes(String(market.result)))return null;
+  const series=String(market.event_ticker||'').split('-')[0];
+  if(!/TEAMTOTAL$/.test(series)||/[1-9](?:Q|P|H|INNING)TEAMTOTAL$/.test(series)||
+    market.floor_strike==null||market.cap_strike!=null||!['greater','greater_than'].includes(market.strike_type)||
+    Object.keys(market.custom_strike||{}).some(k=>/_player$/.test(k)))return null;
+  const line=Number(market.floor_strike);
+  if(!Number.isFinite(line)||line<0||!Number.isInteger(line+.5))return null;
+  const title=String(market.yes_sub_title||market.title||'').trim();
+  const matched=title.match(/^(.+?)\s+over\s+(\d+(?:\.\d+)?)\s+runs\s+scored$/i);
+  const rules=String(market.rules_primary||'');
+  if(!matched||Number(matched[2])!==line||!/\bruns?\b/i.test(rules)||
+    /\b(?:first|second|third|fourth|innings|powerplay|super over)\b/i.test(rules))return null;
+  const home=norm(matched[1])===norm(game.homeName),away=norm(matched[1])===norm(game.awayName);
+  if(home===away)return null;
+  const teamId=Object.entries(market.custom_strike||{}).find(([key,value])=>/_team$/.test(key)&&typeof value==='string')?.[1];
+  const expectedId=home?game.homeTeamId:game.awayTeamId;
+  if(teamId&&(!expectedId||teamId!==expectedId))return null;
+  if(!teamId&&!norm(rules).includes(norm(matched[1])))return null;
+  const scored=home?game.home:game.away;
+  if(!Number.isInteger(scored)||scored<=line)return null;
+  if(market.yes_ask_dollars!=null&&Number(market.yes_ask_dollars)>0&&Number(market.yes_ask_dollars)<.8)return null;
+  return {strategy:'over',reason:`${matched[1]} has ${scored} runs; team total ${line} crossed`,fraction:.05};
+}
 export function playerOverSpec(game,market){
   const family=String(game?.type||'');
   const suffix=String(market?.event_ticker||'').split('-')[0].match(/(PASSYDS|RUSHYDS|RECYDS|GOALS|SAVES|SOG|HITS|RBI|HR|PTS|REB|AST|3PT|PRA|STL|BLK)$/)?.[1];
@@ -226,7 +258,8 @@ export function confirmedOver(first,second,market){
   if(!Number.isFinite(first.observedAt)||!Number.isFinite(second.observedAt)||second.observedAt-first.observedAt<dwell)return false;
   if(Number.isFinite(first.updatedAt)&&Number.isFinite(second.updatedAt)&&second.updatedAt<first.updatedAt)return false;
   if([first,second].some(s=>Number.isFinite(s.updatedAt)&&(s.updatedAt>s.observedAt+5000||s.observedAt-s.updatedAt>30000)))return false;
-  if(first.home!==second.home||first.away!==second.away||!first.periodConsistent||!second.periodConsistent)return false;
+  if((first.type==='cricket_match'?(second.home<first.home||second.away<first.away):first.home!==second.home||first.away!==second.away)||
+    !first.periodConsistent||!second.periodConsistent)return false;
   if(/^KX(?:ATP|WTA)GTOTAL$/.test(String(market.event_ticker||'').split('-')[0])&&first.tennisTotal!==second.tennisTotal)return false;
   const firstPlayer=playerOverSpec(first,market),secondPlayer=playerOverSpec(second,market);
   if(firstPlayer&&(!secondPlayer||firstPlayer.value!==secondPlayer.value))return false;
@@ -240,11 +273,13 @@ export function confirmedOver(first,second,market){
 export function kalshiOnlyOver(first,second,market){
   const series=String(market?.event_ticker||'').split('-')[0];
   const player=playerOverSpec(first,market),nextPlayer=playerOverSpec(second,market);
+  const cricket=first?.type==='cricket_match'&&second?.type==='cricket_match'&&
+    Boolean(cricketOverSignal(first,market)&&cricketOverSignal(second,market));
   const fullGameScore=/(?:TEAMTOTAL|TOTAL)$/.test(series)&&!/[1-9](?:Q|P|H|INNING)(?:TEAM)?TOTAL$/.test(series)&&
     ((first?.type==='esports_match'&&['eSoccer','eBasketball'].includes(first.sport)&&first.esportsPeriodsValid&&second?.esportsPeriodsValid)||
       !/esports|tennis/.test(String(first?.type||''))&&/basketball|baseball|football|hockey|soccer/.test(String(first?.type||'')))&&
     !Object.keys(market?.custom_strike||{}).some(k=>/_player$/.test(k));
-  if(!fullGameScore&&(!player||!nextPlayer||player.id!==nextPlayer.id||player.value!==nextPlayer.value))return false;
+  if(!fullGameScore&&!cricket&&(!player||!nextPlayer||player.id!==nextPlayer.id||player.value!==nextPlayer.value))return false;
   if(!Number.isFinite(first?.updatedAt)||!Number.isFinite(second?.updatedAt)||
     second.updatedAt<=first.updatedAt||second.observedAt-first.observedAt<6000)return false;
   return confirmedOver(first,second,market);

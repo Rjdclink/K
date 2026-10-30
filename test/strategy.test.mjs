@@ -107,6 +107,25 @@ test('esports game overs use verified period totals and a newer six-second Kalsh
   assert.equal(overSignal(first,{...market,title:'Over 8.5 total goals',floor_strike:8.5}),null);
   assert.equal(overSignal(gameState({...m,details:{league:'unrecognized'}},{milestone_id:m.id,details:{status:'live',home_score:4,away_score:3,period_unit:'half',home_periods:{period_1:2,period_2:2},away_periods:{period_1:1,period_2:2}}}),market),null);
 });
+test('limited-over cricket team run totals need exact team, crossed line, and two newer updates six seconds apart',()=>{
+  const m={id:'ipl',type:'cricket_match',title:'Ajman vs Abu Dhabi',details:{league:'Emirates D20',home_team_id:'ajman-id',away_team_id:'abu-id'}};
+  const market={status:'active',event_ticker:'KXIPLTEAMTOTAL-26OCT30AJMABU',title:'Ajman over 149.5 runs scored',yes_sub_title:'Ajman over 149.5 runs scored',rules_primary:'Ajman scores more than 149.5 runs in the professional cricket match.',floor_strike:149.5,strike_type:'greater',custom_strike:{cricket_team:'ajman-id'},yes_ask_dollars:'0.94'};
+  const now=Date.now();
+  const state=(at,updated,home=170,away=0)=>gameState(m,{milestone_id:m.id,_observed_at:new Date(at).toISOString(),details:{status:'live',home_score:home,away_score:away,inning:1,home_team_name:'Ajman',away_team_name:'Abu Dhabi',last_updated_ts:updated/1000}});
+  const first=state(now-8000,now-9000),second=state(now,now-1000,171);
+  assert.equal(overSignal(first,market)?.fraction,.05);
+  assert.equal(kalshiOnlyOver(first,second,market),true);
+  assert.equal(kalshiOnlyOver(first,state(now-4000,now-1000,171),market),false);
+  assert.equal(kalshiOnlyOver(first,state(now,now-9000,171),market),false);
+  assert.equal(kalshiOnlyOver(first,state(now,now-1000,169),market),false);
+  assert.equal(overSignal(first,{...market,title:'Abu Dhabi over 149.5 runs scored',yes_sub_title:'Abu Dhabi over 149.5 runs scored'}),null);
+  assert.equal(overSignal(first,{...market,custom_strike:{cricket_team:'abu-id'}}),null);
+  assert.equal(overSignal(first,{...market,rules_primary:'Ajman scores over 149.5 runs in the first innings.'}),null);
+  assert.equal(overSignal(first,{...market,custom_strike:{},rules_primary:'Abu Dhabi scores more than 149.5 runs.'}),null);
+  assert.equal(overSignal({...first,period:3},market),null);
+  assert.equal(overSignal({...first,competition:'Sheffield Shield'},market),null);
+  assert.ok(orderSize(10000,'.94','100',.05,1,15000,Infinity,2)<=8);
+});
 test('Kalshi whole-game over wording is recognized after the line is crossed',()=>{
   const m={id:'kbo-game',title:'Kia Tigers vs Samsung Lions',type:'baseball_game',details:{league:'Korea KBO'}};
   const g=gameState(m,{details:{status:'inprogress',away_points:3,home_points:8,inning:9}});
