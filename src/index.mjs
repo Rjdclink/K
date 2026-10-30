@@ -7,7 +7,7 @@ import { completedTrade } from './history.mjs';
 import { gameState, overSignal, confirmedOver, leadSignal, additionalLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, netSettlementProfitCents, comeback } from './strategy.mjs';
 import { reviewMiss } from './ai.mjs';
 import { kalshiSignature } from './auth.mjs';
-import { marketShard, shardCash, transferPlan } from './funding.mjs';
+import { marketShard, shardCash, transferPlan, shouldFundCombo } from './funding.mjs';
 import { icons } from './icons.mjs';
 import { manifest, worker } from './pwa.mjs';
 import { vapidIdentity, validateSubscription, deliverPush } from './push.mjs';
@@ -525,7 +525,7 @@ async function reconcileCombos(){
       const shard=marketShard({exchange_index:collection.exchange_index},combo),local=shardCash(account,shard);
       const desired=Math.floor(Math.min(Number(account.balance),bankroll*fraction));
       if(local===null||desired<100)return;
-      if(local<desired&&transferPlan(account,shard,desired)){funding.push({strategy,created,combo,desired});return}
+      if(local<desired&&shouldFundCombo(local,desired)&&transferPlan(account,shard,desired)){funding.push({strategy,created,combo,desired});return}
       const budget=Math.floor(Math.min(desired,local));
       if(budget<100)return;
       const existing=await pool.query(`SELECT status FROM trade_attempts WHERE market_ticker=$1`,[ticker]);
