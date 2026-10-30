@@ -94,6 +94,16 @@ export function comboPairDiagnostics(collections,candidates){
 export function selectedComboMarkets(legs){
   return legs.map(c=>({event_ticker:c.event.event_ticker,market_ticker:c.market.ticker,side:'yes'}));
 }
+export async function liveComboMarket(get,ticker){
+  try{
+    const {market}=await get('/markets/'+encodeURIComponent(ticker));
+    return market?.ticker===ticker&&['active','open'].includes(market.status)?market:null;
+  }catch(e){
+    // A newly created multivariate market can briefly be absent from GET.
+    if(/^Kalshi (404|410) GET \/markets\//.test(String(e.message)))return null;
+    throw e;
+  }
+}
 export function heldComboLeg(row,market,snapshot={}){
   if(!row||Number(row.fill_count)<=0||!market||market.ticker!==row.market_ticker||market.event_ticker!==row.event_ticker||
     !['active','open'].includes(market.status)||market.result&&!['','not_determined'].includes(String(market.result)))return null;
