@@ -1,6 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {COMBO_WINDOW_MS,VERIFY_DWELL_MS,comboAllocation,comboCandidates,comboCollection,compatibleComboGroups,quoteForYes,comboLegs,filledComboWindow} from '../src/combos.mjs';
+import {COMBO_WINDOW_MS,VERIFY_DWELL_MS,comboAllocation,comboCandidates,comboCollection,compatibleComboGroups,quoteForYes,comboLegs,filledComboWindow,collectionsForEvents} from '../src/combos.mjs';
+
+test('combo collection discovery filters by each event and paginates',async()=>{
+  const requests=[];
+  const collections=await collectionsForEvents(['E1','E2','E1'],async path=>{
+    const q=new URL(path,'https://example.test').searchParams;
+    requests.push([q.get('associated_event_ticker'),q.get('cursor')]);
+    if(q.get('associated_event_ticker')==='E1'&&!q.get('cursor'))return {multivariate_contracts:[{collection_ticker:'C1'}],cursor:'next'};
+    if(q.get('associated_event_ticker')==='E2')return {multivariate_contracts:[{collection_ticker:'C2'},{collection_ticker:'C1'}],cursor:''};
+    return {multivariate_contracts:[{collection_ticker:'C3'}],cursor:''};
+  });
+  assert.deepEqual(collections.map(c=>c.collection_ticker),['C1','C3','C2']);
+  assert.deepEqual(requests.sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b))),[['E1','next'],['E1',null],['E2',null]].sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b))));
+});
 const candidate=(id,event,strategy='over')=>({milestone:{id},event:{event_ticker:event},market:{ticker:id+'-YES'},signal:{strategy},state:{title:id,sport:'NBA'}});
 test('each new filled combination lowers its bankroll allocation to a two percent floor',()=>{
   assert.equal(VERIFY_DWELL_MS,3000);
