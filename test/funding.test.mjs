@@ -11,6 +11,8 @@ test('plans a bounded internal funding transfer for the actual market shard',()=
   assert.deepEqual(transferPlan(account,3,6000),{sourceShard:0,destinationShard:3,amountCenticents:509700});
   assert.equal(transferPlan(account,0,2000),null);
   assert.equal(transferPlan({balance:5097},3,1500),null);
+  assert.deepEqual(transferPlan(account,3,1500,2000),{sourceShard:0,destinationShard:3,amountCenticents:150000});
+  assert.equal(transferPlan(account,3,4000,5100),null);
 });
 
 test('combo allocation is a ceiling even when its shard has less cash',()=>{

@@ -307,8 +307,11 @@ async function verifyNbaOver(game,milestone,{fetcher=fetch,market}={}){
     return nbaAgreement(box,game,milestone,market,id);
   }catch{return null}
 }
-export async function verifyIndependentOver(game,milestone,options={}){
+// null means no exact independent fixture/stat was available. A definite
+// contradiction remains false and must never authorize a Kalshi-only fallback.
+export async function verifyIndependentOverDecision(game,milestone,options={}){
   const [preferred,nba]=await Promise.all([verifyExistingOver(game,milestone,options),verifyNbaOver(game,milestone,options)]);
+  if(nba===false||preferred===false)return false;
   if(nba!==null)return nba;
   if(preferred!==null)return preferred;
   // Only an unavailable source advances to the next rank. An exact
@@ -318,6 +321,9 @@ export async function verifyIndependentOver(game,milestone,options={}){
     if(result!==null)return result;
   }
   const fox=await verifyExistingOver(game,milestone,{...options,source:'FOX'});
-  return fox===null?false:fox;
+  return fox;
+}
+export async function verifyIndependentOver(game,milestone,options={}){
+  return (await verifyIndependentOverDecision(game,milestone,options))===true;
 }
 

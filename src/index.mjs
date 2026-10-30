@@ -4,7 +4,7 @@ import pg from 'pg';
 import { page } from './ui.mjs';
 import { historyPage } from './history_ui.mjs';
 import { completedTrade } from './history.mjs';
-import { gameState, overSignal, confirmedOver, leadSignal, additionalLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, netSettlementProfitCents, comeback } from './strategy.mjs';
+import { gameState, overSignal, confirmedOver, kalshiOnlyOver, leadSignal, additionalLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, netSettlementProfitCents, comeback } from './strategy.mjs';
 import { reviewMiss } from './ai.mjs';
 import { kalshiSignature } from './auth.mjs';
 import { marketShard, shardCash, transferPlan, comboShardBudget } from './funding.mjs';
@@ -15,7 +15,7 @@ import { favorableSettlement } from './settlements.mjs';
 import { authorized, checkCredentials, sessionCookie, loginPage } from './dashboard_auth.mjs';
 import { eligibleForMarkets, linkedEventTickers, gameTimeLabel, storedClockSeconds } from './discovery.mjs';
 import { tieRefundPreference } from './settlement_preference.mjs';
-import { verifyIndependentOver, verifyIndependentTableTennisLead, verifyIndependentTableTennisMatch } from './score_verification.mjs';
+import { verifyIndependentOverDecision, verifyIndependentTableTennisLead, verifyIndependentTableTennisMatch } from './score_verification.mjs';
 import { COMBO_ATTEMPT_MS, COMBO_WINDOW_MS, VERIFY_DWELL_MS, comboAllocation, compatibleComboGroups, comboLegs, filledComboWindow, eligibleFillTrigger, heldComboLeg, quoteForYes, collectionsForEvents, selectedComboMarkets } from './combos.mjs';
 import { estimatedSaleProfitCents, positiveExitEligible } from './positions.mjs';
 import { weatherContract } from './weather.mjs';
@@ -112,11 +112,20 @@ async function auditedOver(game,milestone,options={}){
     catch(e){observations.push({url,requested_at:at,error:String(e.message)});throw e}
   };
   // Separate reads retain the exact source response used for this decision.
-  const passed=await verifyIndependentOver(game,milestone,{...options,cache:undefined,fetcher});
+  const decision=await verifyIndependentOverDecision(game,milestone,{...options,cache:undefined,fetcher});
+  const passed=decision===true;
   await auditTable();const id=randomUUID();
-  await pool.query('INSERT INTO verification_records(id,market_ticker,passed,evidence) VALUES($1,$2,$3,$4)',[id,options.market?.ticker||'',passed,JSON.stringify({game,milestone,observations,firstObservation:options.firstObservation})]);
+  await pool.query('INSERT INTO verification_records(id,market_ticker,passed,evidence) VALUES($1,$2,$3,$4)',[id,options.market?.ticker||'',passed,JSON.stringify({game,milestone,observations,firstObservation:options.firstObservation,independentUnavailable:decision===null})]);
   if(passed)game.verificationId=id;
-  return passed;
+  return options.allowUnavailable?decision:passed;
+}
+async function auditKalshiOnlyOver(first,second,market,milestone){
+  if(!kalshiOnlyOver(first,second,market))return false;
+  await auditTable();const id=randomUUID();
+  await pool.query('INSERT INTO verification_records(id,market_ticker,passed,evidence) VALUES($1,$2,true,$3)',
+    [id,market.ticker,JSON.stringify({mode:'kalshi_only_crossed_over',first,second,milestoneId:milestone.id,dwellMs:second.observedAt-first.observedAt,allocation:.05})]);
+  second.verificationId=id;
+  return true;
 }
 async function currentSell(ticker){
   const [positions,market,book]=await Promise.all([allOpenPositions(),kalshi('/markets/'+encodeURIComponent(ticker)),kalshi('/markets/'+encodeURIComponent(ticker)+'/orderbook')]);
@@ -362,14 +371,14 @@ function signalExecution(c,filled,account,balance,bankroll){
   }
   return c.signal.strategy==='over'?'Awaiting independent score confirmation':'Eligible for final verification';
 }
-async function ensureShardFunding(signal,event,market,account,desiredCents){
+async function ensureShardFunding(signal,event,market,account,desiredCents,sourceFloorCents=0){
   const destination=marketShard(event,market);
-  const plan=transferPlan(account,destination,desiredCents);
+  const plan=transferPlan(account,destination,desiredCents,sourceFloorCents);
   if(!plan)return false;
   const {rows:[pending]}=await pool.query(`SELECT * FROM funding_transfers WHERE market_ticker=$1 AND strategy=$2 AND status IN ('pending','uncertain') ORDER BY created_at DESC LIMIT 1`,[market.ticker,signal.strategy]);
   // Funding belongs to the destination shard, not a market. Do not queue
   // competing transfers against the same source cash while one is settling.
-  if(!pending){const inFlight=await pool.query(`SELECT id FROM funding_transfers WHERE status IN ('pending','uncertain') AND destination_shard=$1 LIMIT 1`,[destination]);if(inFlight.rowCount)return false}
+  if(!pending){const inFlight=await pool.query(`SELECT id FROM funding_transfers WHERE status IN ('pending','uncertain') AND (destination_shard=$1 OR source_shard=$2) LIMIT 1`,[destination,plan.sourceShard]);if(inFlight.rowCount)return false}
   if(pending){
     const history=await kalshi('/portfolio/intra_exchange_instance_transfers?limit=100',{auth:true});
     const matched=(history.transfers||[]).find(t=>t.client_transfer_id===pending.id);
@@ -389,6 +398,22 @@ async function ensureShardFunding(signal,event,market,account,desiredCents){
     throw e;
   }
   return false; // Transfers are asynchronous; the next scan checks actual shard cash.
+}
+async function stageCashAcrossShards(account,bankroll){
+  // Keep a starter amount in every exchange shard before games begin. This is
+  // ordinary available cash, never a trading reservation or combo reserve.
+  const shards=[...new Set((account.balance_breakdown||[]).map(b=>Number(b.exchange_index)).filter(Number.isInteger))];
+  if(!shards.length)return;
+  const target=Math.min(Math.floor(bankroll*.15),Math.floor(Number(account.balance)/shards.length));
+  if(target<100)return;
+  const underfunded=shards.filter(shard=>(shardCash(account,shard)??0)<target)
+    .sort((a,b)=>(shardCash(account,a)??0)-(shardCash(account,b)??0));
+  for(const shard of underfunded){
+    if(!transferPlan(account,shard,target,target))continue;
+    const marker={exchange_index:shard,ticker:`STAGING-SHARD-${shard}`};
+    await ensureShardFunding({strategy:'staging'},marker,marker,account,target,target);
+    break; // One transfer per cycle; the next cycle uses a fresh balance.
+  }
 }
 async function reconcileFundingTransfers(){
   const pending=await pool.query(`SELECT id,transfer_id FROM funding_transfers WHERE status IN ('pending','uncertain') AND updated_at<now()-interval '10 seconds' ORDER BY created_at DESC LIMIT 100`);
@@ -789,9 +814,11 @@ async function executeVerifiedWeather(verified){
     const shard=marketShard(event,quote),local=shardCash(fresh,shard),cost=estimatedCostCents(count,Number(quote.yes_ask_dollars),fee);
     if(local===null)continue;
      const signal={strategy:'weather',fraction:.10,reason:`${item.contract.type} ${item.observed.value.toFixed(2)} at ${item.contract.station} on ${item.contract.localDate}; ${item.contract.comparison} ${item.contract.threshold}`};
-    if(local<cost){if(transferPlan(fresh,shard,cost))await ensureShardFunding(signal,event,quote,fresh,cost);continue}
+    if(local<cost&&transferPlan(fresh,shard,cost))await ensureShardFunding(signal,event,quote,fresh,cost);
+    const affordable=profitableCount(contractCount(Math.min(spendable,local),quote,.10,total,Infinity,fee),Number(quote.yes_ask_dollars),fee,'weather',total);
+    if(!affordable||netSettlementProfitCents(affordable,Number(quote.yes_ask_dollars),fee)<30)continue;
     await auditTable();const verificationId=randomUUID();
-    await pool.query('INSERT INTO verification_records(id,market_ticker,passed,evidence) VALUES($1,$2,true,$3)',[verificationId,quote.ticker,JSON.stringify({contract:item.contract,kalshiFirst:{at:item.firstAt,market:item.first},kalshiSecond:{at:item.secondAt,market:item.second},external:item.observed,executable:{price:quote.yes_ask_dollars,size:quote.yes_ask_size_fp,count,feeReserve:fee,projectedNetCents:netSettlementProfitCents(count,Number(quote.yes_ask_dollars),fee)}})]);
+    await pool.query('INSERT INTO verification_records(id,market_ticker,passed,evidence) VALUES($1,$2,true,$3)',[verificationId,quote.ticker,JSON.stringify({contract:item.contract,kalshiFirst:{at:item.firstAt,market:item.first},kalshiSecond:{at:item.secondAt,market:item.second},external:item.observed,executable:{price:quote.yes_ask_dollars,size:quote.yes_ask_size_fp,count:affordable,feeReserve:fee,projectedNetCents:netSettlementProfitCents(affordable,Number(quote.yes_ask_dollars),fee)}})]);
     const game={id:'weather:'+event.event_ticker,sport:'Weather',type:'weather',verificationId};
     await pool.query(`INSERT INTO game_snapshots(id,title,sport,sport_family,status,scanned_at,signals) VALUES($1,$2,'Weather','weather','live',now(),'[]')
       ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,scanned_at=now()`,[game.id,event.title]);
@@ -831,6 +858,7 @@ async function scan(cachedMilestones){
       account=currentAccount;balance=Number(account.balance);
       bankroll=balance+Number(account.portfolio_value);
       comboCount=Number((await pool.query(`SELECT count(*) AS n FROM trade_attempts WHERE combo_legs IS NOT NULL AND status IN ('filled','combo_pending')`)).rows[0].n);
+      if(live())try{await stageCashAcrossShards(account,bankroll)}catch(e){console.warn('Early shard staging deferred:',e.message)}
     }
     // Exits are assessed before any new risk is added.
     if(live()||exitOnly())await exitComebacks(games,events,openPositions);
@@ -911,15 +939,22 @@ async function scan(cachedMilestones){
         try{
           // Start the first independent observation during the Kalshi dwell.
           // A second independent read after that dwell catches corrected stats.
-          const independentFirst=auditedOver(c.state,c.milestone,{cache:scoreboardCache,market:c.market}).catch(()=>false);
-           const remaining=VERIFY_DWELL_MS-(Date.now()-c.state.observedAt);
+          const independentFirst=auditedOver(c.state,c.milestone,{cache:scoreboardCache,market:c.market,allowUnavailable:true}).catch(()=>false);
+          const firstDecision=await independentFirst;
+          if(firstDecision===false)continue;
+          const dwell=firstDecision===null?6000:VERIFY_DWELL_MS;
+           const remaining=dwell-(Date.now()-c.state.observedAt);
           if(!Number.isFinite(remaining))continue;
           if(remaining>0)await new Promise(resolve=>setTimeout(resolve,remaining));
           const latest=await liveMilestone(c.milestone.id);
           if(!latest)continue;
           latest._observed_at=new Date().toISOString();
           const state=gameState(c.milestone,latest);
-          if(confirmedOver(c.state,state,c.market)&&await independentFirst&&await auditedOver(state,c.milestone,{cache:scoreboardCache,market:c.market,firstObservation:c.state}))overPreflights.set(signalKey(c),state);
+          if(!confirmedOver(c.state,state,c.market))continue;
+          const secondDecision=await auditedOver(state,c.milestone,{cache:scoreboardCache,market:c.market,firstObservation:c.state,allowUnavailable:true});
+          if(secondDecision===true)overPreflights.set(signalKey(c),{state,kalshiOnly:false});
+          else if(firstDecision===null&&secondDecision===null&&await auditKalshiOnlyOver(c.state,state,c.market,c.milestone))
+            overPreflights.set(signalKey(c),{state,kalshiOnly:true});
         }catch(e){console.warn('Over preflight deferred:',c.market.ticker,e.message)}
         finally{c.preflightDone()}
       }
@@ -945,16 +980,21 @@ async function scan(cachedMilestones){
         // A confirmed over preflight expires quickly; never submit on a stale
         // score. Lead games still require a fresh check before the quote.
         if(c.signal.strategy==='over'&&overReady.has(signalKey(c)))await overReady.get(signalKey(c));
-        let freshState=c.signal.strategy==='over'?overPreflights.get(signalKey(c)):
+        const preflight=c.signal.strategy==='over'?overPreflights.get(signalKey(c)):null;
+        let kalshiOnly=preflight?.kalshiOnly===true;
+        let freshState=c.signal.strategy==='over'?preflight?.state:
           gameState(c.milestone,(await liveBatch([c.milestone])).get(c.milestone.id));
         if(!freshState)continue;
         if(c.signal.strategy==='over'&&Date.now()-freshState.observedAt>10000){
-           const remaining=VERIFY_DWELL_MS-(Date.now()-freshState.observedAt);
+           const remaining=(kalshiOnly?6000:VERIFY_DWELL_MS)-(Date.now()-freshState.observedAt);
           if(remaining>0)await new Promise(resolve=>setTimeout(resolve,remaining));
           const next=await liveMilestone(c.milestone.id);
           if(!next)continue;
           next._observed_at=new Date().toISOString();const rechecked=gameState(c.milestone,next);
-          if(!confirmedOver(freshState,rechecked,c.market)||!await auditedOver(rechecked,c.milestone,{cache:scoreboardCache,market:c.market,firstObservation:freshState}))continue;
+          if(!confirmedOver(freshState,rechecked,c.market))continue;
+          const decision=await auditedOver(rechecked,c.milestone,{cache:scoreboardCache,market:c.market,firstObservation:freshState,allowUnavailable:true});
+          if(decision===false||decision===null&&(!kalshiOnly||!await auditKalshiOnlyOver(freshState,rechecked,c.market,c.milestone)))continue;
+          if(decision===true)kalshiOnly=false;
           freshState=rechecked;
         }
         if(c.signal.strategy==='lead' && /basketball/.test(state.type) &&
@@ -976,13 +1016,16 @@ async function scan(cachedMilestones){
         const rawQuote=await recoverSummaryAsk((await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market);
         const quote=rawQuote&&hasAsk(rawQuote)?await executableQuote(rawQuote):null;
         if(!quote||quote.ticker!==c.market.ticker||quote.event_ticker!==c.event.event_ticker||!hasAsk(quote))continue;
+        if(kalshiOnly&&(Date.now()-freshState.observedAt>10000||
+          quote.rules_primary!==c.market.rules_primary||quote.floor_strike!==c.market.floor_strike||
+          quote.cap_strike!==c.market.cap_strike||quote.close_time!==c.market.close_time))continue;
         const stillQualifies=c.signal.strategy==='over'?overSignal(freshState,quote):golfSignal(freshState,quote)||leadSignal(freshState,quote)||additionalLeadSignal(freshState,quote)||tennisSignal(freshState,quote)||tableTennisSignal(freshState,quote);
         if(!stillQualifies)continue;
         if(freshState.golf&&!await verifyGolf(freshState,c.milestone,c.event))continue;
         if(tableTennisSignal(freshState,quote)&&!await verifyIndependentTableTennisLead(freshState,c.milestone))continue;
         if(c.signal.strategy==='lead'&&!freshState.golf&&!tableTennisSignal(freshState,quote)&&
           !await auditedOver(freshState,c.milestone,{cache:scoreboardCache,market:quote,firstObservation:c.state}))continue;
-        c.signal=stillQualifies;
+        c.signal=kalshiOnly?{...stillQualifies,fraction:.05,reason:stillQualifies.reason+'; Kalshi-only newer score check, 6 seconds apart'}:stillQualifies;
         c.market=quote;
         c.state=state=freshState;
         const budget=Infinity;
@@ -998,8 +1041,9 @@ async function scan(cachedMilestones){
         const desiredCost=estimatedCostCents(wanted,Number(c.market.yes_ask_dollars),feeReserve(c.event,c.market));
         if(localCash<desiredCost&&transferPlan(latest,shard,desiredCost)){
           await ensureShardFunding(c.signal,c.event,c.market,latest,desiredCost);
-          continue;
         }
+        // The allocation is a ceiling. Buy the profitable quantity already
+        // affordable in this shard while any top-up settles asynchronously.
         if(await submit(c.signal,state,c.event,c.market,Math.min(spendable,localCash),bankroll,budget,bankroll)||await recoverPending(c.signal,state,c.event,c.market,Math.min(spendable,localCash),bankroll,budget,bankroll)){
           submitted++;singlesFilledThisPass++;filled.add(signalKey(c));const account=await accountBalance({fresh:true});balance=Number(account.balance);bankroll=balance+Number(account.portfolio_value);
         }
@@ -1115,7 +1159,7 @@ async function settlementAlerts(since){
   return rows;
 }
 export default {async fetch(req){const url=new URL(req.url);
-  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'props-combos-verification-20261030b'});
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'shard-staging-score-fallback-20261030'});
   if(req.method==='GET'&&url.pathname==='/manifest.webmanifest')return response(manifest,'application/manifest+json');
   if(req.method==='GET'&&url.pathname==='/sw.js')return new Response(worker,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','service-worker-allowed':'/','x-content-type-options':'nosniff'}});
   if(req.method==='GET'&&/^\/icon-(192|512)\.png$/.test(url.pathname))return response(Buffer.from(icons[Number(url.pathname.match(/\d+/)[0])],'base64'),'image/png');

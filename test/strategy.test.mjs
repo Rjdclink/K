@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {gameState,overSignal,confirmedOver,leadSignal,tennisSignal,tableTennisSignal,orderSize,estimatedCostCents,overBudget,minimumProfitCents,netSettlementProfitCents,profitableCount,comeback} from '../src/strategy.mjs';
+import {gameState,overSignal,confirmedOver,kalshiOnlyOver,leadSignal,tennisSignal,tableTennisSignal,orderSize,estimatedCostCents,overBudget,minimumProfitCents,netSettlementProfitCents,profitableCount,comeback} from '../src/strategy.mjs';
 
 test('each trade has its own percentage of the full bankroll',()=>{
   const bankroll=14600,alreadyHeld=4372;
@@ -65,6 +65,22 @@ test('over preflight requires stable scores from a newer, fresh milestone update
   assert.equal(confirmedOver(sample(1,0,now-13000,now-100000),valid,market),false,'initial score stale');
   assert.equal(confirmedOver(first,sample(1,0,now,now-50000),market),false,'latest score stale');
   assert.equal(confirmedOver(first,gameState(m,{milestone_id:m.id,_observed_at:new Date(now).toISOString(),details:{status:'live',home_score:1,away_score:0,time:"55'"}}),market),true,'provider may omit its update timestamp; independent source still required');
+});
+test('Kalshi-only fallback requires a newer score update six seconds later and excludes player stats',()=>{
+  const m={id:'kbo',title:'Kia Tigers vs Samsung Lions',type:'baseball_game',details:{league:'Korea KBO'}};
+  const market={status:'active',event_ticker:'KXKBOTOTAL-26OCT30KIASAM',title:'Over 9.5 runs scored?',rules_primary:'The teams collectively score more than 9.5 runs',floor_strike:9.5,strike_type:'greater'};
+  const now=Date.now();
+  const state=(observed,updated,home=8)=>gameState(m,{milestone_id:m.id,_observed_at:new Date(observed).toISOString(),details:{status:'live',home_score:home,away_score:3,inning:9,last_updated_ts:updated/1000}});
+  const first=state(now-8000,now-9000),second=state(now,now-1000);
+  assert.equal(kalshiOnlyOver(first,second,market),true);
+  assert.equal(kalshiOnlyOver(first,state(now-3000,now-4000),market),false);
+  assert.equal(kalshiOnlyOver(first,state(now,now-9000),market),false);
+  assert.equal(kalshiOnlyOver(first,state(now,NaN),market),false);
+  assert.equal(kalshiOnlyOver(first,state(now,now-1000,6),market),false);
+  assert.equal(kalshiOnlyOver(first,second,{...market,custom_strike:{baseball_player:'player'}}),false);
+  assert.equal(kalshiOnlyOver(first,second,{...market,event_ticker:'KXKBOGAME-26OCT30KIASAM'}),false);
+  assert.equal(kalshiOnlyOver(first,second,{...market,event_ticker:'KXKBO1INNINGTOTAL-26OCT30KIASAM'}),false);
+  assert.ok(orderSize(10000,'.94','100',.05,1,15000,Infinity,2)<=8,'fallback is capped at five percent of the full bankroll');
 });
 test('Kalshi whole-game over wording is recognized after the line is crossed',()=>{
   const m={id:'kbo-game',title:'Kia Tigers vs Samsung Lions',type:'baseball_game',details:{league:'Korea KBO'}};

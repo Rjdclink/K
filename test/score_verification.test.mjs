@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { gameState } from '../src/strategy.mjs';
-import { espnMatches, foxMatches, tennisMatches, scoreAgreement, verifyIndependentOver, playerStatAgreement, foxPlayerStat, tableTennisMatches, verifyIndependentTableTennisLead } from '../src/score_verification.mjs';
+import { espnMatches, foxMatches, tennisMatches, scoreAgreement, verifyIndependentOver, verifyIndependentOverDecision, playerStatAgreement, foxPlayerStat, tableTennisMatches, verifyIndependentTableTennisLead } from '../src/score_verification.mjs';
 
 test('Liga Pro table tennis lead requires an exact independent live set score and fixture',async()=>{
   const milestone={id:'liga',type:'table_tennis_match',title:'Oleg Moshnikov vs Iurii Krivenkii',start_date:start,details:{league:'Russia Liga Pro',best_of:5,first_competitor_id:'oleg',second_competitor_id:'iurii'}};
@@ -81,6 +81,8 @@ test('every over preflight needs an exact independent source; missing data fails
   const soccer={id:'cup-game',type:'soccer_match',title:'Dolomiti Bellunesi vs Desenzano',start_date:start};
   const soccerGame=gameState(soccer,{details:{status:'live',home_score:1,away_score:0,time:"20'"}});
   assert.equal(await verifyIndependentOver(soccerGame,soccer,{fetcher}),false,'the incident game is absent from both providers');
+  assert.equal(await verifyIndependentOverDecision(soccerGame,soccer,{fetcher}),null,'no exact independent fixture permits only the restricted fallback');
+  assert.equal(await verifyIndependentOverDecision(game,m,{fetcher:async url=>({ok:true,json:async()=>url.includes('espn.com')?espn(0,0):fox(0,0)})}),false,'a confirmed contradiction cannot fall back');
 });
 
 test('FOX soccer home team may be the upper row',()=>{
