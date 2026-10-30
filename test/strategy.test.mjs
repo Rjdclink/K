@@ -1,16 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {gameState,overSignal,confirmedOver,leadSignal,tennisSignal,tableTennisSignal,orderSize,estimatedCostCents,overBudget,overSingleBudget,minimumProfitCents,netSettlementProfitCents,profitableCount,comeback} from '../src/strategy.mjs';
+import {gameState,overSignal,confirmedOver,leadSignal,tennisSignal,tableTennisSignal,orderSize,estimatedCostCents,overBudget,minimumProfitCents,netSettlementProfitCents,profitableCount,comeback} from '../src/strategy.mjs';
 
-test('six singles share the 30% over pool while preserving 10% for a combo',()=>{
-  const bankroll=14600,initial=overBudget(bankroll,0,0),reserve=Math.floor(bankroll*.10);
-  let remaining=initial,allocated=0;
-  for(let left=6;left>0;left--){const spend=overSingleBudget(remaining,reserve,left);allocated+=spend;remaining-=spend}
-  assert.equal(allocated,initial-reserve);
-  assert.equal(remaining,reserve);
-  assert.equal(overSingleBudget(initial,reserve,6),486);
-  assert.equal(overSingleBudget(200,1460,2),0);
+test('each trade has its own percentage of the full bankroll',()=>{
+  const bankroll=14600,alreadyHeld=4372;
+  assert.equal(overBudget(10228,alreadyHeld,alreadyHeld),4380);
+  assert.equal(overBudget(10228,alreadyHeld,alreadyHeld),overBudget(10228,alreadyHeld,0));
+  assert.ok(orderSize(10228,'.98','1000',.30,1,bankroll,4380,2)>40);
+  assert.ok(orderSize(10228,'.98','1000',.15,1,bankroll,Infinity,2)>20);
 });
 
 test('table tennis deciding set uses four and six point tiers without a clock',()=>{
@@ -341,11 +339,11 @@ test('quantity preflights cash, allocation, fees, price and displayed liquidity'
   assert.ok(estimatedCostCents(orderSize(10000,'.95','1000',.15),.95)<=1500);
   assert.ok(estimatedCostCents(orderSize(10000,'.95','1000',.25),.95)<=2500);
 });
-test('over allocation is capped across existing unsettled over positions',()=>{
+test('over allocation is a per-trade cap independent of existing positions',()=>{
   assert.equal(overBudget(10000,0,0),3000);
-  assert.equal(overBudget(2000,8000,8000),0);
-  assert.equal(overBudget(6000,4000,3000),0);
-  assert.equal(overBudget(10000,0,9000),0);
+  assert.equal(overBudget(2000,8000,8000),3000);
+  assert.equal(overBudget(6000,4000,3000),3000);
+  assert.equal(overBudget(10000,0,9000),3000);
 });
 test('entry submissions and recovery use full fills while exits cannot target overs',()=>{
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');

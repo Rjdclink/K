@@ -4,7 +4,7 @@ import pg from 'pg';
 import { page } from './ui.mjs';
 import { historyPage } from './history_ui.mjs';
 import { completedTrade } from './history.mjs';
-import { gameState, overSignal, confirmedOver, leadSignal, additionalLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, overBudget, overSingleBudget, profitableCount, netSettlementProfitCents, comeback } from './strategy.mjs';
+import { gameState, overSignal, confirmedOver, leadSignal, additionalLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, netSettlementProfitCents, comeback } from './strategy.mjs';
 import { reviewMiss } from './ai.mjs';
 import { kalshiSignature } from './auth.mjs';
 import { marketShard, shardCash, transferPlan } from './funding.mjs';
@@ -16,7 +16,7 @@ import { authorized, checkCredentials, sessionCookie, loginPage } from './dashbo
 import { eligibleForMarkets, linkedEventTickers, gameTimeLabel, storedClockSeconds } from './discovery.mjs';
 import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOver, verifyIndependentTableTennisLead, verifyIndependentTableTennisMatch } from './score_verification.mjs';
-import { COMBO_ATTEMPT_MS, COMBO_WINDOW_MS, VERIFY_DWELL_MS, comboAllocation, compatibleComboGroups, comboLegs, filledComboWindow, quoteForYes } from './combos.mjs';
+import { COMBO_ATTEMPT_MS, COMBO_WINDOW_MS, VERIFY_DWELL_MS, comboAllocation, compatibleComboGroups, comboLegs, filledComboWindow, quoteForYes, collectionsForEvents } from './combos.mjs';
 import { estimatedSaleProfitCents } from './positions.mjs';
 import { weatherContract } from './weather.mjs';
 import { scanWeatherMarkets } from './weather_scanner.mjs';
@@ -331,25 +331,26 @@ function contractCount(balance,market,fraction,bankroll,budget,fees){
   const count=orderSize(balance,market.yes_ask_dollars,market.yes_ask_size_fp,fraction,Number(process.env.MAX_YES_PRICE||1),bankroll,budget,fees);
   return market.fractional_trading_enabled===false?Math.floor(count):count;
 }
-function executableCount(c,balance,bankroll,overRemaining,overSpendCents=overRemaining){
+function executableCount(c,balance,bankroll){
   const fees=feeReserve(c.event,c.market),price=Number(c.market.yes_ask_dollars);
-  const count=contractCount(balance,c.market,c.signal.fraction,bankroll,c.signal.strategy==='over'?overSpendCents:Infinity,fees);
+  const count=contractCount(balance,c.market,c.signal.fraction,bankroll,Infinity,fees);
   return profitableCount(count,price,fees,c.signal.strategy,bankroll,c.state.type,c.state.remainingSeconds);
 }
 const signalKey=c=>`${c.market.ticker}:${c.signal.strategy}`;
-function signalExecution(c,filled,account,balance,bankroll,overRemaining){
+function signalExecution(c,filled,account,balance,bankroll){
   if(filled.has(signalKey(c)))return 'Already filled';
   if(!hasAsk(c.market))return 'No ask liquidity';
   if(!account)return 'Trading paused';
   const price=Number(c.market.yes_ask_dollars),fees=feeReserve(c.event,c.market);
-  const raw=contractCount(balance,c.market,c.signal.fraction,bankroll,c.signal.strategy==='over'?overRemaining:Infinity,fees);
-  if(!raw)return 'Insufficient budget or price above cap';
+  if(price>Number(process.env.MAX_YES_PRICE||1))return 'Ask above maximum YES price';
+  const raw=contractCount(balance,c.market,c.signal.fraction,bankroll,Infinity,fees);
+  if(!raw)return 'Insufficient available cash for this trade';
   if(!profitableCount(raw,price,fees,c.signal.strategy,bankroll,c.state.type,c.state.remainingSeconds))return 'Below minimum net profit after fees';
   const local=shardCash(account,marketShard(c.event,c.market));
   if(local===null)return 'Shard balance unavailable';
   if(local<estimatedCostCents(raw,price,fees)){
     if(transferPlan(account,marketShard(c.event,c.market),estimatedCostCents(raw,price,fees)))return 'Awaiting shard funding';
-    const localCount=contractCount(Math.min(balance,local),c.market,c.signal.fraction,bankroll,c.signal.strategy==='over'?overRemaining:Infinity,fees);
+    const localCount=contractCount(Math.min(balance,local),c.market,c.signal.fraction,bankroll,Infinity,fees);
     if(!profitableCount(localCount,price,fees,c.signal.strategy,bankroll,c.state.type,c.state.remainingSeconds))return 'Insufficient shard cash';
   }
   return c.signal.strategy==='over'?'Awaiting independent score confirmation':'Eligible for final verification';
@@ -461,7 +462,7 @@ async function reconcileCombos(){
     }catch(e){console.warn('Combo reconciliation deferred:',row.market_ticker,e.message)}
   }
 }
- async function executeCombo(group,account,bankroll,overRemaining,scoreboardCache,fraction,newTicker){
+ async function executeCombo(group,account,bankroll,scoreboardCache,fraction,newTicker){
   if(group.length<2)return {filled:false,pending:false};
   // The verification window begins with a fresh observation of every leg.
   const verified=await Promise.all(group.map(async c=>{
@@ -493,7 +494,7 @@ async function reconcileCombos(){
   }).slice(0,6);
   if(eligible.length<2)return {filled:false,pending:false};
   // Prefer all available verified legs, then smaller valid combinations.
-  const collections=(await kalshi('/multivariate_event_collections?'+new URLSearchParams({status:'open',limit:'100'}))).multivariate_contracts||[];
+  const collections=await collectionsForEvents(eligible.map(c=>c.event.event_ticker),kalshi);
   const deadline=Date.now()+COMBO_ATTEMPT_MS;
   const plans=[],funding=[];
   // Request executable quotes for all available ticket sizes in the same
@@ -510,7 +511,7 @@ async function reconcileCombos(){
       const strategy=legs.some(c=>c.signal.strategy==='over')?'over':'lead';
        // The fill-triggered allocation declines from 10% to a 2% floor.
       const shard=marketShard({exchange_index:collection.exchange_index},combo),local=shardCash(account,shard);
-      const desired=Math.floor(Math.min(Number(account.balance),bankroll*fraction,strategy==='over'?overRemaining:Infinity));
+      const desired=Math.floor(Math.min(Number(account.balance),bankroll*fraction));
       if(local===null||desired<100)return;
       if(local<desired&&transferPlan(account,shard,desired)){funding.push({strategy,created,combo,desired});return}
       const budget=Math.floor(Math.min(desired,local));
@@ -549,7 +550,6 @@ async function reconcileCombos(){
         const latest=await accountBalance({fresh:true});
         if(Number(latest.balance)<terms.debitCents || (shardCash(latest,shard)??0)<terms.debitCents ||
           terms.debitCents>Math.floor((Number(latest.balance)+Number(latest.portfolio_value))*fraction) ||
-          strategy==='over'&&terms.debitCents>overRemaining ||
           !profitableCount(terms.count,terms.yesCost,fees,strategy,Number(latest.balance)+Number(latest.portfolio_value),legs[0].state.type,legs[0].state.remainingSeconds))break;
         const id=randomUUID(),reason=`${legs.length}-pick ${strategy} combo: ${legs.map(c=>c.state.title).join(' / ')}`;
         const inserted=await pool.query(`INSERT INTO trade_attempts(id,market_ticker,event_ticker,game_id,sport,strategy,reason,fraction,count,limit_price,available_cents,status,combo_legs,combo_rfq_id,combo_quote_id)
@@ -568,6 +568,37 @@ async function reconcileCombos(){
     }
   }finally{await Promise.all(plans.map(p=>kalshi('/communications/rfqs/'+encodeURIComponent(p.rfq),{auth:true,method:'DELETE'}).catch(e=>console.warn('RFQ cancellation deferred:',e.message))))}
   return {filled:false,pending:false};
+}
+async function diagnoseUnfilledCombo(candidates,filled){
+  const unfilled=candidates.filter(c=>hasAsk(c.market)&&!filled.has(signalKey(c)));
+  if(unfilled.length<2)return;
+  await pool.query(`CREATE TABLE IF NOT EXISTS combo_diagnostics (
+    id bigserial PRIMARY KEY,checked_at timestamptz NOT NULL DEFAULT now(),
+    leg_tickers jsonb NOT NULL,collection_ticker text,status text NOT NULL,detail text)`);
+  const recent=await pool.query(`SELECT 1 FROM combo_diagnostics WHERE checked_at>now()-interval '2 minutes' LIMIT 1`);
+  if(recent.rowCount)return;
+  const unique=new Map();
+  for(const c of unfilled){if(!unique.has(c.event.event_ticker))unique.set(c.event.event_ticker,c);if(unique.size===6)break}
+  const legs=[...unique.values()];
+  if(legs.length<2)return;
+  let collection=null,status='no_compatible_collection',detail='';
+  try{
+    const collections=await collectionsForEvents(legs.map(c=>c.event.event_ticker),kalshi);
+    const group=compatibleComboGroups(collections,legs,64)[0];
+    if(group){
+      collection=group.collection.collection_ticker;
+      const selected_markets=group.legs.map(c=>({event_ticker:c.event.event_ticker,market_ticker:c.market.ticker}));
+      try{
+        const created=await kalshi('/multivariate_event_collections/'+encodeURIComponent(collection),
+          {auth:true,method:'POST',body:{selected_markets,with_market_payload:true}});
+        status=created.market_ticker?'market_created':'invalid_response';
+        detail=created.market_ticker||JSON.stringify(created).slice(0,500);
+      }catch(e){status='creation_error';detail=String(e.message).slice(0,500)}
+    }else detail=`No all-YES collection among ${collections.length} event-filtered collections; ${legs.length} distinct events`;
+  }catch(e){status='collection_error';detail=String(e.message).slice(0,500)}
+  await pool.query(`INSERT INTO combo_diagnostics(leg_tickers,collection_ticker,status,detail) VALUES($1,$2,$3,$4)`,
+    [JSON.stringify(legs.map(c=>c.market.ticker)),collection,status,detail]);
+  console.info('Unfilled combo creation diagnostic:',status,collection,detail);
 }
 async function exitComebacks(games,events,positions){
   const byGame=new Map(games.map(g=>[g.milestone.id,g.state]));
@@ -715,7 +746,7 @@ async function scan(cachedMilestones){
     const games=ms.map(m=>({milestone:m,state:gameState(m,liveMap.get(m.id))}));
     const active=games.filter(g=>g.state.verifiedLive && g.state.scoreKnown);
     const events=await marketMap(active.filter(g=>eligibleForMarkets(g.state)).flatMap(g=>linkedEventTickers(g.milestone)));
-    let balance=0,bankroll=0,overRemaining=0,heldSingleCount=0,account=null;
+    let balance=0,bankroll=0,account=null;
     const existingFills=await pool.query(`SELECT market_ticker,event_ticker,game_id,strategy,fill_count,limit_price,created_at,updated_at,combo_legs FROM trade_attempts WHERE status='filled'`);
     let filled=new Set(existingFills.rows.map(r=>`${r.market_ticker}:${r.strategy}`));
     const pendingLegs=await pool.query(`SELECT combo_legs FROM trade_attempts WHERE status='combo_pending' AND combo_legs IS NOT NULL`);
@@ -728,10 +759,6 @@ async function scan(cachedMilestones){
       openPositions=positions;
       account=currentAccount;balance=Number(account.balance);
       bankroll=balance+Number(account.portfolio_value);
-      const open=new Set((positions.market_positions||[]).filter(p=>Number(p.position_fp??p.position??0)!==0).map(p=>p.ticker));
-      heldSingleCount=existingFills.rows.filter(r=>!r.combo_legs&&open.has(r.market_ticker)).length;
-      const exposure=existingFills.rows.reduce((sum,r)=>sum+(r.strategy==='over'&&open.has(r.market_ticker)?estimatedCostCents(Number(r.fill_count),Number(r.limit_price),2):0),0);
-      overRemaining=overBudget(balance,account.portfolio_value,exposure);
     }
     // Exits are assessed before any new risk is added.
     if(live()||exitOnly())await exitComebacks(games,events,openPositions);
@@ -759,7 +786,7 @@ async function scan(cachedMilestones){
       const clockSeconds=storedClockSeconds(preciseClockSeconds,state.clockRunning);
       const clockLabel=soccer?Number.isFinite(state.matchRemainingSeconds)?'Match time left':state.soccerMinute>=90?'Stoppage time':'Regulation left':baseball?'Inning progress':tennis?'Set progress':['NCAAB','NCAAW'].includes(state.sport)? `Half ${state.period||'?'} left`:/hockey/.test(state.type)?`Period ${state.period||'?'} left`:/football|basketball/.test(state.type)?`Quarter ${state.period||'?'} left`:'Game clock';
       const displayClockLabel=clockSeconds!=null&&state.clockRunning===false?`${clockLabel} · paused`:clockLabel;
-      snapshotRows.set(state.id,[state.id,state.title||'Sports game',state.sport,state.type,state.scoreKnown?state.home:null,state.scoreKnown?state.away:null,state.verifiedLive?'live':/^(final|finished|complete|completed|closed|ended)$/.test(state.status)?'final':'inactive',Number.isFinite(state.progress)?state.progress:null,String(state.period||''),timeLeft,clockSeconds,displayClockLabel,liveMap.get(milestone.id)?._observed_at||null,scanStarted,JSON.stringify(candidates.map(c=>({strategy:c.signal.strategy,reason:c.signal.reason,ticker:c.market.ticker,title:c.market.title||c.market.yes_sub_title||'',ask:c.market.yes_ask_dollars,ask_size:c.market.yes_ask_size_fp,execution:signalExecution(c,filled,account,balance,bankroll,overRemaining)}))),state.possessionSide,state.homeTeamId||null,state.awayTeamId||null ]);
+      snapshotRows.set(state.id,[state.id,state.title||'Sports game',state.sport,state.type,state.scoreKnown?state.home:null,state.scoreKnown?state.away:null,state.verifiedLive?'live':/^(final|finished|complete|completed|closed|ended)$/.test(state.status)?'final':'inactive',Number.isFinite(state.progress)?state.progress:null,String(state.period||''),timeLeft,clockSeconds,displayClockLabel,liveMap.get(milestone.id)?._observed_at||null,scanStarted,JSON.stringify(candidates.map(c=>({strategy:c.signal.strategy,reason:c.signal.reason,ticker:c.market.ticker,title:c.market.title||c.market.yes_sub_title||'',ask:c.market.yes_ask_dollars,ask_size:c.market.yes_ask_size_fp,execution:signalExecution(c,filled,account,balance,bankroll)}))),state.possessionSide,state.homeTeamId||null,state.awayTeamId||null ]);
     }
     for(let i=0;i<allCandidates.length;i+=100){const batch=allCandidates.slice(i,i+100);if(!batch.length)continue;
       const values=batch.map((_,n)=>`($${2*n+1},$${2*n+2})`).join(',');
@@ -779,18 +806,14 @@ async function scan(cachedMilestones){
     // Make the live score and clock visible before slower order preflights.
     await pool.query(`UPDATE scan_status SET last_scan=$1,scanned=$2,signals=$3 WHERE id=1`,[scanStarted,scanned,signals]);
     opportunities.sort((a,b)=>{
-      const executable=c=>hasAsk(c.market)&&!filled.has(signalKey(c))&&profitableCount(executableCount(c,balance,bankroll,overRemaining),Number(c.market.yes_ask_dollars),feeReserve(c.event,c.market),c.signal.strategy,bankroll,c.state.type,c.state.remainingSeconds)>0;
+      const executable=c=>hasAsk(c.market)&&!filled.has(signalKey(c))&&profitableCount(executableCount(c,balance,bankroll),Number(c.market.yes_ask_dollars),feeReserve(c.event,c.market),c.signal.strategy,bankroll,c.state.type,c.state.remainingSeconds)>0;
       if(executable(a)!==executable(b))return executable(a)?-1:1;
       if(a.signal.strategy!==b.signal.strategy)return a.signal.strategy==='over'?-1:1;
-      const profit=c=>netSettlementProfitCents(executableCount(c,balance,bankroll,overRemaining),Number(c.market.yes_ask_dollars),feeReserve(c.event,c.market));
+      const profit=c=>netSettlementProfitCents(executableCount(c,balance,bankroll),Number(c.market.yes_ask_dollars),feeReserve(c.event,c.market));
       return profit(b)-profit(a) || (a.signal.strategy==='lead'?Number(tieRefundPreference(b.market))-Number(tieRefundPreference(a.market)):0);
     });
-    const overSlots=new Set(opportunities.filter(c=>c.signal.strategy==='over'&&hasAsk(c.market)&&
-      !filled.has(signalKey(c))&&executableCount(c,balance,bankroll,overRemaining)>0).map(signalKey));
-    let overSlotsLeft=overSlots.size;
-    // The 30% total over exposure includes the possible combination. When a
-    // pair can form, hold back 10% and share the rest across the single legs.
-    const comboReserve=overSlotsLeft+heldSingleCount>=2?Math.min(overRemaining,Math.floor(bankroll*.10)):0;
+    // Each order has its own fraction of the full bankroll. Cash availability
+    // and the current quote remain separate execution gates.
     // Verify independent over scoreboards in parallel. A dozen sequential 12s
     // dwells used to freeze the dashboard for minutes and miss later games.
     const overPreflights=new Map(),overReady=new Map(),overs=live()?opportunities.filter(c=>c.signal.strategy==='over'&&hasAsk(c.market)):[];
@@ -815,10 +838,6 @@ async function scan(cachedMilestones){
       }
     }));
     for(const c of opportunities){let state=c.state;
-      const overSlot=overSlots.has(signalKey(c));
-      const singleBudget=c.signal.strategy==='over'?
-        overSingleBudget(overRemaining,comboReserve,Math.max(1,overSlotsLeft)):Infinity;
-      if(overSlot)overSlotsLeft--;
       try{
         if(!live())continue;
         if(filled.has(signalKey(c)))continue;
@@ -876,8 +895,8 @@ async function scan(cachedMilestones){
         c.signal=stillQualifies;
         c.market=quote;
         c.state=state=freshState;
-        const budget=c.signal.strategy==='over'?singleBudget:Infinity;
-        const wanted=executableCount(c,balance,bankroll,overRemaining,budget);
+        const budget=Infinity;
+        const wanted=executableCount(c,balance,bankroll);
         if(!wanted)continue;
         const shard=marketShard(c.event,c.market),localCash=shardCash(latest,shard);
         if(localCash===null){executionErrors.push(`${c.market.ticker}: Kalshi shard balance unavailable`);continue}
@@ -892,8 +911,7 @@ async function scan(cachedMilestones){
           continue;
         }
         if(await submit(c.signal,state,c.event,c.market,Math.min(balance,localCash),bankroll,budget,bankroll)||await recoverPending(c.signal,state,c.event,c.market,Math.min(balance,localCash),bankroll,budget,bankroll)){
-          submitted++;filled.add(signalKey(c));const before=balance;const account=await accountBalance({fresh:true});balance=Number(account.balance);bankroll=balance+Number(account.portfolio_value);
-          if(c.signal.strategy==='over')overRemaining=Math.max(0,overRemaining-Math.max(0,before-balance));
+          submitted++;filled.add(signalKey(c));const account=await accountBalance({fresh:true});balance=Number(account.balance);bankroll=balance+Number(account.portfolio_value);
         }
       }catch(e){const message=`${c.market.ticker}: ${String(e.message).slice(0,170)}`;executionErrors.push(message);console.error('Candidate execution failed:',message)}
     }
@@ -928,12 +946,13 @@ async function scan(cachedMilestones){
         for(const c of comboCandidates){if(seenMarkets.has(c.market.ticker))continue;
           group.push(c);seenMarkets.add(c.market.ticker);if(group.length===6)break}
         if(group.length>=2)try{
-          const result=await executeCombo(group,currentAccount,Number(currentAccount.balance)+Number(currentAccount.portfolio_value),overRemaining,scoreboardCache,comboAllocation(comboCount),newlyFilled.market_ticker);
+          const result=await executeCombo(group,currentAccount,Number(currentAccount.balance)+Number(currentAccount.portfolio_value),scoreboardCache,comboAllocation(comboCount),newlyFilled.market_ticker);
           if(result.pending)await pool.query('UPDATE combo_fill_triggers SET completed_at=now() WHERE fill_id=$1',[newlyFilled.id]);
           if(result.filled)submitted++;
         }catch(e){executionErrors.push('Combo: '+String(e.message).slice(0,180));console.error('Combo execution deferred:',e)}
       }
     }
+    if(live())try{await diagnoseUnfilledCombo(opportunities,filled)}catch(e){console.warn('Unfilled combo diagnostic deferred:',e.message)}
     await pool.query('UPDATE scan_status SET last_scan=$5,last_error=$4,scanned=$1,signals=$2,orders_submitted=orders_submitted+$3 WHERE id=1',[scanned,signals,submitted,executionErrors.length?executionErrors.slice(0,2).join('; ').slice(0,250):null,scanStarted]);
     try{await syncSettlementAlerts()}catch(e){console.error('Settlement alert scan failed:',e)}
     return {scanned,signals,submitted,active:active.length,next:games.filter(g=>g.state.verifiedLive || (new Date(g.milestone.start_date).getTime()>Date.now()-3600000 && new Date(g.milestone.start_date).getTime()<Date.now()+3600000)).map(g=>g.milestone)};

@@ -23,6 +23,22 @@ export function filledComboWindow(fills,heldTickers,lastComboAt,max=6){
     markets.add(r.market_ticker);return true;
   }).slice(0,max);
 }
+export async function collectionsForEvents(eventTickers,get){
+  const tickers=[...new Set(eventTickers)].filter(Boolean).slice(0,6);
+  const responses=await Promise.all(tickers.map(async ticker=>{
+    const rows=[];let cursor='';
+    for(let page=0;page<5;page++){
+      const query=new URLSearchParams({status:'open',associated_event_ticker:ticker,limit:'200'});
+      if(cursor)query.set('cursor',cursor);
+      const response=await get('/multivariate_event_collections?'+query);
+      rows.push(...response.multivariate_contracts||[]);
+      cursor=response.cursor||'';
+      if(!cursor)break;
+    }
+    return rows;
+  }));
+  return [...new Map(responses.flat().map(c=>[c.collection_ticker,c])).values()];
+}
 export function comboCollection(collections,legs){
   return (collections||[]).find(c=>(c.is_all_yes===true || c.is_all_yes===false && /every associated market resolves to YES/i.test(String(c.functional_description||''))) &&
     (c.is_single_market_per_event===false || c.is_single_market_per_event===true && new Set(legs.map(l=>l.event.event_ticker)).size===legs.length) &&
