@@ -4,6 +4,14 @@
 import { cricketOneInningsFormat } from './strategy.mjs';
 const supportedType=type=>/basketball|baseball|football|hockey|soccer|tennis|golf|handball|rugby|lacrosse|volleyball|darts/.test(String(type||'').toLowerCase());
 
+export async function mapBatches(items,limit,task){
+  const results=new Array(items.length);let next=0;
+  await Promise.all(Array.from({length:Math.min(items.length,Math.max(1,Math.floor(limit)))},async()=>{
+    while(next<items.length){const i=next++;results[i]=await task(items[i],i)}
+  }));
+  return results;
+}
+
 export function eligibleForMarkets(game){return game?.verifiedLive && game.scoreKnown &&
   (supportedType(game.type)||game.type==='cricket_match'&&(cricketOneInningsFormat(game.competition)||game.cricket?.innings===4)||
     game.type==='esports_match'&&['eSoccer','eBasketball'].includes(game.sport)&&game.esportsPeriodsValid)}

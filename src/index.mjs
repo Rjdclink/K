@@ -13,7 +13,7 @@ import { manifest, worker } from './pwa.mjs';
 import { vapidIdentity, validateSubscription, deliverPush } from './push.mjs';
 import { favorableSettlement } from './settlements.mjs';
 import { authorized, checkCredentials, sessionCookie, loginPage } from './dashboard_auth.mjs';
-import { discoverCurrentMilestones, eligibleForMarkets, linkedEventTickers, gameTimeLabel, storedClockSeconds } from './discovery.mjs';
+import { discoverCurrentMilestones, eligibleForMarkets, linkedEventTickers, gameTimeLabel, storedClockSeconds, mapBatches } from './discovery.mjs';
 import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOverDecision, verifyIndependentTableTennisLeadDecision, verifyIndependentTableTennisMatch } from './score_verification.mjs';
 import { COMBO_ATTEMPT_MS, COMBO_WINDOW_MS, VERIFY_DWELL_MS, comboAllocation, comboLegAllocation, comboAllowedCents, comboRfqTargetCents, remainingVerifiedComboCents, availableComboFills, compatibleComboGroups, comboPairDiagnostics, comboLegs, filledComboWindow, eligibleFillTrigger, heldComboLeg, quoteForYes, collectionsForEvents, selectedComboMarkets } from './combos.mjs';
@@ -296,15 +296,18 @@ async function milestones(){
   return found;
 }
 async function liveBatch(ms){
-  const map=new Map();for(let i=0;i<ms.length;i+=40){const groups=[ms.slice(i,i+20),ms.slice(i+20,i+40)].filter(g=>g.length);
-    const results=await Promise.all(groups.map(async group=>{const q=new URLSearchParams();group.forEach(m=>q.append('milestone_ids',m.id));q.set('include_player_stats','true');
+  const started=Date.now();
+  const map=new Map(),groups=[];
+  for(let i=0;i<ms.length;i+=20)groups.push(ms.slice(i,i+20));
+  const results=await mapBatches(groups,12,async group=>{const q=new URLSearchParams();group.forEach(m=>q.append('milestone_ids',m.id));q.set('include_player_stats','true');
     let list=[];try{list=(await kalshi('/live_data/batch?'+q)).live_datas||[]}catch(e){
       if(!/^Kalshi (400|404|405) /.test(String(e.message)))throw e;
       console.warn('Live batch unsupported; using bounded individual requests:',e.message);
       for(const m of group){try{let result;try{result=await kalshi('/live_data/milestone/'+encodeURIComponent(m.id)+'?include_player_stats=true')}catch(error){if(!/^Kalshi (400|404) /.test(String(error.message)))throw error;result=await kalshi('/live_data/milestone/'+encodeURIComponent(m.id))}if(result.live_data)list.push(result.live_data)}catch(error){if(/Kalshi 429 /.test(String(error.message)))throw error}}
     }
-    return {list,observedAt:new Date().toISOString()};}));
-    results.forEach(({list,observedAt})=>list.forEach(d=>map.set(d.milestone_id,{...d,_observed_at:observedAt})));}
+    return {list,observedAt:new Date().toISOString()};});
+  results.forEach(({list,observedAt})=>list.forEach(d=>map.set(d.milestone_id,{...d,_observed_at:observedAt})));
+  if(ms.length>100)console.info('Live batch:',JSON.stringify({milestones:ms.length,groups:groups.length,returned:map.size,elapsedMs:Date.now()-started}));
   return map;
 }
 async function liveMilestone(id){

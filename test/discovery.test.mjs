@@ -1,7 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {discoverCurrentMilestones,eligibleForMarkets,linkedEventTickers,gameTimeLabel,storedClockSeconds} from '../src/discovery.mjs';
+import {discoverCurrentMilestones,eligibleForMarkets,linkedEventTickers,gameTimeLabel,storedClockSeconds,mapBatches} from '../src/discovery.mjs';
 import {gameState,overSignal,sportName} from '../src/strategy.mjs';
+
+test('bounded parallel live batches cover every milestone without losing result order',async()=>{
+  const ids=Array.from({length:1570},(_,i)=>i);
+  const groups=Array.from({length:Math.ceil(ids.length/20)},(_,i)=>ids.slice(i*20,(i+1)*20));
+  let active=0,peak=0;
+  const results=await mapBatches(groups,12,async(group,i)=>{
+    active++;peak=Math.max(peak,active);
+    await new Promise(resolve=>setTimeout(resolve,1+i%3));
+    active--;
+    return group;
+  });
+  assert.deepEqual(results.flat(),ids);
+  assert.equal(peak,12);
+});
 
 test('sports discovery traverses pages and includes esports and older live tournaments',async()=>{
   const now=Date.parse('2026-10-30T13:00:00Z'),at=days=>new Date(now+days*86400000).toISOString();
