@@ -1,5 +1,5 @@
-// Kalshi combinations are separate YES markets. A quote is executable only while
-// every component still qualifies; an RFQ alone is never a fill.
+// Kalshi combinations are separate YES markets. Two confirmed, still-held
+// single fills qualify as legs; an RFQ alone is never a fill.
 export const COMBO_WINDOW_MS=12000;
 // A fresh quote lives only briefly, but creating markets and waiting for an
 // RFQ maker can take longer than the quote freshness window.
@@ -68,6 +68,13 @@ export function compatibleComboGroups(collections,candidates,maxGroups=6){
 }
 export function selectedComboMarkets(legs){
   return legs.map(c=>({event_ticker:c.event.event_ticker,market_ticker:c.market.ticker,side:'yes'}));
+}
+export function heldComboLeg(row,market,snapshot={}){
+  if(!row||Number(row.fill_count)<=0||!market||market.ticker!==row.market_ticker||market.event_ticker!==row.event_ticker||
+    !['active','open'].includes(market.status)||market.result&&!['','not_determined'].includes(String(market.result)))return null;
+  return {milestone:{id:row.game_id},event:{event_ticker:row.event_ticker},market,
+    signal:{strategy:row.strategy},state:{title:snapshot.title||row.sport||row.event_ticker,sport:row.sport||snapshot.sport||'',
+      type:snapshot.sport_family||'',remainingSeconds:snapshot.clock_seconds==null?NaN:Number(snapshot.clock_seconds)}};
 }
 export function quoteForYes(quote,ticker,budgetCents,feeMultiplier=2,bankrollCents=budgetCents){
   if(!quote || quote.market_ticker!==ticker || quote.status!=='open')return null;
