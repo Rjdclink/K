@@ -19,3 +19,24 @@ export function bestYesAsk(orderbook){
   const size=levels.filter(x=>Math.round(x.bid*10000)===Math.round(best.bid*10000)).reduce((sum,x)=>sum+x.size,0);
   return {price:Number((1-best.bid).toFixed(4)),size:Math.floor(size*100+1e-7)/100};
 }
+// Cover every candidate, including games with many crossed markets. A partial
+// batch response or unsupported batch endpoint falls back to individual books.
+export async function bestAsksForTickers(tickers,fetchBatch,fetchOne,onError=()=>{}){
+  const unique=[...new Set(tickers.filter(Boolean))],groups=[];
+  for(let i=0;i<unique.length;i+=100)groups.push(unique.slice(i,i+100));
+  const results=await Promise.all(groups.map(async group=>{
+    let books=[];
+    try{
+      books=await fetchBatch(group);
+      if(!Array.isArray(books))throw Error('Batch orderbooks response missing');
+    }catch(error){onError('batch',error);}
+    const found=new Map(books.filter(book=>group.includes(book?.ticker)).map(book=>[book.ticker,book]));
+    const absent=group.filter(ticker=>!found.has(ticker));
+    await Promise.all(absent.map(async ticker=>{
+      try{found.set(ticker,await fetchOne(ticker))}
+      catch(error){onError(ticker,error);found.set(ticker,null)}
+    }));
+    return group.map(ticker=>[ticker,bestYesAsk(found.get(ticker)?.orderbook_fp)]);
+  }));
+  return new Map(results.flat());
+}
