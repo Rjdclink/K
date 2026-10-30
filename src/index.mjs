@@ -4,7 +4,7 @@ import pg from 'pg';
 import { page } from './ui.mjs';
 import { historyPage } from './history_ui.mjs';
 import { completedTrade } from './history.mjs';
-import { gameState, overSignal, confirmedOver, kalshiOnlyOver, kalshiOnlyLead, leadSignal, additionalLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, netSettlementProfitCents, comeback } from './strategy.mjs';
+import { gameState, overSignal, confirmedOver, kalshiOnlyOver, kalshiOnlyLead, leadSignal, additionalLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, netSettlementProfitCents, comeback, KALSHI_ONLY_FRACTION } from './strategy.mjs';
 import { reviewMiss } from './ai.mjs';
 import { kalshiSignature } from './auth.mjs';
 import { marketShard, shardCash, transferPlan, comboShardBudget } from './funding.mjs';
@@ -125,7 +125,7 @@ async function auditKalshiOnlyOver(first,second,market,milestone){
   if(!kalshiOnlyOver(first,second,market))return false;
   await auditTable();const id=randomUUID();
   await pool.query('INSERT INTO verification_records(id,market_ticker,passed,evidence) VALUES($1,$2,true,$3)',
-    [id,market.ticker,JSON.stringify({mode:'kalshi_only_crossed_over',first,second,milestoneId:milestone.id,dwellMs:second.observedAt-first.observedAt,allocation:.05})]);
+    [id,market.ticker,JSON.stringify({mode:'kalshi_only_crossed_over',first,second,milestoneId:milestone.id,dwellMs:second.observedAt-first.observedAt,allocation:KALSHI_ONLY_FRACTION})]);
   second.verificationId=id;
   return true;
 }
@@ -133,7 +133,7 @@ async function auditKalshiOnlyLead(first,second,market,milestone){
   if(!kalshiOnlyLead(first,second,market))return false;
   await auditTable();const id=randomUUID();
   await pool.query('INSERT INTO verification_records(id,market_ticker,passed,evidence) VALUES($1,$2,true,$3)',
-    [id,market.ticker,JSON.stringify({mode:'kalshi_only_commanding_lead',first,second,milestoneId:milestone.id,dwellMs:second.observedAt-first.observedAt,allocation:.05})]);
+    [id,market.ticker,JSON.stringify({mode:'kalshi_only_commanding_lead',first,second,milestoneId:milestone.id,dwellMs:second.observedAt-first.observedAt,allocation:KALSHI_ONLY_FRACTION})]);
   second.verificationId=id;
   return true;
 }
@@ -429,7 +429,7 @@ async function submit(signal,game,event,market,balance,bankroll,budgetCents=Infi
   const price=Number(market.yes_ask_dollars);const count=profitableCount(contractCount(balance,market,signal.fraction,bankroll,budgetCents,feeReserve(event,market)),price,feeReserve(event,market),signal.strategy,availableCents,game.type,game.remainingSeconds);if(!count)return false;
   if(['over','weather'].includes(signal.strategy)&&!game.verificationId)return false;
   if(/Kalshi-only/i.test(signal.reason||'')){
-    // A provisional position consumes the entire 5% allowance for this game.
+    // A provisional position consumes the entire 10% allowance for this game.
     // Filled historical trades count only while their market is still held.
     const positions=await allOpenPositions();
     const held=(positions.market_positions||[]).filter(p=>Number(p.position_fp??p.position??0)>0).map(p=>p.ticker);
@@ -1063,7 +1063,7 @@ async function scan(cachedMilestones,discoveryCount){
             kalshiOnly=true;
           }
         }
-        c.signal=kalshiOnly?{...stillQualifies,fraction:.05,reason:stillQualifies.reason+'; Kalshi-only newer score check, 6 seconds apart'}:stillQualifies;
+        c.signal=kalshiOnly?{...stillQualifies,fraction:KALSHI_ONLY_FRACTION,reason:stillQualifies.reason+'; Kalshi-only two score reads, 6 seconds apart'}:stillQualifies;
         c.market=quote;
         c.state=state=freshState;
         const budget=Infinity;
