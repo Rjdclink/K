@@ -94,6 +94,19 @@ test('Kalshi-only crossed player prop requires the same identified statistic on 
   assert.equal(kalshiOnlyOver(first,second,{...market,custom_strike:{basketball_player:'someone_else'}}),false);
   assert.equal(kalshiOnlyOver(first,second,{...market,event_ticker:'KXNBAGAME-26OCT30NYKCHI'}),false);
 });
+test('esports game overs use verified period totals and a newer six-second Kalshi update without a clock',()=>{
+  const m={id:'esoc',type:'esports_match',title:'Fede vs Eder',details:{league:'eSoccer'}};
+  const market={status:'active',event_ticker:'KXESOCCTOTAL-26OCT30FEDEDER',title:'Over 5.5 total goals',rules_primary:'The teams score over 5.5 total goals in the full match.',floor_strike:5.5,strike_type:'greater',yes_ask_dollars:'0.95'};
+  const now=Date.now();
+  const state=(at,updated,home=4)=>gameState(m,{milestone_id:m.id,_observed_at:new Date(at).toISOString(),details:{status:'live',home_score:home,away_score:3,period_unit:'half',home_periods:{period_1:2,period_2:2},away_periods:{period_1:1,period_2:2},last_updated_ts:updated/1000}});
+  const first=state(now-8000,now-9000),second=state(now,now-1000);
+  assert.ok(overSignal(first,market));
+  assert.equal(kalshiOnlyOver(first,second,market),true);
+  assert.equal(kalshiOnlyOver(first,state(now,now-1000,5),market),false);
+  assert.equal(kalshiOnlyOver(first,second,{...market,event_ticker:'KXESOCC1HTOTAL-26OCT30FEDEDER'}),false);
+  assert.equal(overSignal(first,{...market,title:'Over 8.5 total goals',floor_strike:8.5}),null);
+  assert.equal(overSignal(gameState({...m,details:{league:'unrecognized'}},{milestone_id:m.id,details:{status:'live',home_score:4,away_score:3,period_unit:'half',home_periods:{period_1:2,period_2:2},away_periods:{period_1:1,period_2:2}}}),market),null);
+});
 test('Kalshi whole-game over wording is recognized after the line is crossed',()=>{
   const m={id:'kbo-game',title:'Kia Tigers vs Samsung Lions',type:'baseball_game',details:{league:'Korea KBO'}};
   const g=gameState(m,{details:{status:'inprogress',away_points:3,home_points:8,inning:9}});

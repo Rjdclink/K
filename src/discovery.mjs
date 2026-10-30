@@ -1,10 +1,10 @@
 // Only fetch event families used by the two entry strategies and comeback exits.
 // The exchange remains authoritative: a guessed ticker is ignored unless an
 // open event and its market are actually returned by Kalshi.
-const supportedType=type=>/basketball|baseball|football|hockey|soccer|tennis|golf|handball|rugby|lacrosse|volleyball|darts/.test(String(type||'').toLowerCase()) &&
-  !/esports/.test(String(type||'').toLowerCase()); // Esports require a competition-specific live verifier before entry.
+const supportedType=type=>/basketball|baseball|football|hockey|soccer|tennis|golf|handball|rugby|lacrosse|volleyball|darts/.test(String(type||'').toLowerCase());
 
-export function eligibleForMarkets(game){return game?.verifiedLive && game.scoreKnown && supportedType(game.type)}
+export function eligibleForMarkets(game){return game?.verifiedLive && game.scoreKnown &&
+  (supportedType(game.type)||game.type==='esports_match'&&['eSoccer','eBasketball'].includes(game.sport)&&game.esportsPeriodsValid)}
 
 export function linkedEventTickers(milestone){
   if(milestone.type==='golf_tournament')return [milestone.details?.main_game_event_ticker].filter(Boolean);
@@ -42,7 +42,7 @@ export function gameTimeLabel(game){
     return Number.isInteger(game.period)&&holes.length?`Round ${game.period} · ${Math.min(...holes)}–${Math.max(...holes)} holes completed`:
       Number.isInteger(game.period)?`Round ${game.period} · hole progress unavailable`:'Round progress unavailable';
   }
-  if(/esports/.test(family))return `${game.phase?game.phase+' · ':''}esports trading not enabled`;
+  if(/esports/.test(family))return `${game.phase?game.phase+' · ':''}${game.esportsPeriodsValid?'score periods verified':'period scores unavailable'}`;
   if(/darts/.test(family))return `${game.phase?game.phase+' · ':''}no countdown clock`;
   if(/table_tennis/.test(family))return Number.isFinite(game.setNumber)?`Set ${game.setNumber} · no countdown clock`:'Set number unavailable';
   if(/baseball/.test(family))return Number.isFinite(game.period)?`Inning ${game.period}${Number.isFinite(game.outs)?` · ${game.outs} out(s)`:''}`:'Inning unavailable';

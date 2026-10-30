@@ -74,6 +74,15 @@ export function gameState(m, live) {
   const soccerMinute=minuteMatch?Number(minuteMatch[1])+Number(minuteMatch[3]||0)+Number(minuteMatch[2]||0)/60:NaN;
   const family=String(m.type||'').toLowerCase();
   const phase=/esports/.test(family)?(()=>{const periods=[...Object.keys(d.home_periods||{}),...Object.keys(d.away_periods||{})].map(k=>Number(k.match(/^period_(\d+)$/)?.[1])).filter(Number.isFinite);const last=Math.max(0,...periods);return last?`${d.period_unit==='half'?'Half':d.period_unit==='quarter'?'Quarter':'Period'} ${last}`:''})():darts?String(d.match_status||''):'';
+  const esportsPeriodsValid=/esports/.test(family)&&(()=>{
+    const homePeriods=d.home_periods||{},awayPeriods=d.away_periods||{};
+    const homeKeys=Object.keys(homePeriods).filter(k=>/^period_[1-9]\d*$/.test(k)).sort();
+    const awayKeys=Object.keys(awayPeriods).filter(k=>/^period_[1-9]\d*$/.test(k)).sort();
+    if(!homeKeys.length||homeKeys.join('|')!==awayKeys.join('|'))return false;
+    const homeValues=homeKeys.map(k=>N(homePeriods[k])),awayValues=awayKeys.map(k=>N(awayPeriods[k]));
+    return [...homeValues,...awayValues].every(v=>Number.isInteger(v)&&v>=0)&&
+      homeValues.reduce((a,b)=>a+b,0)===home&&awayValues.reduce((a,b)=>a+b,0)===away;
+  })();
   const possessionValue=/hockey/.test(family)?d.puck_possession_team_id??d.puck_possession:
     /football/.test(family)?d.situation?.possession_team_id??d.possession_team_id??d.possession:
     /soccer/.test(family)?d.ball_possession_team_id??d.possession_team_id??d.possession:
@@ -109,7 +118,7 @@ export function gameState(m, live) {
   const tennisData=tennis?{bestOf:N(m.details?.best_of),firstId:m.details?.first_competitor_id,secondId:m.details?.second_competitor_id,firstGames:N(one?.score),secondGames:N(two?.score),firstSets:N(d.competitor1_overall_score),secondSets:N(d.competitor2_overall_score),firstPoints:N(d.competitor1_current_round_score),secondPoints:N(d.competitor2_current_round_score),firstRound:one?.outcome,secondRound:two?.outcome,server:String(d.server||''),advantage:String(d.advantage||''),mainEvent:m.details?.main_game_event_ticker}:null;
   const tableTennisData=tableTennis?{bestOf:N(m.details?.best_of??d.best_of_sets),firstId:m.details?.first_competitor_id,secondId:m.details?.second_competitor_id,firstIsHome,firstSets:N(d.competitor1_overall_score),secondSets:N(d.competitor2_overall_score),setNumber:N(currentSet?.number),firstPoints:N(currentSet?.competitor1_score),secondPoints:N(currentSet?.competitor2_score)}:null;
   const tennisTotal=tennis?tennisGameTotal(d):NaN;
-  return {id:m.id, feedId:live?.milestone_id, observedAt:Date.parse(live?._observed_at||''), updatedAt:Number.isFinite(updated)?updated*1000:NaN, title:m.title, sport, competition:String(m.details?.league||''), tour:String(m.details?.tour||''), type:family, status, home, away, homeUnits, awayUnits, unit, period, periodScores, playerStats:d.player_stats||null, tennisTotal, tableTennis:tableTennisData, darts:darts?{format:String(d.game_format||m.details?.format||''),bestOf:N(d.best_of_legs),firstIsHome,firstId:m.details?.first_competitor_id,secondId:m.details?.second_competitor_id,firstLegs:N(d.competitor1_overall_score),secondLegs:N(d.competitor2_overall_score),firstRemaining:N(d.competitor1_remaining_points),secondRemaining:N(d.competitor2_remaining_points),nextThrow:String(d.next_throw_competitor_id||''),firstCheckout:d.competitor1_checkout_possible===true,secondCheckout:d.competitor2_checkout_possible===true,firstDouble:d.competitor1_on_double===true,secondDouble:d.competitor2_on_double===true}:null, volleyball:volleyball?{bestOf:N(d.best_of),homeSets:home,awaySets:away,current:periodScores.find(p=>p.number===period)}:null, setNumber:N(currentSet?.number), phase, periodConsistent, scoreConsistent, clock, remainingSeconds, clockRunning, soccerMinute, soccerHalf:half, soccerExtraTime, matchRemainingSeconds, possessionSide, tennis:tennisData, inningHalf:N(d.inning_half), outs:N(d.outs), progress, verifiedLive, scoreKnown:Number.isFinite(home)&&Number.isFinite(away), homeName:String(d.home_team?.name||d.home_team_name||d.home?.name||(versus.length===2?versus[0]:names.length===2?names[1]:'')), awayName:String(d.away_team?.name||d.away_team_name||d.away?.name||(versus.length===2?versus[1]:names.length===2?names[0]:'')),homeTeamId:m.details?.home_team_id,awayTeamId:m.details?.away_team_id,eventTickers:m.related_event_tickers||m.events||[]};
+  return {id:m.id, feedId:live?.milestone_id, observedAt:Date.parse(live?._observed_at||''), updatedAt:Number.isFinite(updated)?updated*1000:NaN, title:m.title, sport, competition:String(m.details?.league||''), tour:String(m.details?.tour||''), type:family, status, home, away, homeUnits, awayUnits, unit, period, periodScores, playerStats:d.player_stats||null, tennisTotal, tableTennis:tableTennisData, darts:darts?{format:String(d.game_format||m.details?.format||''),bestOf:N(d.best_of_legs),firstIsHome,firstId:m.details?.first_competitor_id,secondId:m.details?.second_competitor_id,firstLegs:N(d.competitor1_overall_score),secondLegs:N(d.competitor2_overall_score),firstRemaining:N(d.competitor1_remaining_points),secondRemaining:N(d.competitor2_remaining_points),nextThrow:String(d.next_throw_competitor_id||''),firstCheckout:d.competitor1_checkout_possible===true,secondCheckout:d.competitor2_checkout_possible===true,firstDouble:d.competitor1_on_double===true,secondDouble:d.competitor2_on_double===true}:null, volleyball:volleyball?{bestOf:N(d.best_of),homeSets:home,awaySets:away,current:periodScores.find(p=>p.number===period)}:null, setNumber:N(currentSet?.number), phase, esportsPeriodsValid, periodConsistent, scoreConsistent, clock, remainingSeconds, clockRunning, soccerMinute, soccerHalf:half, soccerExtraTime, matchRemainingSeconds, possessionSide, tennis:tennisData, inningHalf:N(d.inning_half), outs:N(d.outs), progress, verifiedLive, scoreKnown:Number.isFinite(home)&&Number.isFinite(away), homeName:String(d.home_team?.name||d.home_team_name||d.home?.name||(versus.length===2?versus[0]:names.length===2?names[1]:'')), awayName:String(d.away_team?.name||d.away_team_name||d.away?.name||(versus.length===2?versus[1]:names.length===2?names[0]:'')),homeTeamId:m.details?.home_team_id,awayTeamId:m.details?.away_team_id,eventTickers:m.related_event_tickers||m.events||[]};
 }
 export function tennisGameTotal(details){
   const first=details?.competitor1_round_scores,second=details?.competitor2_round_scores;
@@ -146,8 +155,11 @@ export function overSignal(game, market) {
   if (!game.verifiedLive || !game.scoreKnown || !game.scoreConsistent || Math.min(game.home,game.away)<0 || game.home+game.away<=0 || market.status!=='active' && market.status!=='open') return null;
   const player=playerOverSpec(game,market);
   // Scores from these feeds are not comparable to a whole-game contract line.
-  if ((!/basketball|baseball|football|hockey|soccer|^tennis_/.test(game.type)||/table_tennis/.test(game.type))&&!player || /esports/.test(game.type)) return null;
+  const esportsScore=game.type==='esports_match'&&
+    ((game.sport==='eSoccer'&&/^Half [12]$/.test(game.phase))||(game.sport==='eBasketball'&&/^Quarter [1-4]$/.test(game.phase)))&&game.esportsPeriodsValid;
+  if ((!/basketball|baseball|football|hockey|soccer|^tennis_/.test(game.type)||/table_tennis/.test(game.type))&&!player&&!esportsScore || /esports/.test(game.type)&&!esportsScore) return null;
   const series=String(market.event_ticker||'').split('-')[0];
+  if(esportsScore&&(!/TOTAL$/.test(series)||/[1-9](?:Q|P|H|INNING)(?:TEAM)?TOTAL$/.test(series)||Object.keys(market.custom_strike||{}).some(k=>/_player$/.test(k))))return null;
   const tennisTotal=/^KX(?:ATP|WTA)GTOTAL$/.test(series)&&/^tennis_/.test(game.type)&&/^(?:ATP|WTA)$/i.test(game.tour);
   const teamTotal=/TEAMTOTAL$/.test(series),gameTotal=/TOTAL$/.test(series)&&!teamTotal;
   if(Object.keys(market.custom_strike||{}).some(k=>/_player$/.test(k))&&!player)return null;
@@ -229,7 +241,8 @@ export function kalshiOnlyOver(first,second,market){
   const series=String(market?.event_ticker||'').split('-')[0];
   const player=playerOverSpec(first,market),nextPlayer=playerOverSpec(second,market);
   const fullGameScore=/(?:TEAMTOTAL|TOTAL)$/.test(series)&&!/[1-9](?:Q|P|H|INNING)(?:TEAM)?TOTAL$/.test(series)&&
-    !/esports|tennis/.test(String(first?.type||''))&&/basketball|baseball|football|hockey|soccer/.test(String(first?.type||''))&&
+    ((first?.type==='esports_match'&&['eSoccer','eBasketball'].includes(first.sport)&&first.esportsPeriodsValid&&second?.esportsPeriodsValid)||
+      !/esports|tennis/.test(String(first?.type||''))&&/basketball|baseball|football|hockey|soccer/.test(String(first?.type||'')))&&
     !Object.keys(market?.custom_strike||{}).some(k=>/_player$/.test(k));
   if(!fullGameScore&&(!player||!nextPlayer||player.id!==nextPlayer.id||player.value!==nextPlayer.value))return false;
   if(!Number.isFinite(first?.updatedAt)||!Number.isFinite(second?.updatedAt)||

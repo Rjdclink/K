@@ -221,7 +221,7 @@ async function json(url,fetcher){
 }
 async function verifyExistingOver(game,milestone,{fetcher=fetch,cache,market,source='ESPN'}={}){
   const start=Date.parse(milestone.start_date||'');
-  if(!Number.isFinite(start)||!game.scoreKnown)return false;
+  if(!Number.isFinite(start)||!game.scoreKnown)return null;
   const {espn,fox}=feeds(game);
   if(!espn&&!fox)return null;
   const dates=dateCandidates(start);
