@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {gameState,overSignal,confirmedOver,kalshiOnlyOver,kalshiOnlyLead,leadSignal,tennisSignal,tableTennisSignal,orderSize,estimatedCostCents,overBudget,minimumProfitCents,netSettlementProfitCents,profitableCount,comeback} from '../src/strategy.mjs';
+import {gameState,overSignal,confirmedOver,kalshiOnlyOver,kalshiOnlyLead,leadSignal,tennisSignal,tableTennisSignal,orderSize,estimatedCostCents,overBudget,minimumProfitCents,netSettlementProfitCents,profitableCount,comeback,KALSHI_ONLY_FRACTION} from '../src/strategy.mjs';
 
 test('each trade has its own percentage of the full bankroll',()=>{
   const bankroll=14600,alreadyHeld=4372;
@@ -98,7 +98,10 @@ test('Kalshi-only game total checks two reads six seconds apart, including feeds
   assert.equal(kalshiOnlyOver(first,second,{...market,custom_strike:{baseball_player:'player'}}),false);
   assert.equal(kalshiOnlyOver(first,second,{...market,event_ticker:'KXKBOGAME-26OCT30KIASAM'}),false);
   assert.equal(kalshiOnlyOver(first,second,{...market,event_ticker:'KXKBO1INNINGTOTAL-26OCT30KIASAM'}),false);
-  assert.ok(orderSize(10000,'.94','100',.05,1,15000,Infinity,2)<=8,'fallback is capped at five percent of the full bankroll');
+  const bankroll=15000,count=orderSize(10000,'.94','100',KALSHI_ONLY_FRACTION,1,bankroll,Infinity,2);
+  assert.equal(KALSHI_ONLY_FRACTION,.10);
+  assert.ok(count>orderSize(10000,'.94','100',.05,1,bankroll,Infinity,2));
+  assert.ok(estimatedCostCents(count,.94,2)<=bankroll*.10,'fallback including fees is capped at ten percent of the full bankroll');
 });
 test('Kalshi-only late baseball lead uses inning state without a clock',()=>{
   const m={id:'kbo-lead',type:'baseball_game',title:'Kia Tigers vs Samsung Lions',details:{league:'Korea KBO',home_team_id:'kia',away_team_id:'sam'}};
