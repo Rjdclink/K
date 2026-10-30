@@ -4,7 +4,7 @@ import {weatherSeries,weatherContract,weatherDate,weatherStationId,stationTimezo
 // queried, including cities not known when the function was deployed.
 export async function scanWeatherMarkets({kalshi,nws,twc,onVerified,now=()=>new Date(),pause=ms=>new Promise(resolve=>setTimeout(resolve,ms))}){
   const catalog=(await kalshi('/series?category=Climate%20and%20Weather')).series?.filter(weatherSeries)||[];
-  const stats={series:catalog.length,events:0,eligible:0,verified:0,failures:0,companyProbe:null,
+  const stats={series:catalog.length,events:0,eligible:0,verified:0,failures:0,companyProbe:null,companyObservationFeed:null,
     sources:{},rejections:{dateMissing:0,dateOutsideWindow:0,stationMissing:0,stationIdUnsupported:0,stationUnavailable:0,contractRules:0,noAsk:0,noObservation:0}};
   let cursor=0;const stations=new Map(),climateDays=new Map(),metarWeeks=new Map();
   const companyDay=label=>{
@@ -14,7 +14,10 @@ export async function scanWeatherMarkets({kalshi,nws,twc,onVerified,now=()=>new 
   const companyObservations=label=>{
     const day=new Date(label+'T00:00:00Z');day.setUTCDate(day.getUTCDate()-(day.getUTCDay()+6)%7);
     const monday=day.toISOString().slice(0,10);
-    if(!metarWeeks.has(monday))metarWeeks.set(monday,twc('/api/metar?primary=true&weekStart='+monday).catch(()=>null));
+    if(!metarWeeks.has(monday))metarWeeks.set(monday,twc('/api/metar?primary=true&weekStart='+monday).then(data=>{
+      stats.companyObservationFeed={available:data?.source==='live'&&Array.isArray(data?.stations),stations:data?.stations?.length||0,fetchedAt:data?.fetchedAt||null};
+      return data;
+    }).catch(()=>{stats.companyObservationFeed={available:false,stations:0};return null}));
     return metarWeeks.get(monday);
   };
   await Promise.all(Array.from({length:Math.min(8,catalog.length)},async()=>{

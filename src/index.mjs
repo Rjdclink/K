@@ -1124,7 +1124,7 @@ export default {async fetch(req){const url=new URL(req.url);
     const weatherClaim=await pool.query(`UPDATE weather_scan_status SET last_scan=now() WHERE id=1
       AND (last_scan IS NULL OR last_scan<now()-interval '90 seconds') RETURNING id`);
     const weatherJob=weatherClaim.rowCount?scanWeatherMarkets({kalshi,nws,twc,onVerified:executeVerifiedWeather}).then(async stats=>{
-      console.info('Weather scan funnel:',JSON.stringify({series:stats.series,events:stats.events,eligible:stats.eligible,verified:stats.verified,companyProbe:stats.companyProbe,sources:stats.sources,rejections:stats.rejections}));
+      console.info('Weather scan funnel:',JSON.stringify({series:stats.series,events:stats.events,eligible:stats.eligible,verified:stats.verified,companyProbe:stats.companyProbe,companyObservationFeed:stats.companyObservationFeed,sources:stats.sources,rejections:stats.rejections}));
       await pool.query(`UPDATE weather_scan_status SET last_scan=now(),series=$1,events=$2,eligible=$3,verified=$4,failures=$5 WHERE id=1`,[stats.series,stats.events,stats.eligible,stats.verified,stats.failures]);
     }).catch(e=>console.warn('Weather discovery deferred:',e.message)):Promise.resolve();
     // Neon cron has minute resolution. Short invocations keep the three-second loop alive
