@@ -223,13 +223,15 @@ export function confirmedOver(first,second,market){
   if(Number.isFinite(first.soccerMinute)&&Number.isFinite(second.soccerMinute)&&second.soccerMinute<first.soccerMinute)return false;
   return true;
 }
-// A source-only fallback is restricted to exact crossed score totals. Player
-// statistics and leads can be revised or reversed and require outside proof.
+// Source-only entry covers exact crossed overs, including identified player
+// statistics. A newer live update and a small allocation bound revision risk.
 export function kalshiOnlyOver(first,second,market){
   const series=String(market?.event_ticker||'').split('-')[0];
-  if(!/(?:TEAMTOTAL|TOTAL)$/.test(series)||/[1-9](?:Q|P|H|INNING)(?:TEAM)?TOTAL$/.test(series)||/esports|tennis/.test(String(first?.type||''))||
-    !/basketball|baseball|football|hockey|soccer/.test(String(first?.type||''))||
-    Object.keys(market?.custom_strike||{}).some(k=>/_player$/.test(k))||playerOverSpec(first,market))return false;
+  const player=playerOverSpec(first,market),nextPlayer=playerOverSpec(second,market);
+  const fullGameScore=/(?:TEAMTOTAL|TOTAL)$/.test(series)&&!/[1-9](?:Q|P|H|INNING)(?:TEAM)?TOTAL$/.test(series)&&
+    !/esports|tennis/.test(String(first?.type||''))&&/basketball|baseball|football|hockey|soccer/.test(String(first?.type||''))&&
+    !Object.keys(market?.custom_strike||{}).some(k=>/_player$/.test(k));
+  if(!fullGameScore&&(!player||!nextPlayer||player.id!==nextPlayer.id||player.value!==nextPlayer.value))return false;
   if(!Number.isFinite(first?.updatedAt)||!Number.isFinite(second?.updatedAt)||
     second.updatedAt<=first.updatedAt||second.observedAt-first.observedAt<6000)return false;
   return confirmedOver(first,second,market);

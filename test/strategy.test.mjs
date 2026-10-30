@@ -66,7 +66,7 @@ test('over preflight requires stable scores from a newer, fresh milestone update
   assert.equal(confirmedOver(first,sample(1,0,now,now-50000),market),false,'latest score stale');
   assert.equal(confirmedOver(first,gameState(m,{milestone_id:m.id,_observed_at:new Date(now).toISOString(),details:{status:'live',home_score:1,away_score:0,time:"55'"}}),market),true,'provider may omit its update timestamp; independent source still required');
 });
-test('Kalshi-only fallback requires a newer score update six seconds later and excludes player stats',()=>{
+test('Kalshi-only game total requires a newer score update six seconds later and rejects unidentified player strikes',()=>{
   const m={id:'kbo',title:'Kia Tigers vs Samsung Lions',type:'baseball_game',details:{league:'Korea KBO'}};
   const market={status:'active',event_ticker:'KXKBOTOTAL-26OCT30KIASAM',title:'Over 9.5 runs scored?',rules_primary:'The teams collectively score more than 9.5 runs',floor_strike:9.5,strike_type:'greater'};
   const now=Date.now();
@@ -81,6 +81,18 @@ test('Kalshi-only fallback requires a newer score update six seconds later and e
   assert.equal(kalshiOnlyOver(first,second,{...market,event_ticker:'KXKBOGAME-26OCT30KIASAM'}),false);
   assert.equal(kalshiOnlyOver(first,second,{...market,event_ticker:'KXKBO1INNINGTOTAL-26OCT30KIASAM'}),false);
   assert.ok(orderSize(10000,'.94','100',.05,1,15000,Infinity,2)<=8,'fallback is capped at five percent of the full bankroll');
+});
+test('Kalshi-only crossed player prop requires the same identified statistic on a newer update',()=>{
+  const m={id:'nba-prop',title:'New York Knicks at Chicago Bulls',type:'basketball_game',details:{home_team_id:'chi',away_team_id:'nyk'}};
+  const market={status:'active',event_ticker:'KXNBAREB-26OCT30NYKCHI',title:'Matas Buzelis: 6+ rebounds',yes_sub_title:'Matas Buzelis: 6+',floor_strike:5.5,strike_type:'greater',custom_strike:{basketball_player:'buzelis'},yes_ask_dollars:'0.91'};
+  const now=Date.now();
+  const state=(at,updated,rebounds)=>gameState(m,{milestone_id:m.id,_observed_at:new Date(at).toISOString(),details:{status:'live',home_score:127,away_score:133,quarter:4,last_updated_ts:updated/1000,player_stats:{buzelis:{rebounds}}}});
+  const first=state(now-8000,now-9000,6),second=state(now,now-1000,6);
+  assert.equal(kalshiOnlyOver(first,second,market),true);
+  assert.equal(kalshiOnlyOver(first,state(now,now-1000,7),market),false);
+  assert.equal(kalshiOnlyOver(first,state(now,now-9000,6),market),false);
+  assert.equal(kalshiOnlyOver(first,second,{...market,custom_strike:{basketball_player:'someone_else'}}),false);
+  assert.equal(kalshiOnlyOver(first,second,{...market,event_ticker:'KXNBAGAME-26OCT30NYKCHI'}),false);
 });
 test('Kalshi whole-game over wording is recognized after the line is crossed',()=>{
   const m={id:'kbo-game',title:'Kia Tigers vs Samsung Lions',type:'baseball_game',details:{league:'Korea KBO'}};
