@@ -612,6 +612,34 @@ async function diagnoseUnfilledCombo(candidates,filled){
     [JSON.stringify(legs.map(c=>c.market.ticker)),collection,status,detail]);
   console.info('Unfilled combo creation diagnostic:',status,collection,detail);
 }
+async function diagnoseHeldCombinations(fills,positions){
+  const held=new Set((positions?.market_positions||[]).filter(p=>Number(p.position_fp??p.position??0)>0).map(p=>p.ticker));
+  const singles=filledComboWindow(fills,held,null).slice(0,3);
+  if(singles.length!==3)return;
+  await pool.query(`CREATE TABLE IF NOT EXISTS combo_diagnostics (
+    id bigserial PRIMARY KEY,checked_at timestamptz NOT NULL DEFAULT now(),
+    leg_tickers jsonb NOT NULL,collection_ticker text,status text NOT NULL,detail text)`);
+  const legs=singles.map(r=>({event:{event_ticker:r.event_ticker},market:{ticker:r.market_ticker}}));
+  const collections=await collectionsForEvents(legs.map(c=>c.event.event_ticker),kalshi);
+  const groups=compatibleComboGroups(collections,legs,8);
+  if(!groups.length)console.warn('Held combo diagnostic: no compatible pair or triple collection',legs.map(c=>c.market.ticker));
+  for(const {legs:part,collection} of groups){
+    const tickers=part.map(c=>c.market.ticker),key=JSON.stringify(tickers);
+    const {rowCount}=await pool.query(`SELECT 1 FROM combo_diagnostics WHERE leg_tickers=$1::jsonb
+      AND (status='held_market_created' OR checked_at>now()-interval '2 minutes') LIMIT 1`,[key]);
+    if(rowCount)continue;
+    let status='held_market_created',detail='';
+    try{
+      const result=await kalshi('/multivariate_event_collections/'+encodeURIComponent(collection.collection_ticker),
+        {auth:true,method:'POST',body:{selected_markets:selectedComboMarkets(part),with_market_payload:true}});
+      detail=result.market_ticker||'No market ticker returned';
+      if(!result.market_ticker)status='held_invalid_response';
+    }catch(e){status='held_creation_error';detail=String(e.message).slice(0,500)}
+    await pool.query(`INSERT INTO combo_diagnostics(leg_tickers,collection_ticker,status,detail) VALUES($1,$2,$3,$4)`,
+      [key,collection.collection_ticker,status,detail]);
+    console.info('Held combo market diagnostic:',status,tickers,detail);
+  }
+}
 async function exitComebacks(games,events,positions){
   const byGame=new Map(games.map(g=>[g.milestone.id,g.state]));
   const gameInfo=new Map(games.map(g=>[g.milestone.id,g]));
@@ -989,7 +1017,10 @@ async function scan(cachedMilestones){
         }catch(e){executionErrors.push('Combo: '+String(e.message).slice(0,180));console.error('Combo execution deferred:',e)}
       }
     }
-    if(live())try{await diagnoseUnfilledCombo(opportunities,filled)}catch(e){console.warn('Unfilled combo diagnostic deferred:',e.message)}
+    if(live()){
+      try{await diagnoseHeldCombinations(existingFills.rows,openPositions)}catch(e){console.warn('Held combo diagnostic deferred:',e.message)}
+      try{await diagnoseUnfilledCombo(opportunities,filled)}catch(e){console.warn('Unfilled combo diagnostic deferred:',e.message)}
+    }
     await pool.query('UPDATE scan_status SET last_scan=$5,last_error=$4,scanned=$1,signals=$2,orders_submitted=orders_submitted+$3 WHERE id=1',[scanned,signals,submitted,executionErrors.length?executionErrors.slice(0,2).join('; ').slice(0,250):null,scanStarted]);
     try{await syncSettlementAlerts()}catch(e){console.error('Settlement alert scan failed:',e)}
     return {scanned,signals,submitted,active:active.length,next:games.filter(g=>g.state.verifiedLive || (new Date(g.milestone.start_date).getTime()>Date.now()-3600000 && new Date(g.milestone.start_date).getTime()<Date.now()+3600000)).map(g=>g.milestone)};
