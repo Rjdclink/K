@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {COMBO_WINDOW_MS,VERIFY_DWELL_MS,comboAllocation,comboLegAllocation,remainingVerifiedComboCents,availableComboFills,comboCandidates,comboCollection,compatibleComboGroups,comboPairDiagnostics,quoteForYes,comboLegs,filledComboWindow,eligibleFillTrigger,heldComboLeg,collectionsForEvents,selectedComboMarkets} from '../src/combos.mjs';
+import {COMBO_WINDOW_MS,VERIFY_DWELL_MS,comboAllocation,comboLegAllocation,comboAllowedCents,comboRfqTargetCents,remainingVerifiedComboCents,availableComboFills,comboCandidates,comboCollection,compatibleComboGroups,comboPairDiagnostics,quoteForYes,comboLegs,filledComboWindow,eligibleFillTrigger,heldComboLeg,collectionsForEvents,selectedComboMarkets} from '../src/combos.mjs';
 
 test('two held fills qualify for combo without a second live game verification',()=>{
   const rows=['A','B'].map(ticker=>({market_ticker:ticker,event_ticker:'E',game_id:'G',sport:'NFL',strategy:'over',fill_count:'2.00',combo_legs:null,updated_at:new Date().toISOString()}));
@@ -12,7 +12,7 @@ test('two held fills qualify for combo without a second live game verification',
   assert.equal(heldComboLeg({...rows[0],fill_count:'0'},{ticker:'A',event_ticker:'E',status:'active'}),null);
   assert.deepEqual(filledComboWindow(rows,new Set(['A']),null),[]);
 });
-test('restricted 2, 5 and 20 percent singles cannot become larger combination tickets',()=>{
+test('every held single can be a combo leg if Kalshi offers a compatible market',()=>{
   const rows=[
     {market_ticker:'A',reason:'Restricted 2% lead: Alpha leads',strategy:'lead',fill_count:1,event_ticker:'E'},
     {market_ticker:'B',reason:'Restricted 5% draw at 0–0',strategy:'lead',fill_count:1,event_ticker:'E'},
@@ -20,11 +20,20 @@ test('restricted 2, 5 and 20 percent singles cannot become larger combination ti
     {market_ticker:'D',reason:'Ordinary lead',strategy:'lead',fill_count:1,event_ticker:'E'},
     {market_ticker:'E',reason:'Ordinary lead',strategy:'lead',fill_count:1,event_ticker:'E'}
   ];
-  assert.deepEqual(availableComboFills(rows,new Set()),rows.slice(3));
-  assert.deepEqual(filledComboWindow(rows,new Set(rows.map(r=>r.market_ticker)),null),rows.slice(3));
-  for(const row of rows.slice(0,3))assert.equal(heldComboLeg(row,{ticker:row.market_ticker,event_ticker:'E',status:'active'}),null);
+  assert.deepEqual(availableComboFills(rows,new Set()),rows);
+  assert.deepEqual(filledComboWindow(rows,new Set(rows.map(r=>r.market_ticker)),null),rows);
+  for(const row of rows.slice(0,3))assert.ok(heldComboLeg(row,{ticker:row.market_ticker,event_ticker:'E',status:'active'}));
   const candidates=rows.map((row,i)=>({milestone:{id:'G'+i},event:{event_ticker:'E'+i},market:{ticker:row.market_ticker},signal:{strategy:'lead',comboEligible:i>=3}}));
-  assert.deepEqual(comboCandidates(candidates,'lead'),candidates.slice(3));
+  assert.deepEqual(comboCandidates(candidates,'lead'),candidates);
+});
+test('a soccer total corrected below its line cannot be added to a new combo',()=>{
+  const row={market_ticker:'KXFOOTOTAL-MATCH-4',event_ticker:'KXFOOTOTAL-MATCH',strategy:'over',fill_count:'4.57',game_id:'match'};
+  const market={ticker:row.market_ticker,event_ticker:row.event_ticker,status:'active',floor_strike:3.5};
+  const snapshot={sport_family:'soccer_tournament_multi_leg',status:'live',scanned_at:new Date().toISOString(),home:3,away:0};
+  assert.equal(heldComboLeg(row,market,snapshot),null);
+  assert.ok(heldComboLeg(row,market,{...snapshot,away:1}));
+  assert.equal(heldComboLeg(row,market,{...snapshot,scanned_at:new Date(Date.now()-91000).toISOString()}),null);
+  assert.equal(heldComboLeg(row,market,{...snapshot,away:null}),null);
 });
 
 test('a stale newer fill cannot starve an older live combo trigger',()=>{
@@ -141,6 +150,16 @@ test('accepts only fresh affordable positive net YES quotes, with maker NO bid a
   assert.equal(quoteForYes({...q,no_bid_dollars:'0.0001'},'COMBO',1000,2),null);
   const small={...q,no_contracts_fp:'3.00'};
   assert.ok(quoteForYes(small,'COMBO',1000,2,9900)?.profitCents>0);
+});
+test('RFQ target reserves room for the fee within the full combo allocation',()=>{
+  const budget=2970;
+  assert.equal(comboRfqTargetCents(budget),2880);
+  const quote={market_ticker:'COMBO',status:'open',no_bid_dollars:'0.0700',no_contracts_fp:'31.77',created_ts:new Date().toISOString()};
+  assert.equal(quoteForYes(quote,'COMBO',budget,2),null,'the observed full quote exceeds the fee-inclusive cap');
+  assert.ok(quoteForYes(quote,'COMBO',comboAllowedCents(.20,14850),2),'a fee-inclusive quote 14 cents above the base allocation is within the ten-dollar leeway');
+  assert.equal(comboAllowedCents(.20,14850),3970);
+  assert.equal(quoteForYes(quote,'COMBO',2970+10,2),null,'ten cents is less than the quoted fee difference');
+  assert.ok(quoteForYes({...quote,no_contracts_fp:'28.74'},'COMBO',budget,2));
 });
 test('same game and event picks require a collection explicitly allowing multiple markets per event',()=>{
  const legs=[candidate('a','A'),candidate('b','A')];

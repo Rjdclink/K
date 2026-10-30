@@ -1,5 +1,11 @@
 import { golfState } from './golf.mjs';
 export const KALSHI_ONLY_FRACTION=.10;
+export const SOCCER_OVER_STABILITY_MS=15000;
+export function soccerOverWaitMs(firstSeen,now=Date.now()){
+  const first=firstSeen instanceof Date?firstSeen.getTime():Date.parse(firstSeen||'');
+  return Number.isFinite(first)?Math.max(0,first+SOCCER_OVER_STABILITY_MS-now):Infinity;
+}
+export function soccerOverStable(firstSeen,now=Date.now()){return soccerOverWaitMs(firstSeen,now)===0;}
 const N = v => v === null || v === undefined || v === '' ? NaN : Number(v);
 const pick = (obj, names) => names.map(k => obj?.[k]).find(v => Number.isFinite(N(v)));
 export function sportName(m) {
@@ -384,6 +390,11 @@ export function leadSignal(game, market) {
   if (!Number.isFinite(h)||!Number.isFinite(a)) return null;
   const margin=Math.abs(h-a),trailerScore=Math.min(h,a);
   const finalWhistleSeconds=soccer&&game.soccerMinute>=89&&Number.isFinite(game.matchRemainingSeconds)&&game.matchRemainingSeconds>0?game.matchRemainingSeconds:Infinity;
+  // A three-goal soccer lead can receive the 20% tier only near the end.
+  // When a final countdown is available it takes precedence over an estimated minute.
+  if(soccer&&margin>=3&&!(Number.isFinite(game.matchRemainingSeconds)?
+    game.matchRemainingSeconds>0&&game.matchRemainingSeconds<600:
+    Number.isFinite(game.soccerMinute)&&game.soccerMinute>80&&game.soccerMinute<90))return null;
   const minimum=basketball?5:football?10:hockey?3:baseball?2:soccer?finalWhistleSeconds<45?1:finalWhistleSeconds<120?2:3:null;
   const closeLeaderPossession=game.possessionSide===(h>a?'home':'away');
   const closeLeadThreshold=basketball?4:football?7:hockey?1:Infinity;

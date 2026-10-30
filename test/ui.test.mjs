@@ -88,6 +88,13 @@ test('filled order timer is bright red, advances each second and reanchors to li
   assert.match(chosen.innerHTML,/Away <strong class="chosen-score">71<\/strong> · Home 79/);
   assert.match(page,/\.chosen-score\{color:#26f5ae/);
   assert.match(page,/Tennis: <strong>5–4 or 6–5<\/strong>/);
+  const tennis=order({...base,sport:'Tennis',sport_family:'tennis_tournament_singles',game_title:'Berrettini vs de Minaur',strategy:'lead',selected_name:'Alex de Minaur'});
+  assert.equal(tennis.children[0].children[0].className,'chosen-name');
+  assert.match(tennis.children[0].children[0].textContent,/Alex de Minaur/);
+  const soccer=order({...base,sport:'Soccer',game_title:'Metz vs Pau',strategy:'lead',selected_name:'Pau'});
+  assert.equal(soccer.children[0].children[0].textContent,'Pau');
+  assert.match(page,/\.chosen-name\{color:#26f5ae/);
+  assert.doesNotMatch(page,/Combination unavailable: Kalshi has no all-YES collection for these held legs/);
 });
 
 test('filled position names describe the sport, matchup and current over margin without showing ticker codes',()=>{
