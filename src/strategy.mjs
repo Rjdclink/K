@@ -269,9 +269,16 @@ export function confirmedOver(first,second,market){
   if(Number.isFinite(first.soccerMinute)&&Number.isFinite(second.soccerMinute)&&second.soccerMinute<first.soccerMinute)return false;
   return true;
 }
+// When the provider supplies update times, the second read must be newer.
+// Some live-data feeds omit that field; two separate, stable reads can still
+// qualify for the limited fallback, but mixed timestamp availability cannot.
+function kalshiUpdatePairOk(first,second){
+  const firstHas=Number.isFinite(first?.updatedAt),secondHas=Number.isFinite(second?.updatedAt);
+  return firstHas===secondHas&&(!firstHas||second.updatedAt>first.updatedAt);
+}
 // An independently unavailable scoreboard permits the exact over signal only
-// after a second, newer Kalshi update. The same segment and named statistic
-// must remain crossed; a contradictory external source never reaches here.
+// after a second Kalshi read. The same segment and named statistic must remain
+// crossed; a contradictory external source never reaches here.
 export function kalshiOnlyOver(first,second,market){
   const player=playerOverSpec(first,market),nextPlayer=playerOverSpec(second,market);
   if(!overSignal(first,market)||!overSignal(second,market))return false;
@@ -279,8 +286,7 @@ export function kalshiOnlyOver(first,second,market){
   const initialSegment=periodValue(first,market),laterSegment=periodValue(second,market);
   if(Boolean(initialSegment)!==Boolean(laterSegment)||initialSegment&&
     (initialSegment.home!==laterSegment.home||initialSegment.away!==laterSegment.away))return false;
-  if(!Number.isFinite(first?.updatedAt)||!Number.isFinite(second?.updatedAt)||
-    second.updatedAt<=first.updatedAt||second.observedAt-first.observedAt<6000)return false;
+  if(!kalshiUpdatePairOk(first,second)||second.observedAt-first.observedAt<6000)return false;
   return confirmedOver(first,second,market);
 }
 export function kalshiOnlyLead(first,second,market){
@@ -290,7 +296,7 @@ export function kalshiOnlyLead(first,second,market){
     !first.scoreConsistent||!second.scoreConsistent||first.home!==second.home||first.away!==second.away||
     !Object.is(first.period,second.period)||!first.periodConsistent||!second.periodConsistent||
     !Number.isFinite(first.observedAt)||!Number.isFinite(second.observedAt)||second.observedAt-first.observedAt<6000||
-    !Number.isFinite(first.updatedAt)||!Number.isFinite(second.updatedAt)||second.updatedAt<=first.updatedAt||
+    !kalshiUpdatePairOk(first,second)||
     [first,second].some(s=>s.updatedAt>s.observedAt+5000||s.observedAt-s.updatedAt>30000)||
     !/^table_tennis_/.test(first.type)&&Number.isFinite(first.remainingSeconds)&&Number.isFinite(second.remainingSeconds)&&second.remainingSeconds>first.remainingSeconds||
     Number.isFinite(first.soccerMinute)&&Number.isFinite(second.soccerMinute)&&second.soccerMinute<first.soccerMinute)return false;

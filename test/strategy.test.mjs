@@ -34,6 +34,7 @@ test('table tennis lead fallback verifies two live scores without using a clock'
   const first=state(now-8000,now-9000,'00:10'),second=state(now,now-1000,'00:11');
   assert.equal(kalshiOnlyLead(first,second,market),true,'an incidental clock increase cannot veto a table tennis score');
   assert.equal(kalshiOnlyLead(state(now-8000,now-9000,''),state(now,now-1000,''),market),true,'no clock is accepted');
+  assert.equal(kalshiOnlyLead(state(now-8000,NaN,''),state(now,NaN,''),market),true,'the clockless fallback accepts two reads when both update timestamps are absent');
   assert.equal(kalshiOnlyLead(first,state(now,now-1000,'00:11',9),market),false,'changed points still fail');
   assert.equal(kalshiOnlyLead(first,state(now-3000,now-4000,'00:11'),market),false,'six-second dwell remains mandatory');
 });
@@ -78,7 +79,7 @@ test('over preflight requires stable scores from a newer, fresh milestone update
   assert.equal(confirmedOver(first,sample(1,0,now,now-50000),market),false,'latest score stale');
   assert.equal(confirmedOver(first,gameState(m,{milestone_id:m.id,_observed_at:new Date(now).toISOString(),details:{status:'live',home_score:1,away_score:0,time:"55'"}}),market),true,'provider may omit its update timestamp; independent source still required');
 });
-test('Kalshi-only game total requires a newer score update six seconds later and rejects unidentified player strikes',()=>{
+test('Kalshi-only game total checks two reads six seconds apart, including feeds without update timestamps',()=>{
   const m={id:'kbo',title:'Kia Tigers vs Samsung Lions',type:'baseball_game',details:{league:'Korea KBO'}};
   const market={status:'active',event_ticker:'KXKBOTOTAL-26OCT30KIASAM',title:'Over 9.5 runs scored?',rules_primary:'The teams collectively score more than 9.5 runs',floor_strike:9.5,strike_type:'greater'};
   const now=Date.now();
@@ -88,6 +89,11 @@ test('Kalshi-only game total requires a newer score update six seconds later and
   assert.equal(kalshiOnlyOver(first,state(now-3000,now-4000),market),false);
   assert.equal(kalshiOnlyOver(first,state(now,now-9000),market),false);
   assert.equal(kalshiOnlyOver(first,state(now,NaN),market),false);
+  const noTimestamp=at=>gameState(m,{milestone_id:m.id,_observed_at:new Date(at).toISOString(),details:{status:'live',home_score:8,away_score:3,inning:9}});
+  assert.equal(kalshiOnlyOver(noTimestamp(now-8000),noTimestamp(now),market),true);
+  assert.equal(kalshiOnlyOver(noTimestamp(now-3000),noTimestamp(now),market),false);
+  assert.equal(kalshiOnlyOver(noTimestamp(now-8000),second,market),false,'mixed timestamp availability fails closed');
+  assert.equal(kalshiOnlyOver(noTimestamp(now-8000),{...noTimestamp(now),verifiedLive:false},market),false);
   assert.equal(kalshiOnlyOver(first,state(now,now-1000,6),market),false);
   assert.equal(kalshiOnlyOver(first,second,{...market,custom_strike:{baseball_player:'player'}}),false);
   assert.equal(kalshiOnlyOver(first,second,{...market,event_ticker:'KXKBOGAME-26OCT30KIASAM'}),false);
@@ -106,6 +112,10 @@ test('Kalshi-only late baseball lead uses inning state without a clock',()=>{
   assert.equal(kalshiOnlyLead(first,state(now,now-9000),market),false);
   assert.equal(kalshiOnlyLead(first,state(now,now-1000,4),market),false);
   assert.equal(kalshiOnlyLead(first,state(now,now-1000,5,8),market),false);
+  const noTimestamp=at=>gameState(m,{milestone_id:m.id,_observed_at:new Date(at).toISOString(),details:{status:'live',home_score:5,away_score:2,inning:9,inning_half:2,home_team_name:'Kia Tigers',away_team_name:'Samsung Lions'}});
+  assert.equal(kalshiOnlyLead(noTimestamp(now-8000),noTimestamp(now),market),true);
+  assert.equal(kalshiOnlyLead(noTimestamp(now-3000),noTimestamp(now),market),false);
+  assert.equal(kalshiOnlyLead(first,noTimestamp(now),market),false,'mixed timestamp availability fails closed');
 });
 test('Kalshi-only crossed player prop requires the same identified statistic on a newer update',()=>{
   const m={id:'nba-prop',title:'New York Knicks at Chicago Bulls',type:'basketball_game',details:{home_team_id:'chi',away_team_id:'nyk'}};

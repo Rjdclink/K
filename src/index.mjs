@@ -21,7 +21,7 @@ import { estimatedSaleProfitCents, positiveExitEligible } from './positions.mjs'
 import { weatherContract } from './weather.mjs';
 import { scanWeatherMarkets } from './weather_scanner.mjs';
 import { sellQuote } from './sell.mjs';
-import { yesDepthAtAsk, bestYesAsk } from './orderbook.mjs';
+import { yesDepthAtAsk, bestYesAsk, bestAsksForTickers } from './orderbook.mjs';
 
 const API='https://external-api.kalshi.com/trade-api/v2';
 const pool = new pg.Pool({connectionString:process.env.DATABASE_URL, max:4, idleTimeoutMillis:15000});
@@ -326,9 +326,9 @@ async function executableQuote(market){
   return available>=minimumCount(market)?{...market,yes_ask_size_fp:String(available)}:null;
 }
 const askProbe=new Map();
-async function recoverSummaryAsk(market){
+async function recoverSummaryAsk(market,{fresh=false}={}){
   if(hasAsk(market))return market;
-  const cached=askProbe.get(market.ticker);
+  const cached=fresh?null:askProbe.get(market.ticker);
   if(cached&&Date.now()-cached.at<10000)return cached.quote?{...market,...cached.quote}:market;
   try{
     const {orderbook_fp}=await kalshi('/markets/'+encodeURIComponent(market.ticker)+'/orderbook');
@@ -878,8 +878,7 @@ async function scan(cachedMilestones,discoveryCount){
     if(live()||exitOnly())await exitComebacks(games,events,openPositions);
     await candidateTable();
     const opportunities=[],snapshotRows=new Map(),scoreboardCache=new Map();
-    const allCandidates=[];
-    let askProbeBudget=20;
+    const allCandidates=[],snapshotCandidates=new Map();
     for(const {milestone,state} of games){
       const candidates=[];
       if(eligibleForMarkets(state))for(const ticker of linkedEventTickers(milestone)){const event=events.get(ticker);if(!event || !['Sports','Esports'].includes(event.category))continue;
@@ -887,14 +886,7 @@ async function scan(cachedMilestones,discoveryCount){
       // Keep crossed, already-filled props visible with their status, but do
       // not send them through order preflight or count them as new candidates.
       allCandidates.push(...candidates.filter(c=>!filled.has(signalKey(c))));
-      // Summary depth recovery is exploratory. Bound it across the whole scan;
-      // final execution still fetches an authoritative fresh orderbook.
-      const missing=candidates.filter(c=>!filled.has(signalKey(c))&&!hasAsk(c.market));
-      const sample=missing.filter(c=>Number(c.market.yes_ask_dollars)<1)
-        .concat(missing.filter(c=>Number(c.market.yes_ask_dollars)>=1));
-      const probes=sample.slice(0,Math.min(2,askProbeBudget));
-      askProbeBudget-=probes.length;
-      await Promise.all(probes.map(async c=>{c.market=await recoverSummaryAsk(c.market)}));
+      snapshotCandidates.set(state.id,candidates);
       if(state.verifiedLive)scanned++;
       const baseball=/baseball/.test(state.type),tennis=/tennis/.test(state.type),soccer=/soccer/.test(state.type);
       const timeLeft=gameTimeLabel(state);
@@ -902,7 +894,21 @@ async function scan(cachedMilestones,discoveryCount){
       const clockSeconds=storedClockSeconds(preciseClockSeconds,state.clockRunning);
       const clockLabel=state.golf?'Round progress':/esports/.test(state.type)?'Match phase':/cricket/.test(state.type)?'Innings progress':soccer?Number.isFinite(state.matchRemainingSeconds)?'Match time left':state.soccerMinute>=90?'Stoppage time':'Regulation left':baseball?'Inning progress':tennis?'Set progress':['NCAAB','NCAAW'].includes(state.sport)? `Half ${state.period||'?'} left`:/hockey/.test(state.type)?`Period ${state.period||'?'} left`:/football|basketball/.test(state.type)?`Quarter ${state.period||'?'} left`:'Game clock';
       const displayClockLabel=clockSeconds!=null&&state.clockRunning===false?`${clockLabel} · paused`:clockLabel;
-      snapshotRows.set(state.id,[state.id,state.title||'Sports game',state.sport,state.type,state.scoreKnown?state.home:null,state.scoreKnown?state.away:null,state.verifiedLive?'live':/^(final|finished|complete|completed|closed|ended)$/.test(state.status)?'final':'inactive',Number.isFinite(state.progress)?state.progress:null,String(state.period||''),timeLeft,clockSeconds,displayClockLabel,liveMap.get(milestone.id)?._observed_at||null,scanStarted,JSON.stringify(candidates.map(c=>({strategy:c.signal.strategy,reason:c.signal.reason,ticker:c.market.ticker,title:c.market.title||c.market.yes_sub_title||'',ask:c.market.yes_ask_dollars,ask_size:c.market.yes_ask_size_fp,execution:signalExecution(c,filled,account,balance,bankroll)}))),state.possessionSide,state.homeTeamId||null,state.awayTeamId||null ]);
+      snapshotRows.set(state.id,[state.id,state.title||'Sports game',state.sport,state.type,state.scoreKnown?state.home:null,state.scoreKnown?state.away:null,state.verifiedLive?'live':/^(final|finished|complete|completed|closed|ended)$/.test(state.status)?'final':'inactive',Number.isFinite(state.progress)?state.progress:null,String(state.period||''),timeLeft,clockSeconds,displayClockLabel,liveMap.get(milestone.id)?._observed_at||null,scanStarted,'[]',state.possessionSide,state.homeTeamId||null,state.awayTeamId||null ]);
+    }
+    const missing=allCandidates.filter(c=>!hasAsk(c.market));
+    if(missing.length){
+      const quotes=await bestAsksForTickers(missing.map(c=>c.market.ticker),async tickers=>{
+        const q=new URLSearchParams();tickers.forEach(ticker=>q.append('tickers',ticker));
+        return (await kalshi('/markets/orderbooks?'+q)).orderbooks;
+      },async ticker=>({ticker,orderbook_fp:(await kalshi('/markets/'+encodeURIComponent(ticker)+'/orderbook')).orderbook_fp}),
+      (ticker,error)=>console.warn('Ask depth probe unavailable:',ticker,error.message));
+      for(const c of missing){const quote=quotes.get(c.market.ticker);
+        if(quote)c.market={...c.market,yes_ask_dollars:quote.price.toFixed(4),yes_ask_size_fp:quote.size.toFixed(2)};
+      }
+    }
+    for(const [id,candidates] of snapshotCandidates){
+      snapshotRows.get(id)[14]=JSON.stringify(candidates.map(c=>({strategy:c.signal.strategy,reason:c.signal.reason,ticker:c.market.ticker,title:c.market.title||c.market.yes_sub_title||'',ask:c.market.yes_ask_dollars,ask_size:c.market.yes_ask_size_fp,execution:signalExecution(c,filled,account,balance,bankroll)})));
     }
     for(let i=0;i<allCandidates.length;i+=100){const batch=allCandidates.slice(i,i+100);if(!batch.length)continue;
       const values=batch.map((_,n)=>`($${2*n+1},$${2*n+2})`).join(',');
@@ -1034,7 +1040,7 @@ async function scan(cachedMilestones,discoveryCount){
              checked.home!==c.state.home||checked.away!==c.state.away)continue;
           freshState=checked;
         }
-        const rawQuote=await recoverSummaryAsk((await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market);
+        const rawQuote=await recoverSummaryAsk((await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market,{fresh:true});
         const quote=rawQuote&&hasAsk(rawQuote)?await executableQuote(rawQuote):null;
         if(!quote||quote.ticker!==c.market.ticker||quote.event_ticker!==c.event.event_ticker||!hasAsk(quote))continue;
         if(kalshiOnly&&(Date.now()-freshState.observedAt>10000||
