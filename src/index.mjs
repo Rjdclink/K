@@ -848,7 +848,8 @@ async function scan(cachedMilestones,discoveryCount){
     if(live()&&!cachedMilestones)try{await reconcileFundingTransfers()}catch(e){console.warn('Transfer history unavailable:',e.message)}
     ms=cachedMilestones||await milestones();discoveryCount??=ms.length;
     await ensureScanStatus();const liveMap=await liveBatch(ms);
-    const games=ms.map(m=>({milestone:m,state:gameState(m,liveMap.get(m.id))}));
+    const games=ms.map(m=>({milestone:m,state:gameState(m,liveMap.get(m.id))})).filter(g=>
+      g.state.verifiedLive||Date.parse(g.milestone.start_date||'')>Date.now()-3600000);
     const active=games.filter(g=>g.state.verifiedLive && g.state.scoreKnown);
     const events=await marketMap(active.filter(g=>eligibleForMarkets(g.state)).flatMap(g=>linkedEventTickers(g.milestone)));
     // Market discovery can take longer than a scoring play. Refresh live

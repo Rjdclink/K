@@ -10,7 +10,8 @@ test('sports discovery traverses pages and includes esports and older live tourn
     const query=new URL(path,'https://kalshi.test').searchParams,category=query.get('category'),cursor=query.get('cursor');
     requests.push([category,cursor,query.get('minimum_start_date')]);
     if(category==='Sports'&&!cursor)return {milestones:[{id:'old-golf',start_date:at(-5),end_date:at(1)},
-      {id:'finished',start_date:at(-2),end_date:at(-2)}],cursor:'next'};
+      {id:'finished',start_date:at(-2),end_date:at(-2)},
+      {id:'completed-with-future-end',start_date:at(-2),end_date:at(1),details:{status:'completed'}}],cursor:'next'};
     if(category==='Sports'&&cursor==='future')return {milestones:[{id:'later',start_date:at(3)}],cursor:'unused'};
     if(category==='Sports')return {milestones:[{id:'live-baseball',start_date:at(-.1)},
       {id:'upcoming',start_date:at(2)}],cursor:'future'};

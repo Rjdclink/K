@@ -10,13 +10,18 @@ export function eligibleForMarkets(game){return game?.verifiedLive && game.score
 
 export async function discoverCurrentMilestones(get,now=Date.now()){
   const cutoff=now+3600000,min=new Date(now-7*86400000).toISOString();
+  const finished=m=>{
+    const status=String(m.details?.status||'').trim().toLowerCase();
+    return /^(?:final|finished|completed|closed|ended|event closed|match complete)(?:\b|$)/.test(status)&&
+      Date.parse(m.start_date||'')<now-2*3600000;
+  };
   const categories=await Promise.all(['Sports','Esports'].map(async category=>{
     const found=[],seen=new Set();let cursor='';
     for(;;){
       const query=new URLSearchParams({category,limit:'500',minimum_start_date:min});
       if(cursor)query.set('cursor',cursor);
       const response=await get('/milestones?'+query),page=response.milestones||[];
-      found.push(...page.filter(m=>m.id&&Date.parse(m.start_date||'')<cutoff&&
+      found.push(...page.filter(m=>m.id&&!finished(m)&&Date.parse(m.start_date||'')<cutoff&&
         (!m.end_date||Date.parse(m.end_date)>now-36*3600000||
           /^(?:live|inprogress|in_progress|playing)$/.test(String(m.details?.status||'').toLowerCase()))));
       // Kalshi lists milestones in start-date order. The next page of an
