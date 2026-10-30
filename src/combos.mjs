@@ -57,6 +57,9 @@ export function compatibleComboGroups(collections,candidates,maxGroups=6){
   }
   return groups.sort((a,b)=>b.legs.length-a.legs.length).slice(0,maxGroups);
 }
+export function selectedComboMarkets(legs){
+  return legs.map(c=>({event_ticker:c.event.event_ticker,market_ticker:c.market.ticker,side:'yes'}));
+}
 export function quoteForYes(quote,ticker,budgetCents,feeMultiplier=2,bankrollCents=budgetCents){
   if(!quote || quote.market_ticker!==ticker || quote.status!=='open')return null;
   // The maker's NO bid is the price at which the RFQ creator buys YES.

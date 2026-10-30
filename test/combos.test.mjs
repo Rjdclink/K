@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {COMBO_WINDOW_MS,VERIFY_DWELL_MS,comboAllocation,comboCandidates,comboCollection,compatibleComboGroups,quoteForYes,comboLegs,filledComboWindow,collectionsForEvents} from '../src/combos.mjs';
+import {COMBO_WINDOW_MS,VERIFY_DWELL_MS,comboAllocation,comboCandidates,comboCollection,compatibleComboGroups,quoteForYes,comboLegs,filledComboWindow,collectionsForEvents,selectedComboMarkets} from '../src/combos.mjs';
+
+test('Kalshi combo creation includes the side required by the live validator',()=>{
+  const legs=[{event:{event_ticker:'E1'},market:{ticker:'M1'}},{event:{event_ticker:'E2'},market:{ticker:'M2'}}];
+  assert.deepEqual(selectedComboMarkets(legs),[
+    {event_ticker:'E1',market_ticker:'M1',side:'yes'},
+    {event_ticker:'E2',market_ticker:'M2',side:'yes'}
+  ]);
+});
 
 test('combo collection discovery filters by each event and paginates',async()=>{
   const requests=[];
