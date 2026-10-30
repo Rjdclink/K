@@ -12,13 +12,17 @@ test('verified over top-up deducts held exposure and fees from the total 30% cap
   assert.equal(remainingVerifiedOverCents({...position,market_exposure_dollars:'299.00'},100000),0);
   assert.equal(remainingVerifiedOverCents({...position,fees_paid_dollars:null},100000),0);
   assert.equal(remainingVerifiedOverCents({...position,position_fp:'0.00'},100000),0);
+  assert.equal(remainingVerifiedOverCents(position,100000,.40),30000,'a robust verified over may reach 40% inclusive of its held cost');
 });
 
-test('only the same held Kalshi-only over with a 30% verified rule is upgradeable',()=>{
+test('held fallback overs can upgrade at 30% or 40%, and existing verified overs only at the robust 40% tier',()=>{
   const fill={status:'filled',strategy:'over',reason:'score; Kalshi-only two reads',market_ticker:'OVER',event_ticker:'GAME',game_id:'m1'};
   const position={ticker:'OVER',position_fp:'10.00'};
   const candidate={market:{ticker:'OVER'},event:{event_ticker:'GAME'},milestone:{id:'m1'},signal:{strategy:'over',fraction:.30}};
   assert.equal(upgradeEligible(fill,position,candidate),true);
+  assert.equal(upgradeEligible(fill,position,{...candidate,signal:{strategy:'over',fraction:.40}}),true);
+  assert.equal(upgradeEligible({...fill,reason:'independently verified'},position,{...candidate,signal:{strategy:'over',fraction:.40}}),true,'an existing verified 30% over can later be topped up');
+  assert.equal(upgradeEligible({...fill,reason:'independently verified'},position,candidate),false);
   for(const altered of [{...fill,strategy:'lead'},{...fill,reason:'verified'},{...fill,game_id:'m2'},{...fill,combo_legs:[1]}])
     assert.equal(upgradeEligible(altered,position,candidate),false);
   assert.equal(upgradeEligible(fill,position,{...candidate,signal:{strategy:'over',fraction:.05}}),false);

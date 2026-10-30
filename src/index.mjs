@@ -107,6 +107,7 @@ async function auditTable(){return auditReady??=pool.query(`CREATE TABLE IF NOT 
 let upgradesReady;
 function upgradeTables(){return upgradesReady??=Promise.all([
   pool.query(`CREATE TABLE IF NOT EXISTS position_upgrades (market_ticker text PRIMARY KEY,id uuid NOT NULL UNIQUE,original_id uuid NOT NULL,verification_id uuid NOT NULL,status text NOT NULL,count numeric(12,2) NOT NULL,limit_price numeric NOT NULL,available_cents integer NOT NULL,order_id text,fill_count numeric NOT NULL DEFAULT 0,error text,created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now())`),
+  pool.query(`CREATE TABLE IF NOT EXISTS robust_over_upgrades (market_ticker text PRIMARY KEY,id uuid NOT NULL UNIQUE,original_id uuid NOT NULL,verification_id uuid NOT NULL,status text NOT NULL,count numeric(12,2) NOT NULL,limit_price numeric NOT NULL,available_cents integer NOT NULL,order_id text,fill_count numeric NOT NULL DEFAULT 0,error text,created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now())`),
   pool.query(`CREATE TABLE IF NOT EXISTS fallback_verifications (market_ticker text PRIMARY KEY,original_id uuid NOT NULL,verification_id uuid NOT NULL,first_verified_at timestamptz NOT NULL DEFAULT now(),verified_at timestamptz NOT NULL DEFAULT now())`),
   pool.query(`CREATE TABLE IF NOT EXISTS combo_upgrades (market_ticker text PRIMARY KEY,original_id uuid NOT NULL,verification_ids jsonb NOT NULL,status text NOT NULL,rfq_id text NOT NULL,quote_id text NOT NULL,order_id text,fill_count numeric NOT NULL DEFAULT 0,error text,created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now())`)
 ]).catch(e=>{upgradesReady=null;throw e})}
@@ -190,11 +191,13 @@ async function syncTradeHistory(settlements){
   await upgradeTables();
   const {rows:pending}=await pool.query(`SELECT a.id,a.market_ticker,a.sport,a.order_id,a.fill_count,a.created_at,a.combo_legs,
       u.order_id AS upgrade_order_id,u.fill_count AS upgrade_fill_count,
+      ru.order_id AS robust_upgrade_order_id,ru.fill_count AS robust_upgrade_fill_count,
       cu.order_id AS combo_upgrade_order_id,cu.fill_count AS combo_upgrade_fill_count,
       (SELECT SUM(e.filled_count) FROM exit_attempts e WHERE e.market_ticker=a.market_ticker AND e.filled_count>0) AS expected_sold,
       g.sport_family,COALESCE(g.title,'Sports game') AS teams
     FROM trade_attempts a LEFT JOIN game_snapshots g ON g.id=a.game_id
       LEFT JOIN position_upgrades u ON u.original_id=a.id AND u.status='filled'
+      LEFT JOIN robust_over_upgrades ru ON ru.original_id=a.id AND ru.status='filled'
       LEFT JOIN combo_upgrades cu ON cu.original_id=a.id AND cu.status='filled'
     WHERE a.created_at>=$1 AND a.status='filled' AND
       (NOT EXISTS (SELECT 1 FROM trade_history h WHERE h.id=a.id) OR
@@ -510,7 +513,7 @@ async function recoverPending(signal,game,event,market,balance,bankroll,budgetCe
     const filled=Number(result.fill_count_fp??result.fill_count??result.order?.fill_count_fp??result.order?.fill_count??0);await pool.query(`UPDATE trade_attempts SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE id=$1`,[row.id,filled>0?'filled':'unfilled',result.order_id||result.order?.order_id||null,filled]);return filled>0
   }catch(e){await pool.query(`UPDATE trade_attempts SET status='check_order',error=$2,updated_at=now() WHERE id=$1`,[row.id,'Recovery response uncertain: '+String(e.message).slice(0,200)]);return false}
 }
-async function reconcileUpgrade(row){
+async function reconcileUpgrade(row,robust=false){
   if(!row||!['reserved','check_order'].includes(row.status))return row;
   try{
     let cursor='';
@@ -521,7 +524,7 @@ async function reconcileUpgrade(row){
       const match=(orders.orders||[]).find(o=>o.client_order_id===row.id);
       if(match){
         const filled=Number(match.fill_count_fp??match.fill_count??0);
-        await pool.query('UPDATE position_upgrades SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE market_ticker=$1',
+        await pool.query(`UPDATE ${robust?'robust_over_upgrades':'position_upgrades'} SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE market_ticker=$1`,
           [row.market_ticker,filled>0?'filled':'unfilled',match.order_id||null,filled]);
         if(filled>0)await invalidateBalance();
         return {...row,status:filled>0?'filled':'unfilled'};
@@ -542,46 +545,52 @@ async function upgradeHeldOver(c,preflight,original,scoreboardCache){
     state=checked;
   }
   const current=(await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market;
+  const verifiedSignal=current?overSignal(state,current):null;
   if(!current||current.ticker!==original.market_ticker||current.event_ticker!==original.event_ticker||
     current.rules_primary!==c.market.rules_primary||current.floor_strike!==c.market.floor_strike||
     current.cap_strike!==c.market.cap_strike||current.close_time!==c.market.close_time||
     JSON.stringify(current.custom_strike||{})!==JSON.stringify(c.market.custom_strike||{})||
-    !overSignal(state,current)||overSignal(state,current).fraction!==.30)return {verified:false,filled:false};
+    !verifiedSignal||![.30,.40].includes(verifiedSignal.fraction))return {verified:false,filled:false};
   await upgradeTables();
-  await pool.query(`INSERT INTO fallback_verifications(market_ticker,original_id,verification_id,verified_at) VALUES($1,$2,$3,now())
+  if(/Kalshi-only/i.test(original.reason||''))await pool.query(`INSERT INTO fallback_verifications(market_ticker,original_id,verification_id,verified_at) VALUES($1,$2,$3,now())
     ON CONFLICT(market_ticker) DO UPDATE SET original_id=EXCLUDED.original_id,verification_id=EXCLUDED.verification_id,
       first_verified_at=CASE WHEN fallback_verifications.original_id=EXCLUDED.original_id THEN fallback_verifications.first_verified_at ELSE now() END,verified_at=now()`,
   [current.ticker,original.id,state.verificationId]);
-  let {rows:[prior]}=await pool.query('SELECT * FROM position_upgrades WHERE market_ticker=$1',[current.ticker]);
-  if(prior&&['reserved','check_order'].includes(prior.status))prior=await reconcileUpgrade(prior);
+  const robust=verifiedSignal.fraction===.40,upgradeTable=robust?'robust_over_upgrades':'position_upgrades';
+  const otherTable=robust?'position_upgrades':'robust_over_upgrades';
+  let {rows:[other]}=await pool.query(`SELECT * FROM ${otherTable} WHERE market_ticker=$1`,[current.ticker]);
+  if(other&&['reserved','check_order'].includes(other.status))other=await reconcileUpgrade(other,!robust);
+  if((other&&['reserved','check_order'].includes(other.status))||(!robust&&other?.status==='filled'))return {verified:true,filled:false};
+  let {rows:[prior]}=await pool.query(`SELECT * FROM ${upgradeTable} WHERE market_ticker=$1`,[current.ticker]);
+  if(prior&&['reserved','check_order'].includes(prior.status))prior=await reconcileUpgrade(prior,robust);
   if(prior&&!['unfilled','rejected'].includes(prior.status))return {verified:true,filled:false};
   const raw=await recoverSummaryAsk(current,{fresh:true});
   const quote=raw&&hasAsk(raw)?await executableQuote(raw):null;
-  if(!quote)return {verified:true,filled:false};
+  if(!quote||overSignal(state,quote)?.fraction!==verifiedSignal.fraction)return {verified:true,filled:false};
   const [account,positions]=await Promise.all([accountBalance({fresh:true}),allOpenPositions()]);
   const position=positions.market_positions?.find(p=>p.ticker===quote.ticker);
-  if(!upgradeEligible(original,position,{...c,market:quote}))return {verified:true,filled:false};
+  if(!upgradeEligible(original,position,{...c,market:quote,signal:verifiedSignal}))return {verified:true,filled:false};
   const bankroll=Number(account.balance)+Number(account.portfolio_value);
-  const budget=remainingVerifiedOverCents(position,bankroll),fees=feeReserve(c.event,quote);
+  const fraction=verifiedSignal.fraction,budget=remainingVerifiedOverCents(position,bankroll,fraction),fees=feeReserve(c.event,quote);
   const spendable=Number(account.balance),price=Number(quote.yes_ask_dollars);
-  const desired=profitableCount(contractCount(spendable,quote,.30,bankroll,budget,fees),price,fees,'over',bankroll,state.type,state.remainingSeconds);
+  const desired=profitableCount(contractCount(spendable,quote,fraction,bankroll,budget,fees),price,fees,'over',bankroll,state.type,state.remainingSeconds);
   if(!desired)return {verified:true,filled:false};
   const shard=marketShard(c.event,quote),local=shardCash(account,shard);
   if(local===null)return {verified:true,filled:false};
   const desiredCost=estimatedCostCents(desired,price,fees);
   if(local<desiredCost&&transferPlan(account,shard,desiredCost))await ensureShardFunding({strategy:'over'},c.event,quote,account,desiredCost);
-  const count=profitableCount(contractCount(Math.min(spendable,local),quote,.30,bankroll,budget,fees),price,fees,'over',bankroll,state.type,state.remainingSeconds);
+  const count=profitableCount(contractCount(Math.min(spendable,local),quote,fraction,bankroll,budget,fees),price,fees,'over',bankroll,state.type,state.remainingSeconds);
   if(!count)return {verified:true,filled:false};
   const id=randomUUID();
-  const reserved=await pool.query(`INSERT INTO position_upgrades(market_ticker,id,original_id,verification_id,status,count,limit_price,available_cents)
+  const reserved=await pool.query(`INSERT INTO ${upgradeTable}(market_ticker,id,original_id,verification_id,status,count,limit_price,available_cents)
     VALUES($1,$2,$3,$4,'reserved',$5,$6,$7)
     ON CONFLICT(market_ticker) DO UPDATE SET id=EXCLUDED.id,original_id=EXCLUDED.original_id,
       verification_id=EXCLUDED.verification_id,status='reserved',count=EXCLUDED.count,limit_price=EXCLUDED.limit_price,
       available_cents=EXCLUDED.available_cents,order_id=NULL,fill_count=0,error=NULL,created_at=now(),updated_at=now()
-    WHERE (position_upgrades.status='unfilled' AND position_upgrades.updated_at<now()-interval '2 seconds')
-       OR (position_upgrades.status='rejected' AND position_upgrades.updated_at<now()-interval '15 seconds'
-         AND ((position_upgrades.error ILIKE '%insufficient%' AND EXCLUDED.available_cents>position_upgrades.available_cents)
-           OR (position_upgrades.error ILIKE '%price%' AND EXCLUDED.limit_price<>position_upgrades.limit_price)))
+    WHERE (${upgradeTable}.status='unfilled' AND ${upgradeTable}.updated_at<now()-interval '2 seconds')
+       OR (${upgradeTable}.status='rejected' AND ${upgradeTable}.updated_at<now()-interval '15 seconds'
+         AND ((${upgradeTable}.error ILIKE '%insufficient%' AND EXCLUDED.available_cents>${upgradeTable}.available_cents)
+           OR (${upgradeTable}.error ILIKE '%price%' AND EXCLUDED.limit_price<>${upgradeTable}.limit_price)))
     RETURNING id`,
     [quote.ticker,id,original.id,state.verificationId,count,price,Math.floor(spendable)]);
   if(!reserved.rowCount)return {verified:true,filled:false};
@@ -590,13 +599,13 @@ async function upgradeHeldOver(c,preflight,original,scoreboardCache){
   try{
     const result=await kalshi('/portfolio/events/orders',{method:'POST',auth:true,body:{ticker:quote.ticker,client_order_id:id,side:'bid',count:count.toFixed(2),price:price.toFixed(4),time_in_force:'fill_or_kill',self_trade_prevention_type:'taker_at_cross',post_only:false}});
     const filled=Number(result.fill_count_fp??result.fill_count??result.order?.fill_count_fp??0);
-    await pool.query('UPDATE position_upgrades SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE id=$1',
+    await pool.query(`UPDATE ${upgradeTable} SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE id=$1`,
       [id,filled>0?'filled':'unfilled',result.order_id||result.order?.order_id||null,filled]);
     if(filled>0)await invalidateBalance();
     return {verified:true,filled:filled>0};
   }catch(e){
     const message=String(e.message),noLiquidity=/^Kalshi 409 .*fill or kill insufficient resting volume/i.test(message),terminal=/^Kalshi (400|401|403|404|422) /.test(message);
-    await pool.query('UPDATE position_upgrades SET status=$2,error=$3,updated_at=now() WHERE id=$1',
+    await pool.query(`UPDATE ${upgradeTable} SET status=$2,error=$3,updated_at=now() WHERE id=$1`,
       [id,noLiquidity?'unfilled':terminal?'rejected':'check_order',message.slice(0,250)]);
     console.error('Upgrade order response:',quote.ticker,e.message);
     return {verified:true,filled:false};
@@ -617,7 +626,7 @@ async function immediatelyUpgradeFilledOver(c,scoreboardCache){
   if(!confirmedOver(first,second,c.market)||
     await auditedOver(second,c.milestone,{cache:scoreboardCache,market:c.market,firstObservation:first,allowUnavailable:true})!==true)return false;
   const verifiedSignal=overSignal(second,c.market);
-  if(!verifiedSignal||verifiedSignal.fraction!==.30)return false;
+  if(!verifiedSignal||![.30,.40].includes(verifiedSignal.fraction))return false;
   const {rows:[fill]}=await pool.query(`SELECT id,market_ticker,event_ticker,game_id,sport,strategy,reason,status,combo_legs
     FROM trade_attempts WHERE market_ticker=$1 AND status='filled'`,[c.market.ticker]);
   if(!fill)return false;
@@ -1178,7 +1187,7 @@ async function scan(cachedMilestones,discoveryCount){
     await candidateTable();
     const opportunities=[],snapshotRows=new Map(),scoreboardCache=new Map();
     const allCandidates=[],upgradeCandidates=[],snapshotCandidates=new Map();
-    const fallbackFills=new Map(existingFills.rows.filter(r=>['over','lead'].includes(r.strategy)&&/Kalshi-only/i.test(r.reason||'')).map(r=>[r.market_ticker,r]));
+    const upgradeFills=new Map(existingFills.rows.filter(r=>r.strategy==='over'||r.strategy==='lead'&&/Kalshi-only/i.test(r.reason||'')).map(r=>[r.market_ticker,r]));
     const heldPositions=new Map((openPositions?.market_positions||[]).map(p=>[p.ticker,p]));
     for(const {milestone,state} of games){
       const candidates=[];
@@ -1188,7 +1197,7 @@ async function scan(cachedMilestones,discoveryCount){
       // not send them through order preflight or count them as new candidates.
       allCandidates.push(...candidates.filter(c=>!filled.has(signalKey(c))));
       for(const c of candidates){
-        const original=fallbackFills.get(c.market.ticker);
+        const original=upgradeFills.get(c.market.ticker);
         const position=heldPositions.get(c.market.ticker);
         if(upgradeEligible(original,position,c)||original?.status==='filled'&&original.strategy==='lead'&&
           c.signal.strategy==='lead'&&c.market.ticker===original.market_ticker&&c.event.event_ticker===original.event_ticker&&
@@ -1572,7 +1581,7 @@ async function settlementAlerts(since){
   return rows;
 }
 export default {async fetch(req){const url=new URL(req.url);
-  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'soccer-over-stability-combo-leeway-20261030'});
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'robust-over-strict-weather-20261030'});
   if(req.method==='GET'&&url.pathname==='/manifest.webmanifest')return response(manifest,'application/manifest+json');
   if(req.method==='GET'&&url.pathname==='/sw.js')return new Response(worker,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','service-worker-allowed':'/','x-content-type-options':'nosniff'}});
   if(req.method==='GET'&&/^\/icon-(192|512)\.png$/.test(url.pathname))return response(Buffer.from(icons[Number(url.pathname.match(/\d+/)[0])],'base64'),'image/png');

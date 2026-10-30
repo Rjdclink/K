@@ -37,6 +37,15 @@ test('only a same-station in-period observed exceeded outcome qualifies',()=>{
   assert.equal(observedWeather(c,[observation('KNYC','2026-11-03T05:00:00Z',2.54)],now),null);
   assert.equal(stationTimezone({geometry:{coordinates:[-73.97,40.78]}}),'America/New_York');
 });
+test('NWS settled directional temperatures use the strict contract line without an added cushion',()=>{
+  const now=new Date('2026-11-03T04:55:00Z');
+  const contract={station:'KNYC',start:Date.parse('2026-11-02T05:00:00Z'),end:Date.parse('2026-11-03T05:00:00Z'),type:'high',comparison:'greater',threshold:70};
+  const reading=c=>[{properties:{station:'https://api.weather.gov/stations/KNYC',timestamp:'2026-11-02T20:00:00Z',temperature:{value:c}}}];
+  assert.ok(observedWeather(contract,reading(21.2),now)?.value>70);
+  assert.equal(observedWeather(contract,reading((70-32)*5/9),now),null);
+  const low={...contract,type:'low',comparison:'less'};
+  assert.ok(observedWeather(low,reading(21),now)?.value<70);
+});
 test('predictive rain, unresolved ranges and wrong source fail closed',()=>{
   const at=new Date('2026-11-03T04:55:00Z');
   assert.equal(weatherContract(event,{...market,strike_type:'less'},station,at),null);
@@ -56,10 +65,12 @@ test('Weather Company station and same-day settled observations verify direction
   assert.equal(observedWeatherCompany(c,feed,at)?.value,70);
   const observation=tempF=>({...feed,stations:[{...feed.stations[0],observations:[{...reading,tempF}]}]});
   assert.equal(observedWeatherCompany(c,observation(68),at)?.value,68,'one full degree past a high line qualifies');
-  assert.equal(observedWeatherCompany(c,observation(67.9),at),null);
+  assert.equal(observedWeatherCompany(c,observation(67.9),at)?.value,67.9,'a settled reading strictly above the contract line qualifies');
+  assert.equal(observedWeatherCompany(c,observation(67),at),null);
   const low={...c,type:'low',comparison:'less',threshold:67};
   assert.equal(observedWeatherCompany(low,observation(66),at)?.value,66,'one full degree below a low line qualifies');
-  assert.equal(observedWeatherCompany(low,observation(66.1),at),null);
+  assert.equal(observedWeatherCompany(low,observation(66.1),at)?.value,66.1);
+  assert.equal(observedWeatherCompany(low,observation(67),at),null);
   assert.equal(observedWeatherCompany(c,{...feed,stations:[{...feed.stations[0],observations:[{...reading,status:'preliminary'}]}]},at),null);
   assert.equal(observedWeatherCompany(c,{...feed,stations:[{...feed.stations[0],observations:[{...reading,localDate:'2026-10-28'}]}]},at),null);
   assert.equal(observedWeatherCompany(c,{...feed,stations:[{...feed.stations[0],observations:[{...reading,icaoId:'KORD'}]}]},at),null);

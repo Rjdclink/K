@@ -74,7 +74,13 @@ export function espnMatches(data,game,milestone){
     if(!home||!away||!sameFixture(game,milestone,teamAliases(home.team),teamAliases(away.team),e.date))return [];
     const status=c.status||e.status;
     const periods=(home.linescores||[]).map((part,i)=>({number:i+1,home:score(part.value),away:score(away.linescores?.[i]?.value)}));
-    return [{source:'ESPN',eventId:e.id,home:score(home.score),away:score(away.score),periods,live:status?.type?.state==='in',clockOk:clockCompatible(game,status?.period,status?.displayClock)}];
+    // Use the last play only when scoring events account for the full score.
+    const plays=Array.isArray(c.details)?c.details.filter(p=>p.scoringPlay===true):[];
+    const values=plays.map(p=>Number(p.scoreValue));
+    const total=score(home.score)+score(away.score);
+    const lastScoringPlay=values.length&&values.every(v=>Number.isInteger(v)&&v>0)&&
+      values.reduce((a,b)=>a+b,0)===total?values.at(-1):null;
+    return [{source:'ESPN',eventId:e.id,home:score(home.score),away:score(away.score),periods,live:status?.type?.state==='in',clockOk:clockCompatible(game,status?.period,status?.displayClock),lastScoringPlay}];
   });
 }
 export function tennisMatches(data,game,milestone){
@@ -257,7 +263,7 @@ async function verifyExistingOver(game,milestone,{fetcher=fetch,cache,market,sou
     if(!matches.length)return null;
     if(!scoreAgreement(game,[matches],market))return false;
     const player=playerOverSpec(game,market);
-    if(!player)return true;
+    if(!player){if(source==='ESPN'&&Number.isInteger(matches[0].lastScoringPlay))game.lastScoringPlay=matches[0].lastScoringPlay;return true;}
     const matched=matches[0];
     if(!matched.eventId)return null;
     try{
