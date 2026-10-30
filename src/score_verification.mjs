@@ -174,10 +174,11 @@ export function playerStatAgreement(summary,player){
     const yardType={PASSYDS:'passing',RUSHYDS:'rushing',RECYDS:'receiving'}[player.metric];
     if(yardType&&!String(group.name||group.displayName||'').toLowerCase().includes(yardType))return [];
     const label={PTS:'PTS',REB:'REB',AST:'AST','3PT':'3PT',STL:'STL',BLK:'BLK',PRA:'PTS',GOALS:'G',SAVES:'SV',SOG:'SOG',HITS:'H',RBI:'RBI',HR:'HR',PASSYDS:'YDS',RUSHYDS:'YDS',RECYDS:'YDS'}[player.metric];
-    const index=group.names?.findIndex(name=>name===label);
-    if(index<0)return [];
+    const headers=group.names||group.labels;
+    const index=headers?.findIndex(name=>name===label);
+    if(!Number.isInteger(index)||index<0)return [];
     return (group.athletes||[]).filter(a=>clean(a.athlete?.displayName)===clean(player.name)&&!a.didNotPlay).map(a=>{
-      const at=label=>group.names?.indexOf(label);
+      const at=label=>headers?.indexOf(label);
       const read=label=>{const n=at(label);return n<0?NaN:score(String(a.stats?.[n]||'').split('-')[0])};
       return player.metric==='PRA'?read('PTS')+read('REB')+read('AST'):read(label);
     });
