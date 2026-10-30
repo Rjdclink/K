@@ -501,17 +501,8 @@ async function reconcileCombos(){
   // Request executable quotes for all available ticket sizes in the same
   // bounded window. A six-pick market may have no maker while a three-pick does.
   const allGroups=compatibleComboGroups(collections,eligible,64);
-  const groups=allGroups.filter(({legs})=>legs.some(c=>c.market.ticker===newTicker));
+  const groups=allGroups;
   if(!groups.length)console.warn('Combo no compatible collection for trigger:',newTicker,eligible.map(c=>[c.event.event_ticker,c.market.ticker]),'collections',collections.length);
-  // Probe the remaining held pair as a creation-only diagnostic. It must not
-  // turn into an order because this trigger belongs to the newly filled leg.
-  await Promise.all(allGroups.filter(({legs})=>eligible.length===3&&legs.length===2&&!legs.some(c=>c.market.ticker===newTicker)).slice(0,3).map(async ({legs,collection})=>{
-    try{
-      const created=await kalshi('/multivariate_event_collections/'+encodeURIComponent(collection.collection_ticker),
-        {auth:true,method:'POST',body:{selected_markets:selectedComboMarkets(legs),with_market_payload:true}});
-      console.info('Combo alternative pair market created:',legs.map(c=>c.market.ticker),created.market_ticker);
-    }catch(e){console.warn('Combo alternative pair creation failed:',legs.map(c=>c.market.ticker),e.message)}
-  }));
   await Promise.all(groups.slice(0,10).map(async ({legs,collection})=>{
     const n=legs.length;
     try{
@@ -554,7 +545,7 @@ async function reconcileCombos(){
           }
           return eligible;
         }catch(e){console.warn('Combo quotes unavailable:',plan.ticker,e.message);if(e.message.includes('Kalshi 403 GET /communications/quotes'))throw e;return []}
-      }))).flat().sort((a,b)=>b.plan.legs.length-a.plan.legs.length||b.terms.profitCents-a.terms.profitCents);
+      }))).flat().sort((a,b)=>b.plan.legs.length-a.plan.legs.length||Number(b.plan.legs.some(c=>c.market.ticker===newTicker))-Number(a.plan.legs.some(c=>c.market.ticker===newTicker))||b.terms.profitCents-a.terms.profitCents);
       if(offers.length){
         const {q,terms,plan,fees}=offers[0],{legs,ticker,strategy,fraction,shard,rfq,created}=plan;
         // Refresh every leg immediately before accepting a quote. A goal correction
