@@ -346,7 +346,13 @@ function signalExecution(c,filled,account,balance,bankroll,comboCount=0){
   const spendable=cashAfterComboReserve(balance,bankroll,comboCount);
   const raw=contractCount(spendable,c.market,c.signal.fraction,bankroll,Infinity,fees);
   if(!raw)return spendable<balance?'Cash reserved for combination':'Insufficient available cash for this trade';
-  if(!profitableCount(raw,price,fees,c.signal.strategy,bankroll,c.state.type,c.state.remainingSeconds))return 'Below minimum net profit after fees';
+  if(!profitableCount(raw,price,fees,c.signal.strategy,bankroll,c.state.type,c.state.remainingSeconds)){
+    // Overs have no arbitrary profit floor. With a small residual cash amount,
+    // fractional contract and fee rounding can still leave zero net cents.
+    if(c.signal.strategy==='over'&&netSettlementProfitCents(raw,price,fees)<1)
+      return spendable<balance?'Cash reserved for combination; remaining size has no net profit after fees':'No positive net profit after fees';
+    return 'Below minimum net profit after fees';
+  }
   const local=shardCash(account,marketShard(c.event,c.market));
   if(local===null)return 'Shard balance unavailable';
   if(local<estimatedCostCents(raw,price,fees)){
@@ -801,6 +807,10 @@ async function scan(cachedMilestones){
     const games=ms.map(m=>({milestone:m,state:gameState(m,liveMap.get(m.id))}));
     const active=games.filter(g=>g.state.verifiedLive && g.state.scoreKnown);
     const events=await marketMap(active.filter(g=>eligibleForMarkets(g.state)).flatMap(g=>linkedEventTickers(g.milestone)));
+    // Market discovery can take longer than a scoring play. Refresh live
+    // player stats immediately before deciding which props crossed their line.
+    const currentLive=await liveBatch(active.map(g=>g.milestone));
+    for(const game of active){const latest=currentLive.get(game.milestone.id);if(latest){liveMap.set(game.milestone.id,latest);game.state=gameState(game.milestone,latest)}}
     let balance=0,bankroll=0,account=null,comboCount=0;
     const existingFills=await pool.query(`SELECT id,market_ticker,event_ticker,game_id,sport,strategy,fill_count,limit_price,created_at,updated_at,combo_legs FROM trade_attempts WHERE status='filled'`);
     let filled=new Set(existingFills.rows.map(r=>`${r.market_ticker}:${r.strategy}`));
@@ -830,11 +840,13 @@ async function scan(cachedMilestones){
     for(const {milestone,state} of games){
       const candidates=[];
       if(eligibleForMarkets(state))for(const ticker of linkedEventTickers(milestone)){const event=events.get(ticker);if(!event || event.category!=='Sports')continue;
-        for(const market of event.markets||[]){if(market.event_ticker!==event.event_ticker)continue;const signal=overSignal(state,market)||golfSignal(state,market)||leadSignal(state,market)||additionalLeadSignal(state,market)||tennisSignal(state,market)||tableTennisSignal(state,market);if(signal&&!filled.has(`${market.ticker}:${signal.strategy}`))candidates.push({signal,event,market,state,milestone})}}
-      allCandidates.push(...candidates);
+        for(const market of event.markets||[]){if(market.event_ticker!==event.event_ticker)continue;const signal=overSignal(state,market)||golfSignal(state,market)||leadSignal(state,market)||additionalLeadSignal(state,market)||tennisSignal(state,market)||tableTennisSignal(state,market);if(signal)candidates.push({signal,event,market,state,milestone})}}
+      // Keep crossed, already-filled props visible with their status, but do
+      // not send them through order preflight or count them as new candidates.
+      allCandidates.push(...candidates.filter(c=>!filled.has(signalKey(c))));
       // Summary depth recovery is exploratory. Bound it across the whole scan;
       // final execution still fetches an authoritative fresh orderbook.
-      const missing=candidates.filter(c=>!hasAsk(c.market));
+      const missing=candidates.filter(c=>!filled.has(signalKey(c))&&!hasAsk(c.market));
       const sample=missing.filter(c=>Number(c.market.yes_ask_dollars)<1)
         .concat(missing.filter(c=>Number(c.market.yes_ask_dollars)>=1));
       const probes=sample.slice(0,Math.min(2,askProbeBudget));
@@ -863,6 +875,11 @@ async function scan(cachedMilestones){
       const batch=snapshots.slice(i,i+100);
       const values=batch.map((_,row)=>'('+Array.from({length:18},(_,field)=>'$'+(row*18+field+1)).join(',')+')').join(',');
       await pool.query(`INSERT INTO game_snapshots(id,title,sport,sport_family,home,away,status,progress,period,time_left,clock_seconds,clock_label,clock_observed_at,scanned_at,signals,possession_side,home_team_id,away_team_id) VALUES ${values} ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,sport=EXCLUDED.sport,sport_family=EXCLUDED.sport_family,home=EXCLUDED.home,away=EXCLUDED.away,status=EXCLUDED.status,progress=EXCLUDED.progress,period=EXCLUDED.period,time_left=EXCLUDED.time_left,clock_seconds=EXCLUDED.clock_seconds,clock_label=EXCLUDED.clock_label,clock_observed_at=CASE WHEN game_snapshots.clock_seconds IS NOT DISTINCT FROM EXCLUDED.clock_seconds AND game_snapshots.period=EXCLUDED.period AND game_snapshots.status=EXCLUDED.status AND game_snapshots.clock_label=EXCLUDED.clock_label THEN game_snapshots.clock_observed_at ELSE EXCLUDED.clock_observed_at END,scanned_at=EXCLUDED.scanned_at,signals=EXCLUDED.signals,possession_side=EXCLUDED.possession_side,home_team_id=EXCLUDED.home_team_id,away_team_id=EXCLUDED.away_team_id WHERE game_snapshots.status IS DISTINCT FROM 'live' OR EXCLUDED.status IS DISTINCT FROM 'live' OR game_snapshots.period IS DISTINCT FROM EXCLUDED.period OR game_snapshots.clock_seconds IS NULL OR EXCLUDED.clock_seconds IS NULL OR EXCLUDED.clock_seconds<=game_snapshots.clock_seconds`,batch.flat());
+      // A concurrent clock refresh may be newer than the scan's clock. Keep
+      // that clock, but always publish this scan's signal set and its own age.
+      const signalValues=batch.map((_,row)=>`($${row*2+1},$${row*2+2})`).join(',');
+      await pool.query(`UPDATE game_snapshots AS g SET signals=v.signals::jsonb,scanned_at=clock_timestamp()
+        FROM (VALUES ${signalValues}) AS v(id,signals) WHERE g.id=v.id`,batch.flatMap(row=>[row[0],row[14]]));
     }
     // Make the live score and clock visible before slower order preflights.
     await pool.query(`UPDATE scan_status SET last_scan=$1,scanned=$2,signals=$3 WHERE id=1`,[scanStarted,scanned,signals]);
@@ -1027,7 +1044,7 @@ async function refreshOpenClocks(){
       await pool.query(`UPDATE game_snapshots SET home=$2,away=$3,status=$4,time_left=$5,possession_side=$9,
         clock_observed_at=CASE WHEN clock_seconds IS DISTINCT FROM $6::integer OR period IS DISTINCT FROM $8::text OR status IS DISTINCT FROM $4::text
           THEN clock_timestamp() ELSE clock_observed_at END,
-        clock_seconds=$6,clock_label=$7,period=$8,scanned_at=clock_timestamp()
+        clock_seconds=$6,clock_label=$7,period=$8
         WHERE id=$1 AND (scanned_at<clock_timestamp() OR status='live')
           AND (status IS DISTINCT FROM 'live' OR $4::text IS DISTINCT FROM 'live' OR period IS DISTINCT FROM $8::text OR clock_seconds IS NULL OR $6::integer IS NULL OR $6::integer<=clock_seconds)`,
         [m.id,s.scoreKnown?s.home:null,s.scoreKnown?s.away:null,s.verifiedLive?'live':'final',
@@ -1037,7 +1054,7 @@ async function refreshOpenClocks(){
 }
 async function state(){const [snap,stats,attempts,weatherStatus]=await Promise.all([
   pool.query(`SELECT id,title,sport,home,away,possession_side,status,time_left,scanned_at,signals FROM game_snapshots
-    WHERE status IN ('live','inprogress','started') AND scanned_at>now()-interval '5 minutes'
+    WHERE status IN ('live','inprogress','started') AND scanned_at>now()-interval '15 minutes'
     ORDER BY jsonb_array_length(signals) DESC,title`),
   pool.query('SELECT * FROM scan_status WHERE id=1'),
   pool.query(`SELECT a.market_ticker,a.game_id,a.sport,a.strategy,a.reason,a.combo_legs,a.fill_count,a.limit_price,g.status AS game_status,g.title AS game_title,g.sport_family,g.possession_side,g.home AS home_score,g.away AS away_score,g.scanned_at AS score_scanned_at,g.clock_seconds,g.clock_label,g.clock_observed_at,g.time_left FROM trade_attempts a LEFT JOIN game_snapshots g ON g.id=a.game_id WHERE a.status='filled' ORDER BY a.created_at DESC`),
