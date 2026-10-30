@@ -114,6 +114,7 @@ test('limited-over cricket team run totals need exact team, crossed line, and tw
   const state=(at,updated,home=170,away=0)=>gameState(m,{milestone_id:m.id,_observed_at:new Date(at).toISOString(),details:{status:'live',home_score:home,away_score:away,inning:1,home_team_name:'Ajman',away_team_name:'Abu Dhabi',last_updated_ts:updated/1000}});
   const first=state(now-8000,now-9000),second=state(now,now-1000,171);
   assert.equal(overSignal(first,market)?.fraction,.05);
+  assert.equal(overSignal(first,{...market,yes_sub_title:'Over 149.5 runs scored'})?.fraction,.05);
   assert.equal(kalshiOnlyOver(first,second,market),true);
   assert.equal(kalshiOnlyOver(first,state(now-4000,now-1000,171),market),false);
   assert.equal(kalshiOnlyOver(first,state(now,now-9000,171),market),false);

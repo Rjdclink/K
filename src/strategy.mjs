@@ -217,10 +217,11 @@ export function cricketOverSignal(game,market){
     Object.keys(market.custom_strike||{}).some(k=>/_player$/.test(k)))return null;
   const line=Number(market.floor_strike);
   if(!Number.isFinite(line)||line<0||!Number.isInteger(line+.5))return null;
-  const title=String(market.yes_sub_title||market.title||'').trim();
-  const matched=title.match(/^(.+?)\s+over\s+(\d+(?:\.\d+)?)\s+runs\s+scored$/i);
+  const titles=[market.yes_sub_title,market.title].filter(Boolean).map(value=>String(value).trim());
+  const parsed=titles.map(title=>title.match(/^(.+?)\s+over\s+(\d+(?:\.\d+)?)\s+runs\s+scored$/i)).filter(Boolean);
+  const matched=parsed[0];
   const rules=String(market.rules_primary||'');
-  if(!matched||Number(matched[2])!==line||!/\bruns?\b/i.test(rules)||
+  if(!matched||parsed.some(candidate=>Number(candidate[2])!==line||norm(candidate[1])!==norm(matched[1]))||!/\bruns?\b/i.test(rules)||
     /\b(?:first|second|third|fourth|innings|powerplay|super over)\b/i.test(rules))return null;
   const home=norm(matched[1])===norm(game.homeName),away=norm(matched[1])===norm(game.awayName);
   if(home===away)return null;
