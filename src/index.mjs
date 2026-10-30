@@ -836,7 +836,7 @@ async function executeVerifiedWeather(verified){
     break;
   }
 }
-async function scan(cachedMilestones){
+async function scan(cachedMilestones,discoveryCount){
   // A transaction-scoped lock is released by Postgres even if an invocation is terminated.
   // Snapshot writes use other pool connections so the dashboard sees each completed cycle.
   const client=await pool.connect();await client.query('BEGIN');
@@ -846,7 +846,8 @@ async function scan(cachedMilestones){
   try{
     if(live()||exitOnly())await reconcileCombos();
     if(live()&&!cachedMilestones)try{await reconcileFundingTransfers()}catch(e){console.warn('Transfer history unavailable:',e.message)}
-    ms=cachedMilestones||await milestones();await ensureScanStatus();const liveMap=await liveBatch(ms);
+    ms=cachedMilestones||await milestones();discoveryCount??=ms.length;
+    await ensureScanStatus();const liveMap=await liveBatch(ms);
     const games=ms.map(m=>({milestone:m,state:gameState(m,liveMap.get(m.id))}));
     const active=games.filter(g=>g.state.verifiedLive && g.state.scoreKnown);
     const events=await marketMap(active.filter(g=>eligibleForMarkets(g.state)).flatMap(g=>linkedEventTickers(g.milestone)));
@@ -921,7 +922,7 @@ async function scan(cachedMilestones){
         FROM (VALUES ${signalValues}) AS v(id,signals) WHERE g.id=v.id`,batch.flatMap(row=>[row[0],row[14]]));
     }
     // Make the live score and clock visible before slower order preflights.
-    await pool.query(`UPDATE scan_status SET last_scan=$1,scanned=$2,signals=$3,discovered=$4 WHERE id=1`,[scanStarted,scanned,signals,ms.length]);
+    await pool.query(`UPDATE scan_status SET last_scan=$1,scanned=$2,signals=$3,discovered=$4 WHERE id=1`,[scanStarted,scanned,signals,discoveryCount]);
     // A maker's RFQ window can last 45 seconds. Publish current player props
     // first, then give held fills their combination chance before singles.
     if(live()&&account)try{
@@ -1090,9 +1091,9 @@ async function scan(cachedMilestones){
       try{await diagnoseHeldCombinations(existingFills.rows,openPositions)}catch(e){console.warn('Held combo diagnostic deferred:',e.message)}
       try{await diagnoseUnfilledCombo(opportunities,filled)}catch(e){console.warn('Unfilled combo diagnostic deferred:',e.message)}
     }
-    await pool.query('UPDATE scan_status SET last_scan=$5,last_error=$4,scanned=$1,signals=$2,discovered=$6,orders_submitted=orders_submitted+$3 WHERE id=1',[scanned,signals,submitted,executionErrors.length?executionErrors.slice(0,2).join('; ').slice(0,250):null,scanStarted,ms.length]);
+    await pool.query('UPDATE scan_status SET last_scan=$5,last_error=$4,scanned=$1,signals=$2,discovered=$6,orders_submitted=orders_submitted+$3 WHERE id=1',[scanned,signals,submitted,executionErrors.length?executionErrors.slice(0,2).join('; ').slice(0,250):null,scanStarted,discoveryCount]);
     try{await syncSettlementAlerts()}catch(e){console.error('Settlement alert scan failed:',e)}
-    return {scanned,signals,submitted,active:active.length,next:games.filter(g=>g.state.verifiedLive || (new Date(g.milestone.start_date).getTime()>Date.now()-3600000 && new Date(g.milestone.start_date).getTime()<Date.now()+3600000)).map(g=>g.milestone)};
+    return {scanned,signals,submitted,active:active.length,discovered:discoveryCount,next:games.filter(g=>g.state.verifiedLive || (new Date(g.milestone.start_date).getTime()>Date.now()-3600000 && new Date(g.milestone.start_date).getTime()<Date.now()+3600000)).map(g=>g.milestone)};
   }catch(e){console.error('Scan failed:',e);await pool.query('UPDATE scan_status SET last_scan=now(),last_error=$1,scanned=$2,signals=$3 WHERE id=1',[String(e.message).slice(0,250),scanned,signals]);return {error:e.message,scanned,signals,next:ms}}
   finally{await client.query('ROLLBACK');client.release()}
 }
@@ -1201,9 +1202,10 @@ export default {async fetch(req){const url=new URL(req.url);
     }).catch(e=>console.warn('Weather discovery deferred:',e.message)):Promise.resolve();
     // Neon cron has minute resolution. Short invocations keep the three-second loop alive
     // without relying on one function instance surviving for a full quarter hour.
-    const now=Date.now();const until=Math.min(now+55000,(Math.floor(now/60000)+1)*60000-2000);let cached=null,cycles=0,last={};
-    while(Date.now()<until){const begun=Date.now();last=await scan(cached);cycles++;
-      if(last.next)cached=last.next;if(last.error && !/Kalshi 429 /.test(last.error) || !last.error && !last.active)break;
+    const now=Date.now();const until=Math.min(now+55000,(Math.floor(now/60000)+1)*60000-2000);let cached=null,discoveryCount,cycles=0,last={};
+    while(Date.now()<until){const begun=Date.now();last=await scan(cached,discoveryCount);cycles++;
+      if(last.next)cached=last.next;if(last.discovered!=null)discoveryCount=last.discovered;
+      if(last.error && !/Kalshi 429 /.test(last.error) || !last.error && !last.active)break;
       const pause=Math.max(0,3000-(Date.now()-begun));if(Date.now()+pause>=until)break;
       await new Promise(resolve=>setTimeout(resolve,pause));
     }
