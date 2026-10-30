@@ -1581,7 +1581,7 @@ export default {async fetch(req){const url=new URL(req.url);
     const weatherClaim=await pool.query(`UPDATE weather_scan_status SET last_scan=now() WHERE id=1
       AND (last_scan IS NULL OR last_scan<now()-interval '90 seconds') RETURNING id`);
     const weatherJob=weatherClaim.rowCount?scanWeatherMarkets({kalshi,nws,twc,onVerified:executeVerifiedWeather}).then(async stats=>{
-      console.info('Weather scan funnel:',JSON.stringify({series:stats.series,events:stats.events,eligible:stats.eligible,verified:stats.verified,companyProbe:stats.companyProbe,companyObservationFeed:stats.companyObservationFeed,sources:stats.sources,rejections:stats.rejections}));
+      console.info('Weather scan funnel:',JSON.stringify({series:stats.series,events:stats.events,eligible:stats.eligible,verified:stats.verified,companyProbe:stats.companyProbe,companyObservationFeed:stats.companyObservationFeed,sources:stats.sources,rejections:stats.rejections,thresholdSamples:stats.thresholdSamples}));
       await pool.query(`UPDATE weather_scan_status SET last_scan=now(),series=$1,events=$2,eligible=$3,verified=$4,failures=$5 WHERE id=1`,[stats.series,stats.events,stats.eligible,stats.verified,stats.failures]);
     }).catch(e=>console.warn('Weather discovery deferred:',e.message)):Promise.resolve();
     // Neon cron has minute resolution. Short invocations keep the three-second loop alive
@@ -1630,6 +1630,16 @@ export default {async fetch(req){const url=new URL(req.url);
       const raw=await req.text();if(raw.length>4096)return json({error:'Subscription too large'},413);
       let subscription;try{subscription=validateSubscription(JSON.parse(raw))}catch{return json({error:'Invalid subscription'},400)}
       await pool.query('DELETE FROM push_subscriptions WHERE endpoint=$1',[subscription.endpoint]);return json({ok:true});
+    }
+    if(req.method==='POST'&&url.pathname==='/api/push-test'){
+      if(req.headers.get('origin')!==url.origin||!req.headers.get('content-type')?.startsWith('application/json'))return json({error:'Forbidden'},403);
+      const raw=await req.text();if(raw.length>4096)return json({error:'Subscription too large'},413);
+      let subscription;try{subscription=validateSubscription(JSON.parse(raw))}catch{return json({error:'Invalid subscription'},400)}
+      const registered=await pool.query('SELECT subscription FROM push_subscriptions WHERE endpoint=$1',[subscription.endpoint]);
+      if(!registered.rowCount)return json({error:'This device is not subscribed'},404);
+      const code=await deliverPush(registered.rows[0].subscription,{type:'test-notification',id:'test',body:'Your K notifications are ready.'},pushIdentity());
+      if(code===404||code===410){await pool.query('DELETE FROM push_subscriptions WHERE endpoint=$1',[subscription.endpoint]);return json({error:'Push subscription expired; tap the bell to subscribe again'},410)}
+      return code===201||code===202?json({ok:true}):json({error:`Push provider rejected delivery (${code})`},502);
     }
     if(req.method==='GET'&&url.pathname==='/api/state'){
       const since=Number(url.searchParams.get('since'))||0;
