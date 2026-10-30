@@ -70,7 +70,7 @@ test('independent scoreboards must match the exact live fixture and both team sc
   assert.equal(scoreAgreement(game,[[],foxMatches(fox(24,20,{entityLink:{layout:{tokens:{homeUri:'team-bkn',awayUri:'team-bos'}}}}),game,m)]),false,'FOX row orientation cannot be guessed');
 });
 
-test('every over preflight needs ESPN or FOX; missing data and requests fail closed',async()=>{
+test('every over preflight needs an exact independent source; missing data fails closed',async()=>{
   const fetcher=async url=>({ok:true,json:async()=>url.includes('espn.com')?espn():fox()});
   assert.equal(await verifyIndependentOver(game,m,{fetcher}),true);
   assert.equal(await verifyIndependentOver(game,m,{fetcher:async url=>({ok:true,json:async()=>url.includes('espn.com')?espn(0,0):fox(0,0)})}),false);
@@ -127,19 +127,33 @@ test('ESPN player statistic takes precedence over a delayed FOX box score',async
   assert.equal(await verifyIndependentOver(state,milestone,{market,fetcher:fetcher(7)}),true);
   assert.equal(await verifyIndependentOver(state,milestone,{market,fetcher:async url=>url.includes('/event/106594/data')?{ok:false,status:503}:{ok:true,json:async()=>url.includes('/summary?')?summary:url.includes('espn.com')?board:foxBoard}}),true);
 });
-test('a FOX score from the previous quarter cannot veto a current ESPN player stat',async()=>{
+test('FOX is queried only when ESPN is unavailable, never as a veto of confirmed ESPN stats',async()=>{
   const state=gameState(m,{details:{status:'live',home_score:85,away_score:96,quarter:4,clock:'09:47',player_stats:{p:{steals:2}}}});
   const market={event_ticker:'KXNBASTL-DATE',status:'active',yes_sub_title:'Ty Jerome: 2+ steals',custom_strike:{basketball_player:'p'},floor_strike:1.5};
   const board=espn(85,96,{id:'espn-game',status:{type:{state:'in'},period:4,displayClock:'09:47'}});
   const summary={boxscore:{players:[{statistics:[{names:['STL'],athletes:[{athlete:{displayName:'Ty Jerome'},stats:['2']}]}]}]}};
   const delayed=fox(83,91,{statusLine:'END 3RD'});
+  const urls=[];
   const read=foxBoard=>async url=>{
+    urls.push(url);
     if(url.includes('cdn.nba.com')||url.includes('cbssports.com')||url.includes('yahoo.com'))throw Error('unavailable');
     return {ok:true,json:async()=>url.includes('/summary?')?summary:url.includes('espn.com')?board:foxBoard};
   };
   assert.equal(foxMatches(delayed,state,m)[0]?.stale,true);
   assert.equal(await verifyIndependentOver(state,m,{market,fetcher:read(delayed)}),true);
-  assert.equal(await verifyIndependentOver(state,m,{market,fetcher:read(fox(83,91,{statusLine:'09:47 4TH'}))}),false,'a same-quarter conflict still vetoes');
+  assert.equal(urls.some(url=>url.includes('foxsports.com')),false);
+  assert.equal(await verifyIndependentOver(state,m,{market,fetcher:read(fox(83,91,{statusLine:'09:47 4TH'}))}),true);
+  const wrong=async url=>{
+    if(url.includes('cdn.nba.com')||url.includes('cbssports.com')||url.includes('yahoo.com'))throw Error('unavailable');
+    if(url.includes('foxsports.com'))throw Error('FOX must not be queried when ESPN disagrees');
+    return {ok:true,json:async()=>url.includes('/summary?')?summary:espn(83,91,{id:'espn-game',status:{type:{state:'in'},period:4,displayClock:'09:47'}})};
+  };
+  assert.equal(await verifyIndependentOver(state,m,{market,fetcher:wrong}),false);
+  const fallback=async url=>{
+    if(url.includes('cdn.nba.com')||url.includes('cbssports.com')||url.includes('yahoo.com')||url.includes('espn.com'))throw Error('unavailable');
+    return {ok:true,json:async()=>fox(85,96,{statusLine:'09:47'})};
+  };
+  assert.equal(await verifyIndependentOver(state,m,{market:{event_ticker:'KXNBATOTAL-DATE'},fetcher:fallback}),true);
 });
 test('WTA game totals need the exact ESPN match and all set games',async()=>{
   const milestone={id:'wta',title:'Rakhimova vs Alexandrova',type:'tennis_tournament_singles',start_date:start,details:{tour:'WTA'}};

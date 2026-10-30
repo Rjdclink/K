@@ -188,11 +188,11 @@ export function playerStatAgreement(summary,player){
       return player.metric==='PRA'?read('PTS')+read('REB')+read('AST'):read(label);
     });
   }));
-  return matches.length===1&&Number.isInteger(matches[0])&&matches[0]===player.value;
+  // An absent player or statistic is unavailable, not a contrary reading.
+  return matches.length===1&&Number.isInteger(matches[0])?matches[0]===player.value:null;
 }
-// A missing FOX box score is optional; an exact fixture/player/stat that
-// disagrees with the exchange and ESPN is a veto. Parse the named statistic
-// from the player table, not the recap or a similarly named opponent.
+// FOX supplies a player statistic only when ESPN cannot verify this fixture
+// or stat. Parse the named player table, not a recap or similarly named rival.
 export function foxPlayerStat(data,player,eventId){
   if(String(data?.header?.id)!==String(eventId))return null;
   const column={PTS:'PTS',REB:'REB',AST:'AST','3PT':'3FG',STL:'STL',BLK:'BLK'}[player.metric];
@@ -225,14 +225,6 @@ async function verifyExistingOver(game,milestone,{fetcher=fetch,cache,market}={}
   const {espn,fox}=feeds(game);
   if(!espn&&!fox)return null;
   const dates=dateCandidates(start);
-  // The UTC date may differ from the league's local scoreboard date.
-  const requests=[];
-  if(espn)for(const day of dates)requests.push({source:'ESPN',url:`https://site.api.espn.com/apis/site/v2/sports/${espn}/scoreboard?dates=${day}&limit=500`});
-  if(fox)for(const day of dates){
-    const segment=fox==='soccer'?'c0d'+day:day;
-    const group=fox==='soccer'?'&groupId=0':'';
-    requests.push({source:'FOX Sports',url:`https://api.foxsports.com/bifrost/v1/${fox}/scoreboard/segment/${segment}?apikey=${FOX_KEY}&api-version=1.1${group}`});
-  }
   const read=url=>{
     const cached=cache?.get(url);
     if(cached&&Date.now()-cached.at<3000)return cached.value;
@@ -240,39 +232,40 @@ async function verifyExistingOver(game,milestone,{fetcher=fetch,cache,market}={}
     cache?.set(url,{at:Date.now(),value});
     return value;
   };
-  const results=await Promise.allSettled(requests.map(async request=>({source:request.source,data:await read(request.url)})));
-  const bySource=['ESPN','FOX Sports'].map(source=>{
-    const seen=new Set();return results.flatMap(result=>{
-      if(result.status!=='fulfilled'||result.value.source!==source)return [];
-      const matches=source==='ESPN'?/^tennis_/.test(game.type)?tennisMatches(result.value.data,game,milestone):espnMatches(result.value.data,game,milestone):foxMatches(result.value.data,game,milestone);
-      const signature=JSON.stringify(matches);
-      if(seen.has(signature))return [];
-      seen.add(signature);return matches.filter(m=>!m.stale);
-    });
-  });
-  // Use the preferred provider for a matched fixture. An absent fixture is
-  // unavailable, while a positively identified contradictory score is false.
-  if(bySource[0].length>1||bySource[1].length>1)return false;
-  if(bySource[0].length&&bySource[1].length&&
-    (!scoreAgreement(game,[bySource[0]],market)||!scoreAgreement(game,[bySource[1]],market)))return false;
-  const chosen=bySource[0].length?bySource[0]:bySource[1];
-  if(!chosen.length)return null;
-  if(!scoreAgreement(game,[chosen],market))return false;
-  const player=playerOverSpec(game,market);
-  if(!player)return true;
-  const matches=chosen.filter(m=>m.live&&m.clockOk&&m.home===game.home&&m.away===game.away&&m.eventId);
-  if(matches.length!==1)return null;
-  try{
-    if(chosen===bySource[0]){
-      const summary=await read(`https://site.api.espn.com/apis/site/v2/sports/${espn}/summary?event=${encodeURIComponent(matches[0].eventId)}`);
-      return summary?.boxscore?.players?.length?playerStatAgreement(summary,player):null;
+  const check=async(source,feed)=>{
+    if(!feed)return null;
+    const requests=dates.map(day=>source==='ESPN'
+      ?`https://site.api.espn.com/apis/site/v2/sports/${feed}/scoreboard?dates=${day}&limit=500`
+      :`https://api.foxsports.com/bifrost/v1/${feed}/scoreboard/segment/${feed==='soccer'?'c0d'+day:day}?apikey=${FOX_KEY}&api-version=1.1${feed==='soccer'?'&groupId=0':''}`);
+    const results=await Promise.allSettled(requests.map(read));
+    const seen=new Set(),matches=[];
+    for(const result of results){
+      if(result.status!=='fulfilled')continue;
+      const found=source==='ESPN'?/^tennis_/.test(game.type)?tennisMatches(result.value,game,milestone):espnMatches(result.value,game,milestone):foxMatches(result.value,game,milestone);
+      const signature=JSON.stringify(found);
+      if(seen.has(signature))continue;
+      seen.add(signature);matches.push(...found.filter(m=>!m.stale));
     }
-    if(fox!=='nba')return null;
-    const eventId=matches[0].eventId;
-    const box=await read(`https://api.foxsports.com/bifrost/v1/${fox}/event/${eventId}/data?apikey=${FOX_KEY}&api-version=1.1`);
-    const foxStat=foxPlayerStat(box,player,eventId);
-    return foxStat===null?null:foxStat===player.value;
-  }catch{return null}
+    if(matches.length>1)return false;
+    if(!matches.length)return null;
+    if(!scoreAgreement(game,[matches],market))return false;
+    const player=playerOverSpec(game,market);
+    if(!player)return true;
+    const matched=matches[0];
+    if(!matched.eventId)return null;
+    try{
+      if(source==='ESPN'){
+        const summary=await read(`https://site.api.espn.com/apis/site/v2/sports/${feed}/summary?event=${encodeURIComponent(matched.eventId)}`);
+        return summary?.boxscore?.players?.length?playerStatAgreement(summary,player):null;
+      }
+      if(feed!=='nba')return null;
+      const box=await read(`https://api.foxsports.com/bifrost/v1/${feed}/event/${matched.eventId}/data?apikey=${FOX_KEY}&api-version=1.1`);
+      const value=foxPlayerStat(box,player,matched.eventId);
+      return value===null?null:value===player.value;
+    }catch{return null}
+  };
+  const primary=await check('ESPN',espn);
+  return primary===null?check('FOX Sports',fox):primary;
 }
 
 const nbaAliases=t=>[`${t?.teamCity||''} ${t?.teamName||''}`,`${t?.teamTricode||''} ${t?.teamName||''}`,t?.teamName];
@@ -316,9 +309,10 @@ async function verifyNbaOver(game,milestone,{fetcher=fetch,market}={}){
   }catch{return null}
 }
 export async function verifyIndependentOver(game,milestone,options={}){
-  const [preferred,nba,cbs,yahoo]=await Promise.all([verifyExistingOver(game,milestone,options),verifyNbaOver(game,milestone,options),alternateCheck('CBS',game,milestone,options),alternateCheck('Yahoo',game,milestone,options)]);
+  const [preferred,nba]=await Promise.all([verifyExistingOver(game,milestone,options),verifyNbaOver(game,milestone,options)]);
   if(nba!==null)return nba;
   if(preferred!==null)return preferred;
+  const [cbs,yahoo]=await Promise.all([alternateCheck('CBS',game,milestone,options),alternateCheck('Yahoo',game,milestone,options)]);
   // CBS and Yahoo are fallback sources only. Conflicting fallback readings
   // cannot establish a reliable statistic.
   return [cbs,yahoo].includes(true)&&![cbs,yahoo].includes(false);
