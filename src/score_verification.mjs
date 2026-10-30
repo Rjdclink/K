@@ -219,7 +219,7 @@ async function json(url,fetcher){
   if(!response.ok)throw Error(`Scoreboard ${response.status}`);
   return response.json();
 }
-async function verifyExistingOver(game,milestone,{fetcher=fetch,cache,market}={}){
+async function verifyExistingOver(game,milestone,{fetcher=fetch,cache,market,source='ESPN'}={}){
   const start=Date.parse(milestone.start_date||'');
   if(!Number.isFinite(start)||!game.scoreKnown)return false;
   const {espn,fox}=feeds(game);
@@ -264,8 +264,7 @@ async function verifyExistingOver(game,milestone,{fetcher=fetch,cache,market}={}
       return value===null?null:value===player.value;
     }catch{return null}
   };
-  const primary=await check('ESPN',espn);
-  return primary===null?check('FOX Sports',fox):primary;
+  return source==='ESPN'?check('ESPN',espn):source==='FOX'?check('FOX Sports',fox):null;
 }
 
 const nbaAliases=t=>[`${t?.teamCity||''} ${t?.teamName||''}`,`${t?.teamTricode||''} ${t?.teamName||''}`,t?.teamName];
@@ -312,9 +311,13 @@ export async function verifyIndependentOver(game,milestone,options={}){
   const [preferred,nba]=await Promise.all([verifyExistingOver(game,milestone,options),verifyNbaOver(game,milestone,options)]);
   if(nba!==null)return nba;
   if(preferred!==null)return preferred;
-  const [cbs,yahoo]=await Promise.all([alternateCheck('CBS',game,milestone,options),alternateCheck('Yahoo',game,milestone,options)]);
-  // CBS and Yahoo are fallback sources only. Conflicting fallback readings
-  // cannot establish a reliable statistic.
-  return [cbs,yahoo].includes(true)&&![cbs,yahoo].includes(false);
+  // Only an unavailable source advances to the next rank. An exact
+  // contradiction is a failed verification, not permission to shop feeds.
+  for(const source of ['CBS','Yahoo']){
+    const result=await alternateCheck(source,game,milestone,options);
+    if(result!==null)return result;
+  }
+  const fox=await verifyExistingOver(game,milestone,{...options,source:'FOX'});
+  return fox===null?false:fox;
 }
 

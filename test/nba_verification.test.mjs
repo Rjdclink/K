@@ -47,3 +47,29 @@ test('CBS supplies a player statistic only when NBA and preferred scoreboards ar
  assert.equal(await run(6),true);
  assert.equal(await run(5),false);
 });
+test('NBA fallback tries CBS, then Yahoo, then FOX without querying lower-ranked sources after a reading',async()=>{
+ const cbsUrl='https://www.cbssports.com/nba/gametracker/boxscore/NBA_20261028_NY@CHI/';
+ const cbs=cbsUrl+'<table class="stats-table"><tr><td>PLAYER</td><td>REB</td></tr><tr><td><a href="/nba/players/123/matas-buzelis/">Matas Buzelis</a></td><td>6</td></tr></table>';
+ const yahooUrl='https://sports.yahoo.com/nba/new-york-knicks-chicago-bulls-2026102804/';
+ const yahooGame={gameId:'nba.g.2026102804',startTime:start,playerStats:{homeTables:[{tableStats:[{player:{displayName:'Matas Buzelis',playerGameStats0:[{stats:[{statId:'TOTAL_REBOUNDS',value:'6'}]}]}}]}]}};
+ const yahoo='self.__next_f.push([1,'+JSON.stringify('aa:'+JSON.stringify(yahooGame)+'\n')+'])';
+ const run=async(cbsAvailable,yahooAvailable,cbsValue=6)=>{
+  const urls=[];
+  const result=await verifyIndependentOver(game,milestone,{market,fetcher:async url=>{
+   urls.push(url);
+   if(url.includes('cdn.nba.com')||url.includes('espn.com'))throw Error('unavailable');
+   if(url.includes('cbssports.com'))return cbsAvailable?{ok:true,text:async()=>cbs.replace('<td>6</td>',`<td>${cbsValue}</td>`)}:{ok:false,status:503};
+   if(url.includes('scoreboard/?date='))return yahooAvailable?{ok:true,text:async()=>yahooUrl}:{ok:false,status:503};
+   if(url===yahooUrl)return {ok:true,text:async()=>yahoo};
+   throw Error('lower-ranked FOX must not be requested');
+  }});
+  return {result,urls};
+ };
+ const first=await run(true,true);
+ assert.equal(first.result,true);assert.equal(first.urls.some(url=>url.includes('yahoo.com')),false);
+ const second=await run(false,true);
+ assert.equal(second.result,true);assert.equal(second.urls.some(url=>url.includes('foxsports.com')),false);
+ const disagreement=await run(true,true,5);
+ assert.equal(disagreement.result,false);assert.equal(disagreement.urls.some(url=>url.includes('yahoo.com')),false);
+});
+
