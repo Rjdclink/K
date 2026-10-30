@@ -6,6 +6,10 @@ export const COMBO_WINDOW_MS=12000;
 export const COMBO_ATTEMPT_MS=45000;
 export const VERIFY_DWELL_MS=3000;
 export function comboAllocation(completedCombos){return Math.max(2,10-2*Math.max(0,Math.floor(completedCombos)))/100;}
+export function cashAfterComboReserve(cashCents,bankrollCents,completedCombos){
+  if(!Number.isFinite(cashCents)||!Number.isFinite(bankrollCents)||cashCents<0||bankrollCents<0)return 0;
+  return Math.max(0,Math.floor(cashCents)-Math.floor(bankrollCents*comboAllocation(completedCombos)));
+}
 export function comboCandidates(candidates, strategy, max=6){
   const games=new Set(),events=new Set();
   return candidates.filter(c=>{
