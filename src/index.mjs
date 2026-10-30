@@ -4,7 +4,7 @@ import pg from 'pg';
 import { page } from './ui.mjs';
 import { historyPage } from './history_ui.mjs';
 import { completedTrade } from './history.mjs';
-import { gameState, overSignal, confirmedOver, kalshiOnlyOver, kalshiOnlyLead, leadSignal, additionalLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, netSettlementProfitCents, comeback, KALSHI_ONLY_FRACTION } from './strategy.mjs';
+import { gameState, overSignal, confirmedOver, kalshiOnlyOver, kalshiOnlyLead, leadSignal, confirmedSoccerOneGoalClock, soccerOneGoalWindowOpen, stableSoccerLeadFraction, additionalLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, netSettlementProfitCents, comeback, KALSHI_ONLY_FRACTION } from './strategy.mjs';
 import { reviewMiss } from './ai.mjs';
 import { kalshiSignature } from './auth.mjs';
 import { marketShard, shardCash, transferPlan, comboShardBudget } from './funding.mjs';
@@ -138,9 +138,11 @@ async function auditKalshiOnlyOver(first,second,market,milestone){
 }
 async function auditKalshiOnlyLead(first,second,market,milestone){
   if(!kalshiOnlyLead(first,second,market))return false;
+  const oneGoalSoccer=/soccer/.test(second.type)&&Math.abs(second.home-second.away)===1;
+  const allocation=oneGoalSoccer?stableSoccerLeadFraction(first,second,leadSignal(second,market)):KALSHI_ONLY_FRACTION;
   await auditTable();const id=randomUUID();
   await pool.query('INSERT INTO verification_records(id,market_ticker,passed,evidence) VALUES($1,$2,true,$3)',
-    [id,market.ticker,JSON.stringify({mode:'kalshi_only_commanding_lead',first,second,milestoneId:milestone.id,dwellMs:second.observedAt-first.observedAt,allocation:KALSHI_ONLY_FRACTION})]);
+    [id,market.ticker,JSON.stringify({mode:'kalshi_only_commanding_lead',first,second,milestoneId:milestone.id,dwellMs:second.observedAt-first.observedAt,allocation})]);
   second.verificationId=id;
   return true;
 }
@@ -441,7 +443,7 @@ async function submit(signal,game,event,market,balance,bankroll,budgetCents=Infi
   const price=Number(market.yes_ask_dollars);const count=profitableCount(contractCount(balance,market,signal.fraction,bankroll,budgetCents,feeReserve(event,market)),price,feeReserve(event,market),signal.strategy,availableCents,game.type,game.remainingSeconds);if(!count)return false;
   if(['over','weather'].includes(signal.strategy)&&!game.verificationId)return false;
   if(/Kalshi-only/i.test(signal.reason||'')){
-    // A provisional position consumes the entire 10% allowance for this game.
+    // A provisional position consumes its entire allowance for this game.
     // Filled historical trades count only while their market is still held.
     const positions=await allOpenPositions();
     const held=(positions.market_positions||[]).filter(p=>Number(p.position_fp??p.position??0)>0).map(p=>p.ticker);
@@ -452,9 +454,14 @@ async function submit(signal,game,event,market,balance,bankroll,budgetCents=Infi
   }
   const active=await pool.query(`SELECT 1 FROM trade_attempts WHERE market_ticker=$1 AND status IN ('filled','reserved','check_order','retrying','combo_pending') LIMIT 1`,[market.ticker]);
   if(active.rowCount)return false;
+  if(!soccerOneGoalWindowOpen(game))return false;
   const id=await reserve(signal,game,event,market,count,price,balance);if(!id)return false;
   await pool.query(`CREATE TABLE IF NOT EXISTS order_verifications(order_id uuid PRIMARY KEY,verification_id uuid NOT NULL,created_at timestamptz DEFAULT now())`);
   if(game.verificationId)await pool.query('INSERT INTO order_verifications(order_id,verification_id) VALUES($1,$2) ON CONFLICT DO NOTHING',[id,game.verificationId]);
+  if(!soccerOneGoalWindowOpen(game)){
+    await pool.query(`UPDATE trade_attempts SET status='unfilled',error='Final whistle window elapsed before submission',updated_at=now() WHERE id=$1`,[id]);
+    return false;
+  }
   try{
     // A partial IOC fill can be below the minimum net profit. Require the
     // entire quantity at the limit price or no entry at all.
@@ -488,9 +495,14 @@ async function recoverPending(signal,game,event,market,balance,bankroll,budgetCe
   let review;try{review=await reviewMiss({signal,game,market,error:row.error})}catch(e){review={available:false,retry:true,reason:'AI unavailable: '+e.message}}
   if(!review.retry){await pool.query(`UPDATE trade_attempts SET status='needs_review',ai_review=$2,updated_at=now() WHERE id=$1`,[row.id,review.reason]);return false}
   if(Number(row.count)>contractCount(balance,{...market,yes_ask_dollars:row.limit_price},signal.fraction,bankroll,budgetCents,feeReserve(event,market))||
-    !profitableCount(Number(row.count),Number(row.limit_price),feeReserve(event,market),signal.strategy,availableCents,game.type,game.remainingSeconds))return false;
+    !profitableCount(Number(row.count),Number(row.limit_price),feeReserve(event,market),signal.strategy,availableCents,game.type,game.remainingSeconds)||
+    !soccerOneGoalWindowOpen(game))return false;
   const claim=await pool.query(`UPDATE trade_attempts SET retries=1,status='retrying',ai_review=$2,updated_at=now() WHERE id=$1 AND status IN ('check_order','reserved') AND retries=0 RETURNING id`,[row.id,review.reason]);
   if(!claim.rowCount)return false;
+  if(!soccerOneGoalWindowOpen(game)){
+    await pool.query(`UPDATE trade_attempts SET status='unfilled',error='Final whistle window elapsed before retry',updated_at=now() WHERE id=$1`,[row.id]);
+    return false;
+  }
   try{const result=await kalshi('/portfolio/events/orders',{method:'POST',auth:true,body:{ticker:row.market_ticker,client_order_id:row.id,side:'bid',count:Number(row.count).toFixed(2),price:Number(row.limit_price).toFixed(4),time_in_force:'fill_or_kill',self_trade_prevention_type:'taker_at_cross',post_only:false}});
     const filled=Number(result.fill_count_fp??result.fill_count??result.order?.fill_count_fp??result.order?.fill_count??0);await pool.query(`UPDATE trade_attempts SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE id=$1`,[row.id,filled>0?'filled':'unfilled',result.order_id||result.order?.order_id||null,filled]);return filled>0
   }catch(e){await pool.query(`UPDATE trade_attempts SET status='check_order',error=$2,updated_at=now() WHERE id=$1`,[row.id,'Recovery response uncertain: '+String(e.message).slice(0,200)]);return false}
@@ -1306,7 +1318,8 @@ async function scan(cachedMilestones,discoveryCount){
           if(!checked.verifiedLive||checked.feedId!==c.milestone.id||
              !Number.isFinite(c.state.observedAt)||checked.observedAt-c.state.observedAt<VERIFY_DWELL_MS||
              Number.isFinite(c.state.updatedAt)&&Number.isFinite(checked.updatedAt)&&checked.updatedAt<c.state.updatedAt||
-             checked.home!==c.state.home||checked.away!==c.state.away)continue;
+             checked.home!==c.state.home||checked.away!==c.state.away||
+             !confirmedSoccerOneGoalClock(c.state,checked))continue;
           freshState=checked;
         }
         const rawQuote=await recoverSummaryAsk((await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market,{fresh:true});
@@ -1332,7 +1345,11 @@ async function scan(cachedMilestones,discoveryCount){
             kalshiOnly=true;
           }
         }
-        c.signal=kalshiOnly?{...stillQualifies,fraction:KALSHI_ONLY_FRACTION,reason:stillQualifies.reason+'; Kalshi-only two score reads, 6 seconds apart'}:stillQualifies;
+        if(!soccerOneGoalWindowOpen(freshState))continue;
+        const verifiedFraction=stableSoccerLeadFraction(c.state,freshState,stillQualifies);
+        const oneGoalSoccer=/soccer/.test(freshState.type)&&Math.abs(freshState.home-freshState.away)===1;
+        c.signal=kalshiOnly?{...stillQualifies,fraction:oneGoalSoccer?verifiedFraction:Math.min(verifiedFraction,KALSHI_ONLY_FRACTION),reason:stillQualifies.reason+'; Kalshi-only two score reads, 6 seconds apart'}:
+          {...stillQualifies,fraction:verifiedFraction};
         c.market=quote;
         c.state=state=freshState;
         const budget=Infinity;
@@ -1340,6 +1357,7 @@ async function scan(cachedMilestones,discoveryCount){
         if(!wanted)continue;
         const shard=marketShard(c.event,c.market),localCash=shardCash(latest,shard);
         if(localCash===null){executionErrors.push(`${c.market.ticker}: Kalshi shard balance unavailable`);continue}
+        if(!soccerOneGoalWindowOpen(state))continue;
         if(['check_order','reserved','retrying'].includes(prior.rows[0]?.status)){
           await recoverPending(c.signal,state,c.event,c.market,Math.min(spendable,localCash),bankroll,budget,bankroll);
           continue;
@@ -1351,6 +1369,7 @@ async function scan(cachedMilestones,discoveryCount){
         }
         // The allocation is a ceiling. Buy the profitable quantity already
         // affordable in this shard while any top-up settles asynchronously.
+        if(!soccerOneGoalWindowOpen(state))continue;
         if(await submit(c.signal,state,c.event,c.market,Math.min(spendable,localCash),bankroll,budget,bankroll)||await recoverPending(c.signal,state,c.event,c.market,Math.min(spendable,localCash),bankroll,budget,bankroll)){
           submitted++;filled.add(signalKey(c));const account=await accountBalance({fresh:true});balance=Number(account.balance);bankroll=balance+Number(account.portfolio_value);
         }
@@ -1481,7 +1500,7 @@ async function settlementAlerts(since){
   return rows;
 }
 export default {async fetch(req){const url=new URL(req.url);
-  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'history-losses-20261030'});
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'soccer-last-seconds-20261030'});
   if(req.method==='GET'&&url.pathname==='/manifest.webmanifest')return response(manifest,'application/manifest+json');
   if(req.method==='GET'&&url.pathname==='/sw.js')return new Response(worker,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','service-worker-allowed':'/','x-content-type-options':'nosniff'}});
   if(req.method==='GET'&&/^\/icon-(192|512)\.png$/.test(url.pathname))return response(Buffer.from(icons[Number(url.pathname.match(/\d+/)[0])],'base64'),'image/png');

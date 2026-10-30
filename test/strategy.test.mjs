@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {gameState,overSignal,confirmedOver,kalshiOnlyOver,kalshiOnlyLead,leadSignal,tennisSignal,tableTennisSignal,orderSize,estimatedCostCents,overBudget,minimumProfitCents,netSettlementProfitCents,profitableCount,comeback,KALSHI_ONLY_FRACTION} from '../src/strategy.mjs';
+import {gameState,overSignal,confirmedOver,kalshiOnlyOver,kalshiOnlyLead,leadSignal,confirmedSoccerOneGoalClock,soccerOneGoalWindowOpen,stableSoccerLeadFraction,tennisSignal,tableTennisSignal,orderSize,estimatedCostCents,overBudget,minimumProfitCents,netSettlementProfitCents,profitableCount,comeback,KALSHI_ONLY_FRACTION} from '../src/strategy.mjs';
 
 test('each trade has its own percentage of the full bankroll',()=>{
   const bankroll=14600,alreadyHeld=4372;
@@ -315,9 +315,46 @@ test('soccer starts at 85:00 and excludes extra time or ambiguous stoppage score
   assert.equal(leadSignal(board(2,0,"85'",'1st'),market),null);
   assert.equal(leadSignal(board(2,0,"85'"),{...market,rules_primary:'Includes extra time and penalty shootouts.'}),null);
   const finalSeconds=(remaining)=>gameState(m,{details:{status:'live',home_same_game_score:2,away_same_game_score:1,time:'89:30',half:'2nd',match_remaining_seconds:remaining}});
-  assert.equal(leadSignal(finalSeconds(44),market),null);
+  assert.equal(leadSignal(finalSeconds(44),market)?.fraction,.10);
   assert.equal(leadSignal(finalSeconds(45),market),null);
   assert.equal(leadSignal(board(2,1,"89:30"),market),null);
+});
+test('one-goal soccer winner requires a final-whistle countdown and stable possession for higher tiers',()=>{
+  const m={id:'soccer-close',title:'Abha vs Al-Faisaly',type:'soccer_tournament_multi_leg',details:{home_team_id:'abha',away_team_id:'faisaly'}};
+  const market={status:'active',event_ticker:'KXSAUDIPLGAME-26OCT27ABHFAI',title:'Abha wins',yes_sub_title:'Abha',custom_strike:{soccer_team:'abha'},rules_primary:'If Abha wins after 90 minutes plus stoppage time, then Yes.',yes_ask_dollars:'0.90'};
+  const game=(remaining,possession='away',time='89:30',home=2,away=1)=>gameState(m,{details:{status:'live',home_same_game_score:home,away_same_game_score:away,time,half:'2nd',match_remaining_seconds:remaining,possession}});
+  assert.equal(leadSignal(game(45),market),null);
+  assert.equal(leadSignal(game(44.9),market)?.fraction,.10);
+  assert.equal(leadSignal(game(44.9,'home'),market)?.fraction,.15);
+  assert.equal(leadSignal(game(20),market)?.fraction,.10);
+  assert.equal(leadSignal(game(19.9),market)?.fraction,.35);
+  assert.equal(leadSignal(game(19.9,'home'),market)?.fraction,.40);
+  assert.equal(leadSignal(game(0,'home'),market),null);
+  assert.equal(leadSignal(game(19.9,'home',"88:59"),market),null);
+  assert.equal(leadSignal(game(19.9,'home',"90+1'"),market),null);
+  assert.equal(leadSignal(game(19.9,'home','89:30',1,2),market),null);
+  assert.equal(leadSignal(game(19.9,'home',"89:30",3,1),market)?.fraction,.15,'other commanding leads retain their existing cap');
+  const late=game(19.9,'home'),early=game(44,'home');
+  assert.equal(stableSoccerLeadFraction(early,late,leadSignal(late,market)),.40);
+  assert.equal(stableSoccerLeadFraction(game(44,'away'),late,leadSignal(late,market)),.35);
+  assert.equal(stableSoccerLeadFraction(game(44,'away'),game(30,'home'),leadSignal(game(30,'home'),market)),.10);
+  assert.equal(stableSoccerLeadFraction(early,game(30,'away'),leadSignal(game(30,'away'),market)),.10);
+  assert.equal(confirmedSoccerOneGoalClock(early,late),true);
+  assert.equal(confirmedSoccerOneGoalClock(early,game(44,'home')),false,'a frozen countdown cannot authorize entry');
+  assert.equal(confirmedSoccerOneGoalClock(early,game(45,'home')),false,'a reversing countdown cannot authorize entry');
+  assert.equal(confirmedSoccerOneGoalClock(early,{...late,clockRunning:false}),false);
+  assert.equal(confirmedSoccerOneGoalClock(game(NaN,'home'),late),false,'missing first countdown cannot authorize entry');
+  const now=Date.now();
+  const sample=(seconds,when)=>gameState(m,{milestone_id:m.id,_observed_at:new Date(when).toISOString(),details:{status:'live',last_updated_ts:(when-500)/1000,home_same_game_score:2,away_same_game_score:1,time:'89:30',half:'2nd',match_remaining_seconds:seconds,possession:'home'}});
+  const first=sample(25,now-7000),next=sample(19,now);
+  assert.equal(kalshiOnlyLead(first,next,market),true);
+  assert.equal(kalshiOnlyLead(first,sample(25,now),market),false,'Kalshi-only winner cannot use a stale final clock');
+  const shifted={...next,possessionSide:'away'};
+  assert.equal(kalshiOnlyLead(first,shifted,market),true,'changed possession retains the lower one-goal tier');
+  assert.equal(stableSoccerLeadFraction(first,shifted,leadSignal(shifted,market)),.35);
+  assert.equal(soccerOneGoalWindowOpen(next,now+13999),true);
+  assert.equal(soccerOneGoalWindowOpen(next,now+14000),false,'leave time for the order to reach the exchange');
+  assert.equal(soccerOneGoalWindowOpen({...next,observedAt:NaN},now),false);
 });
 test('regulation soccer totals reject extra-time goals even when live feed says in progress',()=>{
   const m={id:'cup',title:'Castellonense vs Almeria',type:'soccer_tournament_multi_leg'};

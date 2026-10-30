@@ -300,9 +300,11 @@ export function kalshiOnlyLead(first,second,market){
     !kalshiUpdatePairOk(first,second)||
     [first,second].some(s=>s.updatedAt>s.observedAt+5000||s.observedAt-s.updatedAt>30000)||
     !/^table_tennis_/.test(first.type)&&Number.isFinite(first.remainingSeconds)&&Number.isFinite(second.remainingSeconds)&&second.remainingSeconds>first.remainingSeconds||
-    Number.isFinite(first.soccerMinute)&&Number.isFinite(second.soccerMinute)&&second.soccerMinute<first.soccerMinute)return false;
-  // The qualifying phase, possession, and winner still match in both reads.
-  if(first.possessionSide!==second.possessionSide)return false;
+    Number.isFinite(first.soccerMinute)&&Number.isFinite(second.soccerMinute)&&second.soccerMinute<first.soccerMinute||
+    !confirmedSoccerOneGoalClock(first,second))return false;
+  // A changing soccer possession still permits its lower one-goal tier.
+  if(first.possessionSide!==second.possessionSide&&
+    !(/soccer/.test(second.type)&&Math.abs(second.home-second.away)===1))return false;
   for(const key of ['tennis','tableTennis','volleyball','darts']){
     if(JSON.stringify(first[key])!==JSON.stringify(second[key]))return false;
   }
@@ -348,8 +350,8 @@ export function leadSignal(game, market) {
   const h=game.homeUnits,a=game.awayUnits;
   if (!Number.isFinite(h)||!Number.isFinite(a)) return null;
   const margin=Math.abs(h-a),trailerScore=Math.min(h,a);
-  const soccerLastSeconds=soccer&&game.soccerMinute>=89&&game.matchRemainingSeconds>0&&game.matchRemainingSeconds<45;
-  const minimum=basketball?5:football?10:hockey?3:baseball?2:soccer?(Number.isFinite(game.matchRemainingSeconds)&&game.matchRemainingSeconds>0&&game.matchRemainingSeconds<120?2:3):null;
+  const finalWhistleSeconds=soccer&&game.soccerMinute>=89&&Number.isFinite(game.matchRemainingSeconds)&&game.matchRemainingSeconds>0?game.matchRemainingSeconds:Infinity;
+  const minimum=basketball?5:football?10:hockey?3:baseball?2:soccer?finalWhistleSeconds<45?1:finalWhistleSeconds<120?2:3:null;
   const ratio=trailerScore>0?Math.max(h,a)/trailerScore:Infinity;
   if (minimum===null ? trailerScore<=0||ratio<3.5 : margin<minimum) return null;
   const leader = h>a ? game.homeName : game.awayName;
@@ -366,7 +368,29 @@ export function leadSignal(game, market) {
   return {strategy:'lead', reason:`${leader||market.yes_sub_title} leads ${h}–${a} ${game.unit} (${margin} ${game.unit} ahead); ${timing}`, fraction};
 }
 export function leadFraction(game,margin,minimum){
+  if(/soccer/.test(game.type)&&margin===1){
+    const leaderHasBall=game.possessionSide===(game.homeUnits>game.awayUnits?'home':'away');
+    return game.matchRemainingSeconds<20?(leaderHasBall?.40:.35):(leaderHasBall?.15:.10);
+  }
   return .15;
+}
+export function stableSoccerLeadFraction(first,second,signal){
+  if(!/soccer/.test(second.type)||signal.strategy!=='lead'||Math.abs(second.home-second.away)!==1)return signal.fraction;
+  const leader=second.home>second.away?'home':'away';
+  return first.possessionSide===leader&&second.possessionSide===leader?signal.fraction:
+    second.matchRemainingSeconds<20?.35:.10;
+}
+export function confirmedSoccerOneGoalClock(first,second){
+  if(!/soccer/.test(second.type)||Math.abs(second.home-second.away)!==1)return true;
+  return first.clockRunning&&second.clockRunning&&
+    Number.isFinite(first.matchRemainingSeconds)&&first.matchRemainingSeconds>0&&first.matchRemainingSeconds<45&&
+    Number.isFinite(second.matchRemainingSeconds)&&second.matchRemainingSeconds>0&&
+    second.matchRemainingSeconds<first.matchRemainingSeconds;
+}
+export function soccerOneGoalWindowOpen(game,now=Date.now()){
+  if(!/soccer/.test(game.type)||Math.abs(game.home-game.away)!==1)return true;
+  return Number.isFinite(game.observedAt)&&Number.isFinite(game.matchRemainingSeconds)&&
+    game.matchRemainingSeconds*1000-(now-game.observedAt)>5000;
 }
 // Clock-free games use the deciding set, leg and throw data in their feed.
 // A missing contract identity or a missing decisive field never grants entry.
