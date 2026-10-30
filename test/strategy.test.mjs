@@ -26,6 +26,18 @@ test('table tennis deciding set uses four and six point tiers without a clock',(
   assert.equal(tableTennisSignal(state(4,10),market),null);
 });
 
+test('table tennis lead fallback verifies two live scores without using a clock',()=>{
+  const m={id:'liga-clockless',type:'table_tennis_match',title:'Oleg Moshnikov vs Iurii Krivenkii',details:{league:'Russia Liga Pro',best_of:5,first_competitor_id:'oleg',second_competitor_id:'iurii'}};
+  const market={event_ticker:'KXLIGAPROMATCH-DATE',status:'active',title:'Oleg Moshnikov',yes_sub_title:'Oleg Moshnikov',custom_strike:{table_tennis_competitor:'oleg'},yes_ask_dollars:'0.93'};
+  const now=Date.now();
+  const state=(at,updated,clock,points=10)=>gameState(m,{milestone_id:m.id,_observed_at:new Date(at).toISOString(),details:{status:'live',last_updated_ts:updated/1000,competitor1_overall_score:2,competitor2_overall_score:2,period_remaining_time:clock,period_scores:[{type:'set',number:5,competitor1_score:points,competitor2_score:4}]}});
+  const first=state(now-8000,now-9000,'00:10'),second=state(now,now-1000,'00:11');
+  assert.equal(kalshiOnlyLead(first,second,market),true,'an incidental clock increase cannot veto a table tennis score');
+  assert.equal(kalshiOnlyLead(state(now-8000,now-9000,''),state(now,now-1000,''),market),true,'no clock is accepted');
+  assert.equal(kalshiOnlyLead(first,state(now,now-1000,'00:11',9),market),false,'changed points still fail');
+  assert.equal(kalshiOnlyLead(first,state(now-3000,now-4000,'00:11'),market),false,'six-second dwell remains mandatory');
+});
+
 const milestone={id:'game-1',title:'Boston at New York',type:'basketball_game',details:{competition:'Pro Basketball (M)'},related_event_tickers:['GAME']};
 const live=(home,away,quarter=4)=>({details:{status:'live',last_updated_ts:Math.floor(Date.now()/1000),home_score:home,away_score:away,quarter,clock:'00:59',possession:'home',home_team_name:'New York',away_team_name:'Boston'}});
 test('fractional final-minute clock is parsed and stopped clock is identified',()=>{
