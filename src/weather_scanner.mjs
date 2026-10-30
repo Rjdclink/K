@@ -4,7 +4,8 @@ import {weatherSeries,weatherContract,stationTimezone,observedWeather} from './w
 // queried, including cities not known when the function was deployed.
 export async function scanWeatherMarkets({kalshi,nws,onVerified,now=()=>new Date(),pause=ms=>new Promise(resolve=>setTimeout(resolve,ms))}){
   const catalog=(await kalshi('/series?category=Climate%20and%20Weather')).series?.filter(weatherSeries)||[];
-  const stats={series:catalog.length,events:0,eligible:0,verified:0,failures:0};
+  const stats={series:catalog.length,events:0,eligible:0,verified:0,failures:0,
+    sources:{},rejections:{dateMissing:0,dateOutsideWindow:0,stationMissing:0,stationIdUnsupported:0,stationUnavailable:0,contractRules:0,noAsk:0,noObservation:0}};
   let cursor=0;const stations=new Map();
   await Promise.all(Array.from({length:Math.min(8,catalog.length)},async()=>{
     while(cursor<catalog.length){const series=catalog[cursor++];
@@ -16,24 +17,28 @@ export async function scanWeatherMarkets({kalshi,nws,onVerified,now=()=>new Date
           const response=await kalshi('/events?'+query);
           for(const event of response.events||[]){
             stats.events++;
+            const source=event.settlement_sources?.[0]?.name||'unspecified';
+            stats.sources[source]=(stats.sources[source]||0)+1;
             const date=String(event.title||'').match(/\bon (\w+ \d{1,2}, 20\d{2})\b/i)?.[1];
-            if(!date)continue;
+            if(!date){stats.rejections.dateMissing++;continue}
             const eventDate=new Date(date+' 12:00:00 GMT');
-            if(!Number.isFinite(eventDate.getTime())||Math.abs(eventDate.getTime()-now().getTime())>36*3600000)continue;
+            if(!Number.isFinite(eventDate.getTime())||Math.abs(eventDate.getTime()-now().getTime())>36*3600000){stats.rejections.dateOutsideWindow++;continue}
             const id=event.markets?.[0]?.rules_primary?.match(/\(([A-Z][A-Z0-9]{2,7})\)/)?.[1];
-            if(!/^K[A-Z0-9]{3}$/.test(id||''))continue;
+            if(!id){stats.rejections.stationMissing++;continue}
+            if(!/^K[A-Z0-9]{3}$/.test(id)){stats.rejections.stationIdUnsupported++;continue}
             if(!stations.has(id))stations.set(id,nws('/stations/'+id).then(data=>{
               if(data.properties?.stationIdentifier&&data.properties.stationIdentifier!==id)return null;
               return {id,timezone:stationTimezone(data)};
             }).catch(()=>null));
             const station=await stations.get(id);
-            if(!station?.timezone)continue;
+            if(!station?.timezone){stats.rejections.stationUnavailable++;continue}
             const candidates=(event.markets||[]).map(market=>({event,market,contract:weatherContract(event,market,station,now())})).filter(c=>c.contract);
+            if(!candidates.length)stats.rejections.contractRules++;
             stats.eligible+=candidates.length;
             // Price and volume are only screening hints; executable depth is
             // checked again by the order path before a FOK submission.
             const priced=candidates.filter(c=>Number(c.market.yes_ask_size_fp)>0&&Number(c.market.yes_ask_dollars)>0&&Number(c.market.yes_ask_dollars)<1);
-            if(!priced.length)continue;
+            if(!priced.length){if(candidates.length)stats.rejections.noAsk++;continue}
             const verified=[];
             await Promise.all(priced.map(async candidate=>{
               try{
@@ -47,7 +52,7 @@ export async function scanWeatherMarkets({kalshi,nws,onVerified,now=()=>new Date
                   first.floor_strike!==second.floor_strike||first.cap_strike!==second.cap_strike)return;
                 const observations=await nws('/stations/'+id+'/observations?'+new URLSearchParams({start:new Date(current.start).toISOString(),end:new Date(current.end).toISOString(),limit:'500'}));
                 const observed=observedWeather(current,observations.features,now());
-                if(!observed)return;
+                if(!observed){stats.rejections.noObservation++;return}
                 stats.verified++;
                 verified.push({event,market:second,contract:current,observed,firstAt,secondAt,first,second});
               }catch(e){stats.failures++}
@@ -61,3 +66,4 @@ export async function scanWeatherMarkets({kalshi,nws,onVerified,now=()=>new Date
   }));
   return stats;
 }
+
