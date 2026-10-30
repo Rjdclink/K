@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {COMBO_WINDOW_MS,VERIFY_DWELL_MS,comboAllocation,comboCandidates,comboCollection,compatibleComboGroups,quoteForYes,comboLegs,filledComboWindow,eligibleFillTrigger,heldComboLeg,collectionsForEvents,selectedComboMarkets} from '../src/combos.mjs';
+import {COMBO_WINDOW_MS,VERIFY_DWELL_MS,comboAllocation,comboLegAllocation,availableComboFills,comboCandidates,comboCollection,compatibleComboGroups,quoteForYes,comboLegs,filledComboWindow,eligibleFillTrigger,heldComboLeg,collectionsForEvents,selectedComboMarkets} from '../src/combos.mjs';
 
 test('two held fills qualify for combo without a second live game verification',()=>{
   const rows=['A','B'].map(ticker=>({market_ticker:ticker,event_ticker:'E',game_id:'G',sport:'NFL',strategy:'over',fill_count:'2.00',combo_legs:null,updated_at:new Date().toISOString()}));
@@ -67,13 +67,29 @@ test('held fills remain eligible; the market ticker prevents a repeated combo or
   const props=Array.from({length:6},(_,i)=>({...row(i+10),game_id:'SAME-GAME',event_ticker:'PROP-'+i}));
   assert.equal(filledComboWindow(props,new Set(props.map(p=>p.market_ticker)),null).length,6);
 });
-test('unverified singles cannot increase their exposure through a combination',()=>{
+test('unverified singles can enter a combination capped at five percent',()=>{
   const rows=[
     {market_ticker:'UNVERIFIED',reason:'Winner; Kalshi-only newer score check, 6 seconds apart',combo_legs:null},
     {market_ticker:'VERIFIED',reason:'Winner; independent score confirmed',combo_legs:null},
     {market_ticker:'VERIFIED2',reason:'Winner; independent score confirmed',combo_legs:null}
   ];
-  assert.deepEqual(filledComboWindow(rows,new Set(rows.map(r=>r.market_ticker)),null),[rows[1],rows[2]]);
+  assert.deepEqual(filledComboWindow(rows,new Set(rows.map(r=>r.market_ticker)),null),rows);
+  const fallback=heldComboLeg({...rows[0],fill_count:'1',event_ticker:'E'}, {ticker:'UNVERIFIED',event_ticker:'E',status:'active'});
+  const verified=heldComboLeg({...rows[1],fill_count:'1',event_ticker:'E'}, {ticker:'VERIFIED',event_ticker:'E',status:'active'});
+  assert.equal(comboLegAllocation([fallback,verified],comboAllocation(0)),.05);
+  assert.equal(comboLegAllocation([fallback,verified],comboAllocation(4)),.02);
+  assert.equal(comboLegAllocation([verified],comboAllocation(0)),.10);
+  assert.deepEqual(availableComboFills(rows,new Set(['UNVERIFIED'])),[rows[1],rows[2]],'a used unverified leg cannot stack another combo');
+  assert.deepEqual(availableComboFills([{...rows[0],externally_verified:true},rows[1]],new Set(['UNVERIFIED'])).map(r=>r.market_ticker),['UNVERIFIED','VERIFIED']);
+});
+test('a Kalshi-only single joins combinations only after current independent verification',()=>{
+  const rows=[{id:'a',market_ticker:'A',reason:'Kalshi-only two reads',externally_verified:true,updated_at:'2026-10-30T12:00:00Z'},
+    {id:'b',market_ticker:'B',reason:'independent',updated_at:'2026-10-30T12:00:00Z'}];
+  assert.deepEqual(filledComboWindow(rows,new Set(['A','B']),null).map(r=>r.market_ticker),['A','B']);
+  const fallback=heldComboLeg({...rows[0],fill_count:'1',event_ticker:'E'}, {ticker:'A',event_ticker:'E',status:'active'});
+  const verified=heldComboLeg({...rows[0],fill_count:'1',event_ticker:'E',externally_verified:false}, {ticker:'A',event_ticker:'E',status:'active'});
+  assert.equal(comboLegAllocation([fallback],.10),.10);
+  assert.equal(comboLegAllocation([verified],.10),.05);
 });
 test('combo searches compatible non-prefix pairs when the first candidate is outside a collection',()=>{
   const candidates=[candidate('a','A'),candidate('b','B'),candidate('c','C')];
