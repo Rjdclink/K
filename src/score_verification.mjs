@@ -33,7 +33,17 @@ function expectedNames(game,milestone){
 }
 function sameTeam(expected,aliases){
   const key=clean(expected);
-  return key.length>=3 && aliases.some(alias=>clean(alias)===key);
+  const alias={NOP:'NO',NYK:'NY',GSW:'GS',SAS:'SA',PHX:'PHO'};
+  // Kalshi NHL milestones often use only a city, while ESPN/FOX append the
+  // franchise. Map explicitly to avoid matching two clubs from one city.
+  const hockey={Carolina:'Carolina Hurricanes',Columbus:'Columbus Blue Jackets',Dallas:'Dallas Stars',Montreal:'Montreal Canadiens',
+    Minnesota:'Minnesota Wild','New York I':'New York Islanders','New York R':'New York Rangers',Pittsburgh:'Pittsburgh Penguins',
+    Utah:'Utah Mammoth','St. Louis':'St Louis Blues',Boston:'Boston Bruins','Tampa Bay':'Tampa Bay Lightning',Winnipeg:'Winnipeg Jets'};
+  const soccer={'Atletico Mineiro':'Atletico MG'};
+  const parts=String(expected||'').match(/^([A-Z]{2,3})\s+(.+)$/);
+  const alternate=parts&&alias[parts[1]]?clean(alias[parts[1]]+' '+parts[2]):null;
+  const franchise=hockey[expected]?clean(hockey[expected]):soccer[expected]?clean(soccer[expected]):null;
+  return key.length>=3 && aliases.some(name=>clean(name)===key||alternate&&clean(name)===alternate||franchise&&clean(name)===franchise);
 }
 function teamAliases(t,fox=false){
   if(fox)return [t?.imageAltText,t?.longName,t?.stackedNameBottom,`${t?.name||''} ${t?.longName||''}`,`${t?.stackedNameTop||''} ${t?.stackedNameBottom||''}`];
@@ -112,6 +122,19 @@ export async function verifyIndependentTableTennisLead(game,milestone,{fetcher=f
     return m.live&&m.home===game.home&&m.away===game.away&&
       m.homeSets===(game.tableTennis.firstIsHome?game.tableTennis.firstSets:game.tableTennis.secondSets)&&
       m.awaySets===(game.tableTennis.firstIsHome?game.tableTennis.secondSets:game.tableTennis.firstSets);
+  }catch{return false}
+}
+export async function verifyIndependentTableTennisMatch(game,milestone,{fetcher=fetch}={}){
+  const t=game.tableTennis,start=Date.parse(milestone.start_date||'');
+  if(!t||!Number.isFinite(start)||!game.verifiedLive||!Number.isInteger(t.setNumber))return false;
+  try{
+    const dates=dateCandidates(start).map(s=>`${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6)}`);
+    const data=await Promise.allSettled(dates.map(day=>json(`https://www.sofascore.com/api/v1/sport/table-tennis/scheduled-events/${day}`,fetcher)));
+    const matches=data.filter(r=>r.status==='fulfilled').flatMap(r=>tableTennisMatches(r.value,game,milestone));
+    const unique=[...new Map(matches.map(m=>[JSON.stringify(m),m])).values()];
+    return unique.length===1&&unique[0].live&&unique[0].home===game.home&&unique[0].away===game.away&&
+      unique[0].homeSets===(t.firstIsHome?t.firstSets:t.secondSets)&&
+      unique[0].awaySets===(t.firstIsHome?t.secondSets:t.firstSets);
   }catch{return false}
 }
 export function foxMatches(data,game,milestone){
@@ -294,3 +317,4 @@ export async function verifyIndependentOver(game,milestone,options={}){
   // cannot establish a reliable statistic.
   return [cbs,yahoo].includes(true)&&![cbs,yahoo].includes(false);
 }
+
