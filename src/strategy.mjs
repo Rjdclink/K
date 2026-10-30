@@ -292,7 +292,7 @@ export function kalshiOnlyLead(first,second,market){
     !Number.isFinite(first.observedAt)||!Number.isFinite(second.observedAt)||second.observedAt-first.observedAt<6000||
     !Number.isFinite(first.updatedAt)||!Number.isFinite(second.updatedAt)||second.updatedAt<=first.updatedAt||
     [first,second].some(s=>s.updatedAt>s.observedAt+5000||s.observedAt-s.updatedAt>30000)||
-    Number.isFinite(first.remainingSeconds)&&Number.isFinite(second.remainingSeconds)&&second.remainingSeconds>first.remainingSeconds||
+    !/^table_tennis_/.test(first.type)&&Number.isFinite(first.remainingSeconds)&&Number.isFinite(second.remainingSeconds)&&second.remainingSeconds>first.remainingSeconds||
     Number.isFinite(first.soccerMinute)&&Number.isFinite(second.soccerMinute)&&second.soccerMinute<first.soccerMinute)return false;
   // The qualifying phase, possession, and winner still match in both reads.
   if(first.possessionSide!==second.possessionSide)return false;
