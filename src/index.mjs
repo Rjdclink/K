@@ -765,7 +765,7 @@ async function executeVerifiedWeather(verified){
   const account=await accountBalance({fresh:true}),balance=Number(account.balance),bankroll=balance+Number(account.portfolio_value);
   const ranked=verified.map(item=>{
     const fee=feeReserve(event,item.market);
-    const count=profitableCount(contractCount(balance,item.market,.25,bankroll,Infinity,fee),Number(item.market.yes_ask_dollars),fee,'weather',bankroll);
+    const count=profitableCount(contractCount(balance,item.market,.10,bankroll,Infinity,fee),Number(item.market.yes_ask_dollars),fee,'weather',bankroll);
     return {...item,profit:netSettlementProfitCents(count,Number(item.market.yes_ask_dollars),fee)};
   }).sort((a,b)=>b.profit-a.profit);
   for(const item of ranked){
@@ -778,11 +778,11 @@ async function executeVerifiedWeather(verified){
     if(!quote)continue;
     const fresh=await accountBalance({fresh:true}),cash=Number(fresh.balance),total=cash+Number(fresh.portfolio_value);
      const spendable=cash;
-     const fee=feeReserve(event,quote),count=profitableCount(contractCount(spendable,quote,.25,total,Infinity,fee),Number(quote.yes_ask_dollars),fee,'weather',total);
+    const fee=feeReserve(event,quote),count=profitableCount(contractCount(spendable,quote,.10,total,Infinity,fee),Number(quote.yes_ask_dollars),fee,'weather',total);
     if(!count)continue;
     const shard=marketShard(event,quote),local=shardCash(fresh,shard),cost=estimatedCostCents(count,Number(quote.yes_ask_dollars),fee);
     if(local===null)continue;
-     const signal={strategy:'weather',fraction:.25,reason:`${item.contract.type} ${item.observed.value.toFixed(2)} at ${item.contract.station} on ${item.contract.localDate}; ${item.contract.comparison} ${item.contract.threshold}`};
+     const signal={strategy:'weather',fraction:.10,reason:`${item.contract.type} ${item.observed.value.toFixed(2)} at ${item.contract.station} on ${item.contract.localDate}; ${item.contract.comparison} ${item.contract.threshold}`};
     if(local<cost){if(transferPlan(fresh,shard,cost))await ensureShardFunding(signal,event,quote,fresh,cost);continue}
     await auditTable();const verificationId=randomUUID();
     await pool.query('INSERT INTO verification_records(id,market_ticker,passed,evidence) VALUES($1,$2,true,$3)',[verificationId,quote.ticker,JSON.stringify({contract:item.contract,kalshiFirst:{at:item.firstAt,market:item.first},kalshiSecond:{at:item.secondAt,market:item.second},external:item.observed,executable:{price:quote.yes_ask_dollars,size:quote.yes_ask_size_fp,count,feeReserve:fee,projectedNetCents:netSettlementProfitCents(count,Number(quote.yes_ask_dollars),fee)}})]);

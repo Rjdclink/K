@@ -11,6 +11,12 @@ function offsetHours(zone,at){
   return found?(found[1]==='-'?-1:1)*(Number(found[2]||0)+Number(found[3]||0)/60):NaN;
 }
 function standardOffset(zone,year){return Math.min(offsetHours(zone,new Date(Date.UTC(year,0,15))),offsetHours(zone,new Date(Date.UTC(year,6,15))))}
+function finalLocalMinute(label,zone){
+  const [year,month,day]=label.split('-').map(Number),next=Date.UTC(year,month-1,day+1);
+  let midnight=next-offsetHours(zone,new Date(next))*3600000;
+  midnight=next-offsetHours(zone,new Date(midnight))*3600000;
+  return midnight-60000;
+}
 export function weatherSeries(series){return /rain|precipitation|(?:highest|maximum|max|lowest|minimum|low|high)\s+(?:temperature|temp)|(?:temperature|temp)\s+(?:high|low)|hourly directional|city temperature/i.test(String(series?.title||''))}
 export function weatherContract(event,market,station,now=new Date()){
   if(event?.category!=='Climate and Weather'||!['active','open'].includes(market?.status)||market?.result)return null;
@@ -26,7 +32,8 @@ export function weatherContract(event,market,station,now=new Date()){
   const label=declared.toISOString().slice(0,10),zone=station.timezone;
   if(dayKey(now,zone)!==label)return null;
   const close=Date.parse(market.close_time||'');
-  if(!Number.isFinite(close)||now.getTime()>=close)return null;
+  const cutoff=Math.min(close,finalLocalMinute(label,zone));
+  if(!Number.isFinite(cutoff)||now.getTime()<cutoff-2*3600000||now.getTime()>=cutoff)return null;
   const hourly=/\bat \d{1,2}\s*(?:am|pm)\s+[A-Z]{2,5}\b/i.test(title);
   let start,end;
   if(hourly){
@@ -38,10 +45,10 @@ export function weatherContract(event,market,station,now=new Date()){
     if(!Number.isFinite(offset)||!rule.includes(date))return null;
     start=Date.UTC(year,month-1,day)-offset*3600000;
     end=start+86400000;
-    // During DST the NWS standard-time climate day may end after local midnight.
-    if(dayKey(new Date(start),zone)!==label||dayKey(new Date(end-1),zone)!==label)return null;
+    // The NWS standard-time climate day can extend into tomorrow during DST;
+    // observations after the current local date are never read at entry time.
+    if(dayKey(new Date(start),zone)!==label)return null;
   }
-  if(now.getTime()<end-600000)return null;
   const rain=/\bprecipitation\b|\brain\b/i.test(`${title} ${rule}`);
   const high=/\bmaximum temperature\b|\bhighest temperature\b/i.test(`${title} ${rule}`);
   const low=/\bminimum temperature\b|\blowest temperature\b/i.test(`${title} ${rule}`);
@@ -51,7 +58,7 @@ export function weatherContract(event,market,station,now=new Date()){
   if(hourly||type==='rain'&&!market.strike_type.startsWith('greater')||type==='high'&&!market.strike_type.startsWith('greater')||type==='low'&&!market.strike_type.startsWith('less'))return null;
   // A range can be invalidated by later readings. It needs a different proof.
   if(market.floor_strike!=null&&market.cap_strike!=null)return null;
-  return {eventTicker:event.event_ticker,ticker:market.ticker,station:stationId,timezone:zone,source,type,threshold,comparison:market.strike_type,start,end,close,localDate:label};
+  return {eventTicker:event.event_ticker,ticker:market.ticker,station:stationId,timezone:zone,source,type,threshold,comparison:market.strike_type,start,end,close:cutoff,localDate:label};
 }
 export function stationTimezone(station){
   const [longitude,latitude]=station?.geometry?.coordinates||[];
