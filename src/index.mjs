@@ -346,6 +346,16 @@ async function executableQuote(market){
   const available=yesDepthAtAsk(orderbook_fp,market.yes_ask_dollars,market.yes_ask_size_fp);
   return available>=minimumCount(market)?{...market,yes_ask_size_fp:String(available)}:null;
 }
+async function reportFinalAskGone(game,ticker,reason){
+  console.info('Verified candidate lost executable ask:',JSON.stringify({ticker,reason}));
+  await pool.query(`UPDATE game_snapshots AS g SET signals=(
+    SELECT jsonb_agg(CASE WHEN s->>'ticker'=$2 THEN
+      jsonb_set(jsonb_set(s,'{execution}',to_jsonb($3::text)),'{ask_size}',to_jsonb('0.00'::text))
+      ELSE s END) FROM jsonb_array_elements(g.signals) s)
+    WHERE g.id=$1 AND g.home=$4 AND g.away=$5 AND
+      g.signals @> jsonb_build_array(jsonb_build_object('ticker',$2::text))`,
+  [game.id,ticker,reason,game.home,game.away]);
+}
 const askProbe=new Map();
 async function recoverSummaryAsk(market,{fresh=false}={}){
   if(hasAsk(market))return market;
@@ -1393,7 +1403,14 @@ async function scan(cachedMilestones,discoveryCount){
         }
         const rawQuote=await recoverSummaryAsk((await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market,{fresh:true});
         const quote=rawQuote&&hasAsk(rawQuote)?await executableQuote(rawQuote):null;
-        if(!quote||quote.ticker!==c.market.ticker||quote.event_ticker!==c.event.event_ticker||!hasAsk(quote))continue;
+        if(!quote){
+          if(c.signal.strategy==='over'&&freshState.verificationId)
+            await reportFinalAskGone(freshState,c.market.ticker,rawQuote&&hasAsk(rawQuote)?
+              'Score verified; quoted YES shares disappeared from the live orderbook':
+              'Score verified; no live YES ask remains');
+          continue;
+        }
+        if(quote.ticker!==c.market.ticker||quote.event_ticker!==c.event.event_ticker||!hasAsk(quote))continue;
         if(kalshiOnly&&(Date.now()-freshState.observedAt>10000||
           quote.rules_primary!==c.market.rules_primary||quote.floor_strike!==c.market.floor_strike||
           quote.cap_strike!==c.market.cap_strike||quote.close_time!==c.market.close_time))continue;
