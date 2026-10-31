@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {estimatedSaleProfitCents,halfPotentialProfitExitEligible,oneAndHalfExitEligible,soccerOverCorrectionAffects} from '../src/positions.mjs';
+import {estimatedSaleProfitCents,halfPotentialProfitExitEligible,oneAndHalfExitEligible,soccerOverCorrectionAffects,soccerCorrectionTargets} from '../src/positions.mjs';
 
 test('1.5 times exit compares net proceeds with the full proportional cost',()=>{
   const held={position_fp:'20',market_exposure_dollars:'10.00',fees_paid_dollars:'0.20'};
@@ -19,6 +19,10 @@ test('a removed soccer goal triggers exit only when it uncrosses the held over',
   assert.equal(soccerOverCorrectionAffects({...original,strategy:'lead'},state),false,'a winner still ahead is not a corrected total');
   assert.equal(soccerOverCorrectionAffects(original,{...state,verifiedLive:false}),false);
   assert.equal(soccerOverCorrectionAffects(original,{...state,scoreConsistent:false}),false);
+  const combo={market_ticker:'COMBO',strategy:'lead',combo_legs:[{market_ticker:original.market_ticker},{market_ticker:'OTHER'}]};
+  const unrelated={market_ticker:'OTHER',strategy:'over',reason:'3 scored; line 2.5 already passed',game_id:'other'};
+  assert.deepEqual([...soccerCorrectionTargets([{...original,game_id:'chelsea'},combo,unrelated],
+    new Map([['chelsea',state],['other',{...state,home:3}]]))],[original.market_ticker,'COMBO']);
 });
 
 test('sale P&L uses executable shares, proportional cost basis and both fees',()=>{
