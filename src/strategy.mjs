@@ -305,11 +305,12 @@ export function playerOverSpec(game,market){
 }
 // Two separate exchange reads ten seconds apart must retain the qualifying
 // score. The feed may legitimately have no new update between reads.
-export function confirmedOver(first,second,market){
+export function confirmedOver(first,second,market,minimumDwellMs=VERIFY_DWELL_MS){
   if(!overSignal(first,market)||!overSignal(second,market))return false;
   if(first.id!==second.id||first.feedId!==first.id||second.feedId!==second.id)return false;
-  const dwell=VERIFY_DWELL_MS;
+  const dwell=minimumDwellMs;
   if(!Number.isFinite(first.observedAt)||!Number.isFinite(second.observedAt)||second.observedAt-first.observedAt<dwell)return false;
+  if(dwell===0&&second.observedAt<=first.observedAt)return false;
   if(Number.isFinite(first.updatedAt)&&Number.isFinite(second.updatedAt)&&second.updatedAt<first.updatedAt)return false;
   if([first,second].some(s=>Number.isFinite(s.updatedAt)&&(s.updatedAt>s.observedAt+5000||s.observedAt-s.updatedAt>30000)))return false;
   if((first.type==='cricket_match'?(second.home<first.home||second.away<first.away):first.home!==second.home||first.away!==second.away)||
@@ -359,13 +360,26 @@ export function kalshiOnlyLead(first,second,market){
     [first,second].some(s=>s.updatedAt>s.observedAt+5000||s.observedAt-s.updatedAt>30000)||
     !/^table_tennis_/.test(first.type)&&Number.isFinite(first.remainingSeconds)&&Number.isFinite(second.remainingSeconds)&&second.remainingSeconds>first.remainingSeconds||
     Number.isFinite(first.soccerMinute)&&Number.isFinite(second.soccerMinute)&&second.soccerMinute<first.soccerMinute||
-    !confirmedSoccerOneGoalClock(first,second))return false;
+    !confirmedSoccerOneGoalClock(first,second)||!confirmedDrawClock(first,second,market))return false;
   // Soccer possession is required only for the higher one-goal tiers.
   if(first.possessionSide!==second.possessionSide&&!/soccer/.test(second.type))return false;
   for(const key of ['tennis','tableTennis','volleyball','darts','cricket']){
     if(JSON.stringify(first[key])!==JSON.stringify(second[key]))return false;
   }
   return true;
+}
+export function confirmedExternalLead(first,second,market){
+  const signal=s=>leadSignal(s,market)||additionalLeadSignal(s,market)||cricketLeadSignal(s,market)||drawSignal(s,market)||earlyLeadSignal(s,market)||tennisSignal(s,market)||tableTennisSignal(s,market);
+  if(!signal(first)||!signal(second)||first.id!==second.id||first.feedId!==first.id||second.feedId!==second.id||
+    !first.scoreConsistent||!second.scoreConsistent||first.home!==second.home||first.away!==second.away||
+    !Object.is(first.period,second.period)||!first.periodConsistent||!second.periodConsistent||
+    !Number.isFinite(first.observedAt)||!Number.isFinite(second.observedAt)||second.observedAt<=first.observedAt||
+    Number.isFinite(first.updatedAt)&&Number.isFinite(second.updatedAt)&&second.updatedAt<first.updatedAt||
+    [first,second].some(s=>Number.isFinite(s.updatedAt)&&(s.updatedAt>s.observedAt+5000||s.observedAt-s.updatedAt>30000))||
+    Number.isFinite(first.remainingSeconds)&&Number.isFinite(second.remainingSeconds)&&second.remainingSeconds>first.remainingSeconds||
+    Number.isFinite(first.soccerMinute)&&Number.isFinite(second.soccerMinute)&&second.soccerMinute<first.soccerMinute||
+    !confirmedSoccerOneGoalClock(first,second)||!confirmedDrawClock(first,second,market))return false;
+  return ['tennis','tableTennis','volleyball','darts','cricket'].every(key=>JSON.stringify(first[key])===JSON.stringify(second[key]));
 }
 const norm = s => String(s||'').toLowerCase().replace(/[^a-z0-9]/g,'');
 export function tableTennisSignal(game,market){
@@ -469,6 +483,14 @@ export function confirmedSoccerOneGoalClock(first,second){
     Number.isFinite(second.matchRemainingSeconds)&&second.matchRemainingSeconds>0&&
     second.matchRemainingSeconds<first.matchRemainingSeconds;
 }
+export function confirmedDrawClock(first,second,market){
+  if(!drawSignal(first,market))return true;
+  const soccer=/soccer/.test(first.type);
+  const before=soccer?first.matchRemainingSeconds:first.remainingSeconds;
+  const after=soccer?second.matchRemainingSeconds:second.remainingSeconds;
+  return first.clockRunning&&second.clockRunning&&
+    Number.isFinite(before)&&Number.isFinite(after)&&before>after&&after>0;
+}
 export function soccerOneGoalWindowOpen(game,now=Date.now()){
   if(!/soccer/.test(game.type)||Math.abs(game.home-game.away)!==1)return true;
   return Number.isFinite(game.observedAt)&&Number.isFinite(game.matchRemainingSeconds)&&
@@ -563,7 +585,7 @@ export function drawSignal(game,market){
   const seconds=soccer?game?.matchRemainingSeconds:game?.remainingSeconds;
   const rules=String(market?.rules_primary||'');
   if(!game?.verifiedLive||!game.scoreKnown||!game.scoreConsistent||game.home!==game.away||
-    game.period!==final||!Number.isFinite(seconds)||seconds<0||seconds>=20||
+    game.period!==final||!Number.isFinite(seconds)||seconds<=0||seconds>=45||
     soccer&&game.soccerOvertime||!['active','open'].includes(market?.status)||
     market.event_ticker!==game.mainEvent||!/^(?:draw|tie)(?:\b|\/)/i.test(String(market.title||market.yes_sub_title||''))||
     !/\b(?:draw|tie)\b/i.test(rules)||!/\b(?:yes|settles|resolves)\b/i.test(rules)||
