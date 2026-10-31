@@ -3,6 +3,13 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {page} from '../src/ui.mjs';
 
+test('game summary puts preflight and available-ask counts above other metrics',()=>{
+  const names=['Preflight candidates','Signals with an ask','Score rule matches','Kalshi milestones assessed','Weather series monitored'];
+  const positions=names.map(name=>page.indexOf('<span>'+name));
+  assert.ok(positions.every(position=>position>=0));
+  assert.deepEqual([...positions].sort((a,b)=>a-b),positions);
+});
+
 test('game list prioritizes preflights then available asks in descending counts',()=>{
   const element={classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){}};
   const document={getElementById:()=>element,querySelectorAll:()=>[],createElement:()=>({children:[],append(...items){this.children.push(...items)}})};

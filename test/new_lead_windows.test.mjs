@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {gameState,cricketLeadSignal,drawSignal,earlyLeadSignal,kalshiOnlyLead} from '../src/strategy.mjs';
+import {gameState,cricketLeadSignal,drawSignal,confirmedDrawClock,earlyLeadSignal,kalshiOnlyLead} from '../src/strategy.mjs';
 import {eligibleForMarkets} from '../src/discovery.mjs';
 
 const at=Date.now();
@@ -51,8 +51,9 @@ test('baseball needs verified inning half and outs; draw requires a real final c
   assert.equal(earlyLeadSignal(baseball.state(9,'',5,0,{inning:9,inning_half:'top',outs:0}),baseball.market)?.fraction,.02);
   const rugby=team('rugby_match','United Rugby Championship',0,0);
   const draw={...rugby.market,title:'Draw/Tie wins',rules_primary:'If Alpha and Beta draw or tie in the professional rugby match, then the market resolves to Yes.',custom_strike:{rugby_team:'draw'}};
-  assert.equal(drawSignal(rugby.state(1,'00:19'),draw),null);
-  assert.equal(drawSignal(rugby.state(2,'00:20'),draw),null);
+  assert.equal(drawSignal(rugby.state(1,'00:44'),draw),null);
+  assert.equal(drawSignal(rugby.state(2,'00:45'),draw),null);
+  assert.equal(drawSignal(rugby.state(2,'00:44'),draw)?.fraction,.05);
   assert.equal(drawSignal(rugby.state(2,'00:19'),draw)?.fraction,.05);
   assert.equal(drawSignal(rugby.state(2,'00:19',7,7),draw)?.fraction,.05);
   assert.equal(drawSignal(rugby.state(2,'00:19',7,0),draw),null);
@@ -62,6 +63,14 @@ test('baseball needs verified inning half and outs; draw requires a real final c
   const stoppage=soccer.state(2,'',1,1,{half:'2nd',time:"90+3'",match_remaining_seconds:19,match_status:'live'});
   assert.equal(drawSignal(stoppage,soccerDraw)?.fraction,.05);
   assert.equal(drawSignal(stoppage,{...soccerDraw,title:'Tie is the result'})?.fraction,.05);
+  assert.equal(drawSignal(soccer.state(2,'',0,0,{half:'2nd',time:"90+3'",match_remaining_seconds:44,match_status:'live'}),soccerDraw)?.fraction,.05);
+  assert.equal(drawSignal(soccer.state(2,'',0,0,{half:'2nd',time:"90+3'",match_remaining_seconds:45,match_status:'live'}),soccerDraw),null);
+  const before=soccer.state(2,'',0,0,{half:'2nd',time:"90+3'",match_remaining_seconds:44,match_status:'live'});
+  const later=soccer.state(2,'',0,0,{half:'2nd',time:"90+3'",match_remaining_seconds:34,match_status:'live'});
+  assert.equal(confirmedDrawClock(before,later,soccerDraw),true);
+  assert.equal(confirmedDrawClock(before,before,soccerDraw),false,'a frozen clock cannot confirm a late draw');
+  assert.equal(confirmedDrawClock(before,{...later,clockRunning:false},soccerDraw),false);
+  assert.equal(drawSignal(soccer.state(2,'',0,0,{half:'2nd',time:"90+3'",match_remaining_seconds:0,match_status:'live'}),soccerDraw),null);
   assert.equal(drawSignal(soccer.state(2,'',1,1,{half:'2nd',time:"90+3'",match_remaining_seconds:19,match_status:'overtime'}),soccerDraw),null);
 });
 test('Test cricket winner entries stay disabled without a finite number of balls',()=>{

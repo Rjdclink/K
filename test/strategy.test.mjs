@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {gameState,overSignal,confirmedOver,kalshiOnlyOver,kalshiOnlyLead,leadSignal,earlyLeadSignal,confirmedSoccerOneGoalClock,soccerOneGoalWindowOpen,soccerOverStable,soccerOverWaitMs,stableSoccerLeadFraction,externallyVerifiedEarlySoccerLead,tennisSignal,tableTennisSignal,orderSize,estimatedCostCents,overBudget,minimumProfitCents,netSettlementProfitCents,profitableCount,comeback,timedProfitExitAllowed,KALSHI_ONLY_FRACTION} from '../src/strategy.mjs';
+import {gameState,overSignal,confirmedOver,kalshiOnlyOver,kalshiOnlyLead,confirmedExternalLead,leadSignal,earlyLeadSignal,confirmedSoccerOneGoalClock,soccerOneGoalWindowOpen,soccerOverStable,soccerOverWaitMs,stableSoccerLeadFraction,externallyVerifiedEarlySoccerLead,tennisSignal,tableTennisSignal,orderSize,estimatedCostCents,overBudget,minimumProfitCents,netSettlementProfitCents,profitableCount,comeback,timedProfitExitAllowed,KALSHI_ONLY_FRACTION} from '../src/strategy.mjs';
 
 test('each trade has its own percentage of the full bankroll',()=>{
   const bankroll=14600,alreadyHeld=4372;
@@ -145,6 +145,34 @@ test('a crossed player prop cannot use the Kalshi-only over fallback',()=>{
   assert.equal(kalshiOnlyOver(first,state(now,now-13000,6),market),false);
   assert.equal(kalshiOnlyOver(first,second,{...market,custom_strike:{basketball_player:'someone_else'}}),false);
   assert.equal(kalshiOnlyOver(first,second,{...market,event_ticker:'KXNBAGAME-26OCT30NYKCHI'}),false);
+});
+test('independently checked crossed overs use two fresh exchange reads without a timed dwell across sports',()=>{
+  const at=Date.now();
+  for(const [type,title,event,strike,details] of [
+    ['soccer_tournament_multi_leg','Alpha vs Beta','KXSGPPLTOTAL-26OCT31ALPBET',1.5,{half:'2nd',time:"85'"}],
+    ['basketball_game','Alpha vs Beta','KXNBATOTAL-TEST',169.5,{quarter:4,clock:'00:20'}]
+  ]){
+    const milestone={id:`fast-${type}`,type,title,details:{league:'Test'}};
+    const market={status:'active',event_ticker:event,title:`Over ${strike} ${strike===1.5?'goals':'points'} scored`,rules_primary:`Total ${strike===1.5?'goals':'points'} scored in regulation`,floor_strike:strike,strike_type:'greater',yes_ask_dollars:'0.95'};
+    const score=strike===1.5?[2,1]:[92,85];
+    const state=(time,home=score[0])=>gameState(milestone,{milestone_id:milestone.id,_observed_at:new Date(time).toISOString(),details:{status:'live',home_score:home,away_score:score[1],...details}});
+    const first=state(at-500),second=state(at);
+    assert.ok(overSignal(first,market),type);
+    assert.equal(confirmedOver(first,second,market,0),true,type);
+    assert.equal(confirmedOver(first,second,market),false,type);
+    assert.equal(confirmedOver(first,state(at,score[0]-2),market,0),false,type);
+  }
+});
+test('independently checked leads skip the timed dwell while a Kalshi-only lead keeps it',()=>{
+  const milestone={id:'fast-baseball',type:'baseball_game',title:'Kia Tigers vs Samsung Lions',details:{league:'Korea KBO',home_team_id:'kia',away_team_id:'sam'}};
+  const market={status:'active',event_ticker:'KXKBOGAME-26OCT30KIASAM',title:'Kia Tigers wins',yes_sub_title:'Kia Tigers',custom_strike:{baseball_team:'kia'},yes_ask_dollars:'0.92'};
+  const at=Date.now();
+  const state=(time,home=5)=>gameState(milestone,{milestone_id:milestone.id,_observed_at:new Date(time).toISOString(),details:{status:'live',home_score:home,away_score:2,inning:9,inning_half:2,home_team_name:'Kia Tigers',away_team_name:'Samsung Lions'}});
+  const first=state(at-500),second=state(at);
+  assert.ok(leadSignal(first,market));
+  assert.equal(confirmedExternalLead(first,second,market),true);
+  assert.equal(kalshiOnlyLead(first,second,market),false);
+  assert.equal(confirmedExternalLead(first,state(at,4),market),false);
 });
 test('esports game overs use verified period totals and a newer ten-second Kalshi update without a clock',()=>{
   const m={id:'esoc',type:'esports_match',title:'Fede vs Eder',details:{league:'eSoccer'}};

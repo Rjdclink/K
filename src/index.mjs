@@ -4,7 +4,7 @@ import pg from 'pg';
 import { page } from './ui.mjs';
 import { historyPage } from './history_ui.mjs';
 import { completedTrade, manualSaleFill, reconcileManualSaleFills } from './history.mjs';
-import { gameState, overSignal, confirmedOver, kalshiOnlyOver, kalshiOnlyLead, leadSignal, confirmedSoccerOneGoalClock, soccerOneGoalWindowOpen, soccerOverStable, soccerOverWaitMs, stableSoccerLeadFraction, externallyVerifiedEarlySoccerLead, additionalLeadSignal, cricketLeadSignal, drawSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback, KALSHI_ONLY_FRACTION } from './strategy.mjs';
+import { gameState, overSignal, confirmedOver, kalshiOnlyOver, kalshiOnlyLead, confirmedExternalLead, leadSignal, confirmedSoccerOneGoalClock, confirmedDrawClock, soccerOneGoalWindowOpen, stableSoccerLeadFraction, externallyVerifiedEarlySoccerLead, additionalLeadSignal, cricketLeadSignal, drawSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback, KALSHI_ONLY_FRACTION } from './strategy.mjs';
 import { reviewMiss } from './ai.mjs';
 import { kalshiSignature } from './auth.mjs';
 import { marketShard, shardCash, transferPlan, comboShardBudget } from './funding.mjs';
@@ -610,7 +610,7 @@ async function upgradeHeldOver(c,preflight,original,scoreboardCache){
   if(Date.now()-state.observedAt>10000){
     const next=await liveMilestone(c.milestone.id);if(!next)return {verified:false,filled:false};
     next._observed_at=new Date().toISOString();const checked=gameState(c.milestone,next);
-    if(!confirmedOver(state,checked,c.market)||await auditedOver(checked,c.milestone,{cache:scoreboardCache,market:c.market,firstObservation:state,allowUnavailable:true})!==true)return {verified:false,filled:false};
+    if(!confirmedOver(state,checked,c.market,0)||await auditedOver(checked,c.milestone,{market:c.market,firstObservation:state,allowUnavailable:true})!==true)return {verified:false,filled:false};
     state=checked;
   }
   const current=(await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market;
@@ -688,14 +688,12 @@ async function immediatelyUpgradeFilledOver(c,scoreboardCache){
   firstLive._observed_at=new Date().toISOString();
   const first=gameState(c.milestone,firstLive);
   if(!overSignal(first,c.market)||await auditedOver(first,c.milestone,{cache:scoreboardCache,market:c.market,allowUnavailable:true})!==true)return false;
-  const wait=VERIFY_DWELL_MS-(Date.now()-first.observedAt);
-  if(wait>0)await new Promise(resolve=>setTimeout(resolve,wait));
   const nextLive=await liveMilestone(c.milestone.id);
   if(!nextLive)return false;
   nextLive._observed_at=new Date().toISOString();
   const second=gameState(c.milestone,nextLive);
-  if(!confirmedOver(first,second,c.market)||
-    await auditedOver(second,c.milestone,{cache:scoreboardCache,market:c.market,firstObservation:first,allowUnavailable:true})!==true)return false;
+  if(!confirmedOver(first,second,c.market,0)||
+    await auditedOver(second,c.milestone,{market:c.market,firstObservation:first,allowUnavailable:true})!==true)return false;
   const verifiedSignal=overSignal(second,c.market);
   if(!verifiedSignal||![.30,.40].includes(verifiedSignal.fraction))return false;
   const {rows:[fill]}=await pool.query(`SELECT id,market_ticker,event_ticker,game_id,sport,strategy,reason,status,combo_legs
@@ -709,11 +707,9 @@ async function verifyHeldLead(c,original,scoreboardCache){
     await verifyIndependentTableTennisLeadDecision(c.state,c.milestone):
     await auditedOver(c.state,c.milestone,{cache:scoreboardCache,market:c.market,allowUnavailable:true});
   if(first!==true)return false;
-  const remaining=VERIFY_DWELL_MS-(Date.now()-c.state.observedAt);
-  if(remaining>0)await new Promise(resolve=>setTimeout(resolve,remaining));
   const next=await liveMilestone(c.milestone.id);if(!next)return false;
   next._observed_at=new Date().toISOString();const second=gameState(c.milestone,next);
-  if(!kalshiOnlyLead(c.state,second,c.market))return false;
+  if(!confirmedExternalLead(c.state,second,c.market))return false;
   const current=(await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market;
   if(!current||current.ticker!==original.market_ticker||current.event_ticker!==original.event_ticker||
     current.rules_primary!==c.market.rules_primary||current.floor_strike!==c.market.floor_strike||
@@ -722,7 +718,7 @@ async function verifyHeldLead(c,original,scoreboardCache){
     !(leadSignal(second,current)||additionalLeadSignal(second,current)||cricketLeadSignal(second,current)||drawSignal(second,current)||earlyLeadSignal(second,current)||tennisSignal(second,current)||tableTennisSignal(second,current)))return false;
   const tableTennis=Boolean(tableTennisSignal(second,current));
   const confirmed=tableTennis?await verifyIndependentTableTennisLeadDecision(second,c.milestone):
-    await auditedOver(second,c.milestone,{cache:scoreboardCache,market:current,firstObservation:c.state,allowUnavailable:true});
+    await auditedOver(second,c.milestone,{market:current,firstObservation:c.state,allowUnavailable:true});
   if(confirmed!==true)return false;
   if(tableTennis){
     await auditTable();second.verificationId=randomUUID();
@@ -1149,20 +1145,25 @@ async function exitComebacks(games,events,positions){
       let confirmed=targetReached||corrected;
       for(const leg of confirmed?[]:reversing){
         if(!leg.game?.state?.verifiedLive||!leg.market)continue;
-        const first=leg.game.state,remaining=VERIFY_DWELL_MS-(Date.now()-first.observedAt);
+        const first=leg.game.state;
+        const firstIndependent=first.golf?await verifyGolf(first,leg.game.milestone,leg.event):
+          first.tableTennis?await verifyIndependentTableTennisMatch(first,leg.game.milestone):
+          await auditedOver(first,leg.game.milestone,{market:leg.market,allowUnavailable:true});
+        if(firstIndependent===false)continue;
+        const remaining=firstIndependent===true?0:VERIFY_DWELL_MS-(Date.now()-first.observedAt);
         if(!Number.isFinite(remaining))continue;
         if(remaining>0)await new Promise(resolve=>setTimeout(resolve,remaining));
         const raw=await liveMilestone(leg.game.milestone.id);
         if(!raw)continue;
         raw._observed_at=new Date().toISOString();
         const second=gameState(leg.game.milestone,raw);
-        if(second.feedId!==first.id||second.observedAt-first.observedAt<VERIFY_DWELL_MS||
+        if(second.feedId!==first.id||second.observedAt-first.observedAt<(firstIndependent===true?1:VERIFY_DWELL_MS)||
           Number.isFinite(first.updatedAt)&&Number.isFinite(second.updatedAt)&&second.updatedAt<first.updatedAt||
           !comeback(second,leg.market,strategy))continue;
         const independent=second.golf?await verifyGolf(second,leg.game.milestone,leg.event):
           second.tableTennis?await verifyIndependentTableTennisMatch(second,leg.game.milestone):
           await auditedOver(second,leg.game.milestone,{market:leg.market,firstObservation:first});
-        if(independent){confirmed=true;break}
+        if(independent===true){confirmed=true;break}
       }
       if(!confirmed)continue;
       const bid=sale.price,bidSize=sale.count;
@@ -1389,29 +1390,12 @@ async function scan(cachedMilestones,discoveryCount){
         if(quote)c.market={...c.market,yes_ask_dollars:quote.price.toFixed(4),yes_ask_size_fp:quote.size.toFixed(2)};
       }
     }
-    // When a provisional soccer goal is removed, discard its dwell window.
-    const soccerIds=active.filter(g=>/soccer/.test(g.state.type)).map(g=>g.milestone.id);
-    const soccerOvers=allCandidates.filter(c=>c.signal.strategy==='over'&&/soccer/.test(c.state.type));
-    if(soccerIds.length){
-      const {rows:previous}=await pool.query(`SELECT s->>'ticker' AS ticker FROM game_snapshots g
-        CROSS JOIN LATERAL jsonb_array_elements(g.signals) s
-        WHERE g.id=ANY($1::text[]) AND s->>'strategy'='over'`,[soccerIds]);
-      const current=new Set(soccerOvers.map(c=>c.market.ticker));
-      const removed=[...new Set(previous.map(p=>p.ticker).filter(t=>!current.has(t)))];
-      if(removed.length)await pool.query(`DELETE FROM candidate_windows WHERE strategy='over' AND market_ticker=ANY($1::text[])`,[removed]);
-    }
     for(let i=0;i<allCandidates.length;i+=100){const batch=allCandidates.slice(i,i+100);if(!batch.length)continue;
       const values=batch.map((_,n)=>`($${2*n+1},$${2*n+2})`).join(',');
       await pool.query(`INSERT INTO candidate_windows(market_ticker,strategy) VALUES ${values} ON CONFLICT DO NOTHING`,batch.flatMap(c=>[c.market.ticker,c.signal.strategy]));
     }
-    if(soccerOvers.length){
-      const {rows}=await pool.query(`SELECT market_ticker,first_seen FROM candidate_windows
-        WHERE strategy='over' AND market_ticker=ANY($1::text[])`,[[...new Set(soccerOvers.map(c=>c.market.ticker))]]);
-      const firstSeen=new Map(rows.map(r=>[r.market_ticker,r.first_seen]));
-      for(const c of soccerOvers)c.soccerOverFirstSeen=firstSeen.get(c.market.ticker);
-    }
     for(const [id,candidates] of snapshotCandidates){
-      snapshotRows.get(id)[14]=JSON.stringify(candidates.map(c=>({strategy:c.signal.strategy,reason:c.signal.reason,ticker:c.market.ticker,title:c.market.title||c.market.yes_sub_title||'',ask:c.market.yes_ask_dollars,ask_size:c.market.yes_ask_size_fp,execution:c.signal.strategy==='over'&&/soccer/.test(c.state.type)&&!soccerOverStable(c.soccerOverFirstSeen)?'Waiting 10 seconds for a fresh soccer goal check':signalExecution(c,filled,account,balance,bankroll)})));
+      snapshotRows.get(id)[14]=JSON.stringify(candidates.map(c=>({strategy:c.signal.strategy,reason:c.signal.reason,ticker:c.market.ticker,title:c.market.title||c.market.yes_sub_title||'',ask:c.market.yes_ask_dollars,ask_size:c.market.yes_ask_size_fp,execution:signalExecution(c,filled,account,balance,bankroll)})));
     }
     // Expire only the current ten-minute attempt. Removing the row allows a
     // still-live market to enter a new window on a later scan, including when
@@ -1464,24 +1448,21 @@ async function scan(cachedMilestones,discoveryCount){
     const workersDone=Promise.all(Array.from({length:Math.min(20,overs.length)},async()=>{
       while(cursor<overs.length){const c=overs[cursor++];
         try{
-          const soccerWait=!c.upgradeFill&&/soccer/.test(c.state.type)?soccerOverWaitMs(c.soccerOverFirstSeen):0;
-          if(!Number.isFinite(soccerWait))continue;
-          // Start the first independent observation during the Kalshi dwell.
-          // A second independent read after that dwell catches corrected stats.
+          // Independent scoreboard verification begins with the first Kalshi
+          // score; only the Kalshi-only fallback needs the ten-second dwell.
           const independentFirst=auditedOver(c.state,c.milestone,{cache:scoreboardCache,market:c.market,allowUnavailable:true}).catch(()=>false);
           const firstDecision=await independentFirst;
           if(firstDecision===false||c.upgradeFill&&firstDecision!==true)continue;
-          const remaining=Math.max(VERIFY_DWELL_MS-(Date.now()-c.state.observedAt),
-            !c.upgradeFill&&/soccer/.test(c.state.type)?soccerOverWaitMs(c.soccerOverFirstSeen):0);
-          if(!Number.isFinite(remaining))continue;
+          if(firstDecision===null&&/soccer/.test(c.state.type))continue;
+          const remaining=firstDecision===true?0:Math.max(0,VERIFY_DWELL_MS-(Date.now()-c.state.observedAt));
           if(remaining>0)await new Promise(resolve=>setTimeout(resolve,remaining));
           const latest=await liveMilestone(c.milestone.id);
           if(!latest)continue;
           latest._observed_at=new Date().toISOString();
           const state=gameState(c.milestone,latest);
-          if(!confirmedOver(c.state,state,c.market))continue;
-          const secondDecision=await auditedOver(state,c.milestone,{cache:scoreboardCache,market:c.market,firstObservation:c.state,allowUnavailable:true});
-          if(secondDecision===true)overPreflights.set(signalKey(c),{state,kalshiOnly:false});
+          if(!confirmedOver(c.state,state,c.market,firstDecision===true?0:VERIFY_DWELL_MS))continue;
+          const secondDecision=await auditedOver(state,c.milestone,{market:c.market,firstObservation:c.state,allowUnavailable:true});
+          if(firstDecision===true&&secondDecision===true)overPreflights.set(signalKey(c),{state,kalshiOnly:false});
           else if(firstDecision===null&&secondDecision===null&&await auditKalshiOnlyOver(c.state,state,c.market,c.milestone))
             overPreflights.set(signalKey(c),{state,kalshiOnly:true});
         }catch(e){console.warn('Over preflight deferred:',c.market.ticker,e.message)}
@@ -1528,19 +1509,19 @@ async function scan(cachedMilestones,discoveryCount){
         // score. Lead games still require a fresh check before the quote.
         if(c.signal.strategy==='over'&&overReady.has(signalKey(c)))await overReady.get(signalKey(c));
         const preflight=c.signal.strategy==='over'?overPreflights.get(signalKey(c)):null;
-        if(c.signal.strategy==='over'&&/soccer/.test(c.state.type)&&!soccerOverStable(c.soccerOverFirstSeen))continue;
+        if(c.signal.strategy==='over'&&/soccer/.test(c.state.type)&&preflight?.kalshiOnly!==false)continue;
         let kalshiOnly=preflight?.kalshiOnly===true;
         let freshState=c.signal.strategy==='over'?preflight?.state:
           gameState(c.milestone,(await liveBatch([c.milestone])).get(c.milestone.id));
         if(!freshState)continue;
         if(c.signal.strategy==='over'&&Date.now()-freshState.observedAt>10000){
-           const remaining=VERIFY_DWELL_MS-(Date.now()-freshState.observedAt);
+          const remaining=kalshiOnly?VERIFY_DWELL_MS-(Date.now()-freshState.observedAt):0;
           if(remaining>0)await new Promise(resolve=>setTimeout(resolve,remaining));
           const next=await liveMilestone(c.milestone.id);
           if(!next)continue;
           next._observed_at=new Date().toISOString();const rechecked=gameState(c.milestone,next);
-          if(!confirmedOver(freshState,rechecked,c.market))continue;
-          const decision=await auditedOver(rechecked,c.milestone,{cache:scoreboardCache,market:c.market,firstObservation:freshState,allowUnavailable:true});
+          if(!confirmedOver(freshState,rechecked,c.market,kalshiOnly?VERIFY_DWELL_MS:0))continue;
+          const decision=await auditedOver(rechecked,c.milestone,{market:c.market,firstObservation:freshState,allowUnavailable:true});
           if(decision===false||decision===null&&(!kalshiOnly||!await auditKalshiOnlyOver(freshState,rechecked,c.market,c.milestone)))continue;
           if(decision===true)kalshiOnly=false;
           freshState=rechecked;
@@ -1556,17 +1537,17 @@ async function scan(cachedMilestones,discoveryCount){
           if(leadFirstDecision===false)continue;
         }
         if(c.signal.strategy==='lead'){
-          const wait=VERIFY_DWELL_MS-(Date.now()-c.state.observedAt);
+          const wait=leadFirstDecision===true?0:VERIFY_DWELL_MS-(Date.now()-c.state.observedAt);
           if(wait>0)await new Promise(resolve=>setTimeout(resolve,wait));
           const second=await liveMilestone(c.milestone.id);
           if(!second)continue;
           second._observed_at=new Date().toISOString();
           const checked=gameState(c.milestone,second);
           if(!checked.verifiedLive||checked.feedId!==c.milestone.id||
-             !Number.isFinite(c.state.observedAt)||checked.observedAt-c.state.observedAt<VERIFY_DWELL_MS||
+             !Number.isFinite(c.state.observedAt)||checked.observedAt-c.state.observedAt<(leadFirstDecision===true?1:VERIFY_DWELL_MS)||
              Number.isFinite(c.state.updatedAt)&&Number.isFinite(checked.updatedAt)&&checked.updatedAt<c.state.updatedAt||
              checked.home!==c.state.home||checked.away!==c.state.away||
-             !confirmedSoccerOneGoalClock(c.state,checked))continue;
+             !confirmedSoccerOneGoalClock(c.state,checked)||!confirmedDrawClock(c.state,checked,c.market))continue;
           freshState=checked;
         }
         const rawQuote=await recoverSummaryAsk((await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market,{fresh:true});
@@ -1588,7 +1569,7 @@ async function scan(cachedMilestones,discoveryCount){
         if(c.signal.strategy==='lead'&&!freshState.golf){
           const decision=tableTennisSignal(freshState,quote)?
             await verifyIndependentTableTennisLeadDecision(freshState,c.milestone):
-            await auditedOver(freshState,c.milestone,{cache:scoreboardCache,market:quote,firstObservation:c.state,allowUnavailable:true});
+            await auditedOver(freshState,c.milestone,{market:quote,firstObservation:c.state,allowUnavailable:true});
           leadSecondDecision=decision;
           if(decision===false)continue;
           if(decision===null){
