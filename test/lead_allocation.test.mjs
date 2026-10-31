@@ -45,7 +45,7 @@ test('early football allocation uses margin, clock and possession, with a hard t
   const market={event_ticker:'KXGAME-X',title:'Alpha wins',status:'active',custom_strike:{football_team:'a'}};
   const g={...game('football_game','away'),verifiedLive:true,scoreKnown:true,scoreConsistent:true,periodConsistent:true,
     period:4,remainingSeconds:800,mainEvent:'KXGAME-X',homeTeamId:'a',awayTeamId:'b',homeName:'Alpha',awayName:'Beta',unit:'points'};
-  for(const sport of ['CFB','NFL']){
+  for(const sport of ['NFL']){
     const s={...g,sport,home:31,homeUnits:31};
     assert.equal(earlyLeadSignal(s,market)?.fraction,.05);
     assert.equal(earlyLeadSignal({...s,possessionSide:'home'},market)?.fraction,.07);
@@ -57,6 +57,8 @@ test('early football allocation uses margin, clock and possession, with a hard t
     assert.equal(finalLeadFraction(strong,strong,signal,false),.10);
     assert.equal(earlyLeadSignal({...s,period:3,remainingSeconds:59},market),null);
     assert.equal(earlyLeadSignal({...s,period:3,remainingSeconds:59,home:38,homeUnits:38},market)?.fraction,.05);
+    assert.equal(earlyLeadSignal({...s,sport:'CFB'},market),null);
+    assert.equal(earlyLeadSignal({...s,sport:'CFB',period:3,remainingSeconds:59,home:38,homeUnits:38},market),null);
   }
 });
 test('both live entry paths use the final verified allocation and funding rechecks recalculate it',()=>{
