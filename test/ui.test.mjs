@@ -10,6 +10,26 @@ test('game summary puts preflight and available-ask counts above other metrics',
   assert.deepEqual([...positions].sort((a,b)=>a-b),positions);
 });
 
+test('combo controls show live buy and sell liquidity separately',()=>{
+  const element={classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){}};
+  const document={getElementById:()=>element,querySelectorAll:()=>[],createElement:()=>({children:[],append(...items){this.children.push(...items)}})};
+  const context=vm.createContext({document,window:{addEventListener(){}},navigator:{},localStorage:{getItem(){return null},setItem(){}},fetch:()=>new Promise(()=>{}),AbortSignal,setInterval(){}});
+  vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],context);
+  const render=vm.runInContext('order',context);
+  const base={strategy:'over',market_ticker:'KXMVE',combo_legs:[{sport:'Soccer',title:'A vs B'},{sport:'Rugby',title:'C vs D'}],
+    combo_buy_quote:{price:.78,count:10,max_cost_cents:800},sell_quote:{price:.7,count:4},sell_profit_cents:-50};
+  const controls=render(base).children.at(-1).children;
+  assert.equal(controls[0].disabled,false);
+  assert.match(controls[0].textContent,/Buy more/);
+  assert.equal(controls[1].disabled,false);
+  assert.match(controls[1].textContent,/Sell/);
+  const unavailable=render({...base,combo_buy_quote:null,combo_buy_status:'No YES seller is available',sell_quote:null}).children.at(-1).children;
+  assert.equal(unavailable[0].disabled,true);
+  assert.match(unavailable[0].className,/combo-unavailable/);
+  assert.equal(unavailable[1].disabled,true);
+  assert.match(unavailable[1].textContent,/No bid/);
+});
+
 test('game list prioritizes preflights then available asks in descending counts',()=>{
   const element={classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){}};
   const document={getElementById:()=>element,querySelectorAll:()=>[],createElement:()=>({children:[],append(...items){this.children.push(...items)}})};
@@ -122,6 +142,10 @@ test('filled order timer is bright red, advances each second and reanchors to li
   const tennis=order({...base,sport:'Tennis',sport_family:'tennis_tournament_singles',game_title:'Berrettini vs de Minaur',strategy:'lead',selected_name:'Alex de Minaur'});
   assert.equal(tennis.children[0].children[0].className,'chosen-name');
   assert.match(tennis.children[0].children[0].textContent,/Alex de Minaur/);
+  paintScore(chosen,{...base,sport:'Tennis',sport_family:'tennis_tournament_singles',game_title:'Sonego vs Munar',
+    strategy:'lead',selected_name:'Sonego',selected_side:'home',home_score:5,away_score:4,
+    score_scanned_at:new Date(start).toISOString()},start);
+  assert.match(chosen.innerHTML,/Current set · <strong class="chosen-score">Sonego 5<\/strong> · Munar 4 games/);
   const soccer=order({...base,sport:'Soccer',game_title:'Metz vs Pau',strategy:'lead',selected_name:'Pau'});
   assert.equal(soccer.children[0].children[0].textContent,'Pau');
   const cricket={...base,sport:'ODI (M)',sport_family:'cricket_match',game_title:'United Arab Emirates vs Netherlands',
