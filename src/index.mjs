@@ -1102,7 +1102,7 @@ async function checkHeldCombinations(fills){
     return {filled:false,pending:false};
   }
   const account=await accountBalance({fresh:true});
-  const result=await executeCombo(candidates,account,Number(account.balance)+Number(account.portfolio_value),comboAllocation(),trigger.market_ticker);
+  const result=await executeCombo(candidates,account,Number(account.balance)+Number(account.portfolio_value),comboAllocation(),trigger?.market_ticker);
   if(trigger)await pool.query('UPDATE combo_fill_triggers SET completed_at=now(),combo_ticker=$2 WHERE fill_id=$1',[trigger.id,result.ticker||null]);
   return result;
 }
