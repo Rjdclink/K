@@ -519,8 +519,9 @@ async function ensureShardFunding(signal,event,market,account,desiredCents,sourc
   const id=pending?.id||randomUUID(),amount=pending?.amount_centicents||plan.amountCenticents;
   if(Number(amount)<100)return false;
   if(!pending)await pool.query(`INSERT INTO funding_transfers(id,market_ticker,strategy,source_shard,destination_shard,amount_centicents) VALUES($1,$2,$3,$4,$5,$6)`,[id,market.ticker,signal.strategy,plan.sourceShard,destination,amount]);
+  let result;
   try{
-    const result=await kalshi('/portfolio/intra_exchange_instance_transfer',{method:'POST',auth:true,body:{source:'event_contract',destination:'event_contract',amount:Number(amount),client_transfer_id:id,source_exchange_shard:pending?.source_shard??plan.sourceShard,destination_exchange_shard:destination,source_subaccount:0,destination_subaccount:0}});
+    result=await kalshi('/portfolio/intra_exchange_instance_transfer',{method:'POST',auth:true,body:{source:'event_contract',destination:'event_contract',amount:Number(amount),client_transfer_id:id,source_exchange_shard:pending?.source_shard??plan.sourceShard,destination_exchange_shard:destination,source_subaccount:0,destination_subaccount:0}});
     await pool.query(`UPDATE funding_transfers SET status='pending',transfer_id=$2,error=NULL,updated_at=now() WHERE id=$1`,[id,result.transfer_id||null]);
   }catch(e){
     await pool.query(`UPDATE funding_transfers SET status=$2,error=$3,updated_at=now() WHERE id=$1`,[id,/^Kalshi (400|401|403|404) /.test(String(e.message))?'blocked':'uncertain',String(e.message).slice(0,250)]);
