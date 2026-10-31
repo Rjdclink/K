@@ -1,8 +1,6 @@
 // Kalshi combinations are separate YES markets. Two confirmed, still-held
 // single fills qualify as legs; an RFQ alone is never a fill.
-export const COMBO_WINDOW_MS=12000;
-// A fresh quote lives only briefly, but creating markets and waiting for an
-// RFQ maker can take longer than the quote freshness window.
+// Creating markets and waiting for an RFQ maker can take longer than a scan.
 export const COMBO_ATTEMPT_MS=45000;
 export const VERIFY_DWELL_MS=6000;
 export const COMBO_HELD_CANDIDATES=9;
@@ -83,13 +81,15 @@ export function compatibleComboGroups(collections,candidates,maxGroups=6){
 }
 export function prioritizedComboGroups(groups,maxLarger=9,rotation=0){
   const pairs=groups.filter(g=>g.legs.length===2),larger=groups.filter(g=>g.legs.length>2);
-  const sizes=[...new Set(larger.map(g=>g.legs.length))].sort((a,b)=>b-a);
-  const chosen=sizes.slice(0,maxLarger).map(size=>{
-    const options=larger.filter(g=>g.legs.length===size);
-    return options[rotation%options.length];
-  });
+  const chosen=[];
+  const take=(options,n)=>{if(!options.length||!n)return;const start=((rotation*n)%options.length+options.length)%options.length;for(let i=0;i<Math.min(n,options.length);i++)chosen.push(options[(start+i)%options.length])};
+  // Every compatible pair goes first. Rotate four three-picks and four
+  // four-picks per attempt; keep a slot for larger tickets too.
+  take(larger.filter(g=>g.legs.length===3),Math.min(4,maxLarger));
+  take(larger.filter(g=>g.legs.length===4),Math.min(4,maxLarger-chosen.length));
+  take(larger.filter(g=>g.legs.length>4),Math.min(1,maxLarger-chosen.length));
   const rest=larger.filter(g=>!chosen.includes(g));
-  for(let i=0;i<rest.length&&chosen.length<maxLarger;i++)chosen.push(rest[(rotation+i)%rest.length]);
+  if(rest.length&&chosen.length<maxLarger)take(rest,maxLarger-chosen.length);
   return [...pairs,...chosen];
 }
 export function comboPairDiagnostics(collections,candidates){
@@ -139,9 +139,10 @@ export function quoteForYes(quote,ticker,budgetCents,feeMultiplier=2,bankrollCen
   if(!quote || quote.market_ticker!==ticker || quote.status!=='open')return null;
   // The maker's NO bid is the price at which the RFQ creator buys YES.
   const noBid=Number(quote.no_bid_dollars),count=Number(quote.no_contracts_fp??quote.contracts_fp);
-  const created=Date.parse(quote.created_ts||'');
   if(!Number.isFinite(noBid)||noBid<=0||noBid>=1||!Number.isFinite(count)||count<=0||
-    !Number.isFinite(created)||Date.now()-created>COMBO_WINDOW_MS)return null;
+    !Number.isFinite(Date.parse(quote.created_ts||'')))return null;
+  // Quote creation time is not an expiration. The fresh RFQ list says whether
+  // it is open; Kalshi validates that status again when we accept it.
   const yesCost=1-noBid;
   // Conservative fee ceiling; the exchange can reject or leave the quote unfilled.
   const feeCents=Math.ceil(feeMultiplier*7*count*yesCost*(1-yesCost));
