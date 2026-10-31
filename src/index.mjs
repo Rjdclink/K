@@ -92,9 +92,12 @@ async function kalshi(path,opts={}){
   const method=opts.method||'GET';const headers={'accept':'application/json'};
   if(opts.body)headers['content-type']='application/json';
   for(let attempt=0;;attempt++){
+    opts.signal?.throwIfAborted();
     await kalshiRateLimit(method);
+    opts.signal?.throwIfAborted();
     if(opts.auth){const {key,privateKey}=credentials();if(!key||!privateKey)throw Error('Kalshi credentials unavailable');const timestamp=String(Date.now());const unsignedPath='/trade-api/v2'+path.split('?')[0];const signature=kalshiSignature(privateKey,timestamp,method,unsignedPath);Object.assign(headers,{'KALSHI-ACCESS-KEY':key,'KALSHI-ACCESS-TIMESTAMP':timestamp,'KALSHI-ACCESS-SIGNATURE':signature})}
-    const response=await fetch(API+path,{method,headers,body:opts.body?JSON.stringify(opts.body):undefined,signal:AbortSignal.timeout(12000)});
+    const response=await fetch(API+path,{method,headers,body:opts.body?JSON.stringify(opts.body):undefined,
+      signal:opts.signal?AbortSignal.any([opts.signal,AbortSignal.timeout(12000)]):AbortSignal.timeout(12000)});
     const data=await response.json().catch(()=>({}));
     if(response.status===429 && method==='GET'){await kalshiBackoff(retryDelay(response.headers.get('retry-after'),attempt));if(attempt<4)continue}
     if(!response.ok){const detail=data.message||data.error?.message||data.error?.code||data.error||data.code||'request failed';const extra=data.details||data.error?.details;throw Error(`Kalshi ${response.status} ${method} ${path.split('?')[0]}: ${String(typeof detail==='object'?JSON.stringify(detail):detail).slice(0,140)}${extra?' details='+JSON.stringify(extra).slice(0,400):''}`)}
@@ -127,9 +130,13 @@ function ensureValueScan(){return valueScanReady??=Promise.all([
 ]).catch(e=>{valueScanReady=null;throw e})}
 function accountBalance({fresh=false}={}){
   const job=balanceQueue.catch(()=>{}).then(async()=>{
-    const client=await pool.connect();
+    const client=await pool.connect();let deadline;const controller=new AbortController();
     try{
       await client.query('BEGIN');
+      // An exchange stall must not hold the shared balance lock indefinitely.
+      // A timed-out balance refresh fails closed for new orders.
+      await client.query("SET LOCAL idle_in_transaction_session_timeout = '20s'");
+      await client.query("SET LOCAL lock_timeout = '20s'");
       await client.query('SELECT pg_advisory_xact_lock(83027544)');
       const {rows:[cached]}=await client.query('SELECT balance_json,updated_at,last_request_at FROM account_cache WHERE id=1 FOR UPDATE');
       const elapsed=Date.now()-new Date(cached?.updated_at||0).getTime();
@@ -137,12 +144,17 @@ function accountBalance({fresh=false}={}){
       const sinceRequest=Date.now()-new Date(cached?.last_request_at||0).getTime();
       const delay=1250-sinceRequest;if(delay>0&&delay<1250)await new Promise(resolve=>setTimeout(resolve,delay));
       await client.query('UPDATE account_cache SET last_request_at=clock_timestamp() WHERE id=1');
-      const value=await kalshi('/portfolio/balance',{auth:true});
+      const value=await Promise.race([
+        kalshi('/portfolio/balance',{auth:true,signal:controller.signal}),
+        new Promise((_,reject)=>{deadline=setTimeout(()=>{
+          const error=Error('Kalshi balance refresh timed out');controller.abort(error);reject(error);
+        },15000)})
+      ]);
       await client.query('UPDATE account_cache SET balance_json=$1,updated_at=clock_timestamp() WHERE id=1',[JSON.stringify(value)]);
       await client.query('COMMIT');
       return value;
     }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}
-    finally{client.release()}
+    finally{clearTimeout(deadline);client.release()}
   });
   balanceQueue=job.catch(()=>{});return job;
 }
@@ -1597,8 +1609,6 @@ async function scan(cachedMilestones,discoveryCount){
   if(!lock.rows[0].acquired){await client.query('ROLLBACK');client.release();return {skipped:'scan in progress'}};
   let scanned=0,signals=0,submitted=0,ms,scanLockHeld=true;const executionErrors=[],scanStarted=new Date();let openPositions=null;
   try{
-    if(live()||exitOnly())await Promise.all([reconcileCombos(),reconcileComboUpgrades()]);
-    if(live()&&!cachedMilestones)try{await reconcileFundingTransfers()}catch(e){console.warn('Transfer history unavailable:',e.message)}
     ms=cachedMilestones||await milestones();discoveryCount??=ms.length;
     const {rows:recentLive}=await pool.query(`SELECT id,signals FROM game_snapshots
       WHERE status='live' AND scanned_at>now()-interval '30 minutes'`);
@@ -1612,6 +1622,8 @@ async function scan(cachedMilestones,discoveryCount){
     // work. A slow exchange response must not empty the dashboard's live list.
     await ensureValueScan();
     await publishLivePreview(active,liveMap,scanStarted);
+    if(live()||exitOnly())await Promise.all([reconcileCombos(),reconcileComboUpgrades()]);
+    if(live()&&!cachedMilestones)try{await reconcileFundingTransfers()}catch(e){console.warn('Transfer history unavailable:',e.message)}
     await ensureLeadWatch();
     const watched=active;
     for(let i=0;i<watched.length;i+=50){
@@ -2040,12 +2052,14 @@ async function refreshOpenClocks(){
   // can spend longer evaluating orders without freezing the visible game clock.
   await ensureScoreTime();
   const claim=await pool.query(`UPDATE scan_status SET clock_refresh_at=clock_timestamp() WHERE id=1
-    AND (clock_refresh_at IS NULL OR clock_refresh_at<now()-interval '5 seconds') RETURNING id`);
+    AND (clock_refresh_at IS NULL OR clock_refresh_at<now()-interval '20 seconds') RETURNING id`);
   if(!claim.rowCount)return;
   try{
-    const {rows}=await pool.query(`SELECT DISTINCT g.id,g.title,g.sport,g.sport_family,g.home_team_id,g.away_team_id FROM trade_attempts a
-      JOIN game_snapshots g ON g.id=a.game_id WHERE a.status='filled' AND g.status='live'
-      ORDER BY g.id LIMIT 40`);
+    // Refresh the visible live scoreboard independently of the slower market
+    // scan. This is bounded to four live-feed batches per dashboard refresh.
+    const {rows}=await pool.query(`SELECT g.id,g.title,g.sport,g.sport_family,g.home_team_id,g.away_team_id FROM game_snapshots g
+      WHERE g.status='live' AND g.sport_family<>'weather' AND g.scanned_at>now()-interval '15 minutes'
+      ORDER BY g.scanned_at DESC LIMIT 80`);
     if(!rows.length)return;
     const milestones=rows.map(g=>({id:g.id,title:g.title,type:g.sport_family,details:{league:g.sport,home_team_id:g.home_team_id,away_team_id:g.away_team_id}}));
     const data=await liveBatch(milestones);
@@ -2079,8 +2093,8 @@ async function state(){
     checked_at timestamptz NOT NULL DEFAULT now(),leg_tickers jsonb NOT NULL,
     collection_ticker text,status text NOT NULL,detail text)`);
   const [snap,stats,attempts]=await Promise.all([
-  pool.query(`SELECT id,title,sport,home,away,possession_side,status,time_left,scanned_at,signals,value_signals FROM game_snapshots
-    WHERE status IN ('live','inprogress','started') AND scanned_at>now()-interval '2 minutes'
+  pool.query(`SELECT id,title,sport,home,away,possession_side,status,time_left,scanned_at,score_observed_at,signals,value_signals FROM game_snapshots
+    WHERE status IN ('live','inprogress','started') AND GREATEST(score_observed_at,scanned_at)>now()-interval '15 minutes'
     ORDER BY jsonb_array_length(signals) DESC,title`),
   pool.query('SELECT * FROM scan_status WHERE id=1'),
   pool.query(`SELECT a.market_ticker,a.game_id,a.sport,a.strategy,a.reason,a.combo_legs,a.fill_count,a.limit_price,g.status AS game_status,g.title AS game_title,g.signals AS game_signals,g.sport_family,g.possession_side,g.home AS home_score,g.away AS away_score,GREATEST(g.score_observed_at,g.scanned_at) AS score_scanned_at,g.clock_seconds,g.clock_label,g.clock_observed_at,g.time_left,
@@ -2110,7 +2124,8 @@ async function state(){
   for(const game of snap.rows){
     game.stale=new Date(game.scanned_at).getTime()<new Date(stats.rows[0]?.last_scan||0).getTime()-2000 ||
       Date.now()-new Date(game.scanned_at).getTime()>30000;
-    if(game.stale)for(const signal of game.signals||[])signal.execution='Not in latest live scan; last status: '+signal.execution;
+    game.scoreStale=Date.now()-new Date(game.score_observed_at||game.scanned_at).getTime()>60000;
+    if(game.stale)for(const signal of game.signals||[])signal.execution='Market check delayed; last result: '+signal.execution;
   }
   let balance=null,positions=null,accountError=null,positionsError=null,balanceStale=false,balanceAsOf=null;
   if(configured()){

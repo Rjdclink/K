@@ -27,6 +27,9 @@ test('dashboard includes alerts in its existing refresh while the alert endpoint
   const previousKey=process.env.KALSHI_API_KEY;
   const previousKeyId=process.env.KALSHI_API_KEY_ID;
   const alert={id:8,ticker:'KXTEST',profit_cents:25,settled_time:'2026-10-28T13:00:00Z'};
+  const delayedGame={id:'live-1',title:'Live football',sport:'CFB',status:'live',
+    scanned_at:new Date(Date.now()-3*60*1000).toISOString(),score_observed_at:new Date().toISOString(),
+    signals:[{execution:'No ask liquidity'}]};
   const seen=[];
   process.env.DASHBOARD_PASSWORD=secret;
   process.env.KALSHI_API_KEY='';process.env.KALSHI_API_KEY_ID='';
@@ -37,7 +40,7 @@ test('dashboard includes alerts in its existing refresh while the alert endpoint
     if(sql.includes('SET clock_refresh_at='))return {rows:[]};
     if(sql.includes('CREATE TABLE IF NOT EXISTS combo_diagnostics'))return {rows:[]};
     if(sql.includes('FROM combo_diagnostics'))return {rows:[]};
-    if(/FROM game_snapshots\s+WHERE/.test(sql))return {rows:[]};
+    if(/FROM game_snapshots\s+WHERE/.test(sql))return {rows:[structuredClone(delayedGame)]};
     if(sql.includes('FROM scan_status WHERE'))return {rows:[{scanned:0,signals:0}]};
     if(sql.includes('FROM weather_scan_status WHERE'))return {rows:[{series:0,events:0,eligible:0,verified:0}]};
     if(sql.includes('FROM trade_attempts a LEFT JOIN'))return {rows:[]};
@@ -50,7 +53,11 @@ test('dashboard includes alerts in its existing refresh while the alert endpoint
     assert.equal(response.status,200);
     const body=await response.json();
     assert.deepEqual(body.alerts,[alert]);
-    assert.deepEqual(body.games,[]);
+    assert.equal(body.games.length,1);
+    assert.equal(body.games[0].stale,true);
+    assert.equal(body.games[0].scoreStale,false);
+    assert.equal(body.games[0].signals[0].execution,'Market check delayed; last result: No ask liquidity');
+    assert.ok(seen.some(item=>item.sql.includes("GREATEST(score_observed_at,scanned_at)>now()-interval '15 minutes'")));
     assert.equal(body.scan.scanned,0);
     assert.deepEqual(body.weather,{disabled:true,series:0,eligible:0});
     assert.equal(seen.some(item=>item.sql.includes('FROM weather_scan_status WHERE')),false);
