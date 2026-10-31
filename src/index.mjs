@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { page } from './ui.mjs';
 import { historyPage } from './history_ui.mjs';
-import { completedTrade, manualSaleFill, reconcileManualSaleFills } from './history.mjs';
+import { completedTrade, manualSaleFill, reconcileManualSaleFills, settlementLookupCandidates } from './history.mjs';
 import { gameState, overSignal, confirmedOver, kalshiOnlyOver, kalshiOnlyLead, confirmedExternalLead, leadSignal, confirmedSoccerOneGoalClock, confirmedDrawClock, soccerOneGoalWindowOpen, stableSoccerLeadFraction, externallyVerifiedEarlySoccerLead, additionalLeadSignal, cricketLeadSignal, drawSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback, KALSHI_ONLY_FRACTION } from './strategy.mjs';
 import { reviewMiss } from './ai.mjs';
 import { kalshiSignature } from './auth.mjs';
@@ -176,8 +176,6 @@ async function manualSell(body){
   const client=await pool.connect();
   try{
     await client.query('BEGIN');await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',['sell:'+body.ticker]);
-    const over=await client.query("SELECT 1 FROM trade_attempts WHERE market_ticker=$1 AND status='filled' AND strategy='over' AND combo_legs IS NULL LIMIT 1",[body.ticker]);
-    if(over.rowCount){await client.query('ROLLBACK');return json({error:'Manual selling is disabled for OVER tickets'},403)}
     const existing=await client.query("SELECT * FROM manual_sales WHERE id=$1 OR (ticker=$2 AND status='pending')",[body.id,body.ticker]);
     if(existing.rows.length){
       const old=existing.rows[0];
@@ -250,7 +248,7 @@ async function syncTradeHistory(settlements){
       ru.order_id AS robust_upgrade_order_id,ru.fill_count AS robust_upgrade_fill_count,
       cu.order_id AS combo_upgrade_order_id,cu.fill_count AS combo_upgrade_fill_count,
       (SELECT SUM(e.filled_count) FROM exit_attempts e WHERE e.market_ticker=a.market_ticker AND e.filled_count>0) AS expected_sold,
-      g.sport_family,COALESCE(g.title,'Sports game') AS teams
+      g.sport_family,g.status AS game_status,COALESCE(g.title,'Sports game') AS teams
     FROM trade_attempts a LEFT JOIN game_snapshots g ON g.id=a.game_id
       LEFT JOIN position_upgrades u ON u.original_id=a.id AND u.status='filled'
       LEFT JOIN robust_over_upgrades ru ON ru.original_id=a.id AND ru.status='filled'
@@ -261,10 +259,10 @@ async function syncTradeHistory(settlements){
     ORDER BY a.created_at DESC LIMIT 500`,[config.started_at]);
   if(!pending.length)return;
   const settled=new Map(settlements.map(item=>[item.ticker,item]));
-  const aged=pending.filter(item=>!settled.has(item.market_ticker)&&Date.now()-new Date(item.created_at).getTime()>47*3600000);
-  if(aged.length){const start=(Math.floor(Date.now()/30000)*5)%aged.length;
-    for(let i=0;i<Math.min(5,aged.length);i++){
-      const ticker=aged[(start+i)%aged.length].market_ticker;
+  const direct=settlementLookupCandidates(pending,settled,Date.now(),Math.floor(Date.now()/30000)*5);
+  if(direct.length){
+    for(const item of direct){
+      const ticker=item.market_ticker;
       const result=await kalshi('/portfolio/settlements?'+new URLSearchParams({ticker,limit:'100'}),{auth:true});
       const match=(result.settlements||[]).find(item=>item.ticker===ticker);
       if(match)settled.set(ticker,match);
@@ -1992,8 +1990,7 @@ export default {async fetch(req){const url=new URL(req.url);
       const {rows}=await pool.query('SELECT DISTINCT ON (market_ticker) market_ticker,strategy,reason,limit_price,combo_legs FROM trade_attempts WHERE status=$1 AND market_ticker=ANY($2::text[]) ORDER BY market_ticker,created_at DESC',['filled',tickers]);
       const attempts=new Map(rows.map(o=>[o.market_ticker,o]));
       const account=tickers.some(t=>attempts.get(t)?.combo_legs)?await accountBalance():null;
-      const results=await Promise.allSettled(tickers.filter(t=>held.has(t)&&attempts.has(t)&&
-        (attempts.get(t).strategy!=='over'||attempts.get(t).combo_legs)).map(async ticker=>{
+      const results=await Promise.allSettled(tickers.filter(t=>held.has(t)&&attempts.has(t)).map(async ticker=>{
         const {quote,market,book}=await currentSell(ticker,positions,true),attempt=attempts.get(ticker);
         const legsHeld=!attempt.combo_legs||attempt.combo_legs.every(l=>held.has(l.market_ticker));
         const buy=attempt.combo_legs&&!legsHeld?{reason:'A combo leg is no longer held'}:attempt.combo_legs?manualComboQuote(market,book,held.get(ticker),account,

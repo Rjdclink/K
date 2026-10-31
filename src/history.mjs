@@ -1,6 +1,16 @@
 const numeric=value=>value===null||value===undefined||value===''?NaN:Number(value);
 const yesFill=fill=>fill.outcome_side==='yes'||fill.side==='yes';
 const time=value=>{const parsed=new Date(value);return Number.isFinite(parsed.getTime())?parsed:null};
+// The broad settlement feed can omit a recently settled ticker. Retry final
+// games directly after a short grace period, including losing settlements.
+export function settlementLookupCandidates(pending,settled,now=Date.now(),offset=0,limit=5){
+  const due=pending.filter(item=>!settled.has(item.market_ticker)&&
+    Number.isFinite(new Date(item.created_at).getTime())&&
+    now-new Date(item.created_at).getTime()>(item.game_status==='final'?5:47*60)*60000);
+  if(!due.length)return [];
+  const start=offset%due.length;
+  return Array.from({length:Math.min(limit,due.length)},(_,i)=>due[(start+i)%due.length]);
+}
 export function manualSaleFill(sale){
   const r=sale?.result||{},count=numeric(r.fill_count),price=numeric(r.average_fill_price),fee=numeric(r.average_fee_paid);
   if(!sale?.ticker||!r.order_id||!Number.isFinite(count)||count<=0||!Number.isFinite(price)||price<=0||price>1||
