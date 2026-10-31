@@ -450,10 +450,12 @@ async function liveMilestone(id){
 const eventCache=new Map();
 async function marketMap(tickers){
   const map=new Map();const list=[...new Set(tickers)].filter(Boolean).filter(t=>{const cached=eventCache.get(t);if(cached&&Date.now()-cached.at<7000){map.set(t,cached.event);return false}return true});
-  for(let i=0;i<list.length;i+=70){const chunks=[list.slice(i,i+35),list.slice(i+35,i+70)].filter(c=>c.length);
-    const results=await Promise.all(chunks.map(chunk=>kalshi('/events?'+new URLSearchParams({tickers:chunk.join(','),with_nested_markets:'true',limit:'200',status:'open'}))));
-    for(const result of results)for(const e of result.events||[]){map.set(e.event_ticker,e);eventCache.set(e.event_ticker,{event:e,at:Date.now()})}
-  }for(const [ticker,item] of eventCache)if(Date.now()-item.at>30000)eventCache.delete(ticker);return map;
+  const started=Date.now(),chunks=[];
+  for(let i=0;i<list.length;i+=35)chunks.push(list.slice(i,i+35));
+  const results=await mapBatches(chunks,8,chunk=>kalshi('/events?'+new URLSearchParams({tickers:chunk.join(','),with_nested_markets:'true',limit:'200',status:'open'})));
+  for(const result of results)for(const e of result.events||[]){map.set(e.event_ticker,e);eventCache.set(e.event_ticker,{event:e,at:Date.now()})}
+  if(list.length>100)console.info('Event market map:',JSON.stringify({tickers:list.length,requests:chunks.length,elapsedMs:Date.now()-started}));
+  for(const [ticker,item] of eventCache)if(Date.now()-item.at>30000)eventCache.delete(ticker);return map;
 }
 async function reserve(signal,game,event,market,count,price,balance){
   const id=randomUUID();
