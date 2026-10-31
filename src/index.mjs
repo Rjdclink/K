@@ -18,6 +18,7 @@ import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOverDecision, verifyIndependentTableTennisLeadDecision, verifyIndependentTableTennisMatch } from './score_verification.mjs';
 import { verificationStatus } from './verification_status.mjs';
 import { COMBO_ATTEMPT_MS, VERIFY_DWELL_MS, COMBO_RFQ_PLANS, comboAllocation, comboLegAllocation, comboAllowedCents, comboRfqTargetCents, remainingVerifiedComboCents, availableComboFills, compatibleComboGroups, plannedComboGroups, comboPairDiagnostics, comboLegs, filledComboWindow, heldComboLeg, quoteForYes, collectionsForEvents, selectedComboMarkets, liveComboMarket } from './combos.mjs';
+import { selectedTeamName } from './selected_team.mjs';
 import { estimatedSaleProfitCents, halfPotentialProfitExitEligible, oneAndHalfExitEligible, profitTargetAllowed, overCorrectionAffects, correctionExitTargets } from './positions.mjs';
 import { remainingVerifiedOverCents, upgradeEligible } from './upgrades.mjs';
 import { weatherContract } from './weather.mjs';
@@ -1720,7 +1721,7 @@ async function state(){
     WHERE status IN ('live','inprogress','started') AND scanned_at>now()-interval '15 minutes'
     ORDER BY jsonb_array_length(signals) DESC,title`),
   pool.query('SELECT * FROM scan_status WHERE id=1'),
-  pool.query(`SELECT a.market_ticker,a.game_id,a.sport,a.strategy,a.reason,a.combo_legs,a.fill_count,a.limit_price,g.status AS game_status,g.title AS game_title,g.sport_family,g.possession_side,g.home AS home_score,g.away AS away_score,GREATEST(g.score_observed_at,g.scanned_at) AS score_scanned_at,g.clock_seconds,g.clock_label,g.clock_observed_at,g.time_left FROM trade_attempts a LEFT JOIN game_snapshots g ON g.id=a.game_id WHERE a.status='filled' ORDER BY a.created_at DESC`),
+  pool.query(`SELECT a.market_ticker,a.game_id,a.sport,a.strategy,a.reason,a.combo_legs,a.fill_count,a.limit_price,g.status AS game_status,g.title AS game_title,g.signals AS game_signals,g.sport_family,g.possession_side,g.home AS home_score,g.away AS away_score,GREATEST(g.score_observed_at,g.scanned_at) AS score_scanned_at,g.clock_seconds,g.clock_label,g.clock_observed_at,g.time_left FROM trade_attempts a LEFT JOIN game_snapshots g ON g.id=a.game_id WHERE a.status='filled' ORDER BY a.created_at DESC`),
   pool.query('SELECT * FROM weather_scan_status WHERE id=1')
 ]);
   for(const game of snap.rows){
@@ -1788,8 +1789,9 @@ async function state(){
       potential_profit_cents:actual?Math.floor(count*100-allocated):netSettlementProfitCents(count,Number(o.limit_price),2)};
   }).sort((a,b)=>b.potential_profit_cents-a.potential_profit_cents):[];
   for(const o of orders){
-    o.selected_name=o.strategy==='lead'?String(o.reason||'').match(/(?:^|: )([^;:]+?) leads \d/i)?.[1]||null:
+    o.selected_name=o.strategy==='lead'?selectedTeamName(o):
       String(o.reason||'').match(/\bby ([^;]+);/)?.[1]||null;
+    delete o.game_signals;
     delete o.position;
   }
   const comboIssue=comboIssues.find(issue=>!(issue.status==='insufficient_cash'&&Number(balance?.balance)>=100)&&issue.leg_tickers.length>=2&&

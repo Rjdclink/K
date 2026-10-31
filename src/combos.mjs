@@ -118,22 +118,28 @@ export function plannedComboGroups(collections,candidates,maxPlans=COMBO_RFQ_PLA
   const middleSlots=Math.max(0,maxPlans-2);
   const orderedSizes=sizes.length>maxPlans&&sizes.at(-1)===2&&middle.length?
     [sizes[0],...Array.from({length:middleSlots},(_,i)=>middle[(offset*middleSlots+i)%middle.length]).sort((a,b)=>b-a),2]:sizes;
-  for(const size of orderedSizes){
-    const quota=Math.min(sizes.length>maxPlans?1:2,maxPlans-selected.length-(size>2&&orderedSizes.at(-1)===2?1:0));
+  for(let index=0;index<orderedSizes.length;index++){
+    const size=orderedSizes[index],remainingSizes=orderedSizes.length-index-1;
+    // Give every available ticket size at least one plan, preferably two.
+    // Use the rest of the RFQ budget instead of silently stopping at two.
+    const reserve=Math.min(Math.max(0,maxPlans-selected.length-1),remainingSizes*2);
+    const quota=Math.max(0,maxPlans-selected.length-reserve);
     if(quota<=0)continue;
     const start=eligible.length?offset%eligible.length:0;
-    for(let c=0;c<eligible.length&&selected.filter(g=>g.legs.length===size).length<quota;c++){
+    let added=0;
+    // Interleave collections so one broad collection cannot consume every
+    // slot before another valid set of held legs is tried.
+    for(let step=0;step<64&&added<quota;step++)for(let c=0;c<eligible.length&&added<quota;c++){
       const {collection,pools}=eligible[(start+c)%eligible.length];
       if(pools.length<size||Number(collection.size_min)>size||Number(collection.size_max)&&Number(collection.size_max)<size)continue;
       const total=combinationCount(pools.length,size);
-      for(let step=0;step<Math.min(32,Number(total))&&selected.filter(g=>g.legs.length===size).length<quota;step++){
+      if(BigInt(step)>=total)continue;
         const rank=(BigInt(offset)*2n+BigInt(step))%total;
         const legs=combinationAt(pools,size,rank).map((pool,i)=>pool[(offset+step+i)%pool.length]);
         if(!comboCollection([collection],legs))continue;
         const key=legs.map(l=>l.market.ticker).sort().join('|');
         if(seen.has(key))continue;
-        seen.add(key);selected.push({legs,collection});
-      }
+        seen.add(key);selected.push({legs,collection});added++;
     }
   }
   return selected;

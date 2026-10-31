@@ -398,7 +398,7 @@ test('unknown soccer time cannot authorize 20%, but a late minute can use two Ka
   const state=(when,home=3,away=0,half='2nd',other={})=>gameState(m,{milestone_id:m.id,_observed_at:new Date(when).toISOString(),details:{status:'live',home_same_game_score:home,away_same_game_score:away,half,...other}});
   const first=state(now-12000,3,0,'2nd',{time:"81'"}),second=state(now,3,0,'2nd',{time:"81'",possession:'away'});
   assert.equal(leadSignal(state(now-12000),market),null,'no clock or minute cannot prove ten minutes left');
-  assert.equal(earlyLeadSignal(state(now-12000),market)?.fraction,.02,'earlier second-half lead retains the separate two-percent tier');
+  assert.equal(earlyLeadSignal(state(now-12000),market),null,'second-half score alone cannot authorize an early entry');
   assert.equal(leadSignal(first,market)?.fraction,.20);
   assert.match(leadSignal(first,market).reason,/81'/);
   assert.equal(kalshiOnlyLead(first,second,market),true,'ball possession is not required for a three-goal lead');
@@ -412,22 +412,21 @@ test('unknown soccer time cannot authorize 20%, but a late minute can use two Ka
   assert.equal(kalshiOnlyLead(first,state(now,2,0),market),false);
   assert.equal(kalshiOnlyLead(state(now-3000,3,0,'2nd',{time:"81'"}),second,market),false,'the two Kalshi reads still need ten seconds');
 });
-test('early three-goal soccer lead gets 20% only after two exact independent confirmations',()=>{
-  const m={id:'three-goals',type:'soccer_tournament_multi_leg',title:'Bradford vs Huddersfield',
-    details:{home_team_id:'bra',away_team_id:'hud',main_game_event_ticker:'KXEFLL1GAME-TEST'}};
-  const market={status:'active',event_ticker:'KXEFLL1GAME-TEST',title:'Huddersfield wins',
-    custom_strike:{soccer_team:'hud'},yes_ask_dollars:'0.98'};
-  const state=(home,away,half='2nd')=>gameState(m,{milestone_id:m.id,details:{status:'live',home_score:home,away_score:away,half}});
-  const first=state(0,3),second=state(0,3),signal=earlyLeadSignal(second,market);
-  assert.equal(signal?.fraction,.02);
-  const upgraded=externallyVerifiedEarlySoccerLead(first,second,signal,true,true);
-  assert.equal(upgraded.fraction,.20);
-  assert.match(upgraded.reason,/^Externally verified 20% lead:/);
-  assert.equal(externallyVerifiedEarlySoccerLead(first,second,signal,true,null),signal,'a missing final external check stays at 2%');
-  assert.equal(externallyVerifiedEarlySoccerLead(first,second,signal,null,true),signal,'a missing initial external check stays at 2%');
-  assert.equal(externallyVerifiedEarlySoccerLead(first,state(1,3),signal,true,true),signal,'changed lead cannot be upgraded');
-  assert.equal(externallyVerifiedEarlySoccerLead(first,state(0,3,'1st'),signal,true,true),signal,'the game must still be in the second half');
-  assert.equal(externallyVerifiedEarlySoccerLead(first,second,{...signal,fraction:.10},true,true).fraction,.10,'other tiers stay unchanged');
+test('Millwall-style 3–0 lead at minute 47 cannot bypass the late soccer entry window; four goals can',()=>{
+  const m={id:'millwall',type:'soccer_tournament_multi_leg',title:'Millwall vs Derby',
+    details:{home_team_id:'mil',away_team_id:'der',main_game_event_ticker:'KXEFLCHAMPIONSHIPGAME-TEST'}};
+  const market={status:'active',event_ticker:'KXEFLCHAMPIONSHIPGAME-TEST',title:'Millwall wins',
+    custom_strike:{soccer_team:'mil'},yes_ask_dollars:'0.99',
+    rules_primary:'If Millwall wins after 90 minutes plus stoppage time, then Yes.'};
+  const state=(minute,remaining,home=3)=>gameState(m,{milestone_id:m.id,details:{status:'live',home_score:home,away_score:0,half:'2nd',time:`${minute}'`,match_remaining_seconds:remaining}});
+  assert.equal(leadSignal(state(47,2580),market),null);
+  assert.equal(earlyLeadSignal(state(47,2580),market),null);
+  assert.equal(earlyLeadSignal(state(47,2580,4),market)?.fraction,.02);
+  const first=state(47,2580,4),second=state(47,2570,4),early=earlyLeadSignal(second,market);
+  assert.equal(externallyVerifiedEarlySoccerLead(first,second,early,true,true).fraction,.20);
+  assert.equal(externallyVerifiedEarlySoccerLead(first,second,early,true,null).fraction,.02);
+  assert.equal(leadSignal(state(85,599),market)?.fraction,.20);
+  assert.equal(earlyLeadSignal(state(85,599),market),null);
 });
 test('one-goal soccer winner requires a final-whistle countdown and stable possession for higher tiers',()=>{
   const m={id:'soccer-close',title:'Abha vs Al-Faisaly',type:'soccer_tournament_multi_leg',details:{home_team_id:'abha',away_team_id:'faisaly'}};

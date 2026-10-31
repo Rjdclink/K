@@ -223,6 +223,14 @@ test('eighteen held singles are all considered without enumerating every ticket'
   assert.equal(seenPairs.size,153);
   assert.ok([...seenPairs].some(pair=>pair.includes('p17-YES')));
 });
+test('four held legs try every distinct ticket when all eleven fit the RFQ budget',()=>{
+  const candidates=Array.from({length:4},(_,i)=>candidate('p'+i,'E'+i));
+  const collection={collection_ticker:'FOUR',is_all_yes:true,is_single_market_per_event:true,
+    size_min:2,size_max:4,associated_event_tickers:candidates.map(c=>c.event.event_ticker)};
+  const groups=plannedComboGroups([collection],candidates,12,0);
+  assert.deepEqual([4,3,2].map(size=>groups.filter(g=>g.legs.length===size).length),[1,4,6]);
+  assert.equal(new Set(groups.map(g=>g.legs.map(l=>l.market.ticker).sort().join('|'))).size,11);
+});
 test('very large collection sizes rotate smaller ticket sizes while preserving pairs',()=>{
   const candidates=Array.from({length:18},(_,i)=>candidate('p'+i,'E'+i));
   const collection={collection_ticker:'ANY',is_all_yes:true,is_single_market_per_event:true,size_min:2,size_max:0,associated_event_tickers:candidates.map(c=>c.event.event_ticker)};
