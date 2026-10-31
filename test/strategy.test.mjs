@@ -615,12 +615,13 @@ test('zero score never creates an over; overs need only positive net profit',()=
   assert.equal(profitableCount(1,.99,2,'lead',20000,'basketball_game',20),0);
 });
 test('filled order tiers preserve higher existing minimums and exact boundaries',()=>{
-  for(const [orders,expected] of [[0,1],[9,1],[10,25],[14,25],[15,50],[19,50],[20,100],[21,100]]){
+  for(const [orders,expected] of [[0,1],[9,1],[10,15],[14,15],[15,35],[19,35],[20,50],[21,50]]){
     assert.equal(minimumProfitCents('over',5000,'',NaN,orders),expected);
     assert.equal(minimumProfitCents('lead',5000,'',NaN,orders),expected);
   }
   assert.equal(minimumProfitCents('weather',5000,'',NaN,10),30);
-  assert.equal(minimumProfitCents('weather',5000,'',NaN,15),50);
+  assert.equal(minimumProfitCents('weather',5000,'',NaN,15),35);
+  assert.equal(minimumProfitCents('weather',5000,'',NaN,20),50);
   assert.equal(minimumProfitCents('combo',20000,'',NaN,20),200);
   assert.equal(netSettlementProfitCents(1,.75,2),22);
   assert.equal(netSettlementProfitCents(2,.75,2),44);

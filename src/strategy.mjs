@@ -555,7 +555,7 @@ export function tennisSignal(game,market){
   return {strategy:'lead',reason:`Tennis match-clinching set ${leaderGames}–${opponentGames}; leader serves, points ${leaderPoints}–${opponentPoints}${t.advantage===leaderId?' advantage':''}`,fraction:.15};
 }
 export function minimumProfitCents(strategy,availableCents,sportType='',remainingSeconds=NaN,filledOrders=0){
-  const tier=filledOrders>=20?100:filledOrders>=15?50:filledOrders>=10?25:0;
+  const tier=filledOrders>=20?50:filledOrders>=15?35:filledOrders>=10?15:0;
   const existing=strategy==='weather'?30:
     strategy==='over'||strategy==='lead'?1:
     Number(availableCents)>=20000?200:Number(availableCents)>=10000?50:25;

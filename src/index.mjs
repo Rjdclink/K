@@ -16,7 +16,7 @@ import { authorized, checkCredentials, sessionCookie, loginPage } from './dashbo
 import { discoverCurrentMilestones, eligibleForMarkets, linkedEventTickers, gameTimeLabel, storedClockSeconds, mapBatches } from './discovery.mjs';
 import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOverDecision, verifyIndependentTableTennisLeadDecision, verifyIndependentTableTennisMatch } from './score_verification.mjs';
-import { COMBO_ATTEMPT_MS, VERIFY_DWELL_MS, COMBO_RFQ_PLANS, comboAllocation, comboLegAllocation, comboAllowedCents, comboRfqTargetCents, remainingVerifiedComboCents, availableComboFills, compatibleComboGroups, plannedComboGroups, comboPairDiagnostics, comboLegs, filledComboWindow, eligibleFillTrigger, heldComboLeg, quoteForYes, collectionsForEvents, selectedComboMarkets, liveComboMarket } from './combos.mjs';
+import { COMBO_ATTEMPT_MS, VERIFY_DWELL_MS, COMBO_RFQ_PLANS, comboAllocation, comboLegAllocation, comboAllowedCents, comboRfqTargetCents, remainingVerifiedComboCents, availableComboFills, compatibleComboGroups, plannedComboGroups, comboPairDiagnostics, comboLegs, filledComboWindow, heldComboLeg, quoteForYes, collectionsForEvents, selectedComboMarkets, liveComboMarket } from './combos.mjs';
 import { estimatedSaleProfitCents, positiveExitEligible, oneAndHalfExitEligible } from './positions.mjs';
 import { remainingVerifiedOverCents, upgradeEligible } from './upgrades.mjs';
 import { weatherContract } from './weather.mjs';
@@ -965,32 +965,33 @@ async function upgradeVerifiedCombos(scanStarted){
   }
   return {filled:false,pending:false};
 }
-async function checkHeldCombinations(fills,verifiedSince=null){
+async function checkHeldCombinations(fills){
+  // Establish a one-time baseline before this deployment can submit new buys.
+  // Existing holdings are legs for future fills, not triggers on their own.
+  await pool.query(`CREATE TABLE IF NOT EXISTS combo_fill_baseline (
+    id integer PRIMARY KEY,started_at timestamptz NOT NULL)`);
+  await pool.query(`INSERT INTO combo_fill_baseline(id,started_at) VALUES(1,clock_timestamp()) ON CONFLICT DO NOTHING`);
+  const {rows:[baseline]}=await pool.query('SELECT started_at FROM combo_fill_baseline WHERE id=1');
   const positions=await allOpenPositions();
   const held=new Set((positions.market_positions||[]).filter(p=>Number(p.position_fp??p.position??0)>0).map(p=>p.ticker));
   const used=await pool.query(`SELECT combo_legs FROM trade_attempts WHERE combo_legs IS NOT NULL AND status IN ('filled','combo_pending')`);
   const unverifiedUsed=new Set(used.rows.flatMap(r=>(r.combo_legs||[]).map(l=>l.market_ticker)));
   const available=availableComboFills(fills,unverifiedUsed);
   const singles=filledComboWindow(available,held,null);
-  if(singles.length<2)return {filled:false,pending:false};
   await pool.query(`CREATE TABLE IF NOT EXISTS combo_fill_triggers (
     fill_id uuid PRIMARY KEY, attempted_at timestamptz, completed_at timestamptz, combo_ticker text)`);
   await pool.query('ALTER TABLE combo_fill_triggers ADD COLUMN IF NOT EXISTS combo_ticker text');
-  await pool.query(`UPDATE combo_fill_triggers t SET completed_at=NULL,combo_ticker=NULL
-    WHERE t.completed_at IS NOT NULL AND t.combo_ticker IS NOT NULL AND EXISTS(
-      SELECT 1 FROM trade_attempts a WHERE a.market_ticker=t.combo_ticker AND a.status IN ('unfilled','rejected'))`);
   const ready=await pool.query(`SELECT a.id,a.market_ticker FROM trade_attempts a
     LEFT JOIN combo_fill_triggers t ON t.fill_id=a.id
     WHERE a.status='filled' AND a.combo_legs IS NULL AND a.market_ticker=ANY($1::text[])
-      AND (t.completed_at IS NULL OR t.attempted_at<now()-interval '1 minute'
-        OR ($2::timestamptz IS NOT NULL AND a.reason ILIKE '%Kalshi-only%'
-        AND EXISTS (SELECT 1 FROM fallback_verifications f WHERE f.market_ticker=a.market_ticker
-          AND f.original_id=a.id AND f.verified_at >= $2::timestamptz AND t.completed_at<f.first_verified_at)
-        AND NOT EXISTS (SELECT 1 FROM trade_attempts c WHERE c.status='combo_pending'
-          AND c.combo_legs @> jsonb_build_array(jsonb_build_object('market_ticker',a.market_ticker)))))
-      AND (t.attempted_at IS NULL OR t.attempted_at<now()-interval '20 seconds')
-    ORDER BY t.attempted_at ASC NULLS FIRST,a.created_at DESC LIMIT 25`,[[...held],verifiedSince]);
+      AND a.updated_at>=$2 AND t.fill_id IS NULL
+    ORDER BY a.created_at ASC LIMIT 25`,[[...held],baseline.started_at]);
   if(!ready.rowCount)return {filled:false,pending:false};
+  const trigger=ready.rows[0];
+  const claimed=await pool.query(`INSERT INTO combo_fill_triggers(fill_id,attempted_at)
+    VALUES($1,now()) ON CONFLICT DO NOTHING RETURNING fill_id`,[trigger.id]);
+  if(!claimed.rowCount)return {filled:false,pending:false};
+  if(singles.length<2)return {filled:false,pending:false};
   await ensureScoreTime();
   const snapshots=await pool.query('SELECT id,title,sport,sport_family,home,away,status,signals,GREATEST(score_observed_at,scanned_at) AS scanned_at,clock_seconds FROM game_snapshots WHERE id=ANY($1::text[])',
     [[...new Set(singles.map(r=>r.game_id))]]);
@@ -1000,13 +1001,10 @@ async function checkHeldCombinations(fills,verifiedSince=null){
       return heldComboLeg(row,market,byGame.get(row.game_id));
     }catch(e){console.warn('Held combo market unavailable:',row.market_ticker,e.message);return null}
   }))).filter(Boolean);
-  const trigger=eligibleFillTrigger(ready.rows,singles,candidates);
-  if(candidates.length<2||!trigger){console.info('Combo fewer than two open held legs:',singles.map(r=>r.market_ticker));return {filled:false,pending:false}}
-  await pool.query(`INSERT INTO combo_fill_triggers(fill_id,attempted_at) VALUES($1,now())
-    ON CONFLICT(fill_id) DO UPDATE SET attempted_at=EXCLUDED.attempted_at`,[trigger.id]);
+  if(candidates.length<2){console.info('Combo fewer than two open held legs:',singles.map(r=>r.market_ticker));return {filled:false,pending:false}}
   const account=await accountBalance({fresh:true});
   const result=await executeCombo(candidates,account,Number(account.balance)+Number(account.portfolio_value),comboAllocation(),trigger.market_ticker);
-  if(result.pending)await pool.query('UPDATE combo_fill_triggers SET completed_at=now(),combo_ticker=$2 WHERE fill_id=$1',[trigger.id,result.ticker]);
+  await pool.query('UPDATE combo_fill_triggers SET completed_at=now(),combo_ticker=$2 WHERE fill_id=$1',[trigger.id,result.ticker||null]);
   return result;
 }
 async function diagnoseUnfilledCombo(candidates,filled){
@@ -1257,7 +1255,7 @@ async function scan(cachedMilestones,discoveryCount){
     const comboJob=live()?pool.query(`SELECT a.id,a.market_ticker,a.event_ticker,a.game_id,a.sport,a.strategy,a.reason,a.fraction,a.fill_count,a.limit_price,a.created_at,a.updated_at,a.combo_legs,
       EXISTS(SELECT 1 FROM fallback_verifications f WHERE f.market_ticker=a.market_ticker AND f.original_id=a.id AND f.verified_at >= $1) AS externally_verified
       FROM trade_attempts a WHERE a.status='filled'`,[scanStarted])
-      .then(({rows})=>checkHeldCombinations(rows,scanStarted))
+      .then(({rows})=>checkHeldCombinations(rows))
       .catch(e=>{console.error('Held combo execution deferred:',e);return {error:e.message}}):Promise.resolve(null);
     await candidateTable();
     const opportunities=[],snapshotRows=new Map(),scoreboardCache=new Map();
