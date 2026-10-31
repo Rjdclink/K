@@ -296,7 +296,30 @@ export function overSignal(game, market) {
   // score precisely enough for the 40% tier. Do not guess a reversal size.
   const lastPlay=game.lastScoringPlay;
   const robust=gameTotal&&!teamTotal&&!player&&!segment&&Number.isInteger(lastPlay)&&lastPlay>0&&scored-lastPlay>strike;
-  return {strategy:'over', reason:`${scored} ${player?.metric||'scored'}${team?` by ${team}`:''}; line ${strike} already passed${segment?`; segment ${segment[1]}`:''}${robust?`; still crossed if the latest ${lastPlay}-unit scoring play is removed`:''}`, fraction:robust?.40:.30};
+  return {strategy:'over', reason:`${scored} ${player?.metric||'scored'}${team?` by ${team}`:''}; line ${strike} already passed${segment?`; segment ${segment[1]}`:''}${robust?`; still crossed if the latest ${lastPlay}-unit scoring play is removed`:''}`, fraction:robust?.40:.30,scored,strike};
+}
+// A Kalshi-only check cannot establish which scoring event was last. Remove
+// the largest ordinary single scoring play for that sport from the displayed
+// statistic. Sports without a dependable bound cannot use this fallback.
+export function fallbackScoringUnits(game){
+  const type=String(game?.type||'');
+  if(/soccer/.test(type)||game?.sport==='eSoccer')return 1;
+  if(/basketball/.test(type)||game?.sport==='eBasketball')return 4;
+  if(/football/.test(type))return 8;
+  if(/hockey/.test(type))return 1;
+  if(/baseball/.test(type))return 4;
+  if(/rugby/.test(type))return 7;
+  if(/handball/.test(type))return 1;
+  if(/lacrosse/.test(type))return 2;
+  if(/volleyball/.test(type)||/table_tennis|^tennis_/.test(type))return 1;
+  return null;
+}
+export function fallbackOverFraction(game,market){
+  const signal=overSignal(game,market),units=fallbackScoringUnits(game);
+  if(!signal||playerOverSpec(game,market)||!Number.isInteger(units)||
+    !Number.isFinite(signal.scored)||!Number.isFinite(signal.strike)||signal.scored-units<=signal.strike)return null;
+  const excess=signal.scored-units-signal.strike;
+  return excess>=2*units?.15:excess>=units?.10:.05;
 }
 // The live cricket score is a team run total only in limited-over formats
 // with one innings per side. Test/first-class and non-run props need separate
@@ -377,14 +400,11 @@ function kalshiUpdatePairOk(first,second){
 // after a second Kalshi read. The same segment and named statistic must remain
 // crossed; a contradictory external source never reaches here.
 export function kalshiOnlyOver(first,second,market){
-  // A live soccer goal can be rescinded after two identical exchange reads.
-  // Require an independent score before treating a crossed soccer total as final.
-  if(/soccer/.test(first?.type||'')||/soccer/.test(second?.type||''))return false;
   const player=playerOverSpec(first,market),nextPlayer=playerOverSpec(second,market);
   // Player statistics can be corrected after the exchange's two live reads.
   // Only an exact independent player and statistic check can authorize entry.
   if(player||nextPlayer)return false;
-  if(!overSignal(first,market)||!overSignal(second,market))return false;
+  if(fallbackOverFraction(first,market)===null||fallbackOverFraction(second,market)===null)return false;
   const initialSegment=periodValue(first,market),laterSegment=periodValue(second,market);
   if(Boolean(initialSegment)!==Boolean(laterSegment)||initialSegment&&
     (initialSegment.home!==laterSegment.home||initialSegment.away!==laterSegment.away))return false;
@@ -410,7 +430,51 @@ export function kalshiOnlyLead(first,second,market){
   for(const key of ['tennis','tableTennis','volleyball','darts','cricket']){
     if(JSON.stringify(first[key])!==JSON.stringify(second[key]))return false;
   }
-  return true;
+  return fallbackLeadFraction(first,second,market)!==null;
+}
+function fallbackReducedLeader(game,units){
+  if(!Number.isInteger(game.homeUnits)||!Number.isInteger(game.awayUnits)||game.homeUnits===game.awayUnits)return null;
+  const home=game.homeUnits>game.awayUnits?game.homeUnits-units:game.homeUnits;
+  const away=game.awayUnits>game.homeUnits?game.awayUnits-units:game.awayUnits;
+  return home>=0&&away>=0&&home!==away?{...game,home,away,homeUnits:home,awayUnits:away}:null;
+}
+export function fallbackLeadFraction(first,second,market){
+  const units=fallbackScoringUnits(second),type=String(second?.type||'');
+  if(!Number.isInteger(units)||!/basketball|baseball|football|hockey|soccer|rugby|handball|lacrosse|volleyball|table_tennis/.test(type)||
+    first?.type!==type||first.home!==second.home||first.away!==second.away)return null;
+  const deciding=/volleyball|table_tennis/.test(type);
+  const original=deciding?/table_tennis/.test(type)?tableTennisSignal(second,market):additionalLeadSignal(second,market):
+    leadSignal(second,market)||additionalLeadSignal(second,market)||earlyLeadSignal(second,market);
+  if(!original)return null;
+  // A soccer commanding lead must remain at least three goals ahead after
+  // removing the last goal and retain the late regulation winner window.
+  if(/soccer/.test(type)&&Math.abs(second.home-second.away)<4)return null;
+  const qualifies=state=>deciding?/table_tennis/.test(type)?tableTennisSignal(state,market):additionalLeadSignal(state,market):
+    leadSignal(state,market)||additionalLeadSignal(state,market)||earlyLeadSignal(state,market);
+  const reduce=deciding?state=>{
+    if(/table_tennis/.test(type)){
+      const t=state.tableTennis;
+      if(!t||t.firstPoints===t.secondPoints)return null;
+      const firstPoints=t.firstPoints>t.secondPoints?t.firstPoints-1:t.firstPoints;
+      const secondPoints=t.secondPoints>t.firstPoints?t.secondPoints-1:t.secondPoints;
+      return {...state,tableTennis:{...t,firstPoints,secondPoints}};
+    }
+    const point=state.volleyball?.current;
+    if(!point||point.home===point.away)return null;
+    return {...state,volleyball:{...state.volleyball,current:{...point,
+      home:point.home>point.away?point.home-1:point.home,
+      away:point.away>point.home?point.away-1:point.away}}};
+  }:state=>fallbackReducedLeader(state,units);
+  let reduced=reduce(first),next=reduce(second);
+  if(!reduced||!next||!qualifies(reduced)||!qualifies(next)||
+    /soccer/.test(type)&&Math.abs(next.home-next.away)<3)return null;
+  let percent=5;
+  for(let i=0;i<2;i++){
+    reduced=reduce(next);
+    if(!reduced||!qualifies(reduced))break;
+    next=reduced;percent+=5;
+  }
+  return percent/100;
 }
 export function confirmedExternalLead(first,second,market){
   const signal=s=>leadSignal(s,market)||additionalLeadSignal(s,market)||cricketLeadSignal(s,market)||drawSignal(s,market)||earlyLeadSignal(s,market)||tennisSignal(s,market)||tableTennisSignal(s,market);
