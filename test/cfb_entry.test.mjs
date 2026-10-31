@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {gameState,endWindow,leadWatchReason,leadSignal,earlyLeadSignal,kalshiOnlyLead,confirmedExternalLead,orderSize,estimatedCostCents,KALSHI_ONLY_FRACTION} from '../src/strategy.mjs';
+import {finalLeadFraction} from '../src/lead_allocation.mjs';
 
 const at=Date.now();
 const milestone={id:'cfb',type:'football_game',title:'Beta at Alpha',details:{league:'CFB',
@@ -75,6 +76,19 @@ test('CFB possession changes do not veto two qualifying fallback reads; all othe
   assert.equal(kalshiOnlyLead(first,{...second,remainingSeconds:110},market),false,'clock reversal still blocks');
   assert.equal(kalshiOnlyLead(first,{...second,observedAt:first.observedAt+9000},market),false,'ten-second dwell remains');
   assert.equal(kalshiOnlyLead(first,{...second,feedId:'different'},market),false,'fixture identity remains');
+});
+test('CFB Kalshi-only winner must remain eleven ahead after an eight-point play',()=>{
+  const pair=margin=>[state(102,margin,'away',{observed:at-12000}),state(89,margin,'away')];
+  assert.equal(kalshiOnlyLead(...pair(11),market),false);
+  assert.equal(kalshiOnlyLead(...pair(19),market),true);
+  for(const [margin,allocation] of [[19,.05],[27,.10],[35,.15]]){
+    const [first,second]=pair(margin);
+    assert.equal(kalshiOnlyLead(first,second,market),true);
+    assert.equal(finalLeadFraction(first,second,leadSignal(second,market),false,market),allocation);
+  }
+  const [first,second]=pair(35);
+  assert.equal(finalLeadFraction(first,second,leadSignal(second,market),true,market),.35,
+    'independent verification preserves the existing CFB allocation');
 });
 test('NFL possession, allocation, and seven-point last-seconds exception stay unchanged',()=>{
   assert.equal(leadSignal(state(89,21,'away',{sport:'NFL'}),market),null);

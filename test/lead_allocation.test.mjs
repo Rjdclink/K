@@ -19,30 +19,21 @@ test('all supported leader-control sports get five points after independent veri
   const golf={type:'golf_tournament',golf:{}};
   assert.equal(finalLeadFraction(golf,golf,{...lead,fraction:.10},true),.10,'golf has no possession bonus');
 });
-test('Kalshi-only late rugby lead scales to twenty percent with margin, time, and confirmed control',()=>{
-  const first={type:'rugby_match',sport:'Rugby',period:2,verifiedLive:true,scoreConsistent:true,periodConsistent:true,
-    home:19,away:0,homeUnits:19,awayUnits:0,remainingSeconds:89,possessionSide:null};
-  const fraction=(margin,seconds,control=null)=>{
-    const state={...first,home:margin,homeUnits:margin,remainingSeconds:seconds,possessionSide:control};
-    return finalLeadFraction(state,state,{strategy:'lead',fraction:margin>=22?.15:.10},false);
+test('rugby fallback removes one seven-point score and caps the stronger lead at fifteen percent',()=>{
+  const milestone={id:'rugby',type:'rugby_match',title:'Home vs Away',details:{home_competitor_id:'home',away_competitor_id:'away'}};
+  const market={status:'active',event_ticker:'KXRUGBYMATCH-TEST',title:'Home wins',custom_strike:{rugby_team:'home'},yes_ask_dollars:'.95'};
+  const state=(margin,possession)=>gameState(milestone,{milestone_id:'rugby',details:{status:'live',period:2,period_remaining_time:'00:38',home_score:margin,away_score:0,possession_team_id:possession}});
+  const allocation=(margin,possession)=>{
+    const first=state(margin,possession),second=state(margin,possession);
+    return finalLeadFraction(first,second,{strategy:'lead',fraction:.15},false,market);
   };
-  assert.equal(fraction(15,89),.12);
-  assert.equal(fraction(19,60),.12);
-  assert.equal(fraction(19,38),.13);
-  assert.equal(fraction(19,29),.14);
-  assert.equal(fraction(22,38),.16);
-  assert.equal(fraction(28,29),.20);
-  assert.equal(fraction(28,29,'home'),.20);
-  assert.equal(fraction(19,38,'home'),.15);
-  assert.equal(finalLeadFraction({...first,possessionSide:null},{...first,possessionSide:'home',remainingSeconds:38},lead,false),.13,
-    'a single possession observation earns no bonus');
-  assert.equal(fraction(19,90),.10);
-  assert.equal(fraction(14,38),.10);
-  assert.equal(finalLeadFraction({...first,remainingSeconds:37},{...first,remainingSeconds:38},lead,false),.10,
-    'a clock that moves backward cannot receive the higher tier');
-  assert.equal(finalLeadFraction({...first,verifiedLive:false},{...first,remainingSeconds:38},lead,false),.10);
-  assert.equal(finalLeadFraction({...first,remainingSeconds:38},{...first,remainingSeconds:38},lead,true),.15,
-    'independently verified rugby keeps its existing fraction');
+  assert.equal(allocation(21,null),.10,'a fifteen-point lead cannot survive a seven-point reversal');
+  assert.equal(allocation(22,null),.05);
+  assert.equal(allocation(22,'home'),.07);
+  assert.equal(allocation(29,null),.10);
+  assert.equal(allocation(36,'home'),.15);
+  assert.equal(allocation(50,'home'),.15);
+  assert.equal(finalLeadFraction(state(22,null),state(22,null),lead,true,market),.15);
 });
 test('rugby competitor IDs can identify the leader in possession without guessing',()=>{
   const milestone={id:'rugby',type:'rugby_match',title:'Home vs Away',details:{league:'United Rugby Championship',
@@ -98,7 +89,7 @@ test('early football allocation uses margin, clock and possession, with a hard t
 });
 test('both live entry paths use the final verified allocation and funding rechecks recalculate it',()=>{
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
-  assert.match(source,/fraction:finalLeadFraction\(first,second,signal,independent===true\)/);
-  assert.match(source,/finalLeadFraction\(c.state,freshState,verifiedSignal,!kalshiOnly\)/);
-  assert.match(source,/fraction:finalLeadFraction\(state,checked,still,!kalshiOnly\)/);
+  assert.match(source,/fraction:finalLeadFraction\(first,second,signal,independent===true,quote\)/);
+  assert.match(source,/finalLeadFraction\(c.state,freshState,verifiedSignal,!kalshiOnly,quote\)/);
+  assert.match(source,/fraction:finalLeadFraction\(state,checked,still,!kalshiOnly,executable\)/);
 });
