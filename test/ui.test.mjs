@@ -103,6 +103,12 @@ test('filled order timer is bright red, advances each second and reanchors to li
   assert.equal(order(awayProp).children[1].children[1].textContent,'CHA Hornets');
   paintScore(chosen,awayProp,start);
   assert.match(chosen.innerHTML,/<strong class="chosen-score">Away 71<\/strong> · Home 79/);
+  const abbreviated={...propBase,game_title:'NY Knicks at CHI Bulls',market_ticker:'KXNBAAST-26OCT28NYKCHI-CHICWILSON8-4'};
+  assert.equal(order(abbreviated).children[1].children[1].textContent,'CHI Bulls');
+  const shortAway={...propBase,game_title:'GS Warriors at MIN Timberwolves',market_ticker:'KXNBAREB-26OCT28GSWMIN-GSWDGREEN23-8'};
+  assert.equal(order(shortAway).children[1].children[1].textContent,'GS Warriors');
+  paintScore(chosen,shortAway,start);
+  assert.match(chosen.innerHTML,/<strong class="chosen-score">Away 71<\/strong> · Home 79/);
   const unknownProp={...propBase,market_ticker:'KXNBASTL-26OCT30CHAWAS-OTHERPLAYER-1'};
   assert.match(order(unknownProp).children[1].textContent,/^CHA Hornets at WAS Wizards/);
   paintScore(chosen,unknownProp,start);
