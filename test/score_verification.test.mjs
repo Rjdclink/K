@@ -41,6 +41,22 @@ test('ESPN last scoring play is used only with a complete verified scoring list'
   assert.equal(await verifyIndependentOverDecision(second,soccer,{fetcher:async()=>({ok:true,json:async()=>incomplete})}),true);
   assert.equal(second.lastScoringPlay,undefined);
 });
+test('a provisional soccer scoreboard goal cannot clear an over until goal events establish the line',async()=>{
+  const soccer={id:'sou-qpr',type:'soccer_tournament_multi_leg',title:'Southampton vs QPR',start_date:start};
+  const market={event_ticker:'KXEFLCHAMPIONSHIPTOTAL-26OCT31SOUQPR',floor_strike:1.5};
+  const fixture=details=>({events:[{id:'401880189',date:start,status:{type:{state:'in'},period:1,displayClock:"45'+2'"},competitions:[{
+    status:{type:{state:'in'},period:1,displayClock:"45'+2'"},competitors:[
+      {homeAway:'home',score:'2',team:{displayName:'Southampton'}},
+      {homeAway:'away',score:'0',team:{displayName:'Queens Park Rangers',shortDisplayName:'QPR'}}],details
+  }]}]});
+  const state=()=>gameState(soccer,{details:{status:'live',home_score:2,away_score:0,half:'1st',time:"45'+2'"}});
+  const oneGoal=fixture([{scoringPlay:true,scoreValue:1}]);
+  const incomplete=state();
+  assert.equal(await verifyIndependentOverDecision(incomplete,soccer,{market,fetcher:async()=>({ok:true,json:async()=>oneGoal})}),false);
+  assert.match(incomplete.verificationIssue,/confirms 1 of 2 displayed goals/);
+  const bothGoals=fixture([{scoringPlay:true,scoreValue:1},{scoringPlay:true,scoreValue:1}]);
+  assert.equal(await verifyIndependentOverDecision(state(),soccer,{market,fetcher:async()=>({ok:true,json:async()=>bothGoals})}),true);
+});
 test('NFL ESPN labels verify only the named receiving yard statistic',()=>{
   const athlete={athlete:{displayName:'Chuba Hubbard'},stats:['3','15','5.0','0','11','4']};
   const receiving={name:'receiving',labels:['REC','YDS','AVG','TD','LONG','TGTS'],athletes:[athlete]};

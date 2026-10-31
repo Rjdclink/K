@@ -1709,7 +1709,8 @@ async function state(){
   const awaiting=[...new Set(snap.rows.flatMap(g=>(g.signals||[]).filter(s=>s.execution==='Awaiting score verification').map(s=>s.ticker)))];
   if(awaiting.length){
     const {rows}=await pool.query(`SELECT DISTINCT ON (market_ticker) market_ticker,passed,created_at,evidence->>'mode' AS mode,
-      evidence->>'independentUnavailable' AS independent_unavailable
+      evidence->>'independentUnavailable' AS independent_unavailable,
+      evidence->'game'->>'verificationIssue' AS verification_issue
       FROM verification_records WHERE market_ticker=ANY($1) AND created_at>now()-interval '5 minutes'
       ORDER BY market_ticker,created_at DESC`,[awaiting]);
     const checked=new Map(rows.map(r=>[r.market_ticker,r]));
