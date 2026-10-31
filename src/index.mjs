@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { page } from './ui.mjs';
 import { historyPage } from './history_ui.mjs';
-import { completedTrade } from './history.mjs';
+import { completedTrade, manualSaleFill } from './history.mjs';
 import { gameState, overSignal, confirmedOver, kalshiOnlyOver, kalshiOnlyLead, leadSignal, confirmedSoccerOneGoalClock, soccerOneGoalWindowOpen, soccerOverStable, soccerOverWaitMs, stableSoccerLeadFraction, additionalLeadSignal, cricketLeadSignal, drawSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback, timedProfitExitAllowed, KALSHI_ONLY_FRACTION } from './strategy.mjs';
 import { reviewMiss } from './ai.mjs';
 import { kalshiSignature } from './auth.mjs';
@@ -220,6 +220,16 @@ async function syncTradeHistory(settlements){
   // The fills API accepts one ticker, not a comma-joined list. Query each
   // unfinished or exited trade separately so its buy and sale both reconcile.
   const fillsByTicker=new Map();
+  const {rows:[saleTable]}=await pool.query("SELECT to_regclass('manual_sales') AS name");
+  const manualSales=saleTable?.name?(await pool.query("SELECT ticker,result,created_at FROM manual_sales WHERE status='complete' AND ticker=ANY($1::text[])",[pending.map(item=>item.market_ticker)])).rows:[];
+  const manualByTicker=new Map();
+  for(const sale of manualSales){
+    const fill=manualSaleFill(sale);
+    if(!fill)continue;
+    const list=manualByTicker.get(sale.ticker)||[];
+    list.push(fill);
+    manualByTicker.set(sale.ticker,list);
+  }
   for(const ticker of new Set(pending.map(item=>item.market_ticker))){
     const allFills=[];
     let cursor='',complete=false;
@@ -231,7 +241,8 @@ async function syncTradeHistory(settlements){
       if(!cursor){complete=true;break}
     }
     if(!complete)throw Error('Trade history fills exceed pagination safety limit');
-    fillsByTicker.set(ticker,allFills);
+    const known=new Set(allFills.map(fill=>fill.order_id));
+    fillsByTicker.set(ticker,allFills.concat((manualByTicker.get(ticker)||[]).filter(fill=>!known.has(fill.order_id))));
   }
   for(const entry of pending){
     const completed=completedTrade(entry,fillsByTicker.get(entry.market_ticker)||[],settled.get(entry.market_ticker));

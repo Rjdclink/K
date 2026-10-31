@@ -348,6 +348,18 @@ test('a soccer over waits fifteen seconds within the current scan before fresh s
   assert.equal(soccerOverStable(new Date(now-14999),now),false);
   assert.equal(soccerOverStable(new Date(now-15000),now),true);
 });
+test('two Kalshi-only soccer goal reads cannot confirm an over after a reversible score',()=>{
+  const m={id:'hou-ygl',title:'Hougang United vs Young Lions',type:'soccer_tournament_multi_leg',
+    details:{league:'Singapore Premier League'}};
+  const market={status:'active',event_ticker:'KXSGPPLTOTAL-26OCT31HOUYGL',title:'Over 1.5 goals',
+    rules_primary:'Total goals scored in regulation',floor_strike:1.5,yes_ask_dollars:'0.96'};
+  const at=Date.now();
+  const state=ms=>gameState(m,{milestone_id:m.id,_observed_at:new Date(ms).toISOString(),
+    details:{status:'live',home_score:1,away_score:1,half:'1st',time:"33'"}});
+  const first=state(at-7000),second=state(at);
+  assert.ok(overSignal(first,market));
+  assert.equal(kalshiOnlyOver(first,second,market),false);
+});
 test('unknown soccer time cannot authorize 20%, but a late minute can use two Kalshi checks',()=>{
   const m={id:'clockless-soccer',type:'soccer_match',title:'Abha vs Al-Faisaly',details:{home_team_id:'abha',away_team_id:'faisaly',main_game_event_ticker:'KXSAUDIPLGAME-26OCT27ABHFAI'}};
   const market={status:'active',event_ticker:'KXSAUDIPLGAME-26OCT27ABHFAI',title:'Abha wins',yes_sub_title:'Abha',custom_strike:{soccer_team:'abha'},rules_primary:'If Abha wins after 90 minutes plus stoppage time, then Yes.',yes_ask_dollars:'0.91'};

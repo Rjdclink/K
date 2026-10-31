@@ -55,7 +55,16 @@ function cricketFinalInnings(m,d){
   if(counts.home!==max/2||counts.away!==max/2||
     Number.isFinite(N(d.home_total_runs))&&N(d.home_total_runs)!==scores.home||
     Number.isFinite(N(d.away_total_runs))&&N(d.away_total_runs)!==scores.away)return null;
-  return {homeTotal:scores.home,awayTotal:scores.away,innings:max,mainEvent:m.details?.main_game_event_ticker};
+  const format=/\btest\b/i.test(league)?null:/\b(?:T20|D20|IPL|Major League Cricket|Caribbean Premier League)\b/i.test(league)?20:
+    /\b(?:ODI|Pro 50|One Day)\b/i.test(league)?50:null;
+  const wickets=N(board['wickets.'+max]),balls=N(board['balls.'+max]);
+  const overs=String(board['overs.'+max]??'').match(/^(\d{1,2})(?:\.([0-5]))?$/);
+  const oversBalls=overs?Number(overs[1])*6+Number(overs[2]||0):NaN;
+  const bowled=Number.isInteger(balls)&&(!Number.isFinite(oversBalls)||balls===oversBalls)?balls:
+    !Number.isFinite(balls)?oversBalls:NaN;
+  const ballsRemaining=format!=null&&Number.isInteger(bowled)&&bowled>=0&&bowled<=format*6?format*6-bowled:null;
+  const wicketsRemaining=Number.isInteger(wickets)&&wickets>=0&&wickets<=9?10-wickets:null;
+  return {homeTotal:scores.home,awayTotal:scores.away,innings:max,ballsRemaining,wicketsRemaining,mainEvent:m.details?.main_game_event_ticker};
 }
 export function gameState(m, live) {
   if(m.type==='golf_tournament')return golfState(m,live);
@@ -323,6 +332,9 @@ function kalshiUpdatePairOk(first,second){
 // after a second Kalshi read. The same segment and named statistic must remain
 // crossed; a contradictory external source never reaches here.
 export function kalshiOnlyOver(first,second,market){
+  // A live soccer goal can be rescinded after two identical exchange reads.
+  // Require an independent score before treating a crossed soccer total as final.
+  if(/soccer/.test(first?.type||'')||/soccer/.test(second?.type||''))return false;
   const player=playerOverSpec(first,market),nextPlayer=playerOverSpec(second,market);
   if(!overSignal(first,market)||!overSignal(second,market))return false;
   if(player&&(!nextPlayer||player.id!==nextPlayer.id||player.value!==nextPlayer.value))return false;
@@ -484,10 +496,18 @@ export function additionalLeadSignal(game,market){
   return {strategy:'lead',reason:`${leader} leads; ${label}; margin ${decisive}`,fraction:decisive>=very?.15:.10};
 }
 export function cricketLeadSignal(game,market){
-  // A lead while the last innings is still in progress can be chased down.
-  // Suspend cricket winner entries until an independently verified end state
-  // and the contract's official result can be checked before submission.
-  return null;
+  const c=game?.cricket;
+  if(!c||c.innings!==2||!game.verifiedLive||!game.scoreKnown||!game.scoreConsistent||
+    !Number.isInteger(c.ballsRemaining)||c.ballsRemaining<1||c.ballsRemaining>12||
+    !Number.isInteger(c.wicketsRemaining)||c.wicketsRemaining<1||c.wicketsRemaining>3||
+    !['active','open'].includes(market?.status)||market.event_ticker!==c.mainEvent||
+    !Number.isFinite(N(market.yes_ask_dollars))||N(market.yes_ask_dollars)<.90||
+    !/\bwins?\b/i.test(String(market.rules_primary||''))||/\b(?:draw|tie|spread|handicap)\b/i.test(String(market.title||'')))return null;
+  const home=c.homeTotal>c.awayTotal,margin=Math.abs(c.homeTotal-c.awayTotal);
+  if(margin<50||market.custom_strike?.cricket_team!==(home?game.homeTeamId:game.awayTeamId))return null;
+  return {strategy:'lead',fraction:.10,comboEligible:false,
+    reason:'Restricted 10% late cricket chase; verified match totals '+c.homeTotal+'–'+c.awayTotal+
+      ' runs ('+margin+' ahead); '+c.ballsRemaining+' balls and '+c.wicketsRemaining+' wickets left'};
 }
 export function earlyLeadSignal(game,market){
   const type=String(game?.type||'');
