@@ -36,4 +36,12 @@ test('a transfer acknowledgement waits for completion and real destination cash'
   assert.equal(pending,null);
 });
 
+test('a candidate can draw a second shard when the first covers only part of the allocation',()=>{
+  const account={balance_breakdown:[{exchange_index:0,balance:'2.00'},{exchange_index:1,balance:'6.00'},{exchange_index:2,balance:'4.00'}]};
+  const first=transferPlan(account,0,1100);
+  assert.deepEqual(first,{sourceShard:1,destinationShard:0,amountCenticents:60000});
+  const after={balance_breakdown:[{exchange_index:0,balance:'8.00'},{exchange_index:1,balance:'0.00'},{exchange_index:2,balance:'4.00'}]};
+  assert.deepEqual(transferPlan(after,0,1100),{sourceShard:2,destinationShard:0,amountCenticents:30000});
+});
+
 

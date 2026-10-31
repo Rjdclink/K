@@ -1681,16 +1681,27 @@ async function scan(cachedMilestones,discoveryCount){
         if(prior.rows[0]?.status==='needs_review')continue;
         const desiredCost=estimatedCostCents(wanted,Number(c.market.yes_ask_dollars),feeReserve(c.event,c.market));
         if(localCash<desiredCost&&transferPlan(latest,shard,desiredCost)){
-          const transferId=await ensureShardFunding(c.signal,c.event,c.market,latest,desiredCost);
-          if(transferId){
+          let fundingAccount=latest,fundedAny=false;
+          const fundingDeadline=Date.now()+5000;
+          for(let source=0;source<3&&localCash<desiredCost&&Date.now()<fundingDeadline;source++){
+            const plan=transferPlan(fundingAccount,shard,desiredCost);
+            if(!plan)break;
+            const transferId=await ensureShardFunding(c.signal,c.event,c.market,fundingAccount,desiredCost);
+            if(!transferId)break;
             let funded=null;
-            try{funded=await awaitShardCash({destination:shard,desiredCents:desiredCost,transferId,
+            try{funded=await awaitShardCash({destination:shard,
+              desiredCents:Math.min(desiredCost,localCash+plan.amountCenticents/100),transferId,
               lookup:async id=>(await kalshi('/portfolio/intra_exchange_instance_transfers/'+encodeURIComponent(id),{auth:true})).transfer,
-              readBalance:()=>accountBalance({fresh:true})})}
+              readBalance:()=>accountBalance({fresh:true}),timeoutMs:Math.max(0,fundingDeadline-Date.now())})}
             catch(e){console.warn('Funding confirmation deferred:',c.market.ticker,e.message)}
-            if(funded){
-              localCash=shardCash(funded,shard);
-              balance=Number(funded.balance);bankroll=balance+Number(funded.portfolio_value);
+            if(!funded)break;
+            await pool.query(`UPDATE funding_transfers SET status='complete',updated_at=now()
+              WHERE transfer_id=$1 AND status IN ('pending','uncertain')`,[transferId]);
+            fundedAny=true;fundingAccount=funded;
+            localCash=shardCash(funded,shard);
+            balance=Number(funded.balance);bankroll=balance+Number(funded.portfolio_value);
+          }
+          if(fundedAny){
               // Scores and offers can change while capital moves. A transfer
               // never carries forward the previous eligibility decision.
               const updated=await liveMilestone(c.milestone.id);
@@ -1713,7 +1724,6 @@ async function scan(cachedMilestones,discoveryCount){
               if(c.signal.strategy==='over'&&!confirmedOver(state,checked,executable,0))continue;
               if(!kalshiOnly&&await auditedOver(checked,c.milestone,{market:executable,allowUnavailable:true})!==true)continue;
               c.market=executable;c.state=state=checked;
-            }
           }
         }
         // The allocation is a ceiling. Buy the profitable quantity already
