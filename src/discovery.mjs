@@ -43,8 +43,8 @@ export async function discoverCurrentMilestones(get,now=Date.now()){
   return [...new Map(categories.flat().map(m=>[m.id,m])).values()];
 }
 
-  // Kalshi discovery includes older, still-open milestones that have no live
-  // score. Avoid fetching live data for a day of inactive games on every scan.
+// Kalshi discovery includes older, still-open milestones that have no live
+// score. Avoid fetching live data for hours of inactive games on every scan.
 // Retain every recently observed live game and long-running tournament
 // formats even when they began earlier. Some old Kalshi milestones still say
 // "live" after their scores stopped updating, so that flag alone is unsafe.
