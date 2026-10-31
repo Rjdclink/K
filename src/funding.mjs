@@ -16,3 +16,25 @@ export function transferPlan(account,destination,desiredCents,sourceFloorCents=0
   return amountCents>0?{sourceShard:source.index,destinationShard:destination,amountCenticents:amountCents*100}:null;
 }
 
+// A transfer acknowledgement does not prove the destination can collateralize
+// an order. Check its completion and then the actual shard balance.
+export async function awaitShardCash({destination,desiredCents,transferId,lookup,readBalance,
+  sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms)),timeoutMs=4000}){
+  const deadline=Date.now()+timeoutMs;
+  while(Date.now()<deadline){
+    if(transferId){
+      const transfer=await lookup(transferId);
+      if(transfer?.status==='complete'){
+        const balance=await readBalance();
+        if(shardCash(balance,destination)>=desiredCents)return balance;
+      }
+    }else{
+      const balance=await readBalance();
+      if(shardCash(balance,destination)>=desiredCents)return balance;
+    }
+    if(Date.now()>=deadline)break;
+    await sleep(Math.min(300,deadline-Date.now()));
+  }
+  return null;
+}
+
