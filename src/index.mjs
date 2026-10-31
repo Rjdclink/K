@@ -4,7 +4,7 @@ import pg from 'pg';
 import { page } from './ui.mjs';
 import { historyPage } from './history_ui.mjs';
 import { completedTrade, manualSaleFill, reconcileManualSaleFills } from './history.mjs';
-import { gameState, overSignal, confirmedOver, kalshiOnlyOver, kalshiOnlyLead, leadSignal, confirmedSoccerOneGoalClock, soccerOneGoalWindowOpen, soccerOverStable, soccerOverWaitMs, stableSoccerLeadFraction, externallyVerifiedEarlySoccerLead, additionalLeadSignal, cricketLeadSignal, drawSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback, timedProfitExitAllowed, KALSHI_ONLY_FRACTION } from './strategy.mjs';
+import { gameState, overSignal, confirmedOver, kalshiOnlyOver, kalshiOnlyLead, leadSignal, confirmedSoccerOneGoalClock, soccerOneGoalWindowOpen, soccerOverStable, soccerOverWaitMs, stableSoccerLeadFraction, externallyVerifiedEarlySoccerLead, additionalLeadSignal, cricketLeadSignal, drawSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback, KALSHI_ONLY_FRACTION } from './strategy.mjs';
 import { reviewMiss } from './ai.mjs';
 import { kalshiSignature } from './auth.mjs';
 import { marketShard, shardCash, transferPlan, comboShardBudget } from './funding.mjs';
@@ -17,7 +17,7 @@ import { discoverCurrentMilestones, eligibleForMarkets, linkedEventTickers, game
 import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOverDecision, verifyIndependentTableTennisLeadDecision, verifyIndependentTableTennisMatch } from './score_verification.mjs';
 import { COMBO_ATTEMPT_MS, VERIFY_DWELL_MS, COMBO_RFQ_PLANS, comboAllocation, comboLegAllocation, comboAllowedCents, comboRfqTargetCents, remainingVerifiedComboCents, availableComboFills, compatibleComboGroups, plannedComboGroups, comboPairDiagnostics, comboLegs, filledComboWindow, heldComboLeg, quoteForYes, collectionsForEvents, selectedComboMarkets, liveComboMarket } from './combos.mjs';
-import { estimatedSaleProfitCents, positiveExitEligible, oneAndHalfExitEligible } from './positions.mjs';
+import { estimatedSaleProfitCents, halfPotentialProfitExitEligible, oneAndHalfExitEligible, soccerOverCorrectionAffects } from './positions.mjs';
 import { remainingVerifiedOverCents, upgradeEligible } from './upgrades.mjs';
 import { weatherContract } from './weather.mjs';
 import { scanWeatherMarkets } from './weather_scanner.mjs';
@@ -1093,7 +1093,7 @@ async function exitComebacks(games,events,positions){
   const marketGames=new Map(games.flatMap(g=>linkedEventTickers(g.milestone).flatMap(t=>(events.get(t)?.markets||[]).map(m=>[m.ticker,g.milestone.id]))));
   const held=(positions.market_positions||[]).filter(p=>Number(p.position_fp??p.position??0)>0);
   if(!held.length)return;
-  const recorded=await pool.query(`SELECT DISTINCT ON (market_ticker) market_ticker,game_id,sport,strategy,status,combo_legs FROM trade_attempts WHERE status='filled' ORDER BY market_ticker,updated_at DESC`);
+  const recorded=await pool.query(`SELECT DISTINCT ON (market_ticker) market_ticker,game_id,sport,strategy,reason,status,combo_legs FROM trade_attempts WHERE status='filled' ORDER BY market_ticker,updated_at DESC`);
   const ownership=new Map(recorded.rows.map(r=>[r.market_ticker,r]));
   const salesTable=await pool.query("SELECT to_regclass('manual_sales') AS name");
   const manualPending=new Set(salesTable.rows[0]?.name?(await pool.query("SELECT ticker FROM manual_sales WHERE status='pending'")).rows.map(r=>r.ticker):[]);
@@ -1102,30 +1102,35 @@ async function exitComebacks(games,events,positions){
     if(!original||manualPending.has(position.ticker))continue;
     const strategy='lead';
     const combo=Array.isArray(original.combo_legs)&&original.combo_legs.length>=2;
-    const leadExit=original.strategy==='lead'&&!/TOTAL/i.test(position.ticker)&&!combo;
+    const leadPosition=original.strategy==='lead'&&!/TOTAL/i.test(position.ticker);
+    const leadExit=leadPosition&&!combo;
     const reversed=leadExit&&state?.verifiedLive&&nested&&comeback(state,nested,strategy);
     try{
+      const correctionLegs=(combo?original.combo_legs.map(leg=>({row:ownership.get(leg.market_ticker),game:gameInfo.get(leg.game_id)})):
+        [{row:original,game:gameInfo.get(gameId)}]).filter(leg=>soccerOverCorrectionAffects(leg.row,leg.game?.state));
+      // Re-read the live score immediately. Do not wait for the profit target
+      // or the normal comeback dwell when a corrected goal uncrosses an over.
+      let corrected=false;
+      for(const leg of correctionLegs){
+        const raw=await liveMilestone(leg.game.milestone.id);
+        if(!raw)continue;
+        raw._observed_at=new Date().toISOString();
+        if(soccerOverCorrectionAffects(leg.row,gameState(leg.game.milestone,raw))){corrected=true;break}
+      }
       const market=(await kalshi('/markets/'+encodeURIComponent(position.ticker))).market;
       if(!market||!['active','open'].includes(market.status))continue;
       const book=(await kalshi('/markets/'+encodeURIComponent(position.ticker)+'/orderbook')).orderbook_fp;
       const heldCount=Number(position.position_fp??position.position);
       const sale=sellQuote(book,heldCount,market.fractional_trading_enabled===false);
       if(!sale||sale.count<minimumCount(market))continue;
-      // Take the entire position at this bid or leave it held; this keeps the
-      // recorded exit quantity and the 1.5x cost comparison in sync.
-      const targetReached=sale.count>=heldCount-1e-7&&oneAndHalfExitEligible(position,sale);
-      if(!leadExit&&!targetReached)continue;
-      // Any positive realized result after the exchange's paid fees and a
-      // conservative sale fee is eligible; there is no 70% threshold.
-      const basisKnown=position.market_exposure_dollars!=null&&position.fees_paid_dollars!=null&&
-        Number.isFinite(Number(position.market_exposure_dollars))&&Number.isFinite(Number(position.fees_paid_dollars));
-      const profit=basisKnown?estimatedSaleProfitCents(position,sale):null;
-      const basketball=/basketball/i.test(state?.type||'')||/^(?:NBA|WNBA|NCAAB|NCAAW|Basketball|eBasketball)$/i.test(String(original.sport||''));
-      const scoreAllowsProfit=!basketball||timedProfitExitAllowed(state,nested);
-      const profitable=leadExit&&scoreAllowsProfit&&positiveExitEligible(original,state?.type,profit);
-      if(!targetReached&&!profitable&&!reversed)continue;
+      // Profit targets sell the full position at an executable bid. Lead
+      // singles and combos use half their possible net settlement profit.
+      const targetReached=sale.count>=heldCount-1e-7&&
+        (leadPosition?halfPotentialProfitExitEligible(position,sale):oneAndHalfExitEligible(position,sale));
+      if(!leadExit&&!targetReached&&!corrected)continue;
+      if(!targetReached&&!reversed&&!corrected)continue;
       const reversing=[{game:gameInfo.get(gameId),market:nested,event:events.get(nested?.event_ticker)}];
-      let confirmed=targetReached||profitable;
+      let confirmed=targetReached||corrected;
       for(const leg of confirmed?[]:reversing){
         if(!leg.game?.state?.verifiedLive||!leg.market)continue;
         const first=leg.game.state,remaining=VERIFY_DWELL_MS-(Date.now()-first.observedAt);
@@ -1167,7 +1172,7 @@ async function exitComebacks(games,events,positions){
         [id,position.ticker,gameId,count,bid]);
       if(!claim.rowCount)continue;
       try{
-        const result=await kalshi('/portfolio/events/orders',{method:'POST',auth:true,body:{ticker:position.ticker,client_order_id:id,side:'ask',count:count.toFixed(2),price:bid.toFixed(4),time_in_force:targetReached?'fill_or_kill':'immediate_or_cancel',self_trade_prevention_type:'taker_at_cross',post_only:false,reduce_only:true}});
+        const result=await kalshi('/portfolio/events/orders',{method:'POST',auth:true,body:{ticker:position.ticker,client_order_id:id,side:'ask',count:count.toFixed(2),price:bid.toFixed(4),time_in_force:targetReached&&!corrected?'fill_or_kill':'immediate_or_cancel',self_trade_prevention_type:'taker_at_cross',post_only:false,reduce_only:true}});
         const filledCount=Number(result.fill_count_fp??result.fill_count??0);
         await pool.query(`UPDATE exit_attempts SET status=$2,order_id=$3,filled_count=$4,updated_at=now() WHERE id=$1`,[id,filledCount>0?'filled':'unfilled',result.order_id||null,filledCount]);
         if(filledCount>0)await invalidateBalance();
@@ -1335,7 +1340,7 @@ async function scan(cachedMilestones,discoveryCount){
       for(const c of soccerOvers)c.soccerOverFirstSeen=firstSeen.get(c.market.ticker);
     }
     for(const [id,candidates] of snapshotCandidates){
-      snapshotRows.get(id)[14]=JSON.stringify(candidates.map(c=>({strategy:c.signal.strategy,reason:c.signal.reason,ticker:c.market.ticker,title:c.market.title||c.market.yes_sub_title||'',ask:c.market.yes_ask_dollars,ask_size:c.market.yes_ask_size_fp,execution:c.signal.strategy==='over'&&/soccer/.test(c.state.type)&&!soccerOverStable(c.soccerOverFirstSeen)?'Waiting 15 seconds for a fresh soccer goal check':signalExecution(c,filled,account,balance,bankroll)})));
+      snapshotRows.get(id)[14]=JSON.stringify(candidates.map(c=>({strategy:c.signal.strategy,reason:c.signal.reason,ticker:c.market.ticker,title:c.market.title||c.market.yes_sub_title||'',ask:c.market.yes_ask_dollars,ask_size:c.market.yes_ask_size_fp,execution:c.signal.strategy==='over'&&/soccer/.test(c.state.type)&&!soccerOverStable(c.soccerOverFirstSeen)?'Waiting 10 seconds for a fresh soccer goal check':signalExecution(c,filled,account,balance,bankroll)})));
     }
     // Expire only the current ten-minute attempt. Removing the row allows a
     // still-live market to enter a new window on a later scan, including when
@@ -1516,7 +1521,7 @@ async function scan(cachedMilestones,discoveryCount){
         const verifiedFraction=stableSoccerLeadFraction(c.state,freshState,verifiedSignal);
         const oneGoalSoccer=/soccer/.test(freshState.type)&&Math.abs(freshState.home-freshState.away)===1;
         const specificCap=Boolean(tennisSignal(freshState,quote)||cricketLeadSignal(freshState,quote)||drawSignal(freshState,quote));
-        c.signal=kalshiOnly?{...verifiedSignal,fraction:oneGoalSoccer||specificCap?verifiedFraction:Math.min(verifiedFraction,KALSHI_ONLY_FRACTION),reason:verifiedSignal.reason+'; Kalshi-only two score reads, 6 seconds apart'}:
+        c.signal=kalshiOnly?{...verifiedSignal,fraction:oneGoalSoccer||specificCap?verifiedFraction:Math.min(verifiedFraction,KALSHI_ONLY_FRACTION),reason:verifiedSignal.reason+'; Kalshi-only two score reads, 10 seconds apart'}:
           {...verifiedSignal,fraction:verifiedFraction};
         c.market=quote;
         c.state=state=freshState;

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {estimatedSaleProfitCents,positiveExitEligible,oneAndHalfExitEligible} from '../src/positions.mjs';
+import {estimatedSaleProfitCents,halfPotentialProfitExitEligible,oneAndHalfExitEligible,soccerOverCorrectionAffects} from '../src/positions.mjs';
 
 test('1.5 times exit compares net proceeds with the full proportional cost',()=>{
   const held={position_fp:'20',market_exposure_dollars:'10.00',fees_paid_dollars:'0.20'};
@@ -11,6 +11,16 @@ test('1.5 times exit compares net proceeds with the full proportional cost',()=>
   assert.equal(oneAndHalfExitEligible(held,{count:21,price:.99}),false);
 });
 
+test('a removed soccer goal triggers exit only when it uncrosses the held over',()=>{
+  const original={strategy:'over',market_ticker:'KXEPLTOTAL-26OCT31CFCMUN-3',reason:'3 scored; line 2.5 already passed'};
+  const state={type:'soccer_match',verifiedLive:true,scoreKnown:true,scoreConsistent:true,home:2,away:0};
+  assert.equal(soccerOverCorrectionAffects(original,state),true);
+  assert.equal(soccerOverCorrectionAffects({...original,reason:'4 scored; line 2.5 already passed'}, {...state,home:3}),false,'still above the line');
+  assert.equal(soccerOverCorrectionAffects({...original,strategy:'lead'},state),false,'a winner still ahead is not a corrected total');
+  assert.equal(soccerOverCorrectionAffects(original,{...state,verifiedLive:false}),false);
+  assert.equal(soccerOverCorrectionAffects(original,{...state,scoreConsistent:false}),false);
+});
+
 test('sale P&L uses executable shares, proportional cost basis and both fees',()=>{
   const held={position_fp:'20.00',market_exposure_dollars:'15.00',fees_paid_dollars:'0.20'};
   assert.equal(estimatedSaleProfitCents(held,{count:10,price:.92},.75),149);
@@ -18,23 +28,15 @@ test('sale P&L uses executable shares, proportional cost basis and both fees',()
   assert.equal(estimatedSaleProfitCents(held,{count:21,price:.92},.75),null);
 });
 
-test('positive sale exits single basketball, tennis and cricket winners only after fees',()=>{
-  const trade=(sport,strategy='lead')=>({sport,strategy});
-  assert.equal(positiveExitEligible(trade('Tennis'),'tennis_tournament_singles',1),true);
-  assert.equal(positiveExitEligible(trade('NBA'),'basketball_game',1),true);
-  assert.equal(positiveExitEligible(trade('ODI (M)'),'cricket_match',1),true);
-  assert.equal(positiveExitEligible(trade('Senior Women T20'),undefined,1),true,'a live scoreboard can disappear before the cash-out');
-  assert.equal(positiveExitEligible(trade('Test International (M)'),undefined,1),true);
-  assert.equal(positiveExitEligible(trade('ODI (M)'),'cricket_match',0),false);
-  assert.equal(positiveExitEligible(trade('ODI (M)'),'cricket_match',-1),false);
-  assert.equal(positiveExitEligible(trade('ODI (M)','over'),'cricket_match',100),false);
-  assert.equal(positiveExitEligible(trade('Tennis'),'tennis_tournament_singles',0),false);
-  assert.equal(positiveExitEligible(trade('Tennis'),'tennis_tournament_singles',-1),false);
-  assert.equal(positiveExitEligible(trade('Tennis','over'),'tennis_tournament_singles',100),false);
-  assert.equal(positiveExitEligible(trade('Table tennis'),'table_tennis_match',1),false);
-  assert.equal(positiveExitEligible(trade('Soccer'),'soccer_game',1),false);
-  assert.equal(positiveExitEligible({strategy:'lead',combo_legs:[{sport:'Soccer',strategy:'lead'},{sport:'Tennis',strategy:'lead'}]},'',1),false);
-  assert.equal(positiveExitEligible({sport:'ODI (M)',strategy:'lead',combo_legs:[{sport:'ODI (M)'},{sport:'Tennis'}]},'cricket_match',100),false);
-  assert.equal(positiveExitEligible({strategy:'lead',combo_legs:[{sport:'Soccer',strategy:'lead'},{sport:'Football',strategy:'lead'}]},'',1),false);
+test('lead cash-out needs half the possible net settlement profit after both fees and full bid depth',()=>{
+  const held={position_fp:'10.00',market_exposure_dollars:'7.00',fees_paid_dollars:'0.10'};
+  // Maximum net payout profit is $2.90; the sale fee is reserved separately.
+  assert.equal(halfPotentialProfitExitEligible(held,{count:10,price:.88}),true);
+  assert.equal(halfPotentialProfitExitEligible(held,{count:10,price:.86}),false);
+  assert.equal(halfPotentialProfitExitEligible(held,{count:9.99,price:.99}),false,'partial depth does not trigger a full exit');
+  assert.equal(halfPotentialProfitExitEligible({...held,fees_paid_dollars:null},{count:10,price:.99}),false);
+  assert.equal(halfPotentialProfitExitEligible({...held,market_exposure_dollars:null},{count:10,price:.99}),false);
+  assert.equal(halfPotentialProfitExitEligible({...held,market_exposure_dollars:'10.00'},{count:10,price:.99}),false);
+  assert.equal(halfPotentialProfitExitEligible(held,{count:10,price:1}),false,'an invalid bid cannot trigger an exit');
 });
 
