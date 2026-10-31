@@ -8,7 +8,7 @@ export function manualComboQuote(market,book,position,account,kalshiOnly=false,b
   const price=best.price,bankroll=Number(account?.balance)+Number(account?.portfolio_value);
   const exposure=Number(position?.market_exposure_dollars),fees=Number(position?.fees_paid_dollars);
   if(!Number.isFinite(bankroll)||!Number.isFinite(exposure)||!Number.isFinite(fees))return {reason:'Balance or position cost unavailable'};
-  const cap=Math.floor(bankroll*.15)-Math.ceil((exposure+fees)*100);
+  const cap=Math.floor(bankroll*.10)-Math.ceil((exposure+fees)*100);
   const available=Math.min(Number(account.balance),cap,budgetCents);
   if(available<=0)return {reason:'No available cash within this combo’s allocation limit'};
   const feeFactor=Math.max(2,2*Number(market.fee_multiplier_override||0))*7;

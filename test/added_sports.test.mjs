@@ -5,18 +5,19 @@ import {eligibleForMarkets,linkedEventTickers} from '../src/discovery.mjs';
 
 const winner=(family,team='home')=>({status:'active',event_ticker:`KX${family.toUpperCase()}GAME-26OCT29`,title:'Home wins',yes_sub_title:'Home',custom_strike:{[`${family}_team`]:team}});
 const clockGame=(family,lead,clock,period)=>gameState({id:family,type:`${family}_match`,title:'Away at Home',details:{home_team_id:'home',away_team_id:'away'}},{details:{status:'live',home_score:lead,away_score:0,period,period_remaining_time:clock}});
-for(const [family,needed,very,window,period] of [['handball',5,8,'03:00',2],['rugby',15,22,'05:00',2],['lacrosse',4,7,'03:00',4]])test(`${family} final period lead tiers and clock boundary`,()=>{
+for(const [family,needed,very,window,period] of [['handball',5,8,'03:00',2],['rugby',20,27,'02:59',2],['lacrosse',4,7,'03:00',4]])test(`${family} final period lead tiers and clock boundary`,()=>{
   assert.equal(eligibleForMarkets(clockGame(family,needed,window,period)),true);
   assert.equal(additionalLeadSignal(clockGame(family,needed,window,period),winner(family))?.fraction,.10);
   assert.equal(additionalLeadSignal(clockGame(family,very,window,period),winner(family))?.fraction,.15);
   assert.equal(additionalLeadSignal(clockGame(family,needed-1,window,period),winner(family)),null);
+  if(family==='rugby')assert.equal(additionalLeadSignal(clockGame(family,needed,'03:00',period),winner(family)),null);
   assert.equal(additionalLeadSignal(clockGame(family,very,window,period-1),winner(family)),null);
   assert.equal(additionalLeadSignal(clockGame(family,very,'09:00',period),winner(family)),null);
   assert.equal(additionalLeadSignal(clockGame(family,very,'',period),winner(family)),null);
 });
 test('rugby fixture with competitor IDs and a vs title matches its named Kalshi winner',()=>{
   const m={id:'101dedc0-3605-4c3f-ab71-378d1e93c46d',type:'rugby_match',title:'Glasgow Warriors vs Lions',details:{league:'United Rugby Championship',home_competitor_id:'glasgow-id',away_competitor_id:'lions-id'},related_event_tickers:['KXURCMATCH-26OCT301545LIOGLA']};
-  const state=gameState(m,{milestone_id:m.id,details:{status:'live',home_points:19,away_points:3,period:2,period_remaining_time:'00:15'}});
+  const state=gameState(m,{milestone_id:m.id,details:{status:'live',home_points:23,away_points:3,period:2,period_remaining_time:'00:15'}});
   const market={status:'active',event_ticker:'KXURCMATCH-26OCT301545LIOGLA',title:'Glasgow Warriors wins',yes_sub_title:'Glasgow Warriors',custom_strike:{rugby_team:'glasgow-id'}};
   assert.equal(state.homeName,'Glasgow Warriors');
   assert.equal(state.homeTeamId,'glasgow-id');

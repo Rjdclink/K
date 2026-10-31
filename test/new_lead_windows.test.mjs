@@ -29,7 +29,7 @@ test('Germany BBL 30-point winner is a Q4 signal even though a zero-sized ask ca
   assert.equal(earlyLeadSignal(game,market)?.fraction,.02);
   assert.equal(Number(market.yes_ask_size_fp),0);
 });
-test('football uses 28 then 21, hockey four then three, and rugby is excluded',()=>{
+test('early football remains available, while early hockey and rugby are excluded',()=>{
   const football=team('football_game','NFL',28,0);
   assert.equal(earlyLeadSignal(football.state(3,'00:30'),football.market)?.fraction,.05);
   assert.equal(earlyLeadSignal(football.state(3,'00:30',27,0),football.market),null);
@@ -37,9 +37,9 @@ test('football uses 28 then 21, hockey four then three, and rugby is excluded',(
   assert.equal(earlyLeadSignal(football.state(4,'08:00',21,0),football.market)?.fraction,.05);
   assert.equal(earlyLeadSignal(football.state(4,'15:00',20,0),football.market),null);
   const hockey=team('hockey_match','NHL',4,0);
-  assert.equal(earlyLeadSignal(hockey.state(2,'00:30'),hockey.market)?.fraction,.02);
-  assert.equal(earlyLeadSignal(hockey.state(3,'20:00',3,0),hockey.market)?.fraction,.02);
-  assert.equal(earlyLeadSignal(hockey.state(3,'12:00',3,0),hockey.market)?.fraction,.02);
+  assert.equal(earlyLeadSignal(hockey.state(2,'00:30'),hockey.market),null);
+  assert.equal(earlyLeadSignal(hockey.state(3,'20:00',3,0),hockey.market),null);
+  assert.equal(earlyLeadSignal(hockey.state(3,'12:00',3,0),hockey.market),null);
   assert.equal(earlyLeadSignal(hockey.state(2,'00:30',3,0),hockey.market),null);
   const rugby=team('rugby_match','United Rugby Championship',50,0);
   assert.equal(earlyLeadSignal(rugby.state(1,'00:10'),rugby.market),null);
@@ -92,23 +92,25 @@ test('Test cricket winner entries stay disabled without a finite number of balls
   const chase=gameState(d20,{details:{status:'live',current_inning:2,home_score:89,away_score:167,batting:'home',home_total_runs:89,away_total_runs:167,cricket_result:{scoreboard:chaseBoard}}});
   assert.equal(cricketLeadSignal(chase,{...market,custom_strike:{cricket_team:'wi'},title:'Emirates Blues wins'}),null);
 });
-test('limited-over cricket requires a 50-run lead, a late chase, and few wickets left',()=>{
+test('limited-over cricket needs 60 runs, at most nine balls and two wickets left',()=>{
   const m={id:'odi',type:'cricket_match',title:'UAE vs Netherlands',
     details:{league:'ODI (M)',home_team_id:'uae',away_team_id:'ned',main_game_event_ticker:'KXODIMATCH-ODI'}};
   const market={status:'active',event_ticker:'KXODIMATCH-ODI',title:'Netherlands wins',
     rules_primary:'Resolves Yes if Netherlands wins.',custom_strike:{cricket_team:'ned'},yes_ask_dollars:'0.95'};
   const board={home:'UAE',away:'Netherlands','Current Innings':'2','Current Batting Team':'UAE',
-    'batting.1':'Netherlands','batting.2':'UAE','runs.1':'263','runs.2':'208',
-    'wickets.2':'7','overs.2':'48.2'};
+    'batting.1':'Netherlands','batting.2':'UAE','runs.1':'270','runs.2':'208',
+    'wickets.2':'8','overs.2':'48.3'};
   const state=(changes={})=>gameState(m,{milestone_id:m.id,details:{status:'live',current_inning:2,
-    home_score:Number(changes['runs.2']??208),away_score:263,batting:'home',
-    home_total_runs:Number(changes['runs.2']??208),away_total_runs:263,
+    home_score:Number(changes['runs.2']??208),away_score:270,batting:'home',
+    home_total_runs:Number(changes['runs.2']??208),away_total_runs:270,
     cricket_result:{scoreboard:{...board,...changes}}}});
-  assert.equal(state().cricket.ballsRemaining,10);
-  assert.equal(state().cricket.wicketsRemaining,3);
+  assert.equal(state().cricket.ballsRemaining,9);
+  assert.equal(state().cricket.wicketsRemaining,2);
   assert.equal(cricketLeadSignal(state(),market)?.fraction,.10);
-  assert.equal(cricketLeadSignal(state({'runs.2':'214'}),market),null,'49 runs is below the floor');
-  assert.equal(cricketLeadSignal(state({'wickets.2':'6'}),market),null,'four wickets can still bat');
+  assert.equal(cricketLeadSignal(state({'runs.2':'211'}),market),null,'59 runs is below the floor');
+  assert.equal(cricketLeadSignal(state({'runs.2':'210'}),market)?.fraction,.10,'exactly 60 runs is reachable');
+  assert.equal(cricketLeadSignal(state({'wickets.2':'7'}),market),null,'three wickets can still bat');
+  assert.equal(cricketLeadSignal(state({'overs.2':'48.2'}),market),null,'ten balls remain');
   assert.equal(cricketLeadSignal(state({'overs.2':'47.5'}),market),null,'too many balls remain');
   assert.equal(cricketLeadSignal(state({'wickets.2':undefined}),market),null);
   assert.equal(cricketLeadSignal(state({'overs.2':'49.7'}),market),null,'invalid ball count fails closed');

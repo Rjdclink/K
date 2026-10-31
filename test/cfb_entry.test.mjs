@@ -81,14 +81,14 @@ test('CFB Kalshi-only winner must remain eleven ahead after an eight-point play'
   const pair=margin=>[state(102,margin,'away',{observed:at-12000}),state(89,margin,'away')];
   assert.equal(kalshiOnlyLead(...pair(11),market),false);
   assert.equal(kalshiOnlyLead(...pair(19),market),true);
-  for(const [margin,allocation] of [[19,.05],[27,.10],[35,.15]]){
+  for(const [margin,allocation] of [[19,.05],[27,.10],[35,.10]]){
     const [first,second]=pair(margin);
     assert.equal(kalshiOnlyLead(first,second,market),true);
     assert.equal(finalLeadFraction(first,second,leadSignal(second,market),false,market),allocation);
   }
   const [first,second]=pair(35);
-  assert.equal(finalLeadFraction(first,second,leadSignal(second,market),true,market),.35,
-    'independent verification preserves the existing CFB allocation');
+  assert.equal(finalLeadFraction(first,second,leadSignal(second,market),true,market),.30,
+    'the strongest independently verified CFB allocation falls from 35% to 30%');
 });
 test('NFL possession, allocation, and seven-point last-seconds exception stay unchanged',()=>{
   assert.equal(leadSignal(state(89,21,'away',{sport:'NFL'}),market),null);
