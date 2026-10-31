@@ -421,11 +421,27 @@ async function milestones(){
   const {rows:[cached]}=await pool.query(`SELECT milestones FROM sports_discovery_cache
     WHERE id=1 AND discovered_at>now()-interval '60 seconds'`);
   if(cached)return cached.milestones;
-  const started=Date.now(),found=await discoverCurrentMilestones(kalshi);
-  await pool.query(`INSERT INTO sports_discovery_cache(id,milestones,discovered_at) VALUES(1,$1,clock_timestamp())
-    ON CONFLICT(id) DO UPDATE SET milestones=EXCLUDED.milestones,discovered_at=EXCLUDED.discovered_at`,[JSON.stringify(found)]);
-  console.info('Sports discovery:',JSON.stringify({milestones:found.length,elapsedMs:Date.now()-started}));
-  return found;
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const {rows:[claim]}=await client.query('SELECT pg_try_advisory_xact_lock(83027547) AS acquired');
+    if(!claim.acquired){
+      const {rows:[stale]}=await client.query('SELECT milestones FROM sports_discovery_cache WHERE id=1');
+      if(stale){await client.query('ROLLBACK');return stale.milestones}
+      await client.query('SELECT pg_advisory_xact_lock(83027547)');
+    }
+    // A competing instance may have filled the cache before this claim.
+    const {rows:[current]}=await client.query(`SELECT milestones FROM sports_discovery_cache
+      WHERE id=1 AND discovered_at>now()-interval '60 seconds'`);
+    if(current){await client.query('COMMIT');return current.milestones}
+    const started=Date.now(),found=await discoverCurrentMilestones(kalshi);
+    await client.query(`INSERT INTO sports_discovery_cache(id,milestones,discovered_at) VALUES(1,$1,clock_timestamp())
+      ON CONFLICT(id) DO UPDATE SET milestones=EXCLUDED.milestones,discovered_at=EXCLUDED.discovered_at`,[JSON.stringify(found)]);
+    await client.query('COMMIT');
+    console.info('Sports discovery:',JSON.stringify({milestones:found.length,elapsedMs:Date.now()-started}));
+    return found;
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}
+  finally{client.release()}
 }
 async function liveBatch(ms){
   const started=Date.now();
@@ -2144,8 +2160,10 @@ async function handleRequest(req){const url=new URL(req.url);
     // without relying on one function instance surviving for a full quarter hour.
     const now=Date.now();const until=Math.min(now+55000,(Math.floor(now/60000)+1)*60000-2000);let cached=null,discoveryCount,cycles=0,last={};
     await ensureLeadWatch();
-    const {rows:knownLive}=await pool.query(`SELECT milestone FROM lead_watch_milestones
-      WHERE updated_at>now()-interval '4 minutes' ORDER BY updated_at DESC`);
+    const {rows:knownLive}=await pool.query(`SELECT w.milestone FROM lead_watch_milestones w
+      JOIN game_snapshots g ON g.id=w.game_id
+      WHERE w.updated_at>now()-interval '15 minutes' AND g.status='live'
+        AND g.scanned_at>now()-interval '15 minutes' ORDER BY w.updated_at DESC`);
     let discovered=null,discoveryError=null,discoveryApplied=false;
     const discoveryJob=withApiPriority('background',()=>milestones())
       .then(found=>{discovered=found}).catch(error=>{discoveryError=error});
@@ -2155,7 +2173,9 @@ async function handleRequest(req){const url=new URL(req.url);
     const leadWatchJob=withApiPriority('live',()=>watchLeadWindows(until)).catch(e=>console.error('Fast lead watcher failed:',e));
     try{
       while(Date.now()<until){
-        if(discovered&&!discoveryApplied){cached=discovered;discoveryCount=discovered.length;discoveryApplied=true}
+        if(discovered&&!discoveryApplied&&(cycles>0||!cached.length)){
+          cached=discovered;discoveryCount=discovered.length;discoveryApplied=true;
+        }
         if(discoveryError&&!cached.length)throw discoveryError;
         const begun=Date.now();last=await scan(cached,discoveryCount);cycles++;
         if(last.next)cached=last.next;if(last.discovered!=null)discoveryCount=last.discovered;
