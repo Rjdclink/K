@@ -47,6 +47,17 @@ export function eligibleFillTrigger(ready,singles,group){
   const heldById=new Map(singles.map(r=>[r.id,r]));
   return ready.map(r=>heldById.get(r.id)).find(r=>r&&eligible.has(r.market_ticker))||null;
 }
+export function missingQuoteFill(fills,ticker,createdAt){
+  const start=new Date(createdAt).getTime()-1000;
+  if(!Number.isFinite(start))return null;
+  const buys=(fills||[]).filter(f=>f.ticker===ticker&&f.action==='buy'&&
+    (f.outcome_side==='yes'||f.side==='yes')&&f.order_id&&
+    Number.isFinite(Date.parse(f.created_time||f.ts||''))&&Date.parse(f.created_time||f.ts)>=start&&
+    Number(f.count_fp??f.count)>0);
+  const orderId=buys[0]?.order_id;
+  if(!orderId)return null;
+  return {orderId,count:buys.filter(f=>f.order_id===orderId).reduce((sum,f)=>sum+Number(f.count_fp??f.count),0)};
+}
 export async function collectionsForEvents(eventTickers,get){
   const tickers=[...new Set(eventTickers)].filter(Boolean);
   const responses=await Promise.all(tickers.map(async ticker=>{

@@ -17,7 +17,7 @@ import { discoverCurrentMilestones, eligibleForMarkets, linkedEventTickers, game
 import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOverDecision, verifyIndependentTableTennisLeadDecision, verifyIndependentTableTennisMatch } from './score_verification.mjs';
 import { verificationStatus } from './verification_status.mjs';
-import { COMBO_ATTEMPT_MS, VERIFY_DWELL_MS, COMBO_RFQ_PLANS, comboAllocation, comboLegAllocation, comboAllowedCents, comboRfqTargetCents, remainingVerifiedComboCents, availableComboFills, compatibleComboGroups, plannedComboGroups, comboPairDiagnostics, comboLegs, filledComboWindow, heldComboLeg, quoteForYes, collectionsForEvents, selectedComboMarkets, liveComboMarket } from './combos.mjs';
+import { COMBO_ATTEMPT_MS, VERIFY_DWELL_MS, COMBO_RFQ_PLANS, comboAllocation, comboLegAllocation, comboAllowedCents, comboRfqTargetCents, remainingVerifiedComboCents, availableComboFills, compatibleComboGroups, plannedComboGroups, comboPairDiagnostics, comboLegs, filledComboWindow, heldComboLeg, quoteForYes, collectionsForEvents, selectedComboMarkets, liveComboMarket, missingQuoteFill } from './combos.mjs';
 import { selectedTeamName, selectedTeamSide } from './selected_team.mjs';
 import { estimatedSaleProfitCents, halfPotentialProfitExitEligible, oneAndHalfExitEligible, profitTargetAllowed, overCorrectionAffects, correctionExitTargets } from './positions.mjs';
 import { remainingVerifiedOverCents, upgradeEligible } from './upgrades.mjs';
@@ -792,7 +792,19 @@ async function reconcileCombos(){
         (Date.now()-new Date(row.created_at).getTime()>90000 && quote.status==='open')){
         await pool.query(`UPDATE trade_attempts SET status='unfilled',updated_at=now() WHERE id=$1`,[row.id]);
       }
-    }catch(e){console.warn('Combo reconciliation deferred:',row.market_ticker,e.message)}
+    }catch(e){
+      if(/^Kalshi 404 GET \/communications\/rfqs\//.test(String(e.message))&&Date.now()-new Date(row.created_at).getTime()>90000){
+        try{
+          const fills=await kalshi('/portfolio/fills?'+new URLSearchParams({ticker:row.market_ticker,min_ts:String(Math.floor(new Date(row.created_at).getTime()/1000)-60),limit:'1000'}),{auth:true});
+          if(fills.cursor)throw Error('Combo fills need additional pagination');
+          const fill=missingQuoteFill(fills.fills,row.market_ticker,row.created_at);
+          if(fill){await pool.query(`UPDATE trade_attempts SET status='filled',fill_count=$2,order_id=$3,updated_at=now() WHERE id=$1 AND status='combo_pending'`,[row.id,fill.count,fill.orderId]);await invalidateBalance()}
+          else await pool.query(`UPDATE trade_attempts SET status='unfilled',error='Expired maker quote; no matching Kalshi buy fill',updated_at=now() WHERE id=$1 AND status='combo_pending'`,[row.id]);
+          continue;
+        }catch(checkError){console.warn('Combo fill reconciliation deferred:',row.market_ticker,checkError.message)}
+      }
+      console.warn('Combo reconciliation deferred:',row.market_ticker,e.message);
+    }
   }
 }
 async function reconcileComboUpgrades(){
