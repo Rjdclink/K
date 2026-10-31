@@ -200,6 +200,42 @@ export function endWindow(game){
   if(/soccer/.test(game.type))return game.period===2 && Number.isFinite(game.soccerMinute) && game.soccerMinute>=83 && game.soccerMinute<90 && !game.soccerExtraTime;
   return false;
 }
+// Keep a small, fast-polled set of games near a winner-entry window. This is
+// only a watch condition; the full market, score and profit gates still decide
+// whether any order can be sent.
+export function leadWatchReason(game){
+  if(!game?.verifiedLive||!game.scoreKnown||!game.scoreConsistent||!game.periodConsistent)return null;
+  const type=String(game.type||''),margin=Math.abs(game.home-game.away),seconds=game.remainingSeconds;
+  if(!Number.isFinite(margin)||margin<=0)return null;
+  if(/football/.test(type)){
+    if(game.period===3&&Number.isFinite(seconds)&&seconds>=0&&seconds<=180&&margin>=21)
+      return `Tracking ${margin}-point lead; third-quarter entry needs 28+ and under 1:00`;
+    if(game.period===4&&Number.isFinite(seconds)&&seconds>0&&margin>=7)
+      return `Tracking ${margin}-point lead; fourth-quarter winner window and possession required`;
+  }
+  if(/basketball/.test(type)){
+    const college=['NCAAB','NCAAW'].includes(game.sport),penultimate=college?1:3,final=college?2:4;
+    if(game.period===penultimate&&Number.isFinite(seconds)&&seconds>=0&&seconds<=180&&margin>=16)
+      return `Tracking ${margin}-point lead; preceding-period entry needs 20+ and under 1:00`;
+    if(game.period===final&&Number.isFinite(seconds)&&seconds>0&&margin>=4)
+      return `Tracking ${margin}-point lead; final-period winner clock and possession required`;
+  }
+  if(/hockey/.test(type)){
+    if(game.period===2&&Number.isFinite(seconds)&&seconds>=0&&seconds<=180&&margin>=2)
+      return `Tracking ${margin}-goal lead; second-period entry needs 3+ and under 1:00`;
+    if(game.period===3&&Number.isFinite(seconds)&&seconds>0&&margin>=1)
+      return `Tracking ${margin}-goal lead; third-period winner clock required`;
+  }
+  if(/rugby|handball|lacrosse/.test(type)&&Number.isFinite(seconds)&&seconds>0){
+    const rule=/rugby/.test(type)?[2,600,10]:/handball/.test(type)?[2,600,4]:[4,600,3];
+    if(game.period===rule[0]&&seconds<=rule[1]&&margin>=rule[2])
+      return `Tracking ${margin}-point lead; waiting for final winner window`;
+  }
+  if(/soccer/.test(type)&&game.period===2&&!game.soccerExtraTime&&margin>=2&&
+    Number.isFinite(game.soccerMinute)&&game.soccerMinute>=75&&game.soccerMinute<90)
+    return `Tracking ${margin}-goal lead; waiting for the late winner window`;
+  return null;
+}
 export function overSignal(game, market) {
   if (!game.verifiedLive || !game.scoreKnown || !game.scoreConsistent || Math.min(game.home,game.away)<0 || game.home+game.away<=0 || market.status!=='active' && market.status!=='open') return null;
   if(game.type==='cricket_match')return cricketOverSignal(game,market);
