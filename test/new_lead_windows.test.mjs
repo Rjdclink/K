@@ -64,7 +64,7 @@ test('baseball needs verified inning half and outs; draw requires a real final c
   assert.equal(drawSignal(stoppage,{...soccerDraw,title:'Tie is the result'})?.fraction,.05);
   assert.equal(drawSignal(soccer.state(2,'',1,1,{half:'2nd',time:"90+3'",match_remaining_seconds:19,match_status:'overtime'}),soccerDraw),null);
 });
-test('cricket final innings uses team aggregate, not displayed single-innings score',()=>{
+test('cricket winner entries stay disabled while the final innings can reverse',()=>{
   const m={id:'test',type:'cricket_match',title:'Bangladesh vs West Indies',details:{league:'Test International (M)',home_team_id:'ban',away_team_id:'wi',main_game_event_ticker:'KXTESTMATCH-TEST'}};
   const market={status:'active',event_ticker:'KXTESTMATCH-TEST',title:'Bangladesh wins',rules_primary:'If Bangladesh wins the professional Test match, then Yes.',custom_strike:{cricket_team:'ban'},yes_ask_dollars:'0.70'};
   const board={home:'Bangladesh',away:'West Indies','Current Innings':'4','Current Batting Team':'West Indies','batting.1':'Bangladesh','batting.2':'West Indies','batting.3':'Bangladesh','batting.4':'West Indies','runs.1':'272','runs.2':'245','runs.3':'79','runs.4':'40'};
@@ -72,8 +72,8 @@ test('cricket final innings uses team aggregate, not displayed single-innings sc
   const first=state(at-7000),second=state(at);
   assert.equal(eligibleForMarkets(first),true);
   assert.deepEqual([first.cricket.homeTotal,first.cricket.awayTotal],[351,285]);
-  assert.equal(cricketLeadSignal(first,market)?.fraction,.20);
-  assert.equal(kalshiOnlyLead(first,second,market),true);
+  assert.equal(cricketLeadSignal(first,market),null);
+  assert.equal(kalshiOnlyLead(first,second,market),false);
   assert.equal(state(at,3).cricket,null,'third innings can still extend into a fourth');
   assert.equal(cricketLeadSignal(state(at,4,{'runs.1':'270'}),market),null);
   assert.equal(cricketLeadSignal(state(at,4,{'batting.3':'unknown'}),market),null);
@@ -81,5 +81,5 @@ test('cricket final innings uses team aggregate, not displayed single-innings sc
   const d20={...m,details:{...m.details,league:'Emirates D20'}};
   const chaseBoard={home:'Dubai',away:'Emirates Blues','Current Innings':'2','Current Batting Team':'Dubai','batting.1':'Emirates Blues','batting.2':'Dubai','runs.1':'167','runs.2':'89'};
   const chase=gameState(d20,{details:{status:'live',current_inning:2,home_score:89,away_score:167,batting:'home',home_total_runs:89,away_total_runs:167,cricket_result:{scoreboard:chaseBoard}}});
-  assert.equal(cricketLeadSignal(chase,{...market,custom_strike:{cricket_team:'wi'},title:'Emirates Blues wins'})?.fraction,.20);
+  assert.equal(cricketLeadSignal(chase,{...market,custom_strike:{cricket_team:'wi'},title:'Emirates Blues wins'}),null);
 });
