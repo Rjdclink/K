@@ -196,8 +196,8 @@ test('filled position names describe the sport, matchup and current over margin 
   assert.equal(over.children[1].textContent,'Hamburg vs Frankfurt · 0.5 goals above the line');
   assert.equal(over.children[2].textContent,'Funds allocated $54.21 · Potential profit $0.94');
   assert.match(over.children[3].textContent,/OVER TICKET · Live combined total 2 goals · contract line 1.5/);
-  assert.equal(over.children.at(-1).textContent,'OVER ticket · manual selling disabled');
-  assert.ok(!over.children.some(el=>el.ariaLabel==='Sell position'));
+  assert.equal(over.children.at(-1).ariaLabel,'Sell position');
+  assert.equal(over.children.at(-1).disabled,true);
   assert.ok(!over.children.some(el=>String(el.textContent||'').includes('KXDFBPOKALTOTAL')));
   assert.equal(overDescription({...live,home_score:1}).detail,'Hamburg vs Frankfurt · 1.5 goals above the line');
   const team=order({...live,market_ticker:'KXNHLTEAMTOTAL-26OCT27CBJPHI-PHI2',sport:'Hockey',sport_family:'hockey_match',reason:'2 scored by Philadelphia; line 1.5 already passed',game_title:'Columbus at Philadelphia',home_score:2,away_score:3});
@@ -212,18 +212,20 @@ test('filled position names describe the sport, matchup and current over margin 
   assert.equal(lead.children[1].textContent,'Commanding lead');
 });
 
-test('over ticket shows the contract and has no manual sell control',()=>{
+test('over ticket offers manual selling only at an available bid with an explicit confirmation',()=>{
   const refresh={classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){}};
   const document={getElementById:()=>refresh,querySelectorAll:()=>[],createElement:()=>({children:[],append(...items){this.children.push(...items)}})};
-  const context=vm.createContext({document,window:{addEventListener(){}},navigator:{},localStorage:{getItem(){return null},setItem(){}},fetch:()=>new Promise(()=>{}),AbortSignal,setInterval(){}});
+  const confirmations=[];const context=vm.createContext({document,window:{addEventListener(){}},navigator:{},localStorage:{getItem(){return null},setItem(){}},fetch:()=>new Promise(()=>{}),AbortSignal,setInterval(){},confirm:message=>{confirmations.push(message);return false}});
   vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],context);
   const order=vm.runInContext('order',context),overReadout=vm.runInContext('overReadout',context);
   const prop={strategy:'over',sport:'Basketball',game_title:'HOU Rockets at DAL Mavericks',reason:'6 REB by Fred VanVleet; line 5.5 already passed',game_status:'live',score_scanned_at:new Date().toISOString(),home_score:114,away_score:111,sell_quote:{count:29,price:.12},sell_profit_cents:-2461};
   assert.equal(overReadout(prop),'OVER TICKET · Fred VanVleet: 6 REB recorded at entry · contract line 5.5');
   const row=order(prop);
-  assert.equal(row.children.at(-1).textContent,'OVER ticket · manual selling disabled');
-  assert.ok(!row.children.some(el=>el.ariaLabel==='Sell position'));
-  assert.ok(!row.children.some(el=>String(el.textContent||'').includes('$24.61')));
+  assert.equal(row.children.at(-1).ariaLabel,'Sell position');
+  assert.equal(row.children.at(-1).disabled,false);
+  assert.match(row.children.at(-1).textContent,/\$24\.61/);
+  row.children.at(-1).onclick();
+  assert.match(confirmations[0],/Are you sure you want to sell this OVER/);
   assert.match(overReadout({...prop,reason:'225 scored; line 207.5 already passed'}),/Live combined total 225 points · contract line 207.5/);
   assert.match(overReadout({...prop,reason:'225 scored; line 207.5 already passed',score_scanned_at:new Date(0).toISOString()}),/225 points recorded at entry · contract line 207.5/);
 });

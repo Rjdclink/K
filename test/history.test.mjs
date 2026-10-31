@@ -1,6 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {completedTrade,manualSaleFill,reconcileManualSaleFills} from '../src/history.mjs';
+import {completedTrade,manualSaleFill,reconcileManualSaleFills,settlementLookupCandidates} from '../src/history.mjs';
+
+test('final games missing from the broad settlement feed get prompt direct lookups for wins and losses',()=>{
+  const now=Date.parse('2026-10-31T18:00:00Z');
+  const pending=[
+    {market_ticker:'WIN',game_status:'final',created_at:'2026-10-31T17:30:00Z'},
+    {market_ticker:'LOSS',game_status:'final',created_at:'2026-10-31T17:20:00Z'},
+    {market_ticker:'LIVE',game_status:'live',created_at:'2026-10-31T17:10:00Z'},
+    {market_ticker:'NEW',game_status:'final',created_at:'2026-10-31T17:59:00Z'}
+  ];
+  assert.deepEqual(settlementLookupCandidates(pending,new Map(),now,0,5).map(row=>row.market_ticker),['WIN','LOSS']);
+});
 
 const entry={order_id:'buy-1',market_ticker:'KXGAME-TEAM',fill_count:'10.00',created_at:'2026-10-28T13:00:00Z'};
 const buy={order_id:'buy-1',ticker:entry.market_ticker,outcome_side:'yes',action:'buy',count_fp:'10.00',yes_price_dollars:'0.80',fee_cost:'0.10',created_time:'2026-10-28T13:00:01Z'};
