@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {COMBO_WINDOW_MS,VERIFY_DWELL_MS,COMBO_HELD_CANDIDATES,comboAllocation,comboLegAllocation,comboAllowedCents,comboRfqTargetCents,remainingVerifiedComboCents,availableComboFills,comboCandidates,comboCollection,compatibleComboGroups,prioritizedComboGroups,comboPairDiagnostics,quoteForYes,comboLegs,filledComboWindow,eligibleFillTrigger,heldComboLeg,collectionsForEvents,selectedComboMarkets,liveComboMarket} from '../src/combos.mjs';
+import {VERIFY_DWELL_MS,COMBO_HELD_CANDIDATES,comboAllocation,comboLegAllocation,comboAllowedCents,comboRfqTargetCents,remainingVerifiedComboCents,availableComboFills,comboCandidates,comboCollection,compatibleComboGroups,prioritizedComboGroups,comboPairDiagnostics,quoteForYes,comboLegs,filledComboWindow,eligibleFillTrigger,heldComboLeg,collectionsForEvents,selectedComboMarkets,liveComboMarket} from '../src/combos.mjs';
 
 test('two held fills qualify for combo without a second live game verification',()=>{
   const rows=['A','B'].map(ticker=>({market_ticker:ticker,event_ticker:'E',game_id:'G',sport:'NFL',strategy:'over',fill_count:'2.00',combo_legs:null,updated_at:new Date().toISOString()}));
@@ -150,17 +150,20 @@ test('requires a compatible all-YES multivariate collection for every leg',()=>{
   assert.equal(comboCollection([{is_all_yes:false,is_single_market_per_event:true,size_min:2,associated_events:[{ticker:'A'},{ticker:'B'}]}],legs),undefined);
   assert.equal(comboCollection([{is_all_yes:true,is_single_market_per_event:true,size_min:2,associated_event_tickers:['A']}],legs),undefined);
 });
-test('accepts only fresh affordable positive net YES quotes, with maker NO bid as complement',()=>{
+test('accepts open affordable positive net YES quotes, with maker NO bid as complement',()=>{
   const q={market_ticker:'COMBO',status:'open',no_bid_dollars:'0.1000',no_contracts_fp:'10.00',created_ts:new Date().toISOString()};
   const good=quoteForYes(q,'COMBO',1000,2);
   assert.equal(good.yesCost,.9);
   assert.ok(good.profitCents>0);
   assert.equal(quoteForYes(q,'COMBO',good.debitCents-1,2),null);
   assert.equal(quoteForYes({...q,status:'executed'},'COMBO',1000,2),null);
-  assert.equal(quoteForYes({...q,created_ts:new Date(Date.now()-COMBO_WINDOW_MS-1000).toISOString()},'COMBO',1000,2),null);
+  assert.ok(quoteForYes({...q,created_ts:new Date(Date.now()-13000).toISOString()},'COMBO',1000,2),'an open quote does not expire just because it was created 13 seconds ago');
+  assert.equal(quoteForYes({...q,created_ts:'invalid'},'COMBO',1000,2),null);
   assert.equal(quoteForYes({...q,no_bid_dollars:'0.0001'},'COMBO',1000,2),null);
   const small={...q,no_contracts_fp:'3.00'};
   assert.ok(quoteForYes(small,'COMBO',1000,2,9900)?.profitCents>0);
+  const observed={...q,no_bid_dollars:'0.0490',no_contracts_fp:'5.75',created_ts:new Date(Date.now()-13000).toISOString()};
+  assert.equal(quoteForYes(observed,'COMBO',566,2)?.debitCents,551);
 });
 test('RFQ target reserves room for the fee within the full combo allocation',()=>{
   const budget=2970;
@@ -191,7 +194,7 @@ test('all fifteen pairs of six held legs are requested ahead of varied larger ti
   const groups=prioritizedComboGroups(compatibleComboGroups([collection],candidates,64));
   assert.equal(groups.filter(g=>g.legs.length===2).length,15);
   assert.equal(groups.filter(g=>g.legs.length>2).length,9);
-  assert.deepEqual([...new Set(groups.filter(g=>g.legs.length>2).map(g=>g.legs.length))].sort(),[3,4,5,6]);
+  assert.deepEqual([...new Set([...groups,...prioritizedComboGroups(compatibleComboGroups([collection],candidates,64),9,1)].filter(g=>g.legs.length>2).map(g=>g.legs.length))].sort(),[3,4,5,6]);
   assert.equal(groups[0].legs.length,2);
 });
 test('all nine held picks expose thirty-six pair opportunities and the full ticket',()=>{
@@ -201,10 +204,18 @@ test('all nine held picks expose thirty-six pair opportunities and the full tick
   const groups=prioritizedComboGroups(compatibleComboGroups([collection],candidates,2**candidates.length));
   assert.equal(groups.filter(g=>g.legs.length===2).length,36);
   assert.equal(groups.length,45);
-  assert.equal(groups[36].legs.length,9);
-  assert.deepEqual([...new Set(groups.slice(36).map(g=>g.legs.length))].sort(),[3,4,5,6,7,8,9]);
+  assert.equal(groups.filter(g=>g.legs.length===3).length,4);
+  assert.equal(groups.filter(g=>g.legs.length===4).length,4);
+  assert.equal(groups.filter(g=>g.legs.length>4).length,1);
   assert.ok(groups.some(g=>g.legs.length===2&&g.legs[0].market.ticker==='p0-YES'&&g.legs[1].market.ticker==='p8-YES'));
   assert.notDeepEqual(prioritizedComboGroups(compatibleComboGroups([collection],candidates,512),9,1).slice(36).map(g=>g.legs.map(l=>l.market.ticker)),groups.slice(36).map(g=>g.legs.map(l=>l.market.ticker)));
+  const all=compatibleComboGroups([collection],candidates,512),seen3=new Set(),seen4=new Set();
+  for(let rotation=0;rotation<42;rotation++)for(const group of prioritizedComboGroups(all,9,rotation)){
+    if(group.legs.length===3)seen3.add(group.legs.map(l=>l.market.ticker).join(','));
+    if(group.legs.length===4)seen4.add(group.legs.map(l=>l.market.ticker).join(','));
+  }
+  assert.equal(seen3.size,84);
+  assert.equal(seen4.size,126);
 });
 test('collection lookup includes the ninth distinct event',async()=>{
   const seen=[];
