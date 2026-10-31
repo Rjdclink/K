@@ -799,6 +799,18 @@ async function upgradeVerifiedCombos(scanStarted){
     seenMarkets.add(c.market.ticker);return true;
   });
   if(eligible.length<2)return {filled:false,pending:false};
+  const availableCents=Math.max(0,Math.floor(Number(account.balance)||0));
+  if(availableCents<100){
+    await pool.query(`CREATE TABLE IF NOT EXISTS combo_diagnostics (
+      id bigserial PRIMARY KEY,checked_at timestamptz NOT NULL DEFAULT now(),
+      leg_tickers jsonb NOT NULL,collection_ticker text,status text NOT NULL,detail text)`);
+    await pool.query(`INSERT INTO combo_diagnostics(leg_tickers,status,detail)
+      SELECT $1::jsonb,'insufficient_cash',$2 WHERE NOT EXISTS (
+        SELECT 1 FROM combo_diagnostics WHERE status='insufficient_cash' AND checked_at>now()-interval '2 minutes')`,[JSON.stringify(eligible.slice(0,2).map(c=>c.market.ticker)),
+      `Only $${(availableCents/100).toFixed(2)} available cash; this scanner needs at least $1.00 to buy a separate combination`]);
+    console.info('Combo cash unavailable:',availableCents,'cents; held singles',eligible.length);
+    return {filled:false,pending:false};
+  }
   // Prefer all held, filled legs, then smaller valid combinations.
   const collections=await collectionsForEvents(eligible.map(c=>c.event.event_ticker),kalshi);
   const deadline=Date.now()+COMBO_ATTEMPT_MS;
@@ -1599,7 +1611,7 @@ async function state(){
   }else accountError='Kalshi credentials are missing from the Neon function environment';
   const open=new Set((positions?.market_positions||[]).filter(p=>Number(p.position_fp??p.position??0)!==0).map(p=>p.ticker));
   const {rows:comboIssues}=await pool.query(`SELECT checked_at,leg_tickers,status,detail FROM combo_diagnostics
-    WHERE status IN ('no_compatible_collection','no_executable_quote') AND checked_at>now()-interval '10 minutes'
+    WHERE status IN ('no_compatible_collection','no_executable_quote','insufficient_cash') AND checked_at>now()-interval '10 minutes'
     ORDER BY checked_at DESC LIMIT 20`);
   const orders=positions?attempts.rows.filter(o=>open.has(o.market_ticker)).map(o=>{
     const position=(positions.market_positions||[]).find(p=>p.ticker===o.market_ticker);
@@ -1616,7 +1628,7 @@ async function state(){
       String(o.reason||'').match(/\bby ([^;]+);/)?.[1]||null;
     delete o.position;
   }
-  const comboIssue=comboIssues.find(issue=>issue.leg_tickers.length>=2&&
+  const comboIssue=comboIssues.find(issue=>!(issue.status==='insufficient_cash'&&Number(balance?.balance)>=100)&&issue.leg_tickers.length>=2&&
     issue.leg_tickers.every(ticker=>open.has(ticker)))||null;
   if(comboIssue)comboIssue.leg_names=comboIssue.leg_tickers.map(ticker=>orders.find(o=>o.market_ticker===ticker)?.game_title||ticker);
   return {live:live(),exitOnly:exitOnly(),credentials:configured(),aiConfigured:Boolean(process.env.AI_API_KEY),balance,accountError,positionsError,positionsStale:Boolean(positions&&positionsError),games:snap.rows,scan:stats.rows[0],weather:weatherStatus.rows[0],comboIssue,orders};

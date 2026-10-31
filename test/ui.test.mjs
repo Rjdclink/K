@@ -233,7 +233,7 @@ test('filled card sums possible net profit across open positions and refreshes a
   const context=vm.createContext({document,window:{addEventListener(){}},navigator:{},localStorage:{getItem(){return null},setItem(){}},fetch:url=>{
     if(url.startsWith('/api/sell-quotes'))return Promise.resolve({ok:true,json:async()=>({quotes:[]})});
     calls++;
-    return Promise.resolve({ok:true,status:200,json:async()=>({live:false,exitOnly:false,credentials:true,aiConfigured:false,balance:null,games:[],orders:calls===1?held:held.slice(0,1),scan:{scanned:0,signals:0},alerts:[]})});
+    return Promise.resolve({ok:true,status:200,json:async()=>({live:false,exitOnly:false,credentials:true,aiConfigured:false,balance:null,games:[],orders:calls===1?held:held.slice(0,1),comboIssue:calls===1?{status:'insufficient_cash',detail:'Only $0.03 available cash; this scanner needs at least $1.00',checked_at:new Date().toISOString(),leg_names:['A vs B','C vs D']}:null,scan:{scanned:0,signals:0},alerts:[]})});
   },AbortSignal,URLSearchParams,setInterval(){}});
   assert.match(page,/Total possible profit/);
   assert.match(page,/profit-summary/);
@@ -241,6 +241,7 @@ test('filled card sums possible net profit across open positions and refreshes a
   await new Promise(resolve=>setImmediate(resolve));
   assert.equal(elements.get('ordersCount').textContent,2);
   assert.equal(elements.get('ordersProfit').textContent,'$2.14');
+  assert.match(elements.get('comboIssue').textContent,/Combination cash unavailable: Only \$0\.03 available cash/);
   await vm.runInContext('load()',context);
   assert.equal(elements.get('ordersCount').textContent,1);
   assert.equal(elements.get('ordersProfit').textContent,'$1.10');
