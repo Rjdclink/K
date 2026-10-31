@@ -17,7 +17,7 @@ import { manifest, worker } from './pwa.mjs';
 import { vapidIdentity, validateSubscription, deliverPush } from './push.mjs';
 import { favorableSettlement } from './settlements.mjs';
 import { authorized, checkCredentials, sessionCookie, loginPage } from './dashboard_auth.mjs';
-import { discoverCurrentMilestones, scanMilestones, eligibleForMarkets, linkedEventTickers, gameTimeLabel, storedClockSeconds, mapBatches } from './discovery.mjs';
+import { discoverCurrentMilestones, scanMilestones, eligibleForMarkets, prioritizeMarketGames, linkedEventTickers, gameTimeLabel, storedClockSeconds, mapBatches } from './discovery.mjs';
 import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOverDecision, verifyIndependentTableTennisLeadDecision, verifyIndependentTableTennisMatch } from './score_verification.mjs';
 import { verificationStatus } from './verification_status.mjs';
@@ -1580,8 +1580,8 @@ async function scan(cachedMilestones,discoveryCount){
     if(live()||exitOnly())await Promise.all([reconcileCombos(),reconcileComboUpgrades()]);
     if(live()&&!cachedMilestones)try{await reconcileFundingTransfers()}catch(e){console.warn('Transfer history unavailable:',e.message)}
     ms=cachedMilestones||await milestones();discoveryCount??=ms.length;
-    const {rows:recentLive}=await pool.query(`SELECT id FROM game_snapshots
-      WHERE status='live' AND scanned_at>now()-interval '15 minutes'`);
+    const {rows:recentLive}=await pool.query(`SELECT id,signals FROM game_snapshots
+      WHERE status='live' AND scanned_at>now()-interval '30 minutes'`);
     ms=scanMilestones(ms,new Set(recentLive.map(row=>row.id)));
     await upgradeTables();
     await ensureScanStatus();const liveMap=await liveBatch(ms);
@@ -1596,10 +1596,19 @@ async function scan(cachedMilestones,discoveryCount){
         ON CONFLICT(game_id) DO UPDATE SET milestone=EXCLUDED.milestone,watchable=EXCLUDED.watchable,updated_at=clock_timestamp()`,
       batch.flatMap(g=>[g.milestone.id,JSON.stringify(g.milestone),Boolean(leadWatchReason(g.state))]));
     }
-    const events=await marketMap(active.filter(g=>eligibleForMarkets(g.state)).flatMap(g=>linkedEventTickers(g.milestone)));
+    const marketCandidates=active.filter(g=>eligibleForMarkets(g.state)).map(g=>({...g,watchable:Boolean(leadWatchReason(g.state))}));
+    const {rows:heldGames}=await pool.query(`SELECT DISTINCT game_id FROM trade_attempts
+      WHERE status='filled' AND game_id=ANY($1::text[])`,[marketCandidates.map(g=>g.milestone.id)]);
+    const marketGames=prioritizeMarketGames(marketCandidates,{
+      signaledIds:new Set(recentLive.filter(row=>(row.signals||[]).some(signal=>
+        signal.strategy!=='watch'&&Number(signal.ask)>0&&Number(signal.ask)<1&&Number(signal.ask_size)>0)).map(row=>row.id)),
+      heldIds:new Set(heldGames.map(row=>row.game_id))
+    });
+    console.info('Live market priority:',JSON.stringify({live:marketCandidates.length,marketChecked:marketGames.length,earlyDeferred:marketCandidates.length-marketGames.length}));
+    const events=await marketMap(marketGames.flatMap(g=>linkedEventTickers(g.milestone)));
     // Market discovery can take longer than a scoring play. Refresh live
     // player stats immediately before deciding which props crossed their line.
-    const currentLive=await liveBatch(active.map(g=>g.milestone));
+    const currentLive=await liveBatch(marketGames.map(g=>g.milestone));
     for(const game of active){const latest=currentLive.get(game.milestone.id);if(latest){liveMap.set(game.milestone.id,latest);game.state=gameState(game.milestone,latest)}}
     let balance=0,bankroll=0,account=null;
     const existingFills=await pool.query(`SELECT id,market_ticker,event_ticker,game_id,sport,strategy,reason,fill_count,limit_price,created_at,updated_at,combo_legs,status FROM trade_attempts WHERE status='filled'`);
@@ -2039,7 +2048,7 @@ async function refreshOpenClocks(){
     }));
   }catch(e){console.warn('Dashboard clock refresh deferred:',e.message)}
 }
-let recentDashboardPositions=null,recentDashboardBalance=null;
+let recentDashboardPositions=null;
 const dashboardDeadline=ms=>new Promise(resolve=>setTimeout(()=>resolve(null),ms));
 async function state(){
   await ensureScoreTime();
@@ -2082,24 +2091,33 @@ async function state(){
       Date.now()-new Date(game.scanned_at).getTime()>30000;
     if(game.stale)for(const signal of game.signals||[])signal.execution='Rechecking live game; last status: '+signal.execution;
   }
-  let balance=null,positions=null,accountError=null,positionsError=null;
+  let balance=null,positions=null,accountError=null,positionsError=null,balanceStale=false,balanceAsOf=null;
   if(configured()){
     await pool.query(`CREATE TABLE IF NOT EXISTS dashboard_positions_cache (
       id integer PRIMARY KEY,positions jsonb NOT NULL,updated_at timestamptz NOT NULL DEFAULT now())`);
-    const [balanceResult,positionsResult]=await Promise.allSettled([
-      Promise.race([accountBalance().then(value=>(recentDashboardBalance=value)),dashboardDeadline(4000)]),
+    const [balanceResult,positionsResult,cachedBalanceResult]=await Promise.allSettled([
+      Promise.race([accountBalance(),dashboardDeadline(4000)]),
       Promise.race([allOpenPositions().then(value=>{
         recentDashboardPositions={value,at:Date.now()};
         void pool.query(`INSERT INTO dashboard_positions_cache(id,positions,updated_at) VALUES(1,$1,now())
           ON CONFLICT(id) DO UPDATE SET positions=EXCLUDED.positions,updated_at=now()`,[JSON.stringify(value)]).catch(e=>console.warn('Dashboard position cache deferred:',e.message));
         return value;
-      }),dashboardDeadline(4000)])
+      }),dashboardDeadline(4000)]),
+      pool.query(`SELECT balance_json,updated_at FROM account_cache
+        WHERE id=1 AND updated_at>now()-interval '5 minutes'`)
     ]);
-    if(balanceResult.status==='fulfilled'){
-      const value=balanceResult.value||recentDashboardBalance;
-      if(value&&Number.isFinite(Number(value.balance))&&Number.isFinite(Number(value.portfolio_value)))balance=value;
-      else accountError=balanceResult.value?'Kalshi returned an incomplete balance response':'Live balance is taking longer than usual; retrying';
-    }else accountError=String(balanceResult.reason?.message||balanceResult.reason);
+    const liveBalance=balanceResult.status==='fulfilled'?balanceResult.value:null;
+    if(liveBalance&&Number.isFinite(Number(liveBalance.balance))&&Number.isFinite(Number(liveBalance.portfolio_value)))balance=liveBalance;
+    else{
+      accountError=balanceResult.status==='rejected'?String(balanceResult.reason?.message||balanceResult.reason):
+        liveBalance?'Kalshi returned an incomplete balance response':'Live balance is taking longer than usual; retrying';
+      const cached=cachedBalanceResult.status==='fulfilled'?cachedBalanceResult.value.rows[0]:null;
+      const value=cached?.balance_json;
+      if(value&&Number.isFinite(Number(value.balance))&&Number.isFinite(Number(value.portfolio_value))){
+        balance=value;balanceStale=true;balanceAsOf=cached.updated_at;
+        accountError='Live balance delayed; showing the last verified balance';
+      }
+    }
     if(positionsResult.status==='fulfilled')positions=positionsResult.value||
       (recentDashboardPositions&&Date.now()-recentDashboardPositions.at<60000?recentDashboardPositions.value:null);
     else positionsError=String(positionsResult.reason?.message||positionsResult.reason);
@@ -2137,7 +2155,7 @@ async function state(){
   const comboIssue=comboIssues.find(issue=>!(issue.status==='insufficient_cash'&&Number(balance?.balance)>=100)&&issue.leg_tickers.length>=2&&
     issue.leg_tickers.every(ticker=>open.has(ticker)))||null;
   if(comboIssue)comboIssue.leg_names=comboIssue.leg_tickers.map(ticker=>orders.find(o=>o.market_ticker===ticker)?.game_title||ticker);
-  return {live:live(),exitOnly:exitOnly(),credentials:configured(),aiConfigured:Boolean(process.env.AI_API_KEY),balance,accountError,positionsError,positionsStale:Boolean(positions&&positionsError),games:snap.rows,scan:stats.rows[0],weather:weatherStatus.rows[0],comboIssue,orders};
+  return {live:live(),exitOnly:exitOnly(),credentials:configured(),aiConfigured:Boolean(process.env.AI_API_KEY),balance,balanceStale,balanceAsOf,accountError,positionsError,positionsStale:Boolean(positions&&positionsError),games:snap.rows,scan:stats.rows[0],weather:weatherStatus.rows[0],comboIssue,orders};
 }
 async function settlementAlerts(since){
   const {rows}=await pool.query(`SELECT id,ticker,profit_cents,settled_time,created_at FROM settlement_alerts WHERE id>$1 AND created_at>now()-interval '2 days' ORDER BY id LIMIT 50`,[since]);
@@ -2162,8 +2180,8 @@ async function handleRequest(req){const url=new URL(req.url);
     await ensureLeadWatch();
     const {rows:knownLive}=await pool.query(`SELECT w.milestone FROM lead_watch_milestones w
       JOIN game_snapshots g ON g.id=w.game_id
-      WHERE w.updated_at>now()-interval '15 minutes' AND g.status='live'
-        AND g.scanned_at>now()-interval '15 minutes' ORDER BY w.updated_at DESC`);
+      WHERE w.updated_at>now()-interval '30 minutes' AND g.status='live'
+        AND g.scanned_at>now()-interval '30 minutes' ORDER BY w.updated_at DESC`);
     let discovered=null,discoveryError=null,discoveryApplied=false;
     const discoveryJob=withApiPriority('background',()=>milestones())
       .then(found=>{discovered=found}).catch(error=>{discoveryError=error});

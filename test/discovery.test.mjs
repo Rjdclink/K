@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {discoverCurrentMilestones,scanMilestones,eligibleForMarkets,linkedEventTickers,gameTimeLabel,storedClockSeconds,mapBatches} from '../src/discovery.mjs';
+import {discoverCurrentMilestones,scanMilestones,nearEntryPhase,prioritizeMarketGames,eligibleForMarkets,linkedEventTickers,gameTimeLabel,storedClockSeconds,mapBatches} from '../src/discovery.mjs';
 import {gameState,overSignal,sportName} from '../src/strategy.mjs';
 
 test('bounded parallel live batches cover every milestone without losing result order',async()=>{
@@ -51,6 +51,31 @@ test('live scan omits old inactive milestones while retaining active and long-ru
   ];
   assert.deepEqual(scanMilestones(games,new Set(['previously-live','long-live']),now).map(m=>m.id),
     ['new','long-live','previously-live','golf','cricket']);
+});
+
+test('market pass prioritizes entry windows across sports and rotates early games',()=>{
+  const game=(id,type,period,remainingSeconds,sport='')=>({milestone:{id},state:{type,period,remainingSeconds,sport}});
+  const games=[
+    game('cfb-early','football_game',2,120,'CFB'),game('nba-early','basketball_game',2,120,'NBA'),
+    game('nhl-early','hockey_game',1,120,'NHL'),game('soccer-early','soccer_game',1,120,'Soccer'),
+    game('mlb-early','baseball_game',5,120,'MLB'),
+    game('cfb-late','football_game',4,240,'CFB'),game('nba-close','basketball_game',3,90,'NBA'),
+    game('nhl-close','hockey_game',2,90,'NHL'),
+    {...game('soccer-late','soccer_game',2,120,'Soccer'),state:{type:'soccer_game',period:2,soccerMinute:75}},
+    game('mlb-late','baseball_game',8,120,'MLB'),
+    {...game('tennis','tennis_match',2,0,'ATP'),state:{type:'tennis_match',tennis:{bestOf:3,firstSets:1,secondSets:0}}}
+  ];
+  assert.equal(nearEntryPhase(games[0].state),false);
+  assert.equal(nearEntryPhase({type:'golf_tournament',period:3,golf:{board:[{current_round_thru:18}]}}),false);
+  assert.equal(nearEntryPhase({type:'golf_tournament',period:4,golf:{board:[{current_round_thru:16}]}}),true);
+  assert.equal(nearEntryPhase({type:'tennis_match',tennis:{bestOf:3,firstSets:1,secondSets:0}}),true);
+  assert.equal(nearEntryPhase({type:'cricket_match',cricket:{innings:2,ballsRemaining:19}}),true);
+  assert.deepEqual(prioritizeMarketGames(games,{cycle:0,lowBudget:2}).map(g=>g.milestone.id),
+    ['cfb-late','nba-close','nhl-close','soccer-late','mlb-late','tennis','cfb-early','nba-early']);
+  assert.deepEqual(prioritizeMarketGames(games,{cycle:1,lowBudget:2}).slice(-2).map(g=>g.milestone.id),
+    ['nhl-early','soccer-early']);
+  const urgent=prioritizeMarketGames(games,{cycle:0,lowBudget:0,heldIds:new Set(['cfb-early']),signaledIds:new Set(['nba-early'])});
+  assert.deepEqual(urgent.slice(0,2).map(g=>g.milestone.id),['cfb-early','nba-early']);
 });
 
 test('find game and both total families from a game-only milestone',()=>{

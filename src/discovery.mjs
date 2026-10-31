@@ -56,6 +56,40 @@ export function scanMilestones(milestones,recentLiveIds=new Set(),now=Date.now()
   });
 }
 
+// A market can cross an over line at any time, so early games still receive a
+// rotating check. Give the frequent market pass to games near a winner window,
+// games with a recent signal, and games with a held position needing exits.
+export function nearEntryPhase(game){
+  const type=String(game?.type||''),period=Number(game?.period),seconds=Number(game?.remainingSeconds);
+  if(/football/.test(type))return period>=4||period===3&&seconds>=0&&seconds<=180;
+  if(/basketball/.test(type)){
+    const college=['NCAAB','NCAAW'].includes(game.sport),final=college?2:4;
+    return period>=final||period===final-1&&seconds>=0&&seconds<=180;
+  }
+  if(/hockey/.test(type))return period>=3||period===2&&seconds>=0&&seconds<=180;
+  if(/soccer/.test(type))return period>=2&&Number(game.soccerMinute)>=70;
+  if(/baseball/.test(type))return period>=8;
+  if(/rugby|handball|lacrosse/.test(type))return period>=(/lacrosse/.test(type)?4:2);
+  if(/golf/.test(type))return period===4&&game.golf?.board?.some(player=>Number(player.current_round_thru)>=16);
+  if(/cricket/.test(type))return game.cricket?.innings===2&&Number(game.cricket.ballsRemaining)<=24;
+  if(/table_tennis/.test(type))return game.tableTennis?.setNumber>=game.tableTennis?.bestOf-1;
+  if(/tennis/.test(type))return Boolean(game.tennis)&&
+    (game.tennis.firstSets>=Math.floor(game.tennis.bestOf/2)||
+      game.tennis.secondSets>=Math.floor(game.tennis.bestOf/2));
+  // Clock-free sports and unfamiliar formats remain on the frequent pass.
+  return true;
+}
+export function prioritizeMarketGames(games,{signaledIds=new Set(),heldIds=new Set(),cycle=Math.floor(Date.now()/60000),lowBudget=12}={}){
+  const urgent=[],early=[];
+  for(const game of games){
+    const id=game.milestone.id;
+    (heldIds.has(id)||signaledIds.has(id)||game.watchable||nearEntryPhase(game.state)?urgent:early).push(game);
+  }
+  const selected=[];
+  for(let i=0;i<Math.min(lowBudget,early.length);i++)selected.push(early[(cycle*lowBudget+i)%early.length]);
+  return [...urgent,...selected];
+}
+
 export function linkedEventTickers(milestone){
   if(milestone.type==='golf_tournament')return [milestone.details?.main_game_event_ticker].filter(Boolean);
   const source=[...(milestone.related_event_tickers||[]),...(milestone.primary_event_tickers||[]),...(milestone.events||[]),milestone.details?.main_game_event_ticker].filter(Boolean);
