@@ -484,13 +484,10 @@ export function additionalLeadSignal(game,market){
   return {strategy:'lead',reason:`${leader} leads; ${label}; margin ${decisive}`,fraction:decisive>=very?.15:.10};
 }
 export function cricketLeadSignal(game,market){
-  const c=game?.cricket;
-  if(!c||!game.verifiedLive||!game.scoreKnown||!game.scoreConsistent||!['active','open'].includes(market?.status)||
-    market.event_ticker!==c.mainEvent||!/\bwins?\b/i.test(String(market.rules_primary||''))||
-    /\b(?:draw|tie|spread|handicap)\b/i.test(String(market.title||'')))return null;
-  const home=c.homeTotal>c.awayTotal,margin=Math.abs(c.homeTotal-c.awayTotal);
-  if(margin<40||market.custom_strike?.cricket_team!==(home?game.homeTeamId:game.awayTeamId))return null;
-  return {strategy:'lead',fraction:.20,comboEligible:false,reason:`Restricted 20% cricket final innings ${c.innings}; verified match totals ${c.homeTotal}–${c.awayTotal} runs (${margin} ahead)`};
+  // A lead while the last innings is still in progress can be chased down.
+  // Suspend cricket winner entries until an independently verified end state
+  // and the contract's official result can be checked before submission.
+  return null;
 }
 export function earlyLeadSignal(game,market){
   const type=String(game?.type||'');
