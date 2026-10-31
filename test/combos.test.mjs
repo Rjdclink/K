@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {VERIFY_DWELL_MS,COMBO_HELD_CANDIDATES,comboAllocation,comboLegAllocation,comboAllowedCents,comboRfqTargetCents,remainingVerifiedComboCents,availableComboFills,comboCandidates,comboCollection,compatibleComboGroups,prioritizedComboGroups,comboPairDiagnostics,quoteForYes,comboLegs,filledComboWindow,eligibleFillTrigger,heldComboLeg,collectionsForEvents,selectedComboMarkets,liveComboMarket} from '../src/combos.mjs';
+import {VERIFY_DWELL_MS,COMBO_RFQ_PLANS,comboAllocation,comboLegAllocation,comboAllowedCents,comboRfqTargetCents,remainingVerifiedComboCents,availableComboFills,comboCandidates,comboCollection,compatibleComboGroups,prioritizedComboGroups,plannedComboGroups,comboPairDiagnostics,quoteForYes,comboLegs,filledComboWindow,eligibleFillTrigger,heldComboLeg,collectionsForEvents,selectedComboMarkets,liveComboMarket} from '../src/combos.mjs';
 
 test('two held fills qualify for combo without a second live game verification',()=>{
   const rows=['A','B'].map(ticker=>({market_ticker:ticker,event_ticker:'E',game_id:'G',sport:'NFL',strategy:'over',fill_count:'2.00',combo_legs:null,updated_at:new Date().toISOString()}));
@@ -196,7 +196,6 @@ test('largest available tickets are sampled first without repeating a leg set',(
   assert.equal(new Set(groups.map(g=>g.legs.map(l=>l.market.ticker).join(','))).size,groups.length);
 });
 test('thirteen held trades all enter collection lookup and ticket rotation',()=>{
-  assert.ok(COMBO_HELD_CANDIDATES>=13);
   const candidates=Array.from({length:13},(_,i)=>candidate('p'+i,'E'+i));
   const collection={collection_ticker:'SIX',is_all_yes:true,is_single_market_per_event:true,size_min:2,size_max:6,associated_event_tickers:candidates.map(c=>c.event.event_ticker)};
   const all=compatibleComboGroups([collection],candidates,2**candidates.length);
@@ -208,6 +207,43 @@ test('thirteen held trades all enter collection lookup and ticket rotation',()=>
   for(let rotation=0;rotation<39;rotation++)for(const g of prioritizedComboGroups(all,12,rotation))if(g.legs.length===2)seen.add(g.legs.map(l=>l.market.ticker).join(','));
   assert.equal(seen.size,78);
 });
+test('eighteen held singles are all considered without enumerating every ticket',()=>{
+  const rows=Array.from({length:18},(_,i)=>({market_ticker:'p'+i,updated_at:new Date(1800000000000+i).toISOString()}));
+  assert.equal(filledComboWindow(rows,new Set(rows.map(r=>r.market_ticker)),null).length,18);
+  const candidates=Array.from({length:18},(_,i)=>candidate('p'+i,'E'+i));
+  const collection={collection_ticker:'SIX',is_all_yes:true,is_single_market_per_event:true,size_min:2,size_max:6,associated_event_tickers:candidates.map(c=>c.event.event_ticker)};
+  const seenPairs=new Set();
+  for(let rotation=0;rotation<77;rotation++){
+    const groups=plannedComboGroups([collection],candidates,COMBO_RFQ_PLANS,rotation);
+    assert.equal(groups[0].legs.length,6);
+    assert.ok(groups.some(group=>group.legs.length===2));
+    for(const group of groups)if(group.legs.length===2)seenPairs.add(group.legs.map(leg=>leg.market.ticker).sort().join('|'));
+  }
+  assert.equal(seenPairs.size,153);
+  assert.ok([...seenPairs].some(pair=>pair.includes('p17-YES')));
+});
+test('very large collection sizes rotate smaller ticket sizes while preserving pairs',()=>{
+  const candidates=Array.from({length:18},(_,i)=>candidate('p'+i,'E'+i));
+  const collection={collection_ticker:'ANY',is_all_yes:true,is_single_market_per_event:true,size_min:2,size_max:0,associated_event_tickers:candidates.map(c=>c.event.event_ticker)};
+  const sizes=new Set();
+  for(let rotation=0;rotation<4;rotation++){
+    const groups=plannedComboGroups([collection],candidates,COMBO_RFQ_PLANS,rotation);
+    assert.equal(groups[0].legs.length,18);
+    assert.ok(groups.some(group=>group.legs.length===2));
+    groups.forEach(group=>sizes.add(group.legs.length));
+  }
+  assert.equal(sizes.size,17);
+});
+test('one-market-per-event collections still sample all event pairs when held props share an event',()=>{
+  const candidates=[candidate('a','E1'),candidate('b','E1'),candidate('c','E2'),candidate('d','E2'),candidate('e','E3')];
+  const collection={collection_ticker:'THREE',is_all_yes:true,is_single_market_per_event:true,size_min:2,size_max:3,associated_event_tickers:['E1','E2','E3']};
+  const pairs=new Set();
+  for(let rotation=0;rotation<4;rotation++)for(const group of plannedComboGroups([collection],candidates,12,rotation)){
+    assert.equal(new Set(group.legs.map(leg=>leg.event.event_ticker)).size,group.legs.length);
+    if(group.legs.length===2)pairs.add(group.legs.map(leg=>leg.event.event_ticker).sort().join('|'));
+  }
+  assert.deepEqual([...pairs].sort(),['E1|E2','E1|E3','E2|E3']);
+});
 test('collection lookup includes the thirteenth distinct event',async()=>{
   const seen=[];
   await collectionsForEvents(Array.from({length:13},(_,i)=>'E'+i),async path=>{
@@ -216,6 +252,15 @@ test('collection lookup includes the thirteenth distinct event',async()=>{
   });
   assert.equal(seen.length,13);
   assert.ok(seen.includes('E12'));
+});
+test('collection lookup does not omit an eighteenth distinct held event',async()=>{
+  const seen=[];
+  await collectionsForEvents(Array.from({length:18},(_,i)=>'E'+i),async path=>{
+    seen.push(new URL(path,'https://example.test').searchParams.get('associated_event_ticker'));
+    return {multivariate_contracts:[],cursor:''};
+  });
+  assert.equal(seen.length,18);
+  assert.ok(seen.includes('E17'));
 });
 test('a newly created combo market 404 is retried while unrelated API errors still surface',async()=>{
   const ticker='COMBO';

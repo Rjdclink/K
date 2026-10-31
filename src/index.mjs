@@ -16,7 +16,7 @@ import { authorized, checkCredentials, sessionCookie, loginPage } from './dashbo
 import { discoverCurrentMilestones, eligibleForMarkets, linkedEventTickers, gameTimeLabel, storedClockSeconds, mapBatches } from './discovery.mjs';
 import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOverDecision, verifyIndependentTableTennisLeadDecision, verifyIndependentTableTennisMatch } from './score_verification.mjs';
-import { COMBO_ATTEMPT_MS, VERIFY_DWELL_MS, COMBO_HELD_CANDIDATES, comboAllocation, comboLegAllocation, comboAllowedCents, comboRfqTargetCents, remainingVerifiedComboCents, availableComboFills, compatibleComboGroups, prioritizedComboGroups, comboPairDiagnostics, comboLegs, filledComboWindow, eligibleFillTrigger, heldComboLeg, quoteForYes, collectionsForEvents, selectedComboMarkets, liveComboMarket } from './combos.mjs';
+import { COMBO_ATTEMPT_MS, VERIFY_DWELL_MS, COMBO_RFQ_PLANS, comboAllocation, comboLegAllocation, comboAllowedCents, comboRfqTargetCents, remainingVerifiedComboCents, availableComboFills, compatibleComboGroups, plannedComboGroups, comboPairDiagnostics, comboLegs, filledComboWindow, eligibleFillTrigger, heldComboLeg, quoteForYes, collectionsForEvents, selectedComboMarkets, liveComboMarket } from './combos.mjs';
 import { estimatedSaleProfitCents, positiveExitEligible, oneAndHalfExitEligible } from './positions.mjs';
 import { remainingVerifiedOverCents, upgradeEligible } from './upgrades.mjs';
 import { weatherContract } from './weather.mjs';
@@ -797,23 +797,20 @@ async function upgradeVerifiedCombos(scanStarted){
   const eligible=group.filter(c=>{
     if(seenMarkets.has(c.market.ticker))return false;
     seenMarkets.add(c.market.ticker);return true;
-  }).slice(0,COMBO_HELD_CANDIDATES);
+  });
   if(eligible.length<2)return {filled:false,pending:false};
   // Prefer all held, filled legs, then smaller valid combinations.
   const collections=await collectionsForEvents(eligible.map(c=>c.event.event_ticker),kalshi);
   const deadline=Date.now()+COMBO_ATTEMPT_MS;
   const plans=[],funding=[];
-  // Request executable quotes for all available ticket sizes in the same
-  // bounded window. A six-pick market may have no maker while a three-pick does.
-  const allGroups=compatibleComboGroups(collections,eligible,2**eligible.length);
-  // Start with the largest available collection size, then rotate through
-  // smaller distinct leg sets across scans within the RFQ time budget.
+  // Consider every held single, sampling distinct leg sets at each collection
+  // size without enumerating an exponential number of possible tickets.
   await pool.query('CREATE TABLE IF NOT EXISTS combo_rotation_state (id integer PRIMARY KEY, next_rotation bigint NOT NULL)');
   const {rows:[rotationRow]}=await pool.query(`INSERT INTO combo_rotation_state(id,next_rotation) VALUES(1,1)
     ON CONFLICT(id) DO UPDATE SET next_rotation=combo_rotation_state.next_rotation+1
     RETURNING next_rotation-1 AS rotation`);
-  const rotation=Number(rotationRow.rotation),groups=prioritizedComboGroups(allGroups,12,rotation);
-  console.info('Combo coverage:',JSON.stringify({held:eligible.length,possiblePairs:eligible.length*(eligible.length-1)/2,compatiblePairs:groups.filter(g=>g.legs.length===2).length,compatibleTriples:allGroups.filter(g=>g.legs.length===3).length,compatibleQuads:allGroups.filter(g=>g.legs.length===4).length,plannedBySize:Object.fromEntries([...new Set(groups.map(g=>g.legs.length))].map(n=>[n,groups.filter(g=>g.legs.length===n).length])),rotation}));
+  const rotation=Number(rotationRow.rotation),groups=plannedComboGroups(collections,eligible,COMBO_RFQ_PLANS,rotation);
+  console.info('Combo coverage:',JSON.stringify({held:eligible.length,possiblePairs:eligible.length*(eligible.length-1)/2,collections:collections.length,plannedBySize:Object.fromEntries([...new Set(groups.map(g=>g.legs.length))].map(n=>[n,groups.filter(g=>g.legs.length===n).length])),rotation}));
   if(!groups.length){
     console.warn('Combo no compatible collection for trigger:',newTicker,eligible.map(c=>[c.event.event_ticker,c.market.ticker]),'collections',collections.length);
     await pool.query(`CREATE TABLE IF NOT EXISTS combo_diagnostics (
