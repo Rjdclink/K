@@ -1002,17 +1002,35 @@ async function checkHeldCombinations(fills){
   await pool.query(`CREATE TABLE IF NOT EXISTS combo_fill_triggers (
     fill_id uuid PRIMARY KEY, attempted_at timestamptz, completed_at timestamptz, combo_ticker text)`);
   await pool.query('ALTER TABLE combo_fill_triggers ADD COLUMN IF NOT EXISTS combo_ticker text');
+  await pool.query(`CREATE TABLE IF NOT EXISTS combo_retry_state (
+    id integer PRIMARY KEY, attempted_at timestamptz NOT NULL)`);
   const ready=await pool.query(`SELECT a.id,a.market_ticker FROM trade_attempts a
     LEFT JOIN combo_fill_triggers t ON t.fill_id=a.id
     WHERE a.status='filled' AND a.combo_legs IS NULL AND a.market_ticker=ANY($1::text[])
       AND a.updated_at>=$2 AND t.fill_id IS NULL
     ORDER BY a.created_at ASC LIMIT 25`,[[...held],baseline.started_at]);
-  if(!ready.rowCount)return {filled:false,pending:false};
-  const trigger=ready.rows[0];
-  const claimed=await pool.query(`INSERT INTO combo_fill_triggers(fill_id,attempted_at)
-    VALUES($1,now()) ON CONFLICT DO NOTHING RETURNING fill_id`,[trigger.id]);
-  if(!claimed.rowCount)return {filled:false,pending:false};
-  if(singles.length<2)return {filled:false,pending:false};
+  const trigger=ready.rows[0]||null;
+  if(trigger){
+    const claimed=await pool.query(`INSERT INTO combo_fill_triggers(fill_id,attempted_at)
+      VALUES($1,now()) ON CONFLICT DO NOTHING RETURNING fill_id`,[trigger.id]);
+    if(!claimed.rowCount)return {filled:false,pending:false};
+    await pool.query(`INSERT INTO combo_retry_state(id,attempted_at) VALUES(1,now())
+      ON CONFLICT(id) DO UPDATE SET attempted_at=now()`);
+  }else{
+    // A missing maker quote or an interrupted scan must not permanently
+    // consume the only fill trigger for a still-held combination.
+    if(singles.length<2)return {filled:false,pending:false};
+    const retry=await pool.query(`INSERT INTO combo_retry_state(id,attempted_at) VALUES(1,now())
+      ON CONFLICT(id) DO UPDATE SET attempted_at=now()
+        WHERE combo_retry_state.attempted_at<now()-interval '2 minutes'
+      RETURNING id`);
+    if(!retry.rowCount)return {filled:false,pending:false};
+    console.info('Retrying combinations from still-held singles:',singles.map(r=>r.market_ticker));
+  }
+  if(singles.length<2){
+    await pool.query('UPDATE combo_fill_triggers SET completed_at=now() WHERE fill_id=$1',[trigger.id]);
+    return {filled:false,pending:false};
+  }
   await ensureScoreTime();
   const snapshots=await pool.query('SELECT id,title,sport,sport_family,home,away,status,signals,GREATEST(score_observed_at,scanned_at) AS scanned_at,clock_seconds FROM game_snapshots WHERE id=ANY($1::text[])',
     [[...new Set(singles.map(r=>r.game_id))]]);
@@ -1022,10 +1040,14 @@ async function checkHeldCombinations(fills){
       return heldComboLeg(row,market,byGame.get(row.game_id));
     }catch(e){console.warn('Held combo market unavailable:',row.market_ticker,e.message);return null}
   }))).filter(Boolean);
-  if(candidates.length<2){console.info('Combo fewer than two open held legs:',singles.map(r=>r.market_ticker));return {filled:false,pending:false}}
+  if(candidates.length<2){
+    console.info('Combo fewer than two open held legs:',singles.map(r=>r.market_ticker));
+    if(trigger)await pool.query('UPDATE combo_fill_triggers SET completed_at=now() WHERE fill_id=$1',[trigger.id]);
+    return {filled:false,pending:false};
+  }
   const account=await accountBalance({fresh:true});
   const result=await executeCombo(candidates,account,Number(account.balance)+Number(account.portfolio_value),comboAllocation(),trigger.market_ticker);
-  await pool.query('UPDATE combo_fill_triggers SET completed_at=now(),combo_ticker=$2 WHERE fill_id=$1',[trigger.id,result.ticker||null]);
+  if(trigger)await pool.query('UPDATE combo_fill_triggers SET completed_at=now(),combo_ticker=$2 WHERE fill_id=$1',[trigger.id,result.ticker||null]);
   return result;
 }
 async function diagnoseUnfilledCombo(candidates,filled){
