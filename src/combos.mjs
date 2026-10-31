@@ -3,7 +3,8 @@
 // Creating markets and waiting for an RFQ maker can take longer than a scan.
 export const COMBO_ATTEMPT_MS=45000;
 export const VERIFY_DWELL_MS=6000;
-export const COMBO_HELD_CANDIDATES=9;
+// Bound the exponential subset search while including a full, larger portfolio.
+export const COMBO_HELD_CANDIDATES=16;
 export function comboAllocation(){return .20;}
 export function comboAllowedCents(fraction,bankrollCents){return Math.floor(fraction*bankrollCents);}
 // Maker RFQs quote close to target cost; leave room for the fee before asking.
@@ -79,18 +80,19 @@ export function compatibleComboGroups(collections,candidates,maxGroups=6){
   }
   return groups.sort((a,b)=>b.legs.length-a.legs.length).slice(0,maxGroups);
 }
-export function prioritizedComboGroups(groups,maxLarger=9,rotation=0){
-  const pairs=groups.filter(g=>g.legs.length===2),larger=groups.filter(g=>g.legs.length>2);
-  const chosen=[];
-  const take=(options,n)=>{if(!options.length||!n)return;const start=((rotation*n)%options.length+options.length)%options.length;for(let i=0;i<Math.min(n,options.length);i++)chosen.push(options[(start+i)%options.length])};
-  // Every compatible pair goes first. Rotate four three-picks and four
-  // four-picks per attempt; keep a slot for larger tickets too.
-  take(larger.filter(g=>g.legs.length===3),Math.min(4,maxLarger));
-  take(larger.filter(g=>g.legs.length===4),Math.min(4,maxLarger-chosen.length));
-  take(larger.filter(g=>g.legs.length>4),Math.min(1,maxLarger-chosen.length));
-  const rest=larger.filter(g=>!chosen.includes(g));
-  if(rest.length&&chosen.length<maxLarger)take(rest,maxLarger-chosen.length);
-  return [...pairs,...chosen];
+export function prioritizedComboGroups(groups,maxPlans=12,rotation=0){
+  const bySize=new Map();
+  for(const group of groups){const n=group.legs.length;const bucket=bySize.get(n)||[];bucket.push(group);bySize.set(n,bucket)}
+  const sizes=[...bySize.keys()].sort((a,b)=>b-a),chosen=[];
+  // A few from each permitted size on every pass. Rotate within each size
+  // so the bounded RFQ window eventually reaches every distinct leg set.
+  for(const size of sizes){
+    const bucket=bySize.get(size),count=Math.min(2,bucket.length,maxPlans-chosen.length);
+    if(!count)break;
+    const start=((rotation*2)%bucket.length+bucket.length)%bucket.length;
+    for(let i=0;i<count;i++)chosen.push(bucket[(start+i)%bucket.length]);
+  }
+  return chosen;
 }
 export function comboPairDiagnostics(collections,candidates){
   const pairs=[];
