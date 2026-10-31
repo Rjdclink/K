@@ -1,7 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {gameState,overSignal,confirmedOver,kalshiOnlyOver,kalshiOnlyLead,confirmedExternalLead,leadSignal,earlyLeadSignal,confirmedSoccerOneGoalClock,soccerOneGoalWindowOpen,soccerOverStable,soccerOverWaitMs,stableSoccerLeadFraction,externallyVerifiedEarlySoccerLead,tennisSignal,tableTennisSignal,orderSize,estimatedCostCents,overBudget,minimumProfitCents,netSettlementProfitCents,profitableCount,comeback,timedProfitExitAllowed,KALSHI_ONLY_FRACTION} from '../src/strategy.mjs';
+import {gameState,overSignal,confirmedOver,kalshiOnlyOver,kalshiOnlyLead,confirmedExternalLead,leadSignal,earlyLeadSignal,leadWatchReason,confirmedSoccerOneGoalClock,soccerOneGoalWindowOpen,soccerOverStable,soccerOverWaitMs,stableSoccerLeadFraction,externallyVerifiedEarlySoccerLead,tennisSignal,tableTennisSignal,orderSize,estimatedCostCents,overBudget,minimumProfitCents,netSettlementProfitCents,profitableCount,comeback,timedProfitExitAllowed,KALSHI_ONLY_FRACTION} from '../src/strategy.mjs';
+
+test('near-qualifying leaders are watched without treating a watch as an entry',()=>{
+  const base={verifiedLive:true,scoreKnown:true,scoreConsistent:true,periodConsistent:true,
+    home:30,away:0,type:'football_game',sport:'CFB',period:3,remainingSeconds:68};
+  assert.match(leadWatchReason(base),/under 1:00/);
+  assert.equal(leadWatchReason({...base,remainingSeconds:181}),null);
+  assert.match(leadWatchReason({...base,period:4,remainingSeconds:800}),/possession required/);
+  assert.equal(leadWatchReason({...base,verifiedLive:false}),null);
+  assert.equal(leadWatchReason({...base,home:0,away:0}),null);
+  const basketball={...base,type:'basketball_game',sport:'Slovakia SBL',home:75,away:57,remainingSeconds:44};
+  assert.match(leadWatchReason(basketball),/20\+/);
+  assert.equal(leadWatchReason({...basketball,home:75,away:60}),null);
+});
 
 test('each trade has its own percentage of the full bankroll',()=>{
   const bankroll=14600,alreadyHeld=4372;
