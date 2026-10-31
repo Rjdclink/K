@@ -22,7 +22,8 @@ export function remainingVerifiedComboCents(position,bankroll){
   return Math.max(0,Math.floor(bankroll*.20)-Math.ceil(exposure*100)-Math.ceil(fees*100));
 }
 export function availableComboFills(fills,usedLegTickers){
-  return fills.filter(r=>!(/Kalshi-only/i.test(r.reason||'')&&r.externally_verified!==true&&usedLegTickers.has(r.market_ticker)));
+  return fills.filter(r=>!/Restricted 20% cricket final innings/i.test(r.reason||'')&&
+    !(/Kalshi-only/i.test(r.reason||'')&&r.externally_verified!==true&&usedLegTickers.has(r.market_ticker)));
 }
 export function comboCandidates(candidates, strategy, max=6){
   const games=new Set(),events=new Set();
@@ -175,6 +176,7 @@ export async function liveComboMarket(get,ticker){
 export function heldComboLeg(row,market,snapshot={}){
   if(!row||Number(row.fill_count)<=0||!market||market.ticker!==row.market_ticker||market.event_ticker!==row.event_ticker||
     !['active','open'].includes(market.status)||market.result&&!['','not_determined'].includes(String(market.result)))return null;
+  if(/Restricted 20% cricket final innings/i.test(row.reason||''))return null;
   // A corrected soccer goal can uncross a held total. Never compound that
   // position into a fresh all-YES ticket while the observed total is below the line.
   const series=String(market.event_ticker||'').split('-')[0];
