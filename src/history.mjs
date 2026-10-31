@@ -8,6 +8,11 @@ export function manualSaleFill(sale){
   return {ticker:sale.ticker,order_id:r.order_id,outcome_side:'yes',action:'sell',count_fp:String(count),
     yes_price_dollars:String(price),fee_cost:String(count*fee),created_time:time(sale.created_at).toISOString()};
 }
+export function reconcileManualSaleFills(fills,manualFills){
+  const manualOrders=new Set(manualFills.map(fill=>fill.order_id));
+  return fills.map(fill=>fill.action==='sell'&&manualOrders.has(fill.order_id)?
+    {...fill,outcome_side:'yes',side:'yes'}:fill);
+}
 
 // Reconcile actual entry and exit fills. A partial sale appears only after its
 // remaining contracts settle, so one history row reflects the whole trade.

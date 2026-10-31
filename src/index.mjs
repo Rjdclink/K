@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { page } from './ui.mjs';
 import { historyPage } from './history_ui.mjs';
-import { completedTrade, manualSaleFill } from './history.mjs';
+import { completedTrade, manualSaleFill, reconcileManualSaleFills } from './history.mjs';
 import { gameState, overSignal, confirmedOver, kalshiOnlyOver, kalshiOnlyLead, leadSignal, confirmedSoccerOneGoalClock, soccerOneGoalWindowOpen, soccerOverStable, soccerOverWaitMs, stableSoccerLeadFraction, additionalLeadSignal, cricketLeadSignal, drawSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback, timedProfitExitAllowed, KALSHI_ONLY_FRACTION } from './strategy.mjs';
 import { reviewMiss } from './ai.mjs';
 import { kalshiSignature } from './auth.mjs';
@@ -242,14 +242,12 @@ async function syncTradeHistory(settlements){
       if(!cursor){complete=true;break}
     }
     if(!complete)throw Error('Trade history fills exceed pagination safety limit');
+    const manualFills=manualByTicker.get(ticker)||[];
     const known=new Set(allFills.map(fill=>fill.order_id));
-    const fills=allFills.concat((manualByTicker.get(ticker)||[]).filter(fill=>!known.has(fill.order_id)));
+    const fills=reconcileManualSaleFills(allFills,manualFills).concat(manualFills.filter(fill=>!known.has(fill.order_id)));
     for(const entry of pending.filter(item=>item.market_ticker===ticker)){
       const completed=completedTrade(entry,fills,settled.get(ticker));
-      if(!completed){
-        if(manualByTicker.has(ticker))console.warn('Manual sale history still awaiting verified entry fills:',JSON.stringify({ticker,fillCount:fills.length,buyOrderPresent:fills.some(fill=>fill.order_id===entry.order_id),saleOrderPresent:fills.some(fill=>fill.action==='sell')}));
-        continue;
-      }
+      if(!completed)continue;
       const sport=([['basketball','Basketball'],['hockey','Hockey'],['football','Football'],['baseball','Baseball'],['soccer','Soccer'],['tennis','Tennis']]
         .find(([family])=>String(entry.sport_family||'').includes(family))||[])[1]||entry.sport;
       await pool.query(`INSERT INTO trade_history(id,market_ticker,sport,teams,occurred_at,profit_cents,outcome)
