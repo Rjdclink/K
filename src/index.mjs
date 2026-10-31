@@ -24,6 +24,7 @@ import { scanWeatherMarkets } from './weather_scanner.mjs';
 import { sellQuote } from './sell.mjs';
 import { yesDepthAtAsk, bestYesAsk, bestAsksForTickers } from './orderbook.mjs';
 import { filledOrderGateCount } from './entry_floor.mjs';
+import { valueCandidate } from './value_scan.mjs';
 
 const API='https://external-api.kalshi.com/trade-api/v2';
 const pool = new pg.Pool({connectionString:process.env.DATABASE_URL, max:4, idleTimeoutMillis:15000});
@@ -81,6 +82,15 @@ let scanStatusReady;
 function ensureScanStatus(){return scanStatusReady??=pool.query('ALTER TABLE scan_status ADD COLUMN IF NOT EXISTS discovered integer NOT NULL DEFAULT 0').catch(e=>{scanStatusReady=null;throw e})}
 let scoreTimeReady;
 function ensureScoreTime(){return scoreTimeReady??=pool.query('ALTER TABLE game_snapshots ADD COLUMN IF NOT EXISTS score_observed_at timestamptz').catch(e=>{scoreTimeReady=null;throw e})}
+let valueScanReady;
+function ensureValueScan(){return valueScanReady??=Promise.all([
+  pool.query(`ALTER TABLE game_snapshots ADD COLUMN IF NOT EXISTS value_signals jsonb NOT NULL DEFAULT '[]'::jsonb`),
+  pool.query(`CREATE TABLE IF NOT EXISTS value_scan_observations (
+    observed_at timestamptz NOT NULL,game_id text NOT NULL,market_ticker text NOT NULL,
+    role text NOT NULL,ask numeric NOT NULL,ask_size numeric NOT NULL,
+    game_state jsonb NOT NULL,market_rules text NOT NULL,
+    PRIMARY KEY(observed_at,market_ticker))`)
+]).catch(e=>{valueScanReady=null;throw e})}
 function accountBalance({fresh=false}={}){
   const job=balanceQueue.catch(()=>{}).then(async()=>{
     const client=await pool.connect();
@@ -1332,15 +1342,20 @@ async function scan(cachedMilestones,discoveryCount){
       FROM trade_attempts a WHERE a.status='filled'`,[scanStarted])
       .then(({rows})=>checkHeldCombinations(rows))
       .catch(e=>{console.error('Held combo execution deferred:',e);return {error:e.message}}):Promise.resolve(null);
-    await candidateTable();
+    await Promise.all([candidateTable(),ensureValueScan()]);
     const opportunities=[],snapshotRows=new Map(),scoreboardCache=new Map();
+    const valueObservations=[];
     const allCandidates=[],upgradeCandidates=[],snapshotCandidates=new Map();
     const upgradeFills=new Map(existingFills.rows.filter(r=>r.strategy==='over'||r.strategy==='lead'&&/Kalshi-only/i.test(r.reason||'')).map(r=>[r.market_ticker,r]));
     const heldPositions=new Map((openPositions?.market_positions||[]).map(p=>[p.ticker,p]));
     for(const {milestone,state} of games){
       const candidates=[];
+      const valueSignals=[];
       if(eligibleForMarkets(state))for(const ticker of linkedEventTickers(milestone)){const event=events.get(ticker);if(!event || !['Sports','Esports'].includes(event.category))continue;
-        for(const market of event.markets||[]){if(market.event_ticker!==event.event_ticker)continue;const signal=overSignal(state,market)||golfSignal(state,market)||leadSignal(state,market)||additionalLeadSignal(state,market)||cricketLeadSignal(state,market)||drawSignal(state,market)||earlyLeadSignal(state,market)||tennisSignal(state,market)||tableTennisSignal(state,market);if(signal)candidates.push({signal,event,market,state,milestone})}}
+        for(const market of event.markets||[]){if(market.event_ticker!==event.event_ticker)continue;
+          const value=valueCandidate(state,market,event);
+          if(value){valueSignals.push(value);valueObservations.push({gameId:state.id,value,state,market})}
+          const signal=overSignal(state,market)||golfSignal(state,market)||leadSignal(state,market)||additionalLeadSignal(state,market)||cricketLeadSignal(state,market)||drawSignal(state,market)||earlyLeadSignal(state,market)||tennisSignal(state,market)||tableTennisSignal(state,market);if(signal)candidates.push({signal,event,market,state,milestone})}}
       // Keep crossed, already-filled props visible with their status, but do
       // not send them through order preflight or count them as new candidates.
       allCandidates.push(...candidates.filter(c=>!filled.has(signalKey(c))));
@@ -1361,6 +1376,7 @@ async function scan(cachedMilestones,discoveryCount){
       const clockLabel=state.golf?'Round progress':/esports/.test(state.type)?'Match phase':/cricket/.test(state.type)?'Innings progress':soccer?Number.isFinite(state.matchRemainingSeconds)?'Match time left':state.soccerMinute>=90?'Stoppage time':'Regulation left':baseball?'Inning progress':tennis?'Set progress':['NCAAB','NCAAW'].includes(state.sport)? `Half ${state.period||'?'} left`:/hockey/.test(state.type)?`Period ${state.period||'?'} left`:/football|basketball/.test(state.type)?`Quarter ${state.period||'?'} left`:'Game clock';
       const displayClockLabel=clockSeconds!=null&&state.clockRunning===false?`${clockLabel} · paused`:clockLabel;
       snapshotRows.set(state.id,[state.id,state.title||'Sports game',state.sport,state.type,state.scoreKnown?state.home:null,state.scoreKnown?state.away:null,state.verifiedLive?'live':/^(final|finished|complete|completed|closed|ended)$/.test(state.status)?'final':'inactive',Number.isFinite(state.progress)?state.progress:null,String(state.period||''),timeLeft,clockSeconds,displayClockLabel,liveMap.get(milestone.id)?._observed_at||null,scanStarted,'[]',state.possessionSide,state.homeTeamId||null,state.awayTeamId||null ]);
+      snapshotRows.get(state.id).valueSignals=valueSignals;
     }
     const missing=[...allCandidates,...upgradeCandidates].filter(c=>!hasAsk(c.market));
     if(missing.length){
@@ -1412,6 +1428,20 @@ async function scan(cachedMilestones,discoveryCount){
       const signalValues=batch.map((_,row)=>`($${row*2+1},$${row*2+2})`).join(',');
       await pool.query(`UPDATE game_snapshots AS g SET signals=v.signals::jsonb,scanned_at=clock_timestamp()
         FROM (VALUES ${signalValues}) AS v(id,signals) WHERE g.id=v.id`,batch.flatMap(row=>[row[0],row[14]]));
+      await pool.query(`UPDATE game_snapshots AS g SET value_signals=v.value_signals::jsonb
+        FROM (VALUES ${signalValues}) AS v(id,value_signals) WHERE g.id=v.id`,batch.flatMap(row=>[row[0],JSON.stringify(row.valueSignals||[])]));
+    }
+    for(let i=0;i<valueObservations.length;i+=50){
+      const batch=valueObservations.slice(i,i+50);
+      const values=batch.map((_,row)=>'('+Array.from({length:8},(_,field)=>'$'+(row*8+field+1)).join(',')+')').join(',');
+      await pool.query(`INSERT INTO value_scan_observations
+        (observed_at,game_id,market_ticker,role,ask,ask_size,game_state,market_rules)
+        VALUES ${values} ON CONFLICT DO NOTHING`,batch.flatMap(({gameId,value,state,market})=>[
+          scanStarted,gameId,value.ticker,value.role,value.ask,value.size,
+          JSON.stringify({sport:state.sport,type:state.type,home:state.home,away:state.away,period:state.period,remainingSeconds:state.remainingSeconds,
+            matchRemainingSeconds:state.matchRemainingSeconds,possessionSide:state.possessionSide,
+            gameObservedAt:state.observedAt,gameUpdatedAt:state.updatedAt}),String(market.rules_primary||'')
+        ]));
     }
     // Make the live score and clock visible before slower order preflights.
     await pool.query(`UPDATE scan_status SET last_scan=$1,scanned=$2,signals=$3,discovered=$4 WHERE id=1`,[scanStarted,scanned,signals,discoveryCount]);
@@ -1665,11 +1695,12 @@ let recentDashboardPositions=null,recentDashboardBalance=null;
 const dashboardDeadline=ms=>new Promise(resolve=>setTimeout(()=>resolve(null),ms));
 async function state(){
   await ensureScoreTime();
+  await ensureValueScan();
   await pool.query(`CREATE TABLE IF NOT EXISTS combo_diagnostics (id bigserial PRIMARY KEY,
     checked_at timestamptz NOT NULL DEFAULT now(),leg_tickers jsonb NOT NULL,
     collection_ticker text,status text NOT NULL,detail text)`);
   const [snap,stats,attempts,weatherStatus]=await Promise.all([
-  pool.query(`SELECT id,title,sport,home,away,possession_side,status,time_left,scanned_at,signals FROM game_snapshots
+  pool.query(`SELECT id,title,sport,home,away,possession_side,status,time_left,scanned_at,signals,value_signals FROM game_snapshots
     WHERE status IN ('live','inprogress','started') AND scanned_at>now()-interval '15 minutes'
     ORDER BY jsonb_array_length(signals) DESC,title`),
   pool.query('SELECT * FROM scan_status WHERE id=1'),
