@@ -1,3 +1,5 @@
+import { periodValue, playerOverSpec } from './strategy.mjs';
+
 // The displayed amount is for the shares that can actually sell at the
 // current bid. Exposure and paid fees come from the exchange's open position.
 export function estimatedSaleProfitCents(position, sale, fallbackPrice) {
@@ -46,14 +48,62 @@ export function halfPotentialProfitExitEligible(position,sale){
     saleProfitCents*2>=maximumNetCents;
 }
 
-// A soccer total can be corrected after entry. Only a reversal that puts the
-// held YES contract back at or below its line calls for an urgent cash-out.
-export function soccerOverCorrectionAffects(original,game){
-  if(original?.strategy!=='over'||!/soccer/.test(String(game?.type||''))||
-    !/TOTAL/i.test(String(original.market_ticker||''))||/TEAMTOTAL/i.test(String(original.market_ticker||''))||
-    !game.verifiedLive||!game.scoreKnown||!game.scoreConsistent)return false;
-  const entry=String(original.reason||'').match(/^(\d+(?:\.\d+)?) scored; line (\d+(?:\.\d+)?) already passed/);
-  const total=Number(game.home)+Number(game.away);
-  return Boolean(entry)&&Number.isFinite(total)&&total<Number(entry[1])&&total<=Number(entry[2]);
+export function profitTargetAllowed(original){
+  const lead=original?.strategy==='lead'&&!/TOTAL/i.test(String(original.market_ticker||''));
+  return !(lead&&(original.sport==='Soccer'||
+    Array.isArray(original.combo_legs)&&original.combo_legs.some(leg=>leg.sport==='Soccer')));
+}
+
+// Compare the exact held over statistic, not a game's aggregate score, with
+// its original crossed line. A reversal matters only once the line uncrosses.
+export function overCorrectionAffects(original,game,market){
+  if(original?.strategy!=='over'||!game?.verifiedLive||!game.scoreKnown||!game.scoreConsistent||
+    !market||market.ticker!==original.market_ticker)return false;
+  const series=String(market.event_ticker||'').split('-')[0];
+  const cricket=game.type==='cricket_match';
+  const reason=String(original.reason||'');
+  const entry=cricket?reason.match(/^(.+?) has (\d+) runs; team total (\d+(?:\.\d+)?) crossed/):
+    reason.match(/^(\d+(?:\.\d+)?) (scored|[A-Z0-9]+)(?: by .+?)?; line (\d+(?:\.\d+)?) already passed/);
+  if(!entry)return false;
+  const before=Number(entry[cricket?2:1]),line=Number(entry[3]);
+  if(!Number.isFinite(before)||!Number.isFinite(line)||Number(market.floor_strike)!==line)return false;
+  let current=NaN;
+  if(cricket){
+    if(!/TEAMTOTAL$/.test(series))return false;
+    const teamId=Object.entries(market.custom_strike||{}).find(([key])=>/_team$/.test(key))?.[1];
+    const home=teamId?teamId===game.homeTeamId:String(entry[1]).toLowerCase()===String(game.homeName||'').toLowerCase();
+    const away=teamId?teamId===game.awayTeamId:String(entry[1]).toLowerCase()===String(game.awayName||'').toLowerCase();
+    if(home===away)return false;
+    current=home?game.home:game.away;
+  }else{
+    const player=playerOverSpec(game,market);
+    const hasPlayer=Object.keys(market.custom_strike||{}).some(key=>/_player$/.test(key));
+    if(hasPlayer){if(!player||player.metric!==entry[2])return false;current=player.value}
+    else if(/^KX(?:ATP|WTA)GTOTAL$/.test(series))current=game.tennisTotal;
+    else if(/[1-9](?:Q|P|H|INNING)(?:TEAM)?TOTAL$/.test(series)){
+      const segment=periodValue(game,market);
+      if(!segment)return false;
+      if(/TEAMTOTAL$/.test(series)){
+        const teamId=Object.entries(market.custom_strike||{}).find(([key])=>/_team$/.test(key))?.[1];
+        const home=teamId&&teamId===game.homeTeamId,away=teamId&&teamId===game.awayTeamId;
+        if(home===away)return false;
+        current=home?segment.home:segment.away;
+      }else current=segment.home+segment.away;
+    }else if(/TEAMTOTAL$/.test(series)){
+      const teamId=Object.entries(market.custom_strike||{}).find(([key])=>/_team$/.test(key))?.[1];
+      const home=teamId&&teamId===game.homeTeamId,away=teamId&&teamId===game.awayTeamId;
+      if(home===away)return false;
+      current=home?game.home:game.away;
+    }else if(/TOTAL$/.test(series))current=Number(game.home)+Number(game.away);
+    else return false;
+  }
+  return Number.isFinite(current)&&current<before&&current<=line;
+}
+
+export function correctionExitTargets(rows,statesByGame,marketsByTicker){
+  const affected=new Set(rows.filter(row=>overCorrectionAffects(row,statesByGame.get(row.game_id),marketsByTicker.get(row.market_ticker)))
+    .map(row=>row.market_ticker));
+  return new Set([...affected,...rows.filter(row=>Array.isArray(row.combo_legs)&&
+    row.combo_legs.some(leg=>affected.has(leg.market_ticker))).map(row=>row.market_ticker)]);
 }
 
