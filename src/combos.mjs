@@ -5,6 +5,7 @@ export const COMBO_WINDOW_MS=12000;
 // RFQ maker can take longer than the quote freshness window.
 export const COMBO_ATTEMPT_MS=45000;
 export const VERIFY_DWELL_MS=6000;
+export const COMBO_HELD_CANDIDATES=9;
 export function comboAllocation(){return .20;}
 export function comboAllowedCents(fraction,bankrollCents){return Math.floor(fraction*bankrollCents);}
 // Maker RFQs quote close to target cost; leave room for the fee before asking.
@@ -31,7 +32,7 @@ export function comboCandidates(candidates, strategy, max=6){
     games.add(c.milestone.id);events.add(c.event.event_ticker);return true;
   }).slice(0,max);
 }
-export function filledComboWindow(fills,heldTickers,lastComboAt,max=6){
+export function filledComboWindow(fills,heldTickers,lastComboAt,max=COMBO_HELD_CANDIDATES){
   const singles=fills.filter(r=>!r.combo_legs&&heldTickers.has(r.market_ticker))
     .sort((a,b)=>new Date(b.updated_at)-new Date(a.updated_at));
   if(singles.length<2)return [];
@@ -47,7 +48,7 @@ export function eligibleFillTrigger(ready,singles,group){
   return ready.map(r=>heldById.get(r.id)).find(r=>r&&eligible.has(r.market_ticker))||null;
 }
 export async function collectionsForEvents(eventTickers,get){
-  const tickers=[...new Set(eventTickers)].filter(Boolean).slice(0,6);
+  const tickers=[...new Set(eventTickers)].filter(Boolean).slice(0,COMBO_HELD_CANDIDATES);
   const responses=await Promise.all(tickers.map(async ticker=>{
     const rows=[];let cursor='';
     for(let page=0;page<5;page++){
@@ -71,17 +72,25 @@ export function comboCollection(collections,legs){
 }
 export function compatibleComboGroups(collections,candidates,maxGroups=6){
   const groups=[];
-  const count=Math.min(10,candidates.length);
+  const count=Math.min(COMBO_HELD_CANDIDATES,candidates.length);
   for(let mask=1;mask<(1<<count);mask++){
     const legs=candidates.slice(0,count).filter((_,i)=>mask&(1<<i));
-    if(legs.length<2||legs.length>6)continue;
+    if(legs.length<2)continue;
     const collection=comboCollection(collections,legs);
     if(collection)groups.push({legs,collection});
   }
   return groups.sort((a,b)=>b.legs.length-a.legs.length).slice(0,maxGroups);
 }
-export function prioritizedComboGroups(groups,maxLarger=5){
-  return [...groups.filter(g=>g.legs.length===2),...groups.filter(g=>g.legs.length>2).slice(0,maxLarger)];
+export function prioritizedComboGroups(groups,maxLarger=9,rotation=0){
+  const pairs=groups.filter(g=>g.legs.length===2),larger=groups.filter(g=>g.legs.length>2);
+  const sizes=[...new Set(larger.map(g=>g.legs.length))].sort((a,b)=>b-a);
+  const chosen=sizes.slice(0,maxLarger).map(size=>{
+    const options=larger.filter(g=>g.legs.length===size);
+    return options[rotation%options.length];
+  });
+  const rest=larger.filter(g=>!chosen.includes(g));
+  for(let i=0;i<rest.length&&chosen.length<maxLarger;i++)chosen.push(rest[(rotation+i)%rest.length]);
+  return [...pairs,...chosen];
 }
 export function comboPairDiagnostics(collections,candidates){
   const pairs=[];
