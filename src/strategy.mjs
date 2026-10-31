@@ -292,11 +292,14 @@ export function overSignal(game, market) {
     if(!team||!norm(market.title).includes(norm(team)))return null;
   }
   if (!Number.isFinite(strike) || strike<0 || !Number.isFinite(scored) || scored<=strike) return null;
+  // A player stat may be recredited during play. Require one more credited
+  // unit than the contract needs before independently checking an entry.
+  if(player&&scored-1<=strike)return null;
   // Only an independently verified, complete play list identifies the last
   // score precisely enough for the 40% tier. Do not guess a reversal size.
   const lastPlay=game.lastScoringPlay;
   const robust=gameTotal&&!teamTotal&&!player&&!segment&&Number.isInteger(lastPlay)&&lastPlay>0&&scored-lastPlay>strike;
-  return {strategy:'over', reason:`${scored} ${player?.metric||'scored'}${team?` by ${team}`:''}; line ${strike} already passed${segment?`; segment ${segment[1]}`:''}${robust?`; still crossed if the latest ${lastPlay}-unit scoring play is removed`:''}`, fraction:robust?.40:.30,scored,strike};
+  return {strategy:'over', reason:`${scored} ${player?.metric||'scored'}${team?` by ${team}`:''}; line ${strike} already passed${segment?`; segment ${segment[1]}`:''}${robust?`; still crossed if the latest ${lastPlay}-unit scoring play is removed`:''}`, fraction:robust?.40:.10,scored,strike};
 }
 // A Kalshi-only check cannot establish which scoring event was last. Remove
 // the largest ordinary single scoring play for that sport from the displayed
@@ -319,7 +322,7 @@ export function fallbackOverFraction(game,market){
   if(!signal||playerOverSpec(game,market)||!Number.isInteger(units)||
     !Number.isFinite(signal.scored)||!Number.isFinite(signal.strike)||signal.scored-units<=signal.strike)return null;
   const excess=signal.scored-units-signal.strike;
-  return excess>=2*units?.15:excess>=units?.10:.05;
+  return excess>=units?.10:.05;
 }
 // The live cricket score is a team run total only in limited-over formats
 // with one innings per side. Test/first-class and non-run props need separate
@@ -836,8 +839,8 @@ export function orderSize(balanceCents, askDollars, askSize, fraction, cap=1, ba
 export function overBudget(balanceCents, portfolioValueCents) {
   const cash=N(balanceCents), value=N(portfolioValueCents);
   if (![cash,value].every(Number.isFinite) || Math.min(cash,value)<0) return 0;
-  // Each single has its own 30% bankroll limit. Existing positions do not
+  // Each ordinary over has its own 10% bankroll limit. Existing positions do not
   // reduce another trade's limit; cash availability is checked separately.
-  return Math.floor((cash+value)*0.30);
+  return Math.floor((cash+value)*0.10);
 }
 
