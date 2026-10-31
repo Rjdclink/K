@@ -16,6 +16,7 @@ test('ask counter excludes watch rows, missing depth, terminal prices, and alrea
   vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],context);
   await new Promise(resolve=>setImmediate(resolve));
   assert.equal(elements.get('askCount').textContent,2,'a real ask can exist even when a different gate blocks the trade');
+  assert.equal(elements.get('gamesCount').textContent,1);
 });
 
 test('bankroll displays a recent verified balance with its age status',async()=>{
@@ -33,10 +34,21 @@ test('bankroll displays a recent verified balance with its age status',async()=>
 });
 
 test('game summary puts preflight and available-ask counts above other metrics',()=>{
-  const names=['Preflight candidates','Signals with an ask','Score rule matches','Catalog milestones discovered','Weather series monitored'];
+  const names=['Preflight candidates','Signals with an ask','Score rule matches','Catalog milestones discovered','Weather scan'];
   const positions=names.map(name=>page.indexOf('<span>'+name));
   assert.ok(positions.every(position=>position>=0));
   assert.deepEqual([...positions].sort((a,b)=>a-b),positions);
+});
+test('weather card reports a paused scan without stale candidate counts',async()=>{
+  const elements=new Map();
+  const element=()=>({children:[],style:{},classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){},replaceChildren(...x){this.children=x}});
+  const document={getElementById:id=>{if(!elements.has(id))elements.set(id,element());return elements.get(id)},querySelectorAll:()=>[],createElement:element};
+  const context=vm.createContext({document,window:{addEventListener(){}},navigator:{},localStorage:{getItem(){return null},setItem(){}},
+    fetch:async()=>({ok:true,status:200,json:async()=>({games:[],orders:[],alerts:[],scan:{},weather:{disabled:true,series:209,eligible:46}})}),AbortSignal,URLSearchParams,setInterval(){}});
+  vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],context);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(elements.get('weatherSeries').textContent,'Paused');
+  assert.equal(elements.get('weatherEligible').textContent,'—');
 });
 
 test('stale football cards explicitly say they were absent from the latest live scan',()=>{

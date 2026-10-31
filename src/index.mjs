@@ -26,7 +26,6 @@ import { selectedTeamName, selectedTeamSide } from './selected_team.mjs';
 import { estimatedSaleProfitCents, halfPotentialProfitExitEligible, oneAndHalfExitEligible, profitTargetAllowed, overCorrectionAffects, correctionExitTargets } from './positions.mjs';
 import { remainingVerifiedOverCents, upgradeEligible } from './upgrades.mjs';
 import { weatherContract } from './weather.mjs';
-import { scanWeatherMarkets } from './weather_scanner.mjs';
 import { sellQuote } from './sell.mjs';
 import { manualComboQuote } from './combo_manual.mjs';
 import { yesDepthAtAsk, bestYesAsk, bestAsksForTickers } from './orderbook.mjs';
@@ -1569,6 +1568,27 @@ async function executeVerifiedWeather(verified){
     break;
   }
 }
+function snapshotRow({milestone,state},liveMap,scanStarted){
+  const baseball=/baseball/.test(state.type),tennis=/tennis/.test(state.type),soccer=/soccer/.test(state.type);
+  const timeLeft=gameTimeLabel(state);
+  const preciseClockSeconds=state.verifiedLive?(soccer&&Number.isFinite(state.matchRemainingSeconds)?state.matchRemainingSeconds:soccer&&Number.isFinite(state.soccerMinute)&&state.soccerMinute<90?Math.max(0,(90-state.soccerMinute)*60):!baseball&&!tennis&&!soccer&&Number.isFinite(state.remainingSeconds)?state.remainingSeconds:null):null;
+  const clockSeconds=storedClockSeconds(preciseClockSeconds,state.clockRunning);
+  const clockLabel=state.golf?'Round progress':/esports/.test(state.type)?'Match phase':/cricket/.test(state.type)?'Innings progress':soccer?Number.isFinite(state.matchRemainingSeconds)?'Match time left':state.soccerMinute>=90?'Stoppage time':'Regulation left':baseball?'Inning progress':tennis?'Set progress':['NCAAB','NCAAW'].includes(state.sport)? `Half ${state.period||'?'} left`:/hockey/.test(state.type)?`Period ${state.period||'?'} left`:/football|basketball/.test(state.type)?`Quarter ${state.period||'?'} left`:'Game clock';
+  const displayClockLabel=clockSeconds!=null&&state.clockRunning===false?`${clockLabel} · paused`:clockLabel;
+  return [state.id,state.title||'Sports game',state.sport,state.type,state.scoreKnown?state.home:null,state.scoreKnown?state.away:null,state.verifiedLive?'live':/^(final|finished|complete|completed|closed|ended)$/.test(state.status)?'final':'inactive',Number.isFinite(state.progress)?state.progress:null,String(state.period||''),timeLeft,clockSeconds,displayClockLabel,liveMap.get(milestone.id)?._observed_at||null,scanStarted,'[]',state.possessionSide,state.homeTeamId||null,state.awayTeamId||null];
+}
+async function publishLivePreview(active,liveMap,scanStarted){
+  for(let i=0;i<active.length;i+=100){
+    const batch=active.slice(i,i+100).map(game=>snapshotRow(game,liveMap,scanStarted));
+    if(!batch.length)continue;
+    const values=batch.map((_,row)=>'('+Array.from({length:18},(_,field)=>'$'+(row*18+field+1)).join(',')+')').join(',');
+    await pool.query(`INSERT INTO game_snapshots(id,title,sport,sport_family,home,away,status,progress,period,time_left,clock_seconds,clock_label,clock_observed_at,scanned_at,signals,possession_side,home_team_id,away_team_id) VALUES ${values}
+      ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,sport=EXCLUDED.sport,sport_family=EXCLUDED.sport_family,home=EXCLUDED.home,away=EXCLUDED.away,status=EXCLUDED.status,progress=EXCLUDED.progress,period=EXCLUDED.period,time_left=EXCLUDED.time_left,clock_seconds=EXCLUDED.clock_seconds,clock_label=EXCLUDED.clock_label,
+      clock_observed_at=CASE WHEN game_snapshots.clock_seconds IS NOT DISTINCT FROM EXCLUDED.clock_seconds AND game_snapshots.period=EXCLUDED.period THEN game_snapshots.clock_observed_at ELSE EXCLUDED.clock_observed_at END,
+      scanned_at=EXCLUDED.scanned_at,signals='[]'::jsonb,value_signals='[]'::jsonb,possession_side=EXCLUDED.possession_side,home_team_id=EXCLUDED.home_team_id,away_team_id=EXCLUDED.away_team_id
+      WHERE game_snapshots.scanned_at<=EXCLUDED.scanned_at`,batch.flat());
+  }
+}
 async function scan(cachedMilestones,discoveryCount){
   // A transaction-scoped lock is released by Postgres even if an invocation is terminated.
   // Snapshot writes use other pool connections so the dashboard sees each completed cycle.
@@ -1588,6 +1608,10 @@ async function scan(cachedMilestones,discoveryCount){
     const games=ms.map(m=>({milestone:m,state:gameState(m,liveMap.get(m.id))})).filter(g=>
       g.state.verifiedLive||Date.parse(g.milestone.start_date||'')>Date.now()-3600000);
     const active=games.filter(g=>g.state.verifiedLive && g.state.scoreKnown);
+    // Publish fresh live scores before quote discovery or cash/combination
+    // work. A slow exchange response must not empty the dashboard's live list.
+    await ensureValueScan();
+    await publishLivePreview(active,liveMap,scanStarted);
     await ensureLeadWatch();
     const watched=active;
     for(let i=0;i<watched.length;i+=50){
@@ -1657,13 +1681,7 @@ async function scan(cachedMilestones,discoveryCount){
       }
       snapshotCandidates.set(state.id,candidates);
       if(state.verifiedLive)scanned++;
-      const baseball=/baseball/.test(state.type),tennis=/tennis/.test(state.type),soccer=/soccer/.test(state.type);
-      const timeLeft=gameTimeLabel(state);
-      const preciseClockSeconds=state.verifiedLive?(soccer&&Number.isFinite(state.matchRemainingSeconds)?state.matchRemainingSeconds:soccer&&Number.isFinite(state.soccerMinute)&&state.soccerMinute<90?Math.max(0,(90-state.soccerMinute)*60):!baseball&&!tennis&&!soccer&&Number.isFinite(state.remainingSeconds)?state.remainingSeconds:null):null;
-      const clockSeconds=storedClockSeconds(preciseClockSeconds,state.clockRunning);
-      const clockLabel=state.golf?'Round progress':/esports/.test(state.type)?'Match phase':/cricket/.test(state.type)?'Innings progress':soccer?Number.isFinite(state.matchRemainingSeconds)?'Match time left':state.soccerMinute>=90?'Stoppage time':'Regulation left':baseball?'Inning progress':tennis?'Set progress':['NCAAB','NCAAW'].includes(state.sport)? `Half ${state.period||'?'} left`:/hockey/.test(state.type)?`Period ${state.period||'?'} left`:/football|basketball/.test(state.type)?`Quarter ${state.period||'?'} left`:'Game clock';
-      const displayClockLabel=clockSeconds!=null&&state.clockRunning===false?`${clockLabel} · paused`:clockLabel;
-      snapshotRows.set(state.id,[state.id,state.title||'Sports game',state.sport,state.type,state.scoreKnown?state.home:null,state.scoreKnown?state.away:null,state.verifiedLive?'live':/^(final|finished|complete|completed|closed|ended)$/.test(state.status)?'final':'inactive',Number.isFinite(state.progress)?state.progress:null,String(state.period||''),timeLeft,clockSeconds,displayClockLabel,liveMap.get(milestone.id)?._observed_at||null,scanStarted,'[]',state.possessionSide,state.homeTeamId||null,state.awayTeamId||null ]);
+      snapshotRows.set(state.id,snapshotRow({milestone,state},liveMap,scanStarted));
       snapshotRows.get(state.id).valueSignals=valueSignals;
       snapshotRows.get(state.id).leadWatch=leadWatchReason(state);
     }
@@ -2060,7 +2078,7 @@ async function state(){
   await pool.query(`CREATE TABLE IF NOT EXISTS combo_diagnostics (id bigserial PRIMARY KEY,
     checked_at timestamptz NOT NULL DEFAULT now(),leg_tickers jsonb NOT NULL,
     collection_ticker text,status text NOT NULL,detail text)`);
-  const [snap,stats,attempts,weatherStatus]=await Promise.all([
+  const [snap,stats,attempts]=await Promise.all([
   pool.query(`SELECT id,title,sport,home,away,possession_side,status,time_left,scanned_at,signals,value_signals FROM game_snapshots
     WHERE status IN ('live','inprogress','started') AND scanned_at>now()-interval '2 minutes'
     ORDER BY jsonb_array_length(signals) DESC,title`),
@@ -2072,7 +2090,6 @@ async function state(){
       WHERE a.sport ILIKE '%tennis%' AND v.market_ticker=a.market_ticker AND v.passed=true AND v.created_at<=a.created_at
       ORDER BY v.created_at DESC LIMIT 1) verified ON true
     WHERE a.status='filled' ORDER BY a.created_at DESC`),
-  pool.query('SELECT * FROM weather_scan_status WHERE id=1')
 ]);
   const awaiting=[...new Set(snap.rows.flatMap(g=>(g.signals||[]).filter(s=>s.execution==='Awaiting score verification').map(s=>s.ticker)))];
   if(awaiting.length){
@@ -2159,25 +2176,19 @@ async function state(){
   const comboIssue=comboIssues.find(issue=>!(issue.status==='insufficient_cash'&&Number(balance?.balance)>=100)&&issue.leg_tickers.length>=2&&
     issue.leg_tickers.every(ticker=>open.has(ticker)))||null;
   if(comboIssue)comboIssue.leg_names=comboIssue.leg_tickers.map(ticker=>orders.find(o=>o.market_ticker===ticker)?.game_title||ticker);
-  return {live:live(),exitOnly:exitOnly(),credentials:configured(),aiConfigured:Boolean(process.env.AI_API_KEY),balance,balanceStale,balanceAsOf,accountError,positionsError,positionsStale:Boolean(positions&&positionsError),games:snap.rows,scan:stats.rows[0],weather:weatherStatus.rows[0],comboIssue,orders};
+  return {live:live(),exitOnly:exitOnly(),credentials:configured(),aiConfigured:Boolean(process.env.AI_API_KEY),balance,balanceStale,balanceAsOf,accountError,positionsError,positionsStale:Boolean(positions&&positionsError),games:snap.rows,scan:stats.rows[0],weather:{disabled:true,series:0,eligible:0},comboIssue,orders};
 }
 async function settlementAlerts(since){
   const {rows}=await pool.query(`SELECT id,ticker,profit_cents,settled_time,created_at FROM settlement_alerts WHERE id>$1 AND created_at>now()-interval '2 days' ORDER BY id LIMIT 50`,[since]);
   return rows;
 }
 async function handleRequest(req){const url=new URL(req.url);
-  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'immediate-fill-combos-20261031'});
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'live-preview-weather-paused-20261031'});
   if(req.method==='GET'&&url.pathname==='/manifest.webmanifest')return response(manifest,'application/manifest+json');
   if(req.method==='GET'&&url.pathname==='/sw.js')return new Response(worker,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','service-worker-allowed':'/','x-content-type-options':'nosniff'}});
   if(req.method==='GET'&&/^\/icon-(192|512)\.png$/.test(url.pathname))return response(Buffer.from(icons[Number(url.pathname.match(/\d+/)[0])],'base64'),'image/png');
   if(req.method==='POST'&&url.pathname==='/tick'){
     if(!req.headers.get('x-neon-trigger-invocation-id'))return json({error:'Forbidden'},403);
-    const weatherClaim=await pool.query(`UPDATE weather_scan_status SET last_scan=now() WHERE id=1
-      AND (last_scan IS NULL OR last_scan<now()-interval '90 seconds') RETURNING id`);
-    const weatherJob=weatherClaim.rowCount?withApiPriority('background',()=>scanWeatherMarkets({kalshi,nws,twc,onVerified:executeVerifiedWeather})).then(async stats=>{
-      console.info('Weather scan funnel:',JSON.stringify({series:stats.series,events:stats.events,eligible:stats.eligible,verified:stats.verified,companyProbe:stats.companyProbe,companyObservationFeed:stats.companyObservationFeed,sources:stats.sources,rejections:stats.rejections,thresholdSamples:stats.thresholdSamples}));
-      await pool.query(`UPDATE weather_scan_status SET last_scan=now(),series=$1,events=$2,eligible=$3,verified=$4,failures=$5 WHERE id=1`,[stats.series,stats.events,stats.eligible,stats.verified,stats.failures]);
-    }).catch(e=>console.warn('Weather discovery deferred:',e.message)):Promise.resolve();
     // Neon cron has minute resolution. Short invocations keep the three-second loop alive
     // without relying on one function instance surviving for a full quarter hour.
     const now=Date.now();const until=Math.min(now+55000,(Math.floor(now/60000)+1)*60000-2000);let cached=null,discoveryCount,cycles=0,last={};
@@ -2209,7 +2220,6 @@ async function handleRequest(req){const url=new URL(req.url);
       await Promise.all([correctionJob,leadWatchJob,discoveryJob]);
       if(discoveryError)console.warn('Sports discovery deferred:',discoveryError.message);
     }
-    await weatherJob;
     const {next,...summary}=last;return json({...summary,cycles});
   }
   if(req.method==='GET'&&url.pathname==='/login')return dashboardAuth(req)?Response.redirect(new URL('/',url),303):response(loginPage(),'text/html; charset=utf-8');
