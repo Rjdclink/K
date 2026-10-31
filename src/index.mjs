@@ -163,6 +163,8 @@ async function manualSell(body){
   const client=await pool.connect();
   try{
     await client.query('BEGIN');await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',['sell:'+body.ticker]);
+    const over=await client.query("SELECT 1 FROM trade_attempts WHERE market_ticker=$1 AND status='filled' AND strategy='over' LIMIT 1",[body.ticker]);
+    if(over.rowCount){await client.query('ROLLBACK');return json({error:'Manual selling is disabled for OVER tickets'},403)}
     const existing=await client.query("SELECT * FROM manual_sales WHERE id=$1 OR (ticker=$2 AND status='pending')",[body.id,body.ticker]);
     if(existing.rows.length){
       const old=existing.rows[0];
@@ -1761,7 +1763,7 @@ export default {async fetch(req){const url=new URL(req.url);
       const held=new Map((positions.market_positions||[]).filter(p=>Number(p.position_fp??p.position??0)>0).map(p=>[p.ticker,p]));
       const {rows}=await pool.query('SELECT DISTINCT ON (market_ticker) market_ticker,strategy,reason,limit_price FROM trade_attempts WHERE status=$1 AND market_ticker=ANY($2::text[]) ORDER BY market_ticker,created_at DESC',['filled',tickers]);
       const attempts=new Map(rows.map(o=>[o.market_ticker,o]));
-      const results=await Promise.allSettled(tickers.filter(t=>held.has(t)&&attempts.has(t)).map(async ticker=>{
+      const results=await Promise.allSettled(tickers.filter(t=>held.has(t)&&attempts.has(t)&&attempts.get(t).strategy!=='over').map(async ticker=>{
         const {quote,market}=await currentSell(ticker,positions,true),attempt=attempts.get(ticker);
         return {ticker,sell_quote:quote,sell_profit_cents:quote?estimatedSaleProfitCents(held.get(ticker),quote,attempt.limit_price):null,
           selected_name:attempt.strategy==='lead'?market?.yes_sub_title||String(market?.title||'').replace(/\s+wins?\b.*/i,''):
