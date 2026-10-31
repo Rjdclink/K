@@ -32,14 +32,28 @@ export function oneAndHalfExitEligible(position,sale){
   return proceedsCents>=Math.ceil(1.5*acquisitionCents-1e-8);
 }
 
-// Positive-profit exits apply to fast-moving single match winners; the
-// separate 1.5x target can also apply to other holdings.
-export function positiveExitEligible(trade, gameType, profitCents) {
-  if (trade?.strategy !== 'lead' || !Number.isFinite(profitCents) || profitCents <= 0) return false;
-  if (Array.isArray(trade.combo_legs) && trade.combo_legs.length >= 2) return false;
-  const fast = (sport, type = '') => /basketball|^tennis(?:_|$)|^cricket_match$/i.test(String(type)) ||
-    /^(?:NBA|WNBA|NCAAB|NCAAW|Basketball|eBasketball|Tennis)$/i.test(String(sport)) ||
-    /\b(?:ODI|T20|Test International|Cricket)\b/i.test(String(sport));
-  return fast(trade.sport, gameType);
+// Compare a full executable cash-out, after estimated sale fees, with half
+// the position's net profit if every YES share pays out at settlement.
+export function halfPotentialProfitExitEligible(position,sale){
+  const held=Number(position?.position_fp??position?.position),count=Number(sale?.count);
+  const exposure=Number(position?.market_exposure_dollars),fees=Number(position?.fees_paid_dollars);
+  if(position?.market_exposure_dollars==null||position?.fees_paid_dollars==null||
+    !Number.isFinite(held)||held<=0||!Number.isFinite(count)||count<held-1e-7||count>held||
+    !Number.isFinite(exposure)||exposure<0||!Number.isFinite(fees)||fees<0)return false;
+  const maximumNetCents=Math.floor(held*100-(exposure+fees)*100+1e-8);
+  const saleProfitCents=estimatedSaleProfitCents(position,sale);
+  return maximumNetCents>0&&saleProfitCents!==null&&saleProfitCents>0&&
+    saleProfitCents*2>=maximumNetCents;
+}
+
+// A soccer total can be corrected after entry. Only a reversal that puts the
+// held YES contract back at or below its line calls for an urgent cash-out.
+export function soccerOverCorrectionAffects(original,game){
+  if(original?.strategy!=='over'||!/soccer/.test(String(game?.type||''))||
+    !/TOTAL/i.test(String(original.market_ticker||''))||/TEAMTOTAL/i.test(String(original.market_ticker||''))||
+    !game.verifiedLive||!game.scoreKnown||!game.scoreConsistent)return false;
+  const entry=String(original.reason||'').match(/^(\d+(?:\.\d+)?) scored; line (\d+(?:\.\d+)?) already passed/);
+  const total=Number(game.home)+Number(game.away);
+  return Boolean(entry)&&Number.isFinite(total)&&total<Number(entry[1])&&total<=Number(entry[2]);
 }
 
