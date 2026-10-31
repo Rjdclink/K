@@ -2,6 +2,8 @@ import { golfState } from './golf.mjs';
 import { VERIFY_DWELL_MS } from './combos.mjs';
 export const KALSHI_ONLY_FRACTION=.10;
 export const SOCCER_OVER_STABILITY_MS=10000;
+export const CFB_LEAD_WINDOW_SECONDS=270;
+export const CFB_LEAD_MINIMUM=11;
 export function soccerOverWaitMs(firstSeen,now=Date.now()){
   const first=firstSeen instanceof Date?firstSeen.getTime():Date.parse(firstSeen||'');
   return Number.isFinite(first)?Math.max(0,first+SOCCER_OVER_STABILITY_MS-now):Infinity;
@@ -195,7 +197,7 @@ export function periodValue(game,market){
 export function endWindow(game){
   if(!game.verifiedLive||!game.scoreKnown||!game.periodConsistent)return false;
   if(/basketball/.test(game.type))return game.period===(['NCAAB','NCAAW'].includes(game.sport)?2:4) && game.remainingSeconds>0 && game.remainingSeconds<=60;
-  if(/football/.test(game.type))return game.period===4 && game.remainingSeconds>0 && game.remainingSeconds<420;
+  if(/football/.test(game.type))return game.period===4 && game.remainingSeconds>0 && game.remainingSeconds<(game.sport==='CFB'?CFB_LEAD_WINDOW_SECONDS:420);
   if(/hockey/.test(game.type))return game.period===3 && game.remainingSeconds>0 && game.remainingSeconds<420;
   if(/baseball/.test(game.type))return game.period===9;
   if(/soccer/.test(game.type))return game.period===2 && Number.isFinite(game.soccerMinute) && game.soccerMinute>=83 && game.soccerMinute<90 && !game.soccerExtraTime;
@@ -209,12 +211,12 @@ export function leadWatchReason(game){
   const type=String(game.type||''),margin=Math.abs(game.home-game.away),seconds=game.remainingSeconds;
   if(!Number.isFinite(margin)||margin<=0)return null;
   if(/football/.test(type)){
+    if(game.sport==='CFB')return game.period===4&&Number.isFinite(seconds)&&seconds>0&&margin>=CFB_LEAD_MINIMUM?
+      `Tracking ${margin}-point college-football lead; entry strictly under 4:30 in Q4`:null;
     if(game.period===3&&Number.isFinite(seconds)&&seconds>=0&&seconds<=180&&margin>=21)
       return `Tracking ${margin}-point lead; third-quarter entry needs 28+ and under 1:00`;
     if(game.period===4&&Number.isFinite(seconds)&&seconds>0&&margin>=7)
-      return game.sport==='CFB'&&margin>=10&&seconds<330?
-        `Tracking ${margin}-point college-football lead; under 5:30, possession not required`:
-        `Tracking ${margin}-point lead; fourth-quarter winner window and possession required`;
+      return `Tracking ${margin}-point lead; fourth-quarter winner window and possession required`;
   }
   if(/basketball/.test(type)){
     const college=['NCAAB','NCAAW'].includes(game.sport),penultimate=college?1:3,final=college?2:4;
@@ -446,8 +448,8 @@ export function tableTennisSignal(game,market){
 }
 export function collegeFootballPossessionOptional(game){
   return game.sport==='CFB'&&/football/.test(game.type)&&game.period===4&&
-    Number.isFinite(game.remainingSeconds)&&game.remainingSeconds>0&&game.remainingSeconds<330&&
-    Number.isFinite(game.homeUnits)&&Number.isFinite(game.awayUnits)&&Math.abs(game.homeUnits-game.awayUnits)>=10;
+    Number.isFinite(game.remainingSeconds)&&game.remainingSeconds>0&&game.remainingSeconds<CFB_LEAD_WINDOW_SECONDS&&
+    Number.isFinite(game.homeUnits)&&Number.isFinite(game.awayUnits)&&Math.abs(game.homeUnits-game.awayUnits)>=CFB_LEAD_MINIMUM;
 }
 export function leadSignal(game, market) {
   if(game.soccerExtraTime)return null;
@@ -462,7 +464,7 @@ export function leadSignal(game, market) {
   if(soccer&&/^(?:1st|first)$/.test(game.soccerHalf))return null;
   const segments=/baseball/.test(game.type)?9:/hockey/.test(game.type)?3:/soccer/.test(game.type)?2:basketball&&['NCAAB','NCAAW'].includes(game.sport)?2:/basketball|football/.test(game.type)?4:Infinity;
   const baseball=/baseball/.test(game.type);
-  const finalTime=baseball?game.period===9:soccer?game.period===2&&(!Number.isFinite(game.soccerMinute)||game.soccerMinute<90):game.period===segments && game.periodConsistent && Number.isFinite(game.remainingSeconds) && game.remainingSeconds>0 && (basketball?game.remainingSeconds<=60:hockey?game.remainingSeconds<=390:game.remainingSeconds<420);
+  const finalTime=baseball?game.period===9:soccer?game.period===2&&(!Number.isFinite(game.soccerMinute)||game.soccerMinute<90):game.period===segments && game.periodConsistent && Number.isFinite(game.remainingSeconds) && game.remainingSeconds>0 && (basketball?game.remainingSeconds<=60:hockey?game.remainingSeconds<=390:game.remainingSeconds<(football&&game.sport==='CFB'?CFB_LEAD_WINDOW_SECONDS:420));
   if (!game.verifiedLive || !game.scoreKnown || soccer&&!game.scoreConsistent || !finalTime || market.status!=='active' && market.status!=='open') return null;
   const h=game.homeUnits,a=game.awayUnits;
   if (!Number.isFinite(h)||!Number.isFinite(a)) return null;
@@ -478,7 +480,7 @@ export function leadSignal(game, market) {
   if(soccer&&margin>=3&&!(Number.isFinite(game.matchRemainingSeconds)?
     game.matchRemainingSeconds>0&&game.matchRemainingSeconds<600:
     Number.isFinite(game.soccerMinute)&&game.soccerMinute>80&&game.soccerMinute<90))return null;
-  const minimum=basketball?5:football?10:hockey?3:baseball?2:soccer?finalWhistleSeconds<30?1:finalWhistleSeconds<300?2:3:null;
+  const minimum=basketball?5:football?game.sport==='CFB'?CFB_LEAD_MINIMUM:10:hockey?3:baseball?2:soccer?finalWhistleSeconds<30?1:finalWhistleSeconds<300?2:3:null;
   const closeLeaderPossession=game.possessionSide===(h>a?'home':'away');
   const closeLeadThreshold=basketball?4:football?7:hockey?1:Infinity;
   const closeLead=!(football&&game.sport==='CFB')&&game.remainingSeconds>0&&game.remainingSeconds<21&&
@@ -605,6 +607,7 @@ export function cricketLeadSignal(game,market){
 }
 export function earlyLeadSignal(game,market){
   const type=String(game?.type||'');
+  if(/football/.test(type)&&game?.sport==='CFB')return null;
   if(!game?.verifiedLive||!game.scoreKnown||!game.scoreConsistent||!game.periodConsistent||
     !['active','open'].includes(market?.status)||market.event_ticker!==game.mainEvent||
     !/^(?:.+ )?wins?\b/i.test(String(market.title||''))||
