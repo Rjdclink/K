@@ -112,8 +112,11 @@ function ensureScanStatus(){return scanStatusReady??=pool.query('ALTER TABLE sca
 let scoreTimeReady;
 function ensureScoreTime(){return scoreTimeReady??=pool.query('ALTER TABLE game_snapshots ADD COLUMN IF NOT EXISTS score_observed_at timestamptz').catch(e=>{scoreTimeReady=null;throw e})}
 let leadWatchReady;
-function ensureLeadWatch(){return leadWatchReady??=pool.query(`CREATE TABLE IF NOT EXISTS lead_watch_milestones (
-  game_id text PRIMARY KEY,milestone jsonb NOT NULL,updated_at timestamptz NOT NULL DEFAULT now())`).catch(e=>{leadWatchReady=null;throw e})}
+function ensureLeadWatch(){return leadWatchReady??=(async()=>{
+  await pool.query(`CREATE TABLE IF NOT EXISTS lead_watch_milestones (
+    game_id text PRIMARY KEY,milestone jsonb NOT NULL,updated_at timestamptz NOT NULL DEFAULT now())`);
+  await pool.query('ALTER TABLE lead_watch_milestones ADD COLUMN IF NOT EXISTS watchable boolean NOT NULL DEFAULT false');
+})().catch(e=>{leadWatchReady=null;throw e})}
 let valueScanReady;
 function ensureValueScan(){return valueScanReady??=Promise.all([
   pool.query(`ALTER TABLE game_snapshots ADD COLUMN IF NOT EXISTS value_signals jsonb NOT NULL DEFAULT '[]'::jsonb`),
@@ -1425,7 +1428,7 @@ async function watchLeadWindows(until){
     const started=Date.now();
     try{
       const {rows}=await pool.query(`SELECT milestone FROM lead_watch_milestones
-        WHERE updated_at>now()-interval '4 minutes' ORDER BY updated_at DESC`);
+        WHERE watchable AND updated_at>now()-interval '4 minutes' ORDER BY updated_at DESC`);
       const watching=rows.map(row=>row.milestone);
       if(watching.length){
         const latest=await liveBatch(watching);
@@ -1570,10 +1573,10 @@ async function scan(cachedMilestones,discoveryCount){
     await ensureLeadWatch();
     const watched=active;
     for(let i=0;i<watched.length;i+=50){
-      const batch=watched.slice(i,i+50),values=batch.map((_,n)=>`($${n*2+1},$${n*2+2}::jsonb)`).join(',');
-      await pool.query(`INSERT INTO lead_watch_milestones(game_id,milestone) VALUES ${values}
-        ON CONFLICT(game_id) DO UPDATE SET milestone=EXCLUDED.milestone,updated_at=clock_timestamp()`,
-      batch.flatMap(g=>[g.milestone.id,JSON.stringify(g.milestone)]));
+      const batch=watched.slice(i,i+50),values=batch.map((_,n)=>`($${n*3+1},$${n*3+2}::jsonb,$${n*3+3}::boolean)`).join(',');
+      await pool.query(`INSERT INTO lead_watch_milestones(game_id,milestone,watchable) VALUES ${values}
+        ON CONFLICT(game_id) DO UPDATE SET milestone=EXCLUDED.milestone,watchable=EXCLUDED.watchable,updated_at=clock_timestamp()`,
+      batch.flatMap(g=>[g.milestone.id,JSON.stringify(g.milestone),Boolean(leadWatchReason(g.state))]));
     }
     const events=await marketMap(active.filter(g=>eligibleForMarkets(g.state)).flatMap(g=>linkedEventTickers(g.milestone)));
     // Market discovery can take longer than a scoring play. Refresh live
