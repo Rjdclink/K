@@ -3,8 +3,8 @@
 // Creating markets and waiting for an RFQ maker can take longer than a scan.
 export const COMBO_ATTEMPT_MS=45000;
 export const VERIFY_DWELL_MS=6000;
-// Bound the exponential subset search while including a full, larger portfolio.
-export const COMBO_HELD_CANDIDATES=16;
+// Bound RFQs per attempt, not the number of distinct held singles considered.
+export const COMBO_RFQ_PLANS=12;
 export function comboAllocation(){return .20;}
 export function comboAllowedCents(fraction,bankrollCents){return Math.floor(fraction*bankrollCents);}
 // Maker RFQs quote close to target cost; leave room for the fee before asking.
@@ -31,7 +31,7 @@ export function comboCandidates(candidates, strategy, max=6){
     games.add(c.milestone.id);events.add(c.event.event_ticker);return true;
   }).slice(0,max);
 }
-export function filledComboWindow(fills,heldTickers,lastComboAt,max=COMBO_HELD_CANDIDATES){
+export function filledComboWindow(fills,heldTickers,lastComboAt,max=Infinity){
   const singles=fills.filter(r=>!r.combo_legs&&heldTickers.has(r.market_ticker))
     .sort((a,b)=>new Date(b.updated_at)-new Date(a.updated_at));
   if(singles.length<2)return [];
@@ -47,7 +47,7 @@ export function eligibleFillTrigger(ready,singles,group){
   return ready.map(r=>heldById.get(r.id)).find(r=>r&&eligible.has(r.market_ticker))||null;
 }
 export async function collectionsForEvents(eventTickers,get){
-  const tickers=[...new Set(eventTickers)].filter(Boolean).slice(0,COMBO_HELD_CANDIDATES);
+  const tickers=[...new Set(eventTickers)].filter(Boolean);
   const responses=await Promise.all(tickers.map(async ticker=>{
     const rows=[];let cursor='';
     for(let page=0;page<5;page++){
@@ -71,14 +71,71 @@ export function comboCollection(collections,legs){
 }
 export function compatibleComboGroups(collections,candidates,maxGroups=6){
   const groups=[];
-  const count=Math.min(COMBO_HELD_CANDIDATES,candidates.length);
-  for(let mask=1;mask<(1<<count);mask++){
-    const legs=candidates.slice(0,count).filter((_,i)=>mask&(1<<i));
-    if(legs.length<2)continue;
-    const collection=comboCollection(collections,legs);
-    if(collection)groups.push({legs,collection});
+  const count=candidates.length;
+  const visit=(start,legs,size)=>{
+    if(groups.length>=maxGroups)return;
+    if(legs.length===size){const collection=comboCollection(collections,legs);if(collection)groups.push({legs:[...legs],collection});return}
+    for(let i=start;i<=count-(size-legs.length);i++){
+      legs.push(candidates[i]);visit(i+1,legs,size);legs.pop();
+      if(groups.length>=maxGroups)return;
+    }
+  };
+  for(let size=count;size>=2&&groups.length<maxGroups;size--)visit(0,[],size);
+  return groups;
+}
+function combinationCount(n,k){
+  let result=1n;for(let i=1;i<=k;i++)result=result*BigInt(n-i+1)/BigInt(i);return result;
+}
+function combinationAt(items,k,index){
+  const chosen=[];let start=0;
+  for(let remaining=k;remaining>0;remaining--){
+    for(let i=start;i<=items.length-remaining;i++){
+      const count=combinationCount(items.length-i-1,remaining-1);
+      if(index>=count){index-=count;continue}
+      chosen.push(items[i]);start=i+1;break;
+    }
   }
-  return groups.sort((a,b)=>b.legs.length-a.legs.length).slice(0,maxGroups);
+  return chosen;
+}
+export function plannedComboGroups(collections,candidates,maxPlans=COMBO_RFQ_PLANS,rotation=0){
+  const compatible=(collections||[]).filter(c=>c.is_all_yes===true ||
+    c.is_all_yes===false&&/every associated market resolves to YES/i.test(String(c.functional_description||'')));
+  const eligible=compatible.map(collection=>{
+    const events=new Set([...(collection.associated_events||[]).map(e=>e.ticker),...(collection.associated_event_tickers||[])]);
+    const items=candidates.filter(candidate=>events.has(candidate.event.event_ticker));
+    const pools=collection.is_single_market_per_event===true?
+      [...Map.groupBy(items,item=>item.event.event_ticker).values()]:items.map(item=>[item]);
+    return {collection,pools};
+  }).filter(({pools})=>pools.length>=2);
+  const maxSize=Math.max(0,...eligible.map(({collection,pools})=>Math.min(pools.length,Number(collection.size_max)||pools.length)));
+  const sizes=[];for(let size=maxSize;size>=2;size--)if(eligible.some(({collection,pools})=>
+    Number(collection.size_min)<=size&&pools.length>=size&&(!Number(collection.size_max)||Number(collection.size_max)>=size)))sizes.push(size);
+  const selected=[],seen=new Set(),offset=Math.max(0,Math.trunc(rotation));
+  // Reserve a pair slot if a collection offers pairs, even when many larger
+  // sizes exist. A market can receive a maker quote at one size but not another.
+  const middle=sizes.slice(1,-1);
+  const middleSlots=Math.max(0,maxPlans-2);
+  const orderedSizes=sizes.length>maxPlans&&sizes.at(-1)===2&&middle.length?
+    [sizes[0],...Array.from({length:middleSlots},(_,i)=>middle[(offset*middleSlots+i)%middle.length]).sort((a,b)=>b-a),2]:sizes;
+  for(const size of orderedSizes){
+    const quota=Math.min(sizes.length>maxPlans?1:2,maxPlans-selected.length-(size>2&&orderedSizes.at(-1)===2?1:0));
+    if(quota<=0)continue;
+    const start=eligible.length?offset%eligible.length:0;
+    for(let c=0;c<eligible.length&&selected.filter(g=>g.legs.length===size).length<quota;c++){
+      const {collection,pools}=eligible[(start+c)%eligible.length];
+      if(pools.length<size||Number(collection.size_min)>size||Number(collection.size_max)&&Number(collection.size_max)<size)continue;
+      const total=combinationCount(pools.length,size);
+      for(let step=0;step<Math.min(32,Number(total))&&selected.filter(g=>g.legs.length===size).length<quota;step++){
+        const rank=(BigInt(offset)*2n+BigInt(step))%total;
+        const legs=combinationAt(pools,size,rank).map((pool,i)=>pool[(offset+step+i)%pool.length]);
+        if(!comboCollection([collection],legs))continue;
+        const key=legs.map(l=>l.market.ticker).sort().join('|');
+        if(seen.has(key))continue;
+        seen.add(key);selected.push({legs,collection});
+      }
+    }
+  }
+  return selected;
 }
 export function prioritizedComboGroups(groups,maxPlans=12,rotation=0){
   const bySize=new Map();

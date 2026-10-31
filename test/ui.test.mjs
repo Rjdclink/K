@@ -215,12 +215,34 @@ test('a temporary positions timeout keeps the last displayed filled order',async
   const context=vm.createContext({document,window:{addEventListener(){}},navigator:{},localStorage:{getItem(){return null},setItem(){}},fetch:url=>{
     if(url.startsWith('/api/sell-quotes'))return Promise.resolve({ok:true,json:async()=>({quotes:[]})});
     calls++;
-    return Promise.resolve({ok:true,status:200,json:async()=>({live:false,exitOnly:false,credentials:true,aiConfigured:false,balance:null,games:[],orders:calls===1?[{market_ticker:'M',strategy:'lead',sport:'Soccer',reason:'Home leads',game_title:'Away vs Home'}]:[],positionsError:calls===2?'Live positions delayed':null,scan:{scanned:0,signals:0},alerts:[]})});
+    return Promise.resolve({ok:true,status:200,json:async()=>({live:false,exitOnly:false,credentials:true,aiConfigured:false,balance:null,games:[],orders:calls===1?[{market_ticker:'M',strategy:'lead',sport:'Soccer',reason:'Home leads',game_title:'Away vs Home',potential_profit_cents:25}]:[],positionsError:calls===2?'Live positions delayed':null,scan:{scanned:0,signals:0},alerts:[]})});
   },AbortSignal,URLSearchParams,setInterval(){}});
   vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],context);
   await new Promise(resolve=>setImmediate(resolve));
   await vm.runInContext('load()',context);
   assert.equal(elements.get('ordersCount').textContent,1);
   assert.equal(elements.get('orders').children.length,1);
+  assert.equal(elements.get('ordersProfit').textContent,'$0.25');
+});
+
+test('filled card sums possible net profit across open positions and refreshes after settlement',async()=>{
+  const elements=new Map();let calls=0;
+  const element=()=>({children:[],style:{},classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){},append(...items){this.children.push(...items)},replaceChildren(...items){this.children=items}});
+  const document={getElementById:id=>{if(!elements.has(id))elements.set(id,element());return elements.get(id)},querySelectorAll:()=>[],createElement:element};
+  const held=[{market_ticker:'A',strategy:'lead',sport:'Soccer',game_title:'A vs B',potential_profit_cents:110},{market_ticker:'B',strategy:'over',sport:'Soccer',game_title:'C vs D',potential_profit_cents:104}];
+  const context=vm.createContext({document,window:{addEventListener(){}},navigator:{},localStorage:{getItem(){return null},setItem(){}},fetch:url=>{
+    if(url.startsWith('/api/sell-quotes'))return Promise.resolve({ok:true,json:async()=>({quotes:[]})});
+    calls++;
+    return Promise.resolve({ok:true,status:200,json:async()=>({live:false,exitOnly:false,credentials:true,aiConfigured:false,balance:null,games:[],orders:calls===1?held:held.slice(0,1),scan:{scanned:0,signals:0},alerts:[]})});
+  },AbortSignal,URLSearchParams,setInterval(){}});
+  assert.match(page,/Total possible profit/);
+  assert.match(page,/profit-summary/);
+  vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],context);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(elements.get('ordersCount').textContent,2);
+  assert.equal(elements.get('ordersProfit').textContent,'$2.14');
+  await vm.runInContext('load()',context);
+  assert.equal(elements.get('ordersCount').textContent,1);
+  assert.equal(elements.get('ordersProfit').textContent,'$1.10');
 });
 
