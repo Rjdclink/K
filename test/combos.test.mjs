@@ -188,43 +188,34 @@ test('six independently filled player props from one game stay in the six-leg co
  assert.equal(groups[0].legs.length,6);
  assert.deepEqual(groups[0].legs.map(c=>c.market.ticker),candidates.map(c=>c.market.ticker));
 });
-test('all fifteen pairs of six held legs are requested ahead of varied larger tickets',()=>{
+test('largest available tickets are sampled first without repeating a leg set',()=>{
   const candidates=Array.from({length:6},(_,i)=>candidate('p'+i,'E'+i));
   const collection={collection_ticker:'SIX',is_all_yes:true,is_single_market_per_event:true,size_min:2,size_max:6,associated_event_tickers:candidates.map(c=>c.event.event_ticker)};
   const groups=prioritizedComboGroups(compatibleComboGroups([collection],candidates,64));
-  assert.equal(groups.filter(g=>g.legs.length===2).length,15);
-  assert.equal(groups.filter(g=>g.legs.length>2).length,9);
-  assert.deepEqual([...new Set([...groups,...prioritizedComboGroups(compatibleComboGroups([collection],candidates,64),9,1)].filter(g=>g.legs.length>2).map(g=>g.legs.length))].sort(),[3,4,5,6]);
-  assert.equal(groups[0].legs.length,2);
+  assert.deepEqual(groups.map(g=>g.legs.length),[6,5,5,4,4,3,3,2,2]);
+  assert.equal(new Set(groups.map(g=>g.legs.map(l=>l.market.ticker).join(','))).size,groups.length);
 });
-test('all nine held picks expose thirty-six pair opportunities and the full ticket',()=>{
-  assert.equal(COMBO_HELD_CANDIDATES,9);
-  const candidates=Array.from({length:9},(_,i)=>candidate('p'+i,'E'+i));
-  const collection={collection_ticker:'NINE',is_all_yes:true,is_single_market_per_event:true,size_min:2,size_max:0,associated_event_tickers:candidates.map(c=>c.event.event_ticker)};
-  const groups=prioritizedComboGroups(compatibleComboGroups([collection],candidates,2**candidates.length));
-  assert.equal(groups.filter(g=>g.legs.length===2).length,36);
-  assert.equal(groups.length,45);
-  assert.equal(groups.filter(g=>g.legs.length===3).length,4);
-  assert.equal(groups.filter(g=>g.legs.length===4).length,4);
-  assert.equal(groups.filter(g=>g.legs.length>4).length,1);
-  assert.ok(groups.some(g=>g.legs.length===2&&g.legs[0].market.ticker==='p0-YES'&&g.legs[1].market.ticker==='p8-YES'));
-  assert.notDeepEqual(prioritizedComboGroups(compatibleComboGroups([collection],candidates,512),9,1).slice(36).map(g=>g.legs.map(l=>l.market.ticker)),groups.slice(36).map(g=>g.legs.map(l=>l.market.ticker)));
-  const all=compatibleComboGroups([collection],candidates,512),seen3=new Set(),seen4=new Set();
-  for(let rotation=0;rotation<42;rotation++)for(const group of prioritizedComboGroups(all,9,rotation)){
-    if(group.legs.length===3)seen3.add(group.legs.map(l=>l.market.ticker).join(','));
-    if(group.legs.length===4)seen4.add(group.legs.map(l=>l.market.ticker).join(','));
-  }
-  assert.equal(seen3.size,84);
-  assert.equal(seen4.size,126);
+test('thirteen held trades all enter collection lookup and ticket rotation',()=>{
+  assert.ok(COMBO_HELD_CANDIDATES>=13);
+  const candidates=Array.from({length:13},(_,i)=>candidate('p'+i,'E'+i));
+  const collection={collection_ticker:'SIX',is_all_yes:true,is_single_market_per_event:true,size_min:2,size_max:6,associated_event_tickers:candidates.map(c=>c.event.event_ticker)};
+  const all=compatibleComboGroups([collection],candidates,2**candidates.length);
+  assert.equal(all.filter(g=>g.legs.length===2).length,78);
+  const groups=prioritizedComboGroups(all,12,0);
+  assert.equal(groups[0].legs.length,6);
+  assert.deepEqual([...new Set(groups.map(g=>g.legs.length))],[6,5,4,3,2]);
+  const seen=new Set();
+  for(let rotation=0;rotation<39;rotation++)for(const g of prioritizedComboGroups(all,12,rotation))if(g.legs.length===2)seen.add(g.legs.map(l=>l.market.ticker).join(','));
+  assert.equal(seen.size,78);
 });
-test('collection lookup includes the ninth distinct event',async()=>{
+test('collection lookup includes the thirteenth distinct event',async()=>{
   const seen=[];
-  await collectionsForEvents(Array.from({length:9},(_,i)=>'E'+i),async path=>{
+  await collectionsForEvents(Array.from({length:13},(_,i)=>'E'+i),async path=>{
     seen.push(new URL(path,'https://example.test').searchParams.get('associated_event_ticker'));
     return {multivariate_contracts:[],cursor:''};
   });
-  assert.equal(seen.length,9);
-  assert.ok(seen.includes('E8'));
+  assert.equal(seen.length,13);
+  assert.ok(seen.includes('E12'));
 });
 test('a newly created combo market 404 is retried while unrelated API errors still surface',async()=>{
   const ticker='COMBO';

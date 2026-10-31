@@ -806,13 +806,13 @@ async function upgradeVerifiedCombos(scanStarted){
   // Request executable quotes for all available ticket sizes in the same
   // bounded window. A six-pick market may have no maker while a three-pick does.
   const allGroups=compatibleComboGroups(collections,eligible,2**eligible.length);
-  // Pair markets can be quotable even when a larger ticket is not. Cover every
-  // pair of the nine held legs and rotate three- and four-picks across attempts.
+  // Start with the largest available collection size, then rotate through
+  // smaller distinct leg sets across scans within the RFQ time budget.
   await pool.query('CREATE TABLE IF NOT EXISTS combo_rotation_state (id integer PRIMARY KEY, next_rotation bigint NOT NULL)');
   const {rows:[rotationRow]}=await pool.query(`INSERT INTO combo_rotation_state(id,next_rotation) VALUES(1,1)
     ON CONFLICT(id) DO UPDATE SET next_rotation=combo_rotation_state.next_rotation+1
     RETURNING next_rotation-1 AS rotation`);
-  const rotation=Number(rotationRow.rotation),groups=prioritizedComboGroups(allGroups,9,rotation);
+  const rotation=Number(rotationRow.rotation),groups=prioritizedComboGroups(allGroups,12,rotation);
   console.info('Combo coverage:',JSON.stringify({held:eligible.length,possiblePairs:eligible.length*(eligible.length-1)/2,compatiblePairs:groups.filter(g=>g.legs.length===2).length,compatibleTriples:allGroups.filter(g=>g.legs.length===3).length,compatibleQuads:allGroups.filter(g=>g.legs.length===4).length,plannedBySize:Object.fromEntries([...new Set(groups.map(g=>g.legs.length))].map(n=>[n,groups.filter(g=>g.legs.length===n).length])),rotation}));
   if(!groups.length){
     console.warn('Combo no compatible collection for trigger:',newTicker,eligible.map(c=>[c.event.event_ticker,c.market.ticker]),'collections',collections.length);
@@ -849,7 +849,7 @@ async function upgradeVerifiedCombos(scanStarted){
       const existing=await pool.query(`SELECT status FROM trade_attempts WHERE market_ticker=$1`,[ticker]);
       if(existing.rows.some(r=>['filled','combo_pending','reserved','check_order'].includes(r.status)))return;
       if(Date.now()>=deadline)return;
-      const rfq=(await kalshi('/communications/rfqs',{auth:true,method:'POST',body:{market_ticker:ticker,target_cost_dollars:(comboRfqTargetCents(budget)/100).toFixed(2),rest_remainder:false,obscure_creator_id:true}})).id;
+      const rfq=(await kalshi('/communications/rfqs',{auth:true,method:'POST',body:{market_ticker:ticker,target_cost_dollars:(comboRfqTargetCents(budget)/100).toFixed(2),rest_remainder:false,obscure_creator_id:true,replace_existing:true}})).id;
       if(rfq)plans.push({legs,created,collection:collection.collection_ticker,ticker,combo,strategy,fraction:groupFraction,shard,budget,rfq});
      }catch(e){console.warn('Combo size unavailable:',n,collection.collection_ticker,legs.map(c=>[c.event.event_ticker,c.market.ticker]),e.message)}
   });
@@ -1204,6 +1204,13 @@ async function scan(cachedMilestones,discoveryCount){
     }
     // Exits are assessed before any new risk is added.
     if(live()||exitOnly())await exitComebacks(games,events,openPositions);
+    // Begin held combo discovery after exits while the ordinary signal scan
+    // proceeds. The final quote acceptance rechecks held legs and cash.
+    const comboJob=live()?pool.query(`SELECT a.id,a.market_ticker,a.event_ticker,a.game_id,a.sport,a.strategy,a.reason,a.fraction,a.fill_count,a.limit_price,a.created_at,a.updated_at,a.combo_legs,
+      EXISTS(SELECT 1 FROM fallback_verifications f WHERE f.market_ticker=a.market_ticker AND f.original_id=a.id AND f.verified_at >= $1) AS externally_verified
+      FROM trade_attempts a WHERE a.status='filled'`,[scanStarted])
+      .then(({rows})=>checkHeldCombinations(rows,scanStarted))
+      .catch(e=>{console.error('Held combo execution deferred:',e);return {error:e.message}}):Promise.resolve(null);
     await candidateTable();
     const opportunities=[],snapshotRows=new Map(),scoreboardCache=new Map();
     const allCandidates=[],upgradeCandidates=[],snapshotCandidates=new Map();
@@ -1479,10 +1486,8 @@ async function scan(cachedMilestones,discoveryCount){
     await Promise.all([workersDone,leadWorkers,...immediateUpgradeJobs]);
     if(live()){
       try{
-        const currentFills=await pool.query(`SELECT a.id,a.market_ticker,a.event_ticker,a.game_id,a.sport,a.strategy,a.reason,a.fraction,a.fill_count,a.limit_price,a.created_at,a.updated_at,a.combo_legs,
-          EXISTS(SELECT 1 FROM fallback_verifications f WHERE f.market_ticker=a.market_ticker AND f.original_id=a.id AND f.verified_at >= $1) AS externally_verified
-          FROM trade_attempts a WHERE a.status='filled'`,[scanStarted]);
-        const combo=await checkHeldCombinations(currentFills.rows,scanStarted);
+        const combo=await comboJob;
+        if(combo.error)executionErrors.push('Combo: '+String(combo.error).slice(0,180));
         if(combo.filled)submitted++;
         if(await upgradeVerifiedCombos(scanStarted))submitted++;
       }catch(e){executionErrors.push('Combo: '+String(e.message).slice(0,180));console.error('Post-fill combo execution deferred:',e)}
@@ -1568,9 +1573,16 @@ async function state(){
   }
   let balance=null,positions=null,accountError=null,positionsError=null;
   if(configured()){
+    await pool.query(`CREATE TABLE IF NOT EXISTS dashboard_positions_cache (
+      id integer PRIMARY KEY,positions jsonb NOT NULL,updated_at timestamptz NOT NULL DEFAULT now())`);
     const [balanceResult,positionsResult]=await Promise.allSettled([
       Promise.race([accountBalance().then(value=>(recentDashboardBalance=value)),dashboardDeadline(4000)]),
-      Promise.race([allOpenPositions().then(value=>{recentDashboardPositions={value,at:Date.now()};return value}),dashboardDeadline(4000)])
+      Promise.race([allOpenPositions().then(value=>{
+        recentDashboardPositions={value,at:Date.now()};
+        void pool.query(`INSERT INTO dashboard_positions_cache(id,positions,updated_at) VALUES(1,$1,now())
+          ON CONFLICT(id) DO UPDATE SET positions=EXCLUDED.positions,updated_at=now()`,[JSON.stringify(value)]).catch(e=>console.warn('Dashboard position cache deferred:',e.message));
+        return value;
+      }),dashboardDeadline(4000)])
     ]);
     if(balanceResult.status==='fulfilled'){
       const value=balanceResult.value||recentDashboardBalance;
@@ -1580,7 +1592,13 @@ async function state(){
     if(positionsResult.status==='fulfilled')positions=positionsResult.value||
       (recentDashboardPositions&&Date.now()-recentDashboardPositions.at<60000?recentDashboardPositions.value:null);
     else positionsError=String(positionsResult.reason?.message||positionsResult.reason);
-    if(!positions&&!positionsError)positionsError='Live positions are taking longer than usual; retrying';
+    if(positions&&!positionsResult.value)positionsError='Live positions delayed; showing recent holdings';
+    if(!positions){
+      const {rows}=await pool.query(`SELECT positions FROM dashboard_positions_cache
+        WHERE id=1 AND updated_at>now()-interval '90 seconds'`);
+      if(rows.length){positions=rows[0].positions;positionsError='Live positions delayed; showing recent holdings';}
+      else if(!positionsError)positionsError='Live positions are taking longer than usual; retrying';
+    }
   }else accountError='Kalshi credentials are missing from the Neon function environment';
   const open=new Set((positions?.market_positions||[]).filter(p=>Number(p.position_fp??p.position??0)!==0).map(p=>p.ticker));
   const {rows:comboIssues}=await pool.query(`SELECT checked_at,leg_tickers,status,detail FROM combo_diagnostics
@@ -1595,7 +1613,7 @@ async function state(){
     const allocated=actual?Math.ceil(exposure*100)+Math.ceil(fees*100):Math.ceil(count*Number(o.limit_price)*100);
     return {...o,position,fill_count:count,allocated_cents:allocated,
       potential_profit_cents:actual?Math.floor(count*100-allocated):netSettlementProfitCents(count,Number(o.limit_price),2)};
-  }):[];
+  }).sort((a,b)=>b.potential_profit_cents-a.potential_profit_cents):[];
   for(const o of orders){
     o.selected_name=o.strategy==='lead'?String(o.reason||'').match(/(?:^|: )([^;:]+?) leads \d/i)?.[1]||null:
       String(o.reason||'').match(/\bby ([^;]+);/)?.[1]||null;
@@ -1604,7 +1622,7 @@ async function state(){
   const comboIssue=comboIssues.find(issue=>issue.leg_tickers.length>=2&&
     issue.leg_tickers.every(ticker=>open.has(ticker)))||null;
   if(comboIssue)comboIssue.leg_names=comboIssue.leg_tickers.map(ticker=>orders.find(o=>o.market_ticker===ticker)?.game_title||ticker);
-  return {live:live(),exitOnly:exitOnly(),credentials:configured(),aiConfigured:Boolean(process.env.AI_API_KEY),balance,accountError,positionsError,games:snap.rows,scan:stats.rows[0],weather:weatherStatus.rows[0],comboIssue,orders};
+  return {live:live(),exitOnly:exitOnly(),credentials:configured(),aiConfigured:Boolean(process.env.AI_API_KEY),balance,accountError,positionsError,positionsStale:Boolean(positions&&positionsError),games:snap.rows,scan:stats.rows[0],weather:weatherStatus.rows[0],comboIssue,orders};
 }
 async function settlementAlerts(since){
   const {rows}=await pool.query(`SELECT id,ticker,profit_cents,settled_time,created_at FROM settlement_alerts WHERE id>$1 AND created_at>now()-interval '2 days' ORDER BY id LIMIT 50`,[since]);

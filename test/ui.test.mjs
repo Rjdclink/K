@@ -208,3 +208,19 @@ test('dashboard renders positions before delayed sell quotes and updates them af
   assert.equal(elements.get('orders').children[0].children.at(-1).textContent,'↗ +$1.49');
 });
 
+test('a temporary positions timeout keeps the last displayed filled order',async()=>{
+  const elements=new Map();let calls=0;
+  const element=()=>({children:[],style:{},classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){},append(...items){this.children.push(...items)},replaceChildren(...items){this.children=items}});
+  const document={getElementById:id=>{if(!elements.has(id))elements.set(id,element());return elements.get(id)},querySelectorAll:()=>[],createElement:element};
+  const context=vm.createContext({document,window:{addEventListener(){}},navigator:{},localStorage:{getItem(){return null},setItem(){}},fetch:url=>{
+    if(url.startsWith('/api/sell-quotes'))return Promise.resolve({ok:true,json:async()=>({quotes:[]})});
+    calls++;
+    return Promise.resolve({ok:true,status:200,json:async()=>({live:false,exitOnly:false,credentials:true,aiConfigured:false,balance:null,games:[],orders:calls===1?[{market_ticker:'M',strategy:'lead',sport:'Soccer',reason:'Home leads',game_title:'Away vs Home'}]:[],positionsError:calls===2?'Live positions delayed':null,scan:{scanned:0,signals:0},alerts:[]})});
+  },AbortSignal,URLSearchParams,setInterval(){}});
+  vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],context);
+  await new Promise(resolve=>setImmediate(resolve));
+  await vm.runInContext('load()',context);
+  assert.equal(elements.get('ordersCount').textContent,1);
+  assert.equal(elements.get('orders').children.length,1);
+});
+
