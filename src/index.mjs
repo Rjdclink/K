@@ -7,7 +7,7 @@ import { completedTrade, manualSaleFill, reconcileManualSaleFills } from './hist
 import { gameState, overSignal, confirmedOver, kalshiOnlyOver, kalshiOnlyLead, confirmedExternalLead, leadSignal, confirmedSoccerOneGoalClock, confirmedDrawClock, soccerOneGoalWindowOpen, stableSoccerLeadFraction, externallyVerifiedEarlySoccerLead, additionalLeadSignal, cricketLeadSignal, drawSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback, KALSHI_ONLY_FRACTION } from './strategy.mjs';
 import { reviewMiss } from './ai.mjs';
 import { kalshiSignature } from './auth.mjs';
-import { marketShard, shardCash, transferPlan, comboShardBudget } from './funding.mjs';
+import { marketShard, shardCash, transferPlan, comboShardBudget, awaitShardCash } from './funding.mjs';
 import { icons } from './icons.mjs';
 import { manifest, worker } from './pwa.mjs';
 import { vapidIdentity, validateSubscription, deliverPush } from './push.mjs';
@@ -509,14 +509,14 @@ async function ensureShardFunding(signal,event,market,account,desiredCents,sourc
   const {rows:[pending]}=await pool.query(`SELECT * FROM funding_transfers WHERE market_ticker=$1 AND strategy=$2 AND status IN ('pending','uncertain') ORDER BY created_at DESC LIMIT 1`,[market.ticker,signal.strategy]);
   // Funding belongs to the destination shard, not a market. Do not queue
   // competing transfers against the same source cash while one is settling.
-  if(!pending){const inFlight=await pool.query(`SELECT id FROM funding_transfers WHERE status IN ('pending','uncertain') AND (destination_shard=$1 OR source_shard=$2) LIMIT 1`,[destination,plan.sourceShard]);if(inFlight.rowCount)return false}
+  if(!pending){const inFlight=await pool.query(`SELECT id,transfer_id,destination_shard FROM funding_transfers WHERE status IN ('pending','uncertain') AND (destination_shard=$1 OR source_shard=$2) LIMIT 1`,[destination,plan.sourceShard]);if(inFlight.rowCount)return Number(inFlight.rows[0].destination_shard)===destination?inFlight.rows[0].transfer_id||null:null}
   if(pending){
     const history=await kalshi('/portfolio/intra_exchange_instance_transfers?limit=100',{auth:true});
     const matched=(history.transfers||[]).find(t=>t.client_transfer_id===pending.id);
     if(matched?.status==='complete'){
-      await pool.query(`UPDATE funding_transfers SET status='complete',transfer_id=$2,updated_at=now() WHERE id=$1`,[pending.id,matched.transfer_id]);await invalidateBalance();return false;
+      await pool.query(`UPDATE funding_transfers SET status='complete',transfer_id=$2,updated_at=now() WHERE id=$1`,[pending.id,matched.transfer_id]);await invalidateBalance();return matched.transfer_id||null;
     }
-    return false; // An uncertain transfer must be reconciled, never resubmitted blindly.
+    return pending.transfer_id||null; // Never resubmit an uncertain transfer blindly.
   }
   const id=pending?.id||randomUUID(),amount=pending?.amount_centicents||plan.amountCenticents;
   if(Number(amount)<100)return false;
@@ -528,7 +528,7 @@ async function ensureShardFunding(signal,event,market,account,desiredCents,sourc
     await pool.query(`UPDATE funding_transfers SET status=$2,error=$3,updated_at=now() WHERE id=$1`,[id,/^Kalshi (400|401|403|404) /.test(String(e.message))?'blocked':'uncertain',String(e.message).slice(0,250)]);
     throw e;
   }
-  return false; // Transfers are asynchronous; the next scan checks actual shard cash.
+  return result.transfer_id||null; // Caller may wait briefly, then checks actual shard cash.
 }
 async function stageCashAcrossShards(account,bankroll){
   // Keep a starter amount in every exchange shard before games begin. This is
@@ -1671,7 +1671,7 @@ async function scan(cachedMilestones,discoveryCount){
             await reportVerifiedGate(freshState,c.market.ticker,'Score verified; current ask, fees or available cash do not allow a profitable order');
           continue;
         }
-        const shard=marketShard(c.event,c.market),localCash=shardCash(latest,shard);
+        const shard=marketShard(c.event,c.market);let localCash=shardCash(latest,shard);
         if(localCash===null){executionErrors.push(`${c.market.ticker}: Kalshi shard balance unavailable`);continue}
         if(!soccerOneGoalWindowOpen(state))continue;
         if(['check_order','reserved','retrying'].includes(prior.rows[0]?.status)){
@@ -1681,7 +1681,40 @@ async function scan(cachedMilestones,discoveryCount){
         if(prior.rows[0]?.status==='needs_review')continue;
         const desiredCost=estimatedCostCents(wanted,Number(c.market.yes_ask_dollars),feeReserve(c.event,c.market));
         if(localCash<desiredCost&&transferPlan(latest,shard,desiredCost)){
-          await ensureShardFunding(c.signal,c.event,c.market,latest,desiredCost);
+          const transferId=await ensureShardFunding(c.signal,c.event,c.market,latest,desiredCost);
+          if(transferId){
+            let funded=null;
+            try{funded=await awaitShardCash({destination:shard,desiredCents:desiredCost,transferId,
+              lookup:async id=>(await kalshi('/portfolio/intra_exchange_instance_transfers/'+encodeURIComponent(id),{auth:true})).transfer,
+              readBalance:()=>accountBalance({fresh:true})})}
+            catch(e){console.warn('Funding confirmation deferred:',c.market.ticker,e.message)}
+            if(funded){
+              localCash=shardCash(funded,shard);
+              balance=Number(funded.balance);bankroll=balance+Number(funded.portfolio_value);
+              // Scores and offers can change while capital moves. A transfer
+              // never carries forward the previous eligibility decision.
+              const updated=await liveMilestone(c.milestone.id);
+              if(!updated)continue;
+              updated._observed_at=new Date().toISOString();
+              const checked=gameState(c.milestone,updated);
+              if(!checked.verifiedLive||checked.feedId!==c.milestone.id||
+                c.signal.strategy==='lead'&&(checked.home!==state.home||checked.away!==state.away))continue;
+              const newest=await recoverSummaryAsk((await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market,{fresh:true});
+              const executable=newest&&hasAsk(newest)?await executableQuote(newest):null;
+              if(!executable||executable.event_ticker!==c.event.event_ticker||
+                executable.rules_primary!==c.market.rules_primary||executable.floor_strike!==c.market.floor_strike||
+                executable.cap_strike!==c.market.cap_strike||executable.close_time!==c.market.close_time||
+                JSON.stringify(executable.custom_strike||{})!==JSON.stringify(c.market.custom_strike||{}))continue;
+              const still=c.signal.strategy==='over'?overSignal(checked,executable):
+                golfSignal(checked,executable)||leadSignal(checked,executable)||additionalLeadSignal(checked,executable)||
+                cricketLeadSignal(checked,executable)||drawSignal(checked,executable)||earlyLeadSignal(checked,executable)||
+                tennisSignal(checked,executable)||tableTennisSignal(checked,executable);
+              if(!still||!soccerOneGoalWindowOpen(checked))continue;
+              if(c.signal.strategy==='over'&&!confirmedOver(state,checked,executable,0))continue;
+              if(!kalshiOnly&&await auditedOver(checked,c.milestone,{market:executable,allowUnavailable:true})!==true)continue;
+              c.market=executable;c.state=state=checked;
+            }
+          }
         }
         // The allocation is a ceiling. Buy the profitable quantity already
         // affordable in this shard while any top-up settles asynchronously.
