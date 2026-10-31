@@ -153,20 +153,21 @@ function combinationAt(items,k,index){
   }
   return chosen;
 }
-export function plannedComboGroups(collections,candidates,maxPlans=COMBO_RFQ_PLANS,rotation=0,excluded=new Set()){
+export function plannedComboGroups(collections,candidates,maxPlans=COMBO_RFQ_PLANS,rotation=0,excluded=new Set(),requiredTicker=null){
   const compatible=(collections||[]).filter(c=>c.is_all_yes===true ||
     c.is_all_yes===false&&/every associated market resolves to YES/i.test(String(c.functional_description||'')));
   const eligible=compatible.map(collection=>{
     const events=new Set([...(collection.associated_events||[]).map(e=>e.ticker),...(collection.associated_event_tickers||[])]);
     const items=candidates.filter(candidate=>events.has(candidate.event.event_ticker));
+    if(requiredTicker)items.sort((a,b)=>Number(b.market.ticker===requiredTicker)-Number(a.market.ticker===requiredTicker));
     const pools=collection.is_single_market_per_event===true?
       [...Map.groupBy(items,item=>item.event.event_ticker).values()]:items.map(item=>[item]);
     return {collection,pools};
-  }).filter(({pools})=>pools.length>=2);
+  }).filter(({pools})=>pools.length>=2&&(!requiredTicker||pools.some(pool=>pool.some(c=>c.market.ticker===requiredTicker))));
   const maxSize=Math.max(0,...eligible.map(({collection,pools})=>Math.min(pools.length,Number(collection.size_max)||pools.length)));
   const sizes=[];for(let size=maxSize;size>=2;size--)if(eligible.some(({collection,pools})=>
     Number(collection.size_min)<=size&&pools.length>=size&&(!Number(collection.size_max)||Number(collection.size_max)>=size)))sizes.push(size);
-  const selected=[],seen=new Set(),offset=Math.max(0,Math.trunc(rotation));
+  const selected=[],seen=new Set(),offset=requiredTicker?0:Math.max(0,Math.trunc(rotation));
   // Reserve a pair slot if a collection offers pairs, even when many larger
   // sizes exist. A market can receive a maker quote at one size but not another.
   const middle=sizes.slice(1,-1);
@@ -191,6 +192,7 @@ export function plannedComboGroups(collections,candidates,maxPlans=COMBO_RFQ_PLA
       if(BigInt(step)>=total)continue;
         const rank=(BigInt(offset)*2n+BigInt(step))%total;
         const legs=combinationAt(pools,size,rank).map((pool,i)=>pool[(offset+step+i)%pool.length]);
+        if(requiredTicker&&!legs.some(leg=>leg.market.ticker===requiredTicker))continue;
         if(!comboCollection([collection],legs)||excluded.has(comboExclusionKey(legs)))continue;
         if(legs.some((a,i)=>legs.slice(i+1).some(b=>excluded.has(comboExclusionKey([a,b])))))continue;
         const key=legs.map(l=>l.market.ticker).sort().join('|');

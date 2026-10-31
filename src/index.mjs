@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { apiPriority, withApiPriority, createPriorityGate } from './api_priority.mjs';
 import { createExecutionAudit } from './execution_audit.mjs';
 import { finalLeadFraction } from './lead_allocation.mjs';
+import { createFillComboQueue } from './fill_combo_queue.mjs';
 import pg from 'pg';
 import { page } from './ui.mjs';
 import { historyPage } from './history_ui.mjs';
@@ -37,6 +38,14 @@ const pool = new pg.Pool({connectionString:process.env.DATABASE_URL, max:4, idle
 pool.on('error', e=>console.error('Idle database connection:',e.message));
 const executionAudit=createExecutionAudit((...args)=>pool.query(...args));
 const recordDecision=decision=>executionAudit(decision).catch(e=>console.warn('Execution audit deferred:',e.message));
+const fillComboQueue=createFillComboQueue((fill,options)=>withApiPriority('normal',()=>checkCurrentHeldCombinations(fill,options)),
+  {onError:(error,fill)=>console.warn('Post-fill combo check deferred:',fill?.market_ticker||'held positions',error.message)});
+async function confirmedSingleFill(id,market_ticker){
+  // A failed balance refresh or combo check must never undo a confirmed fill.
+  await invalidateBalance().catch(e=>console.warn('Post-fill balance invalidation deferred:',e.message));
+  if(live())void fillComboQueue.enqueue({id,market_ticker});
+}
+
 const json=(body,status=200)=>new Response(JSON.stringify(body),{status,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'}});
 const configured=()=>Boolean((process.env.KALSHI_API_KEY||process.env.KALSHI_API_KEY_ID) && process.env.KALSHI_PRIVATE_KEY);
 const live=()=>configured() && process.env.LIVE_TRADING==='true';
@@ -611,7 +620,7 @@ async function submit(signal,game,event,market,balance,bankroll,budgetCents=Infi
     if(!result){await pool.query(`UPDATE trade_attempts SET status='unfilled',error='Below filled-order net profit floor',updated_at=now() WHERE id=$1`,[id]);return false}
     const filled=Number(result.fill_count_fp??result.fill_count??result.order?.fill_count_fp??0);
     await pool.query(`UPDATE trade_attempts SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE id=$1`,[id,filled>0?'filled':'unfilled',result.order_id||result.order?.order_id||null,filled]);
-    if(filled>0)await invalidateBalance();
+    if(filled>0)await confirmedSingleFill(id,market.ticker);
     return filled>0;
   }catch(e){const message=String(e.message),noLiquidity=/^Kalshi 409 .*fill or kill insufficient resting volume/i.test(message),terminal=/^Kalshi (400|401|403|404|422) /.test(message);await pool.query(`UPDATE trade_attempts SET status=$2,error=$3,updated_at=now() WHERE id=$1`,[id,noLiquidity?'unfilled':terminal?'rejected':'check_order',message.slice(0,250)]);if(/insufficient balance/i.test(message))await invalidateBalance();console.error('Order response:',market.ticker,e.message);return false}
 }
@@ -631,7 +640,7 @@ async function recoverPending(signal,game,event,market,balance,bankroll,budgetCe
       if(!cursor){complete=true;break}
     }
     if(!complete){console.warn('Order history still paginated; retry deferred:',market.ticker);return false}
-    if(matched){const filled=Number(matched.fill_count_fp??matched.fill_count??0);await pool.query(`UPDATE trade_attempts SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE id=$1`,[row.id,filled>0?'filled':'unfilled',matched.order_id||null,filled]);return filled>0}
+    if(matched){const filled=Number(matched.fill_count_fp??matched.fill_count??0);await pool.query(`UPDATE trade_attempts SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE id=$1`,[row.id,filled>0?'filled':'unfilled',matched.order_id||null,filled]);if(filled>0)await confirmedSingleFill(row.id,row.market_ticker);return filled>0}
   }catch(e){console.warn('Order history unavailable; retry deferred:',e.message);return false}
   if(row.retries || Date.now()-new Date(row.updated_at).getTime()<15000)return false;
   // The supervisor reviews a missing submission. An unavailable model falls back to one bounded deterministic retry.
@@ -649,7 +658,7 @@ async function recoverPending(signal,game,event,market,balance,bankroll,budgetCe
   try{const result=await withEntryProfitFloor({ticker:row.market_ticker,count:Number(row.count),price:Number(row.limit_price),fees:feeReserve(event,market),strategy:signal.strategy,bankroll},
     ()=>kalshi('/portfolio/events/orders',{method:'POST',auth:true,body:{ticker:row.market_ticker,client_order_id:row.id,side:'bid',count:Number(row.count).toFixed(2),price:Number(row.limit_price).toFixed(4),time_in_force:'fill_or_kill',self_trade_prevention_type:'taker_at_cross',post_only:false}}));
     if(!result){await pool.query(`UPDATE trade_attempts SET status='check_order',retries=0,error='Below filled-order net profit floor',updated_at=now() WHERE id=$1`,[row.id]);return false}
-    const filled=Number(result.fill_count_fp??result.fill_count??result.order?.fill_count_fp??result.order?.fill_count??0);await pool.query(`UPDATE trade_attempts SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE id=$1`,[row.id,filled>0?'filled':'unfilled',result.order_id||result.order?.order_id||null,filled]);return filled>0
+    const filled=Number(result.fill_count_fp??result.fill_count??result.order?.fill_count_fp??result.order?.fill_count??0);await pool.query(`UPDATE trade_attempts SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE id=$1`,[row.id,filled>0?'filled':'unfilled',result.order_id||result.order?.order_id||null,filled]);if(filled>0)await confirmedSingleFill(row.id,row.market_ticker);return filled>0
   }catch(e){await pool.query(`UPDATE trade_attempts SET status='check_order',error=$2,updated_at=now() WHERE id=$1`,[row.id,'Recovery response uncertain: '+String(e.message).slice(0,200)]);return false}
 }
 async function reconcileUpgrade(row,robust=false){
@@ -665,7 +674,7 @@ async function reconcileUpgrade(row,robust=false){
         const filled=Number(match.fill_count_fp??match.fill_count??0);
         await pool.query(`UPDATE ${robust?'robust_over_upgrades':'position_upgrades'} SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE market_ticker=$1`,
           [row.market_ticker,filled>0?'filled':'unfilled',match.order_id||null,filled]);
-        if(filled>0)await invalidateBalance();
+        if(filled>0)await confirmedSingleFill(row.id,row.market_ticker);
         return {...row,status:filled>0?'filled':'unfilled'};
       }
       cursor=orders.cursor||'';if(!cursor)break;
@@ -742,7 +751,7 @@ async function upgradeHeldOver(c,preflight,original,scoreboardCache){
     const filled=Number(result.fill_count_fp??result.fill_count??result.order?.fill_count_fp??0);
     await pool.query(`UPDATE ${upgradeTable} SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE id=$1`,
       [id,filled>0?'filled':'unfilled',result.order_id||result.order?.order_id||null,filled]);
-    if(filled>0)await invalidateBalance();
+    if(filled>0)await confirmedSingleFill(id,quote.ticker);
     return {verified:true,filled:filled>0};
   }catch(e){
     const message=String(e.message),noLiquidity=/^Kalshi 409 .*fill or kill insufficient resting volume/i.test(message),terminal=/^Kalshi (400|401|403|404|422) /.test(message);
@@ -942,7 +951,7 @@ async function recordComboRejection(legs,collection,status,detail){
   await pool.query(`INSERT INTO combo_diagnostics(leg_tickers,collection_ticker,status,detail)
     VALUES($1,$2,$3,$4)`,[JSON.stringify(legs.map(l=>l.market.ticker).sort()),collection,status,detail]);
 }
- async function executeCombo(group,account,bankroll,fraction,newTicker){
+ async function executeCombo(group,account,bankroll,fraction,newTicker,superseded=()=>false){
   if(group.length<2){console.warn('Combo held legs unavailable:',group.map(c=>c.market.ticker));return {filled:false,pending:false}}
   const seenMarkets=new Set();
   await ensureComboAudit();
@@ -976,7 +985,7 @@ async function recordComboRejection(legs,collection,status,detail){
   const {rows:[rotationRow]}=await pool.query(`INSERT INTO combo_rotation_state(id,next_rotation) VALUES(1,1)
     ON CONFLICT(id) DO UPDATE SET next_rotation=combo_rotation_state.next_rotation+1
     RETURNING next_rotation-1 AS rotation`);
-  const rotation=Number(rotationRow.rotation),groups=plannedComboGroups(collections,eligible,COMBO_RFQ_PLANS,rotation,excluded);
+  const rotation=Number(rotationRow.rotation),groups=plannedComboGroups(collections,eligible,COMBO_RFQ_PLANS,rotation,excluded,newTicker);
   for(const pair of comboPairDiagnostics(collections,eligible)){
     const legs=eligible.filter(l=>pair.tickers.includes(l.market.ticker));
     if(pair.rejection||excluded.has(comboExclusionKey(legs)))await recordComboRejection(legs,null,
@@ -999,6 +1008,7 @@ async function recordComboRejection(legs,collection,status,detail){
     }
   }
   await mapBatches(groups,5,async ({legs,collection})=>{
+    if(superseded())return;
     const n=legs.length;let stage='market_creation';
     try{
       const identifiers=selectedComboMarkets(legs);
@@ -1018,7 +1028,7 @@ async function recordComboRejection(legs,collection,status,detail){
       if(budget<100)return;
       const existing=await pool.query(`SELECT status FROM trade_attempts WHERE market_ticker=$1`,[ticker]);
       if(existing.rows.some(r=>['filled','combo_pending','reserved','check_order'].includes(r.status)))return;
-      if(Date.now()>=deadline)return;
+      if(Date.now()>=deadline||superseded())return;
       stage='rfq_creation';
       const rfq=(await kalshi('/communications/rfqs',{auth:true,method:'POST',body:{market_ticker:ticker,target_cost_dollars:(comboRfqTargetCents(budget)/100).toFixed(2),rest_remainder:false,obscure_creator_id:true,replace_existing:true}})).id;
       if(rfq)plans.push({legs,created,collection:collection.collection_ticker,ticker,combo,strategy,fraction:groupFraction,shard,budget,rfq});
@@ -1031,13 +1041,14 @@ async function recordComboRejection(legs,collection,status,detail){
        console.warn('Combo size unavailable:',n,collection.collection_ticker,legs.map(c=>[c.event.event_ticker,c.market.ticker]),e.message);
      }
   });
+  if(!plans.length&&superseded())return {filled:false,pending:false,superseded:true};
   if(!plans.length){console.warn('Combo no executable RFQ plan:',newTicker,'groups',groups.length,'funding',funding.length);if(funding.length){const p=funding[0];await ensureShardFunding({strategy:p.strategy},p.created,p.combo,account,p.desired)}return {filled:false,pending:false}}
   const quoteStats=new Map(plans.map(p=>[p.ticker,{received:0,eligible:0,sellOffers:0}]));
   try{
     const communicationsId=(await kalshi('/communications/id',{auth:true})).communications_id;
     if(!communicationsId)throw new Error('Kalshi communications ID missing');
     console.info('Combo quote owner filter ready:',plans.length,'RFQs');
-    while(Date.now()<deadline){
+    while(Date.now()<deadline&&!superseded()){
       const offers=(await mapBatches(plans,6,async plan=>{
         try{
           const list=(await kalshi('/communications/quotes?'+new URLSearchParams({rfq_id:plan.rfq,rfq_creator_user_id:communicationsId,rfq_user_filter:'self',limit:'100'}),{auth:true})).quotes||[];
@@ -1053,16 +1064,18 @@ async function recordComboRejection(legs,collection,status,detail){
         }catch(e){console.warn('Combo quotes unavailable:',plan.ticker,e.message);if(e.message.includes('Kalshi 403 GET /communications/quotes'))throw e;return []}
       })).flat().sort((a,b)=>b.plan.legs.length-a.plan.legs.length||Number(b.plan.legs.some(c=>c.market.ticker===newTicker))-Number(a.plan.legs.some(c=>c.market.ticker===newTicker))||b.terms.profitCents-a.terms.profitCents);
       for(const {q,terms,plan,fees} of offers){
+        if(superseded())break;
         const {legs,ticker,strategy,fraction,shard,rfq,created}=plan;
         // Confirm holdings and tradability immediately before accepting a quote.
         const [positions,latestCombo]=await Promise.all([allOpenPositions(),liveComboMarket(kalshi,ticker)]);
         const held=new Set((positions.market_positions||[]).filter(p=>Number(p.position_fp??p.position??0)>0).map(p=>p.ticker));
         if(legs.some(c=>!held.has(c.market.ticker))||!latestCombo)continue;
-        if(Date.now()>=deadline)break;
+        if(Date.now()>=deadline||superseded())break;
         const latest=await accountBalance({fresh:true});
         if(Number(latest.balance)<terms.debitCents || (shardCash(latest,shard)??0)<terms.debitCents ||
           terms.debitCents>comboAllowedCents(fraction,Number(latest.balance)+Number(latest.portfolio_value)) ||
           !profitableCount(terms.count,terms.yesCost,fees,strategy,Number(latest.balance)+Number(latest.portfolio_value),legs[0].state.type,legs[0].state.remainingSeconds))continue;
+        if(superseded())break;
         const id=randomUUID(),reason=`${legs.length}-pick ${strategy} combo: ${legs.map(c=>c.state.title).join(' / ')}`;
         const inserted=await pool.query(`INSERT INTO trade_attempts(id,market_ticker,event_ticker,game_id,sport,strategy,reason,fraction,count,limit_price,available_cents,status,combo_legs,combo_rfq_id,combo_quote_id)
           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'combo_pending',$12,$13,$14)
@@ -1081,6 +1094,7 @@ async function recordComboRejection(legs,collection,status,detail){
       await new Promise(resolve=>setTimeout(resolve,Math.min(800,Math.max(0,deadline-Date.now()))));
     }
   }finally{await Promise.all(plans.map(p=>kalshi('/communications/rfqs/'+encodeURIComponent(p.rfq),{auth:true,method:'DELETE'}).catch(e=>console.warn('RFQ cancellation deferred:',e.message))))}
+  if(superseded())return {filled:false,pending:false,superseded:true};
   console.info('Combo quote counts:',JSON.stringify([...quoteStats]));
   console.info('Combo maker quote unavailable:',newTicker,'RFQs',plans.map(p=>p.rfq));
   await pool.query(`CREATE TABLE IF NOT EXISTS combo_diagnostics (
@@ -1098,7 +1112,21 @@ async function recordComboRejection(legs,collection,status,detail){
   }
   return {filled:false,pending:false};
 }
-async function checkHeldCombinations(fills){
+async function checkCurrentHeldCombinations(fill,{verifiedSince,superseded}){
+  if(!live())return {filled:false,pending:false};
+  await upgradeTables();
+  const {rows}=await pool.query(`SELECT a.id,a.market_ticker,a.event_ticker,a.game_id,a.sport,a.strategy,a.reason,a.fraction,a.fill_count,a.limit_price,a.created_at,a.updated_at,a.combo_legs,
+    EXISTS(SELECT 1 FROM fallback_verifications f WHERE f.market_ticker=a.market_ticker AND f.original_id=a.id AND f.verified_at >= $1) AS externally_verified
+    FROM trade_attempts a WHERE a.status='filled'`,[verifiedSince]);
+  console.info('Combo check started:',fill?.market_ticker||'held-position retry','confirmed singles',rows.filter(r=>!r.combo_legs).length);
+  for(let attempt=0;attempt<3;attempt++){
+    const result=await checkHeldCombinations(rows,{requestedFill:fill,superseded});
+    if(!fill||!result.deferred||superseded()||attempt===2)return result;
+    // Account positions can trail the confirmed order response briefly.
+    await new Promise(resolve=>setTimeout(resolve,attempt===0?100:250));
+  }
+}
+async function checkHeldCombinations(fills,{requestedFill=null,superseded=()=>false}={}){
   // Establish a one-time baseline before this deployment can submit new buys.
   // Existing holdings are legs for future fills, not triggers on their own.
   await pool.query(`CREATE TABLE IF NOT EXISTS combo_fill_baseline (
@@ -1107,6 +1135,9 @@ async function checkHeldCombinations(fills){
   const {rows:[baseline]}=await pool.query('SELECT started_at FROM combo_fill_baseline WHERE id=1');
   const positions=await allOpenPositions();
   const held=new Set((positions.market_positions||[]).filter(p=>Number(p.position_fp??p.position??0)>0).map(p=>p.ticker));
+  if(requestedFill&&(!held.has(requestedFill.market_ticker)||!fills.some(row=>
+    row.market_ticker===requestedFill.market_ticker&&!row.combo_legs&&Number(row.fill_count)>0)))
+    return {filled:false,pending:false,deferred:'New single is not yet in confirmed held positions'};
   const used=await pool.query(`SELECT combo_legs FROM trade_attempts WHERE combo_legs IS NOT NULL AND status IN ('filled','combo_pending')`);
   const unverifiedUsed=new Set(used.rows.flatMap(r=>(r.combo_legs||[]).map(l=>l.market_ticker)));
   const available=availableComboFills(fills,unverifiedUsed);
@@ -1116,12 +1147,12 @@ async function checkHeldCombinations(fills){
   await pool.query('ALTER TABLE combo_fill_triggers ADD COLUMN IF NOT EXISTS combo_ticker text');
   await pool.query(`CREATE TABLE IF NOT EXISTS combo_retry_state (
     id integer PRIMARY KEY, attempted_at timestamptz NOT NULL)`);
-  const ready=await pool.query(`SELECT a.id,a.market_ticker FROM trade_attempts a
+  const ready=requestedFill?{rows:[]}:await pool.query(`SELECT a.id,a.market_ticker FROM trade_attempts a
     LEFT JOIN combo_fill_triggers t ON t.fill_id=a.id
     WHERE a.status='filled' AND a.combo_legs IS NULL AND a.market_ticker=ANY($1::text[])
       AND a.updated_at>=$2 AND t.fill_id IS NULL
     ORDER BY a.created_at ASC LIMIT 25`,[[...held],baseline.started_at]);
-  const trigger=ready.rows[0]||null;
+  const trigger=requestedFill||ready.rows[0]||null;
   if(trigger){
     const claimed=await pool.query(`INSERT INTO combo_fill_triggers(fill_id,attempted_at)
       VALUES($1,now()) ON CONFLICT DO NOTHING RETURNING fill_id`,[trigger.id]);
@@ -1158,7 +1189,7 @@ async function checkHeldCombinations(fills){
     return {filled:false,pending:false};
   }
   const account=await accountBalance({fresh:true});
-  const result=await executeCombo(candidates,account,Number(account.balance)+Number(account.portfolio_value),comboAllocation(),trigger?.market_ticker);
+  const result=await executeCombo(candidates,account,Number(account.balance)+Number(account.portfolio_value),comboAllocation(),trigger?.market_ticker,superseded);
   if(trigger)await pool.query('UPDATE combo_fill_triggers SET completed_at=now(),combo_ticker=$2 WHERE fill_id=$1',[trigger.id,result.ticker||null]);
   return result;
 }
@@ -1568,11 +1599,7 @@ async function scan(cachedMilestones,discoveryCount){
     if(live()||exitOnly())await exitComebacks(games,events,openPositions);
     // Begin held combo discovery after exits while the ordinary signal scan
     // proceeds. The final quote acceptance rechecks held legs and cash.
-    const comboJob=live()?pool.query(`SELECT a.id,a.market_ticker,a.event_ticker,a.game_id,a.sport,a.strategy,a.reason,a.fraction,a.fill_count,a.limit_price,a.created_at,a.updated_at,a.combo_legs,
-      EXISTS(SELECT 1 FROM fallback_verifications f WHERE f.market_ticker=a.market_ticker AND f.original_id=a.id AND f.verified_at >= $1) AS externally_verified
-      FROM trade_attempts a WHERE a.status='filled'`,[scanStarted])
-      .then(({rows})=>checkHeldCombinations(rows))
-      .catch(e=>{console.error('Held combo execution deferred:',e);return {error:e.message}}):Promise.resolve(null);
+    const comboJob=live()?fillComboQueue.enqueue(null,scanStarted):Promise.resolve(null);
     await Promise.all([candidateTable(),ensureValueScan()]);
     const opportunities=[],snapshotRows=new Map(),scoreboardCache=new Map();
     const valueObservations=[];
@@ -2086,8 +2113,8 @@ async function settlementAlerts(since){
   const {rows}=await pool.query(`SELECT id,ticker,profit_cents,settled_time,created_at FROM settlement_alerts WHERE id>$1 AND created_at>now()-interval '2 days' ORDER BY id LIMIT 50`,[since]);
   return rows;
 }
-export default {async fetch(req){const url=new URL(req.url);
-  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'cfb-live-priority-20261031'});
+async function handleRequest(req){const url=new URL(req.url);
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'immediate-fill-combos-20261031'});
   if(req.method==='GET'&&url.pathname==='/manifest.webmanifest')return response(manifest,'application/manifest+json');
   if(req.method==='GET'&&url.pathname==='/sw.js')return new Response(worker,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','service-worker-allowed':'/','x-content-type-options':'nosniff'}});
   if(req.method==='GET'&&/^\/icon-(192|512)\.png$/.test(url.pathname))return response(Buffer.from(icons[Number(url.pathname.match(/\d+/)[0])],'base64'),'image/png');
@@ -2236,5 +2263,5 @@ export default {async fetch(req){const url=new URL(req.url);
     if(req.method==='GET'&&url.pathname==='/')return new Response(page,{headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store','content-security-policy':"default-src 'self'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self'; manifest-src 'self'; base-uri 'none'; frame-ancestors 'none'",'x-content-type-options':'nosniff'}})
   }catch(e){console.error(e);return json({error:'Service unavailable'},503)}
   return json({error:'Not found'},404);
-}};
-
+}
+export default {fetch:req=>fillComboQueue.run(()=>handleRequest(req))};
