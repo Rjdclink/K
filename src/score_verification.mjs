@@ -78,9 +78,9 @@ export function espnMatches(data,game,milestone){
     const plays=Array.isArray(c.details)?c.details.filter(p=>p.scoringPlay===true):[];
     const values=plays.map(p=>Number(p.scoreValue));
     const total=score(home.score)+score(away.score);
-    const lastScoringPlay=values.length&&values.every(v=>Number.isInteger(v)&&v>0)&&
-      values.reduce((a,b)=>a+b,0)===total?values.at(-1):null;
-    return [{source:'ESPN',eventId:e.id,home:score(home.score),away:score(away.score),periods,live:status?.type?.state==='in',clockOk:clockCompatible(game,status?.period,status?.displayClock),lastScoringPlay}];
+    const documentedGoals=values.every(v=>Number.isInteger(v)&&v>0)?values.reduce((a,b)=>a+b,0):NaN;
+    const lastScoringPlay=values.length&&documentedGoals===total?values.at(-1):null;
+    return [{source:'ESPN',eventId:e.id,home:score(home.score),away:score(away.score),periods,live:status?.type?.state==='in',clockOk:clockCompatible(game,status?.period,status?.displayClock),documentedGoals,lastScoringPlay}];
   });
 }
 export function tennisMatches(data,game,milestone){
@@ -262,6 +262,13 @@ async function verifyExistingOver(game,milestone,{fetcher=fetch,cache,market,sou
     if(matches.length>1)return false;
     if(!matches.length)return null;
     if(!scoreAgreement(game,[matches],market))return false;
+    const series=String(market?.event_ticker||'').split('-')[0];
+    const soccerGameOver=source==='ESPN'&&/soccer/.test(game.type)&&/TOTAL$/.test(series)&&
+      !/TEAMTOTAL$/.test(series)&&!/[1-9](?:Q|P|H|INNING)(?:TEAM)?TOTAL$/.test(series);
+    if(soccerGameOver&&!(matches[0].documentedGoals>Number(market.floor_strike))){
+      game.verificationIssue=`ESPN goal list confirms ${Number.isFinite(matches[0].documentedGoals)?matches[0].documentedGoals:'no reliable'} of ${game.home+game.away} displayed goals; over ${market.floor_strike} not independently established`;
+      return false;
+    }
     const player=playerOverSpec(game,market);
     if(!player){if(source==='ESPN'&&Number.isInteger(matches[0].lastScoringPlay))game.lastScoringPlay=matches[0].lastScoringPlay;return true;}
     const matched=matches[0];
