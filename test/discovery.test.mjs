@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {discoverCurrentMilestones,eligibleForMarkets,linkedEventTickers,gameTimeLabel,storedClockSeconds,mapBatches} from '../src/discovery.mjs';
+import {discoverCurrentMilestones,scanMilestones,eligibleForMarkets,linkedEventTickers,gameTimeLabel,storedClockSeconds,mapBatches} from '../src/discovery.mjs';
 import {gameState,overSignal,sportName} from '../src/strategy.mjs';
 
 test('bounded parallel live batches cover every milestone without losing result order',async()=>{
@@ -35,6 +35,20 @@ test('sports discovery traverses pages and includes esports and older live tourn
   assert.deepEqual(games.map(m=>m.id),['old-golf','live-baseball','live-esports']);
   assert.deepEqual(requests.map(([category,cursor])=>[category,cursor]).sort(),[['Sports',null],['Sports','next'],['Sports','future'],['Esports',null]].sort());
   assert.ok(requests.every(([, ,min])=>min===at(-7)));
+});
+
+test('live scan omits old inactive milestones while retaining active and long-running events',()=>{
+  const now=Date.parse('2026-10-31T18:00:00Z'),at=hours=>new Date(now+hours*3600000).toISOString();
+  const games=[
+    {id:'old-idle',type:'football_game',start_date:at(-72),details:{status:'scheduled'}},
+    {id:'new',type:'football_game',start_date:at(-2),details:{status:'scheduled'}},
+    {id:'old-live',type:'football_game',start_date:at(-50),details:{status:'live'}},
+    {id:'previously-live',type:'soccer_game',start_date:at(-48),details:{status:'scheduled'}},
+    {id:'golf',type:'golf_tournament',start_date:at(-96),details:{status:'scheduled'}},
+    {id:'cricket',type:'cricket_match',start_date:at(-96),details:{status:'scheduled'}}
+  ];
+  assert.deepEqual(scanMilestones(games,new Set(['previously-live']),now).map(m=>m.id),
+    ['new','old-live','previously-live','golf','cricket']);
 });
 
 test('find game and both total families from a game-only milestone',()=>{
