@@ -35,7 +35,7 @@ test('a corrected stat exits an over and its combo only when its own line uncros
   const playerMarket={ticker:player.market_ticker,event_ticker:'KXNBAPTS-26OCT31',floor_strike:19.5,
     custom_strike:{basketball_player:'john'},yes_sub_title:'John Doe: 20+'};
   const basketball={...state,type:'basketball_game',playerStats:{john:{points:19}}};
-  assert.equal(overCorrectionAffects(player,basketball,playerMarket),true,'a player prop uses the named statistic');
+  assert.equal(overCorrectionAffects(player,basketball,playerMarket),false,'a Kalshi-only player-stat dip cannot force a sale');
   assert.equal(overCorrectionAffects(player,{...basketball,playerStats:{john:{points:21}}},playerMarket),false);
   const cricket={strategy:'over',market_ticker:'KXODITEAMTOTAL-26OCT31-KEN',reason:'Kenya has 231 runs; team total 230.5 crossed'};
   const cricketMarket={ticker:cricket.market_ticker,event_ticker:'KXODITEAMTOTAL-26OCT31',floor_strike:230.5,custom_strike:{cricket_team:'ken'}};

@@ -59,6 +59,9 @@ export function profitTargetAllowed(original){
 export function overCorrectionAffects(original,game,market){
   if(original?.strategy!=='over'||!game?.verifiedLive||!game.scoreKnown||!game.scoreConsistent||
     !market||market.ticker!==original.market_ticker)return false;
+  // An exchange-only player-stat dip is not proof that an already credited
+  // stat was rescinded. Keep player props for settlement or a profitable exit.
+  if(Object.keys(market.custom_strike||{}).some(key=>/_player$/.test(key)))return false;
   const series=String(market.event_ticker||'').split('-')[0];
   const cricket=game.type==='cricket_match';
   const reason=String(original.reason||'');

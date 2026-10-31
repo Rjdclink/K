@@ -10,6 +10,8 @@ test('combo add-on requires a held market, live YES offer, cash and exposure roo
   const quote=manualComboQuote(market,book,position,account,false,1000);
   assert.equal(quote.price,.8);
   assert.ok(quote.count>0&&quote.max_cost_cents<=1000);
+  assert.ok(manualComboQuote(market,book,position,account,false).max_cost_cents<=1349,
+    'a verified combo add-on stays within fifteen percent after held exposure and fees');
   assert.equal(manualComboQuote(market,{no_dollars:[]},position,account).reason,'No YES seller is available');
   assert.equal(manualComboQuote(market,book,{...position,position_fp:'0'},account).reason,'Combo position is no longer held');
   assert.equal(manualComboQuote({...market,status:'closed'},book,position,account).reason,'Combo market is closed');

@@ -730,7 +730,7 @@ async function upgradeHeldOver(c,preflight,original,scoreboardCache){
     current.rules_primary!==c.market.rules_primary||current.floor_strike!==c.market.floor_strike||
     current.cap_strike!==c.market.cap_strike||current.close_time!==c.market.close_time||
     JSON.stringify(current.custom_strike||{})!==JSON.stringify(c.market.custom_strike||{})||
-    !verifiedSignal||![.30,.40].includes(verifiedSignal.fraction))return {verified:false,filled:false};
+    !verifiedSignal||![.10,.40].includes(verifiedSignal.fraction))return {verified:false,filled:false};
   await upgradeTables();
   if(/Kalshi-only/i.test(original.reason||''))await pool.query(`INSERT INTO fallback_verifications(market_ticker,original_id,verification_id,verified_at) VALUES($1,$2,$3,now())
     ON CONFLICT(market_ticker) DO UPDATE SET original_id=EXCLUDED.original_id,verification_id=EXCLUDED.verification_id,
@@ -807,7 +807,7 @@ async function immediatelyUpgradeFilledOver(c,scoreboardCache){
   second.verificationId=first.verificationId;
   second.lastScoringPlay=first.lastScoringPlay;
   const verifiedSignal=overSignal(second,c.market);
-  if(!verifiedSignal||![.30,.40].includes(verifiedSignal.fraction))return false;
+  if(!verifiedSignal||![.10,.40].includes(verifiedSignal.fraction))return false;
   const {rows:[fill]}=await pool.query(`SELECT id,market_ticker,event_ticker,game_id,sport,strategy,reason,status,combo_legs
     FROM trade_attempts WHERE market_ticker=$1 AND status='filled'`,[c.market.ticker]);
   if(!fill)return false;
