@@ -17,7 +17,7 @@ import { discoverCurrentMilestones, eligibleForMarkets, linkedEventTickers, game
 import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOverDecision, verifyIndependentTableTennisLeadDecision, verifyIndependentTableTennisMatch } from './score_verification.mjs';
 import { COMBO_ATTEMPT_MS, VERIFY_DWELL_MS, COMBO_RFQ_PLANS, comboAllocation, comboLegAllocation, comboAllowedCents, comboRfqTargetCents, remainingVerifiedComboCents, availableComboFills, compatibleComboGroups, plannedComboGroups, comboPairDiagnostics, comboLegs, filledComboWindow, heldComboLeg, quoteForYes, collectionsForEvents, selectedComboMarkets, liveComboMarket } from './combos.mjs';
-import { estimatedSaleProfitCents, halfPotentialProfitExitEligible, oneAndHalfExitEligible, soccerOverCorrectionAffects } from './positions.mjs';
+import { estimatedSaleProfitCents, halfPotentialProfitExitEligible, oneAndHalfExitEligible, soccerOverCorrectionAffects, soccerCorrectionTargets } from './positions.mjs';
 import { remainingVerifiedOverCents, upgradeEligible } from './upgrades.mjs';
 import { weatherContract } from './weather.mjs';
 import { scanWeatherMarkets } from './weather_scanner.mjs';
@@ -1183,6 +1183,45 @@ async function exitComebacks(games,events,positions){
     }catch(e){console.error('Position exit deferred:',position.ticker,e.message)}
   }
 }
+// A full discovery scan can take many seconds. Poll only the live games behind
+// held soccer totals throughout the cron invocation, so a score correction
+// does not wait for discovery, candidate verification or combo RFQs.
+async function watchCorrectedSoccerOvers(until){
+  let rows=[],nextRefresh=0;
+  while(Date.now()<until){
+    const started=Date.now();
+    try{
+      if(started>=nextRefresh){
+        const result=await pool.query(`SELECT DISTINCT ON (a.market_ticker) a.market_ticker,a.game_id,a.sport,a.strategy,a.reason,a.combo_legs,
+          g.title,g.sport_family,g.sport AS game_sport,g.home_team_id,g.away_team_id,g.status AS game_status
+          FROM trade_attempts a LEFT JOIN game_snapshots g ON g.id=a.game_id
+          WHERE a.status='filled' AND (a.sport='Soccer' AND a.strategy='over' OR a.combo_legs IS NOT NULL)
+          ORDER BY a.market_ticker,a.updated_at DESC`);
+        rows=result.rows;nextRefresh=Date.now()+5000;
+      }
+      const singles=rows.filter(row=>row.sport==='Soccer'&&row.strategy==='over'&&
+        row.game_status==='live'&&/soccer/.test(String(row.sport_family||''))&&
+        /TOTAL/i.test(row.market_ticker)&&!/TEAMTOTAL/i.test(row.market_ticker));
+      const milestones=[...new Map(singles.map(row=>[row.game_id,{id:row.game_id,title:row.title,
+        type:row.sport_family,details:{league:row.game_sport,home_team_id:row.home_team_id,away_team_id:row.away_team_id}}])).values()];
+      if(milestones.length){
+        const data=await liveBatch(milestones);
+        const games=milestones.map(milestone=>({milestone,state:gameState(milestone,data.get(milestone.id))}));
+        const states=new Map(games.map(game=>[game.milestone.id,game.state]));
+        const target=soccerCorrectionTargets(rows,states);
+        if(target.size){
+          const positions=await allOpenPositions();
+          const held=(positions.market_positions||[]).filter(position=>target.has(position.ticker)&&
+            Number(position.position_fp??position.position)>0);
+          if(held.length)await exitComebacks(games,new Map(),{market_positions:held});
+        }
+      }
+    }catch(e){console.error('Fast soccer correction exit deferred:',e)}
+    const pause=Math.max(0,2000-(Date.now()-started));
+    if(Date.now()+pause>=until)break;
+    if(pause)await new Promise(resolve=>setTimeout(resolve,pause));
+  }
+}
 async function nws(path){
   const response=await fetch('https://api.weather.gov'+path,{headers:{accept:'application/geo+json','user-agent':'K-Kalshi-weather-verification (station observations)'},signal:AbortSignal.timeout(9000)});
   if(!response.ok)throw Error(`NWS ${response.status}`);
@@ -1713,12 +1752,15 @@ export default {async fetch(req){const url=new URL(req.url);
     // Neon cron has minute resolution. Short invocations keep the three-second loop alive
     // without relying on one function instance surviving for a full quarter hour.
     const now=Date.now();const until=Math.min(now+55000,(Math.floor(now/60000)+1)*60000-2000);let cached=null,discoveryCount,cycles=0,last={};
-    while(Date.now()<until){const begun=Date.now();last=await scan(cached,discoveryCount);cycles++;
-      if(last.next)cached=last.next;if(last.discovered!=null)discoveryCount=last.discovered;
-      if(last.error && !/Kalshi 429 /.test(last.error) || !last.error && !last.active)break;
-      const pause=Math.max(0,3000-(Date.now()-begun));if(Date.now()+pause>=until)break;
-      await new Promise(resolve=>setTimeout(resolve,pause));
-    }
+    const correctionJob=watchCorrectedSoccerOvers(until).catch(e=>console.error('Fast correction watcher failed:',e));
+    try{
+      while(Date.now()<until){const begun=Date.now();last=await scan(cached,discoveryCount);cycles++;
+        if(last.next)cached=last.next;if(last.discovered!=null)discoveryCount=last.discovered;
+        if(last.error && !/Kalshi 429 /.test(last.error) || !last.error && !last.active)break;
+        const pause=Math.max(0,3000-(Date.now()-begun));if(Date.now()+pause>=until)break;
+        await new Promise(resolve=>setTimeout(resolve,pause));
+      }
+    }finally{await correctionJob}
     await weatherJob;
     const {next,...summary}=last;return json({...summary,cycles});
   }
