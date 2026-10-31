@@ -52,6 +52,8 @@ test('dashboard includes alerts in its existing refresh while the alert endpoint
     assert.deepEqual(body.alerts,[alert]);
     assert.deepEqual(body.games,[]);
     assert.equal(body.scan.scanned,0);
+    assert.deepEqual(body.weather,{disabled:true,series:0,eligible:0});
+    assert.equal(seen.some(item=>item.sql.includes('FROM weather_scan_status WHERE')),false);
     assert.equal(body.orders.length,0);
     assert.equal(seen.filter(item=>item.sql.includes('FROM settlement_alerts WHERE')).length,1);
     assert.deepEqual(seen.find(item=>item.sql.includes('FROM settlement_alerts WHERE')).params,[7]);
