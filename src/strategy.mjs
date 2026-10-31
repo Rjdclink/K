@@ -131,8 +131,10 @@ export function gameState(m, live) {
     /soccer/.test(family)?d.ball_possession_team_id??d.possession_team_id??d.possession:
     /basketball/.test(family)?d.possession_team_id??d.possession:
     d.possession_team_id??d.possession??d.serving_team_id??(/cricket/.test(family)?d.batting:null);
-  const possessionSide=String(possessionValue||'').toLowerCase()==='home'||possessionValue&&possessionValue===m.details?.home_team_id?'home':
-    String(possessionValue||'').toLowerCase()==='away'||possessionValue&&possessionValue===m.details?.away_team_id?'away':
+  const homeId=m.details?.home_team_id||(/rugby/.test(family)?m.details?.home_competitor_id:null);
+  const awayId=m.details?.away_team_id||(/rugby/.test(family)?m.details?.away_competitor_id:null);
+  const possessionSide=String(possessionValue||'').toLowerCase()==='home'||possessionValue&&possessionValue===homeId?'home':
+    String(possessionValue||'').toLowerCase()==='away'||possessionValue&&possessionValue===awayId?'away':
     /baseball/.test(family)?d.inning_half===2||/bottom/i.test(String(d.inning_half||periodText))?'home':d.inning_half===1||/top/i.test(String(d.inning_half||periodText))?'away':null:
     (tennis||tableTennis)&&d.server===m.details?.first_competitor_id?(firstIsHome?'home':'away'):
     (tennis||tableTennis)&&d.server===m.details?.second_competitor_id?(firstIsHome?'away':'home'):null;

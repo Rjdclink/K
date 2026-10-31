@@ -19,6 +19,41 @@ test('all supported leader-control sports get five points after independent veri
   const golf={type:'golf_tournament',golf:{}};
   assert.equal(finalLeadFraction(golf,golf,{...lead,fraction:.10},true),.10,'golf has no possession bonus');
 });
+test('Kalshi-only late rugby lead scales to twenty percent with margin, time, and confirmed control',()=>{
+  const first={type:'rugby_match',sport:'Rugby',period:2,verifiedLive:true,scoreConsistent:true,periodConsistent:true,
+    home:19,away:0,homeUnits:19,awayUnits:0,remainingSeconds:89,possessionSide:null};
+  const fraction=(margin,seconds,control=null)=>{
+    const state={...first,home:margin,homeUnits:margin,remainingSeconds:seconds,possessionSide:control};
+    return finalLeadFraction(state,state,{strategy:'lead',fraction:margin>=22?.15:.10},false);
+  };
+  assert.equal(fraction(15,89),.12);
+  assert.equal(fraction(19,60),.12);
+  assert.equal(fraction(19,38),.13);
+  assert.equal(fraction(19,29),.14);
+  assert.equal(fraction(22,38),.16);
+  assert.equal(fraction(28,29),.20);
+  assert.equal(fraction(28,29,'home'),.20);
+  assert.equal(fraction(19,38,'home'),.15);
+  assert.equal(finalLeadFraction({...first,possessionSide:null},{...first,possessionSide:'home',remainingSeconds:38},lead,false),.13,
+    'a single possession observation earns no bonus');
+  assert.equal(fraction(19,90),.10);
+  assert.equal(fraction(14,38),.10);
+  assert.equal(finalLeadFraction({...first,remainingSeconds:37},{...first,remainingSeconds:38},lead,false),.10,
+    'a clock that moves backward cannot receive the higher tier');
+  assert.equal(finalLeadFraction({...first,verifiedLive:false},{...first,remainingSeconds:38},lead,false),.10);
+  assert.equal(finalLeadFraction({...first,remainingSeconds:38},{...first,remainingSeconds:38},lead,true),.15,
+    'independently verified rugby keeps its existing fraction');
+});
+test('rugby competitor IDs can identify the leader in possession without guessing',()=>{
+  const milestone={id:'rugby',type:'rugby_match',title:'Home vs Away',details:{league:'United Rugby Championship',
+    home_competitor_id:'home-id',away_competitor_id:'away-id'}};
+  const live={milestone_id:'rugby',details:{status:'live',period:2,clock:'00:38',home_score:0,away_score:19,
+    possession_team_id:'away-id'}};
+  const state=gameState(milestone,live);
+  assert.equal(state.possessionSide,'away');
+  assert.equal(leaderHasControl(state),true);
+  assert.equal(gameState(milestone,{...live,details:{...live.details,possession_team_id:'unrecognized'}}).possessionSide,null);
+});
 test('tennis serve, table-tennis serve, and darts turn must identify the leading competitor',()=>{
   for(const type of ['tennis_match','table_tennis_match']){
     const g=gameState({id:'g',type,title:'Alpha vs Beta',details:{first_competitor_id:'a',second_competitor_id:'b'}},

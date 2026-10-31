@@ -39,6 +39,11 @@ test('game summary puts preflight and available-ask counts above other metrics',
   assert.deepEqual([...positions].sort((a,b)=>a-b),positions);
 });
 
+test('stale football cards explicitly say they were absent from the latest live scan',()=>{
+  assert.match(page,/Not in latest live scan · last seen/);
+  assert.doesNotMatch(page,/Last seen .* · rechecking/);
+});
+
 test('combo controls show live buy and sell liquidity separately',()=>{
   const element={classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){}};
   const document={getElementById:()=>element,querySelectorAll:()=>[],createElement:()=>({children:[],append(...items){this.children.push(...items)}})};
