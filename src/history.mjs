@@ -1,6 +1,13 @@
 const numeric=value=>value===null||value===undefined||value===''?NaN:Number(value);
 const yesFill=fill=>fill.outcome_side==='yes'||fill.side==='yes';
 const time=value=>{const parsed=new Date(value);return Number.isFinite(parsed.getTime())?parsed:null};
+export function manualSaleFill(sale){
+  const r=sale?.result||{},count=numeric(r.fill_count),price=numeric(r.average_fill_price),fee=numeric(r.average_fee_paid);
+  if(!sale?.ticker||!r.order_id||!Number.isFinite(count)||count<=0||!Number.isFinite(price)||price<=0||price>1||
+    !Number.isFinite(fee)||fee<0||!time(sale.created_at))return null;
+  return {ticker:sale.ticker,order_id:r.order_id,outcome_side:'yes',action:'sell',count_fp:String(count),
+    yes_price_dollars:String(price),fee_cost:String(count*fee),created_time:time(sale.created_at).toISOString()};
+}
 
 // Reconcile actual entry and exit fills. A partial sale appears only after its
 // remaining contracts settle, so one history row reflects the whole trade.

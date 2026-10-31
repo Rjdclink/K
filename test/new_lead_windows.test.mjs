@@ -64,7 +64,7 @@ test('baseball needs verified inning half and outs; draw requires a real final c
   assert.equal(drawSignal(stoppage,{...soccerDraw,title:'Tie is the result'})?.fraction,.05);
   assert.equal(drawSignal(soccer.state(2,'',1,1,{half:'2nd',time:"90+3'",match_remaining_seconds:19,match_status:'overtime'}),soccerDraw),null);
 });
-test('cricket winner entries stay disabled while the final innings can reverse',()=>{
+test('Test cricket winner entries stay disabled without a finite number of balls',()=>{
   const m={id:'test',type:'cricket_match',title:'Bangladesh vs West Indies',details:{league:'Test International (M)',home_team_id:'ban',away_team_id:'wi',main_game_event_ticker:'KXTESTMATCH-TEST'}};
   const market={status:'active',event_ticker:'KXTESTMATCH-TEST',title:'Bangladesh wins',rules_primary:'If Bangladesh wins the professional Test match, then Yes.',custom_strike:{cricket_team:'ban'},yes_ask_dollars:'0.70'};
   const board={home:'Bangladesh',away:'West Indies','Current Innings':'4','Current Batting Team':'West Indies','batting.1':'Bangladesh','batting.2':'West Indies','batting.3':'Bangladesh','batting.4':'West Indies','runs.1':'272','runs.2':'245','runs.3':'79','runs.4':'40'};
@@ -82,4 +82,27 @@ test('cricket winner entries stay disabled while the final innings can reverse',
   const chaseBoard={home:'Dubai',away:'Emirates Blues','Current Innings':'2','Current Batting Team':'Dubai','batting.1':'Emirates Blues','batting.2':'Dubai','runs.1':'167','runs.2':'89'};
   const chase=gameState(d20,{details:{status:'live',current_inning:2,home_score:89,away_score:167,batting:'home',home_total_runs:89,away_total_runs:167,cricket_result:{scoreboard:chaseBoard}}});
   assert.equal(cricketLeadSignal(chase,{...market,custom_strike:{cricket_team:'wi'},title:'Emirates Blues wins'}),null);
+});
+test('limited-over cricket requires a 50-run lead, a late chase, and few wickets left',()=>{
+  const m={id:'odi',type:'cricket_match',title:'UAE vs Netherlands',
+    details:{league:'ODI (M)',home_team_id:'uae',away_team_id:'ned',main_game_event_ticker:'KXODIMATCH-ODI'}};
+  const market={status:'active',event_ticker:'KXODIMATCH-ODI',title:'Netherlands wins',
+    rules_primary:'Resolves Yes if Netherlands wins.',custom_strike:{cricket_team:'ned'},yes_ask_dollars:'0.95'};
+  const board={home:'UAE',away:'Netherlands','Current Innings':'2','Current Batting Team':'UAE',
+    'batting.1':'Netherlands','batting.2':'UAE','runs.1':'263','runs.2':'208',
+    'wickets.2':'7','overs.2':'48.2'};
+  const state=(changes={})=>gameState(m,{milestone_id:m.id,details:{status:'live',current_inning:2,
+    home_score:Number(changes['runs.2']??208),away_score:263,batting:'home',
+    home_total_runs:Number(changes['runs.2']??208),away_total_runs:263,
+    cricket_result:{scoreboard:{...board,...changes}}}});
+  assert.equal(state().cricket.ballsRemaining,10);
+  assert.equal(state().cricket.wicketsRemaining,3);
+  assert.equal(cricketLeadSignal(state(),market)?.fraction,.10);
+  assert.equal(cricketLeadSignal(state({'runs.2':'214'}),market),null,'49 runs is below the floor');
+  assert.equal(cricketLeadSignal(state({'wickets.2':'6'}),market),null,'four wickets can still bat');
+  assert.equal(cricketLeadSignal(state({'overs.2':'47.5'}),market),null,'too many balls remain');
+  assert.equal(cricketLeadSignal(state({'wickets.2':undefined}),market),null);
+  assert.equal(cricketLeadSignal(state({'overs.2':'49.7'}),market),null,'invalid ball count fails closed');
+  assert.equal(cricketLeadSignal(state(),{...market,yes_ask_dollars:'0.89'}),null,'do not buy a long shot');
+  assert.equal(cricketLeadSignal(state(),{...market,custom_strike:{cricket_team:'uae'}}),null);
 });

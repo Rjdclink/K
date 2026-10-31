@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {completedTrade} from '../src/history.mjs';
+import {completedTrade,manualSaleFill} from '../src/history.mjs';
 
 const entry={order_id:'buy-1',market_ticker:'KXGAME-TEAM',fill_count:'10.00',created_at:'2026-10-28T13:00:00Z'};
 const buy={order_id:'buy-1',ticker:entry.market_ticker,outcome_side:'yes',action:'buy',count_fp:'10.00',yes_price_dollars:'0.80',fee_cost:'0.10',created_time:'2026-10-28T13:00:01Z'};
@@ -9,6 +9,13 @@ const sale={order_id:'sell-1',ticker:entry.market_ticker,outcome_side:'yes',acti
 test('history records actual sale loss once the whole position closes',()=>{
   assert.deepEqual(completedTrade(entry,[buy,sale],null),{occurredAt:new Date(sale.created_time).toISOString(),profitCents:-265,outcome:'closed'});
   assert.equal(completedTrade(entry,[buy,{...sale,count_fp:'4.00'}],null),null);
+});
+test('a completed manual sale can reconcile history when the sale fill is absent',()=>{
+  const manual=manualSaleFill({ticker:entry.market_ticker,created_at:sale.created_time,
+    result:{order_id:'manual-sell',fill_count:'10.00',average_fill_price:'0.9700',average_fee_paid:'0.0020'}});
+  assert.equal(manual.fee_cost,'0.02');
+  assert.equal(completedTrade(entry,[buy,manual],null).profitCents,158);
+  assert.equal(manualSaleFill({ticker:entry.market_ticker,created_at:sale.created_time,result:{fill_count:'10.00'}}),null);
 });
 test('history includes wins, losses, and partial exit plus settlement',()=>{
   const yes={ticker:entry.market_ticker,market_result:'yes',settled_time:'2026-10-28T14:00:00Z'};

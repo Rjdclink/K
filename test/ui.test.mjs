@@ -93,6 +93,13 @@ test('filled order timer is bright red, advances each second and reanchors to li
   assert.match(tennis.children[0].children[0].textContent,/Alex de Minaur/);
   const soccer=order({...base,sport:'Soccer',game_title:'Metz vs Pau',strategy:'lead',selected_name:'Pau'});
   assert.equal(soccer.children[0].children[0].textContent,'Pau');
+  const cricket={...base,sport:'ODI (M)',sport_family:'cricket_match',game_title:'United Arab Emirates vs Netherlands',
+    strategy:'lead',reason:'Restricted 20% cricket final innings 2; verified match totals 9–263 runs (254 ahead)',
+    home_score:136,away_score:263,score_scanned_at:new Date(start).toISOString()};
+  const cricketRow=order(cricket);
+  assert.equal(cricketRow.children[0].children[0].textContent,'Netherlands');
+  paintScore(chosen,cricket,start);
+  assert.match(chosen.innerHTML,/Away <strong class="chosen-score">263<\/strong> · Home 136/);
   const propBase={...base,sport:'Basketball',sport_family:'basketball_game',strategy:'over',game_title:'CHA Hornets at WAS Wizards',market_ticker:'KXNBASTL-26OCT30CHAWAS-WASKGEORGE18-1',reason:'1 STL by Kyshawn George; line 0.5 already passed',score_scanned_at:new Date(start).toISOString()};
   const homeProp=order(propBase);
   assert.equal(homeProp.children[0].textContent,'Basketball · OVER · Kyshawn George 1+ STL');
