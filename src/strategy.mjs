@@ -554,12 +554,12 @@ export function tennisSignal(game,market){
   const leaderGames=first?t.firstGames:t.secondGames,opponentGames=first?t.secondGames:t.firstGames;
   return {strategy:'lead',reason:`Tennis match-clinching set ${leaderGames}–${opponentGames}; leader serves, points ${leaderPoints}–${opponentPoints}${t.advantage===leaderId?' advantage':''}`,fraction:.15};
 }
-export function minimumProfitCents(strategy,availableCents,sportType='',remainingSeconds=NaN){
-  if(strategy==='weather')return 30;
-  // Leads and overs require positive expected settlement proceeds after fees.
-  if(strategy==='over'||strategy==='lead')return 1;
-  if(Number(availableCents)>=20000)return 200;
-  return Number(availableCents)>=10000?50:25;
+export function minimumProfitCents(strategy,availableCents,sportType='',remainingSeconds=NaN,filledOrders=0){
+  const tier=filledOrders>=20?100:filledOrders>=15?50:filledOrders>=10?25:0;
+  const existing=strategy==='weather'?30:
+    strategy==='over'||strategy==='lead'?1:
+    Number(availableCents)>=20000?200:Number(availableCents)>=10000?50:25;
+  return Math.max(existing,tier);
 }
 export function netSettlementProfitCents(count,price,feeMultiplier=2){
   if(!Number.isFinite(count)||count<=0||!Number.isFinite(price)||price<=0||price>=1)return 0;
