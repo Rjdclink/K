@@ -17,7 +17,7 @@ import { discoverCurrentMilestones, eligibleForMarkets, linkedEventTickers, game
 import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOverDecision, verifyIndependentTableTennisLeadDecision, verifyIndependentTableTennisMatch } from './score_verification.mjs';
 import { COMBO_ATTEMPT_MS, VERIFY_DWELL_MS, COMBO_RFQ_PLANS, comboAllocation, comboLegAllocation, comboAllowedCents, comboRfqTargetCents, remainingVerifiedComboCents, availableComboFills, compatibleComboGroups, plannedComboGroups, comboPairDiagnostics, comboLegs, filledComboWindow, heldComboLeg, quoteForYes, collectionsForEvents, selectedComboMarkets, liveComboMarket } from './combos.mjs';
-import { estimatedSaleProfitCents, halfPotentialProfitExitEligible, oneAndHalfExitEligible, soccerOverCorrectionAffects, soccerCorrectionTargets } from './positions.mjs';
+import { estimatedSaleProfitCents, halfPotentialProfitExitEligible, oneAndHalfExitEligible, profitTargetAllowed, overCorrectionAffects, correctionExitTargets } from './positions.mjs';
 import { remainingVerifiedOverCents, upgradeEligible } from './upgrades.mjs';
 import { weatherContract } from './weather.mjs';
 import { scanWeatherMarkets } from './weather_scanner.mjs';
@@ -1106,16 +1106,22 @@ async function exitComebacks(games,events,positions){
     const leadExit=leadPosition&&!combo;
     const reversed=leadExit&&state?.verifiedLive&&nested&&comeback(state,nested,strategy);
     try{
-      const correctionLegs=(combo?original.combo_legs.map(leg=>({row:ownership.get(leg.market_ticker),game:gameInfo.get(leg.game_id)})):
-        [{row:original,game:gameInfo.get(gameId)}]).filter(leg=>soccerOverCorrectionAffects(leg.row,leg.game?.state));
+      const correctionLegs=[];
+      for(const leg of combo?original.combo_legs.map(leg=>({row:ownership.get(leg.market_ticker),game:gameInfo.get(leg.game_id)})):
+        [{row:original,game:gameInfo.get(gameId)}]){
+        if(leg.row?.strategy!=='over'||!leg.game?.state?.verifiedLive)continue;
+        const legMarket=markets.get(leg.row.market_ticker)||
+          (await kalshi('/markets/'+encodeURIComponent(leg.row.market_ticker))).market;
+        if(overCorrectionAffects(leg.row,leg.game.state,legMarket))correctionLegs.push({...leg,market:legMarket});
+      }
       // Re-read the live score immediately. Do not wait for the profit target
-      // or the normal comeback dwell when a corrected goal uncrosses an over.
+      // or the normal comeback dwell when a corrected statistic uncrosses an over.
       let corrected=false;
       for(const leg of correctionLegs){
         const raw=await liveMilestone(leg.game.milestone.id);
         if(!raw)continue;
         raw._observed_at=new Date().toISOString();
-        if(soccerOverCorrectionAffects(leg.row,gameState(leg.game.milestone,raw))){corrected=true;break}
+        if(overCorrectionAffects(leg.row,gameState(leg.game.milestone,raw),leg.market)){corrected=true;break}
       }
       const market=(await kalshi('/markets/'+encodeURIComponent(position.ticker))).market;
       if(!market||!['active','open'].includes(market.status))continue;
@@ -1123,9 +1129,9 @@ async function exitComebacks(games,events,positions){
       const heldCount=Number(position.position_fp??position.position);
       const sale=sellQuote(book,heldCount,market.fractional_trading_enabled===false);
       if(!sale||sale.count<minimumCount(market))continue;
-      // Profit targets sell the full position at an executable bid. Lead
-      // singles and combos use half their possible net settlement profit.
-      const targetReached=sale.count>=heldCount-1e-7&&
+      // Soccer commanding leads stay open for settlement or an independently
+      // confirmed comeback; a corrected over can still exit immediately.
+      const targetReached=profitTargetAllowed(original)&&sale.count>=heldCount-1e-7&&
         (leadPosition?halfPotentialProfitExitEligible(position,sale):oneAndHalfExitEligible(position,sale));
       if(!leadExit&&!targetReached&&!corrected)continue;
       if(!targetReached&&!reversed&&!corrected)continue;
@@ -1184,10 +1190,10 @@ async function exitComebacks(games,events,positions){
   }
 }
 // A full discovery scan can take many seconds. Poll only the live games behind
-// held soccer totals throughout the cron invocation, so a score correction
+// held overs throughout the cron invocation, so a statistic correction
 // does not wait for discovery, candidate verification or combo RFQs.
-async function watchCorrectedSoccerOvers(until){
-  let rows=[],nextRefresh=0;
+async function watchCorrectedOvers(until){
+  let rows=[],marketsByTicker=new Map(),nextRefresh=0;
   while(Date.now()<until){
     const started=Date.now();
     try{
@@ -1195,28 +1201,38 @@ async function watchCorrectedSoccerOvers(until){
         const result=await pool.query(`SELECT DISTINCT ON (a.market_ticker) a.market_ticker,a.game_id,a.sport,a.strategy,a.reason,a.combo_legs,
           g.title,g.sport_family,g.sport AS game_sport,g.home_team_id,g.away_team_id,g.status AS game_status
           FROM trade_attempts a LEFT JOIN game_snapshots g ON g.id=a.game_id
-          WHERE a.status='filled' AND (a.sport='Soccer' AND a.strategy='over' OR a.combo_legs IS NOT NULL)
+          WHERE a.status='filled' AND (a.strategy='over' OR a.combo_legs IS NOT NULL)
           ORDER BY a.market_ticker,a.updated_at DESC`);
-        rows=result.rows;nextRefresh=Date.now()+5000;
+        rows=result.rows;
+        const overRows=rows.filter(row=>row.strategy==='over'&&row.game_status==='live'&&row.sport_family);
+        const quotes=await Promise.all(overRows.map(async row=>{
+          try{return [row.market_ticker,(await kalshi('/markets/'+encodeURIComponent(row.market_ticker))).market]}
+          catch{return [row.market_ticker,null]}
+        }));
+        marketsByTicker=new Map(quotes.filter(([,market])=>market));
+        nextRefresh=Date.now()+5000;
       }
-      const singles=rows.filter(row=>row.sport==='Soccer'&&row.strategy==='over'&&
-        row.game_status==='live'&&/soccer/.test(String(row.sport_family||''))&&
-        /TOTAL/i.test(row.market_ticker)&&!/TEAMTOTAL/i.test(row.market_ticker));
+      const singles=rows.filter(row=>row.strategy==='over'&&row.game_status==='live'&&
+        row.sport_family&&marketsByTicker.has(row.market_ticker));
       const milestones=[...new Map(singles.map(row=>[row.game_id,{id:row.game_id,title:row.title,
         type:row.sport_family,details:{league:row.game_sport,home_team_id:row.home_team_id,away_team_id:row.away_team_id}}])).values()];
       if(milestones.length){
         const data=await liveBatch(milestones);
         const games=milestones.map(milestone=>({milestone,state:gameState(milestone,data.get(milestone.id))}));
         const states=new Map(games.map(game=>[game.milestone.id,game.state]));
-        const target=soccerCorrectionTargets(rows,states);
+        const target=correctionExitTargets(rows,states,marketsByTicker);
         if(target.size){
           const positions=await allOpenPositions();
           const held=(positions.market_positions||[]).filter(position=>target.has(position.ticker)&&
             Number(position.position_fp??position.position)>0);
-          if(held.length)await exitComebacks(games,new Map(),{market_positions:held});
+          if(held.length){
+            const events=new Map([...marketsByTicker.values()].map(market=>[market.event_ticker,
+              {event_ticker:market.event_ticker,markets:[...marketsByTicker.values()].filter(candidate=>candidate.event_ticker===market.event_ticker)}]));
+            await exitComebacks(games,events,{market_positions:held});
+          }
         }
       }
-    }catch(e){console.error('Fast soccer correction exit deferred:',e)}
+    }catch(e){console.error('Fast over correction exit deferred:',e)}
     const pause=Math.max(0,2000-(Date.now()-started));
     if(Date.now()+pause>=until)break;
     if(pause)await new Promise(resolve=>setTimeout(resolve,pause));
@@ -1752,7 +1768,7 @@ export default {async fetch(req){const url=new URL(req.url);
     // Neon cron has minute resolution. Short invocations keep the three-second loop alive
     // without relying on one function instance surviving for a full quarter hour.
     const now=Date.now();const until=Math.min(now+55000,(Math.floor(now/60000)+1)*60000-2000);let cached=null,discoveryCount,cycles=0,last={};
-    const correctionJob=watchCorrectedSoccerOvers(until).catch(e=>console.error('Fast correction watcher failed:',e));
+    const correctionJob=watchCorrectedOvers(until).catch(e=>console.error('Fast correction watcher failed:',e));
     try{
       while(Date.now()<until){const begun=Date.now();last=await scan(cached,discoveryCount);cycles++;
         if(last.next)cached=last.next;if(last.discovered!=null)discoveryCount=last.discovered;
