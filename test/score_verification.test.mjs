@@ -26,6 +26,18 @@ const espn=(home=24,away=20,overrides={})=>({events:[{date:start,status:{type:{s
   {homeAway:'away',score:String(away),team:{displayName:'Brooklyn Nets',abbreviation:'BKN',name:'Nets'}}
 ]}],...overrides}]});
 const fox=(home=24,away=20,overrides={})=>({sectionList:[{events:[{eventTime:start,eventStatus:1,statusLine:'05:00',entityLink:{layout:{tokens:{homeUri:'team-bos',awayUri:'team-bkn'}}},upperTeam:{uri:'team-bkn',name:'BKN',longName:'Nets',score:away},lowerTeam:{uri:'team-bos',name:'BOS',longName:'Celtics',score:home},...overrides}]}]});
+test('GA Eagles maps to Go Ahead Eagles, while a suspended match still blocks soccer overs',async()=>{
+  const fixture={id:'cambuur',type:'soccer_match',title:'Cambuur vs GA Eagles',start_date:start};
+  const state=gameState(fixture,{details:{status:'live',home_score:0,away_score:4,time:"85'",home_team_name:'Cambuur',away_team_name:'GA Eagles'}});
+  const board={events:[{id:'401875561',date:start,status:{type:{state:'post'},period:2,displayClock:"84'"},competitions:[{
+    competitors:[{homeAway:'home',score:'0',team:{displayName:'SC Cambuur'}},
+      {homeAway:'away',score:'4',team:{displayName:'Go Ahead Eagles'}}],details:[1,1,1,1].map(scoreValue=>({scoringPlay:true,scoreValue}))}]}]};
+  assert.equal(espnMatches(board,state,fixture).length,1);
+  const market={event_ticker:'KXEREDIVISIETOTAL-26OCT31CAMGAE',floor_strike:3.5};
+  assert.equal(await verifyIndependentOverDecision(state,fixture,{market,fetcher:async()=>({ok:true,json:async()=>board})}),false);
+  board.events[0].status.type.state='in';
+  assert.equal(await verifyIndependentOverDecision(state,fixture,{market,fetcher:async()=>({ok:true,json:async()=>board})}),true);
+});
 test('ESPN last scoring play is used only with a complete verified scoring list',async()=>{
   const soccer={id:'goal-1',type:'soccer_match',title:'Boston vs Brooklyn',start_date:start};
   const state=gameState(soccer,{details:{status:'live',home_score:2,away_score:1,time:"65'",home_team_name:'Boston',away_team_name:'Brooklyn'}});

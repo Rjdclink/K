@@ -2058,7 +2058,7 @@ async function state(){
     collection_ticker text,status text NOT NULL,detail text)`);
   const [snap,stats,attempts,weatherStatus]=await Promise.all([
   pool.query(`SELECT id,title,sport,home,away,possession_side,status,time_left,scanned_at,signals,value_signals FROM game_snapshots
-    WHERE status IN ('live','inprogress','started') AND scanned_at>now()-interval '15 minutes'
+    WHERE status IN ('live','inprogress','started') AND scanned_at>now()-interval '2 minutes'
     ORDER BY jsonb_array_length(signals) DESC,title`),
   pool.query('SELECT * FROM scan_status WHERE id=1'),
   pool.query(`SELECT a.market_ticker,a.game_id,a.sport,a.strategy,a.reason,a.combo_legs,a.fill_count,a.limit_price,g.status AS game_status,g.title AS game_title,g.signals AS game_signals,g.sport_family,g.possession_side,g.home AS home_score,g.away AS away_score,GREATEST(g.score_observed_at,g.scanned_at) AS score_scanned_at,g.clock_seconds,g.clock_label,g.clock_observed_at,g.time_left,
@@ -2089,7 +2089,7 @@ async function state(){
   for(const game of snap.rows){
     game.stale=new Date(game.scanned_at).getTime()<new Date(stats.rows[0]?.last_scan||0).getTime()-2000 ||
       Date.now()-new Date(game.scanned_at).getTime()>30000;
-    if(game.stale)for(const signal of game.signals||[])signal.execution='Rechecking live game; last status: '+signal.execution;
+    if(game.stale)for(const signal of game.signals||[])signal.execution='Not in latest live scan; last status: '+signal.execution;
   }
   let balance=null,positions=null,accountError=null,positionsError=null,balanceStale=false,balanceAsOf=null;
   if(configured()){
