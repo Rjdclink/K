@@ -3,6 +3,30 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {page} from '../src/ui.mjs';
 
+test('game list prioritizes preflights then available asks in descending counts',()=>{
+  const element={classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){}};
+  const document={getElementById:()=>element,querySelectorAll:()=>[],createElement:()=>({children:[],append(...items){this.children.push(...items)}})};
+  const context=vm.createContext({document,window:{addEventListener(){}},navigator:{},localStorage:{getItem(){return null},setItem(){}},fetch:()=>new Promise(()=>{}),AbortSignal,setInterval(){}});
+  vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],context);
+  const compare=vm.runInContext('compareGames',context),render=vm.runInContext('item',context);
+  const ask=(price,execution='Waiting 10 seconds')=>({title:'Market',ask:String(price),ask_size:'10',execution});
+  const noAsk={title:'No ask',execution:'No ask liquidity'};
+  const games=[
+    {title:'No asks',signals:[noAsk,noAsk,noAsk]},
+    {title:'One ask',signals:[ask(.75),noAsk]},
+    {title:'Two asks',signals:[ask(.75),ask(.80)]},
+    {title:'One preflight',signals:[ask(.85,'Awaiting score verification')]},
+    {title:'Two preflights',signals:[ask(.85,'Awaiting score verification'),ask(.88,'Eligible for final verification')]}
+  ];
+  assert.deepEqual(games.sort(compare).map(g=>g.title),['Two preflights','One preflight','Two asks','One ask','No asks']);
+  const mixed={title:'Mixed',sport:'Soccer',away:1,home:2,time_left:'4 minutes',signals:[noAsk,ask(.60),ask(.80,'Awaiting score verification'),ask(.90)]};
+  const shown=render(mixed).children.slice(2).map(c=>c.textContent);
+  assert.match(shown[0],/80¢ ask/);
+  assert.match(shown[1],/90¢ ask/);
+  assert.match(shown[2],/60¢ ask/);
+  assert.match(shown[3],/No ask liquidity/);
+});
+
 test('crossed player props show the actual statistic, ask, and execution blocker',()=>{
   const element={classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){}};
   const document={getElementById:()=>element,querySelectorAll:()=>[],createElement:()=>({children:[],append(...items){this.children.push(...items)}})};
