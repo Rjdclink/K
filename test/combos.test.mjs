@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {COMBO_WINDOW_MS,VERIFY_DWELL_MS,comboAllocation,comboLegAllocation,comboAllowedCents,comboRfqTargetCents,remainingVerifiedComboCents,availableComboFills,comboCandidates,comboCollection,compatibleComboGroups,prioritizedComboGroups,comboPairDiagnostics,quoteForYes,comboLegs,filledComboWindow,eligibleFillTrigger,heldComboLeg,collectionsForEvents,selectedComboMarkets,liveComboMarket} from '../src/combos.mjs';
+import {COMBO_WINDOW_MS,VERIFY_DWELL_MS,COMBO_HELD_CANDIDATES,comboAllocation,comboLegAllocation,comboAllowedCents,comboRfqTargetCents,remainingVerifiedComboCents,availableComboFills,comboCandidates,comboCollection,compatibleComboGroups,prioritizedComboGroups,comboPairDiagnostics,quoteForYes,comboLegs,filledComboWindow,eligibleFillTrigger,heldComboLeg,collectionsForEvents,selectedComboMarkets,liveComboMarket} from '../src/combos.mjs';
 
 test('two held fills qualify for combo without a second live game verification',()=>{
   const rows=['A','B'].map(ticker=>({market_ticker:ticker,event_ticker:'E',game_id:'G',sport:'NFL',strategy:'over',fill_count:'2.00',combo_legs:null,updated_at:new Date().toISOString()}));
@@ -86,7 +86,7 @@ test('held fills remain eligible; the market ticker prevents a repeated combo or
   assert.deepEqual(filledComboWindow(rows,held,null).map(r=>r.market_ticker),['M3','M2','M1']);
   assert.deepEqual(filledComboWindow([...rows,row(4)],new Set([...held,'M4']),at(3)).map(r=>r.market_ticker),['M4','M3','M2','M1']);
   assert.deepEqual(filledComboWindow([...rows,row(4),row(5)],new Set([...held,'M4','M5']),at(3)).map(r=>r.market_ticker),['M5','M4','M3','M2','M1']);
-  assert.equal(filledComboWindow(Array.from({length:9},(_,i)=>row(i+1)),new Set(Array.from({length:9},(_,i)=>'M'+(i+1))),null).length,6);
+  assert.equal(filledComboWindow(Array.from({length:9},(_,i)=>row(i+1)),new Set(Array.from({length:9},(_,i)=>'M'+(i+1))),null).length,9);
   const props=Array.from({length:6},(_,i)=>({...row(i+10),game_id:'SAME-GAME',event_ticker:'PROP-'+i}));
   assert.equal(filledComboWindow(props,new Set(props.map(p=>p.market_ticker)),null).length,6);
 });
@@ -185,13 +185,35 @@ test('six independently filled player props from one game stay in the six-leg co
  assert.equal(groups[0].legs.length,6);
  assert.deepEqual(groups[0].legs.map(c=>c.market.ticker),candidates.map(c=>c.market.ticker));
 });
-test('all fifteen pairs of six held legs are requested ahead of larger tickets',()=>{
+test('all fifteen pairs of six held legs are requested ahead of varied larger tickets',()=>{
   const candidates=Array.from({length:6},(_,i)=>candidate('p'+i,'E'+i));
   const collection={collection_ticker:'SIX',is_all_yes:true,is_single_market_per_event:true,size_min:2,size_max:6,associated_event_tickers:candidates.map(c=>c.event.event_ticker)};
   const groups=prioritizedComboGroups(compatibleComboGroups([collection],candidates,64));
   assert.equal(groups.filter(g=>g.legs.length===2).length,15);
-  assert.equal(groups.filter(g=>g.legs.length>2).length,5);
+  assert.equal(groups.filter(g=>g.legs.length>2).length,9);
+  assert.deepEqual([...new Set(groups.filter(g=>g.legs.length>2).map(g=>g.legs.length))].sort(),[3,4,5,6]);
   assert.equal(groups[0].legs.length,2);
+});
+test('all nine held picks expose thirty-six pair opportunities and the full ticket',()=>{
+  assert.equal(COMBO_HELD_CANDIDATES,9);
+  const candidates=Array.from({length:9},(_,i)=>candidate('p'+i,'E'+i));
+  const collection={collection_ticker:'NINE',is_all_yes:true,is_single_market_per_event:true,size_min:2,size_max:0,associated_event_tickers:candidates.map(c=>c.event.event_ticker)};
+  const groups=prioritizedComboGroups(compatibleComboGroups([collection],candidates,2**candidates.length));
+  assert.equal(groups.filter(g=>g.legs.length===2).length,36);
+  assert.equal(groups.length,45);
+  assert.equal(groups[36].legs.length,9);
+  assert.deepEqual([...new Set(groups.slice(36).map(g=>g.legs.length))].sort(),[3,4,5,6,7,8,9]);
+  assert.ok(groups.some(g=>g.legs.length===2&&g.legs[0].market.ticker==='p0-YES'&&g.legs[1].market.ticker==='p8-YES'));
+  assert.notDeepEqual(prioritizedComboGroups(compatibleComboGroups([collection],candidates,512),9,1).slice(36).map(g=>g.legs.map(l=>l.market.ticker)),groups.slice(36).map(g=>g.legs.map(l=>l.market.ticker)));
+});
+test('collection lookup includes the ninth distinct event',async()=>{
+  const seen=[];
+  await collectionsForEvents(Array.from({length:9},(_,i)=>'E'+i),async path=>{
+    seen.push(new URL(path,'https://example.test').searchParams.get('associated_event_ticker'));
+    return {multivariate_contracts:[],cursor:''};
+  });
+  assert.equal(seen.length,9);
+  assert.ok(seen.includes('E8'));
 });
 test('a newly created combo market 404 is retried while unrelated API errors still surface',async()=>{
   const ticker='COMBO';
