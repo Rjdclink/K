@@ -1,6 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {VERIFY_DWELL_MS,COMBO_RFQ_PLANS,comboAllocation,comboLegAllocation,comboAllowedCents,comboRfqTargetCents,remainingVerifiedComboCents,availableComboFills,comboCandidates,comboCollection,compatibleComboGroups,prioritizedComboGroups,plannedComboGroups,comboPairDiagnostics,quoteForYes,comboLegs,filledComboWindow,eligibleFillTrigger,heldComboLeg,collectionsForEvents,selectedComboMarkets,liveComboMarket} from '../src/combos.mjs';
+import {VERIFY_DWELL_MS,COMBO_RFQ_PLANS,comboAllocation,comboLegAllocation,comboAllowedCents,comboRfqTargetCents,remainingVerifiedComboCents,availableComboFills,comboCandidates,comboCollection,compatibleComboGroups,prioritizedComboGroups,plannedComboGroups,comboPairDiagnostics,quoteForYes,comboLegs,filledComboWindow,eligibleFillTrigger,heldComboLeg,collectionsForEvents,selectedComboMarkets,liveComboMarket,missingQuoteFill} from '../src/combos.mjs';
+
+test('an expired RFQ quote is reconciled from exact market buy fills before retiring its pending combo',()=>{
+  const fills=[
+    {ticker:'OTHER',order_id:'elsewhere',action:'buy',outcome_side:'yes',count_fp:'3.00',created_time:'2026-10-31T16:58:25Z'},
+    {ticker:'COMBO',order_id:'accepted',action:'buy',outcome_side:'yes',count_fp:'2.00',created_time:'2026-10-31T16:58:26Z'},
+    {ticker:'COMBO',order_id:'accepted',action:'buy',outcome_side:'yes',count_fp:'1.50',created_time:'2026-10-31T16:58:27Z'}
+  ];
+  assert.deepEqual(missingQuoteFill(fills,'COMBO','2026-10-31T16:58:24Z'),{orderId:'accepted',count:3.5});
+  assert.equal(missingQuoteFill(fills.slice(0,1),'COMBO','2026-10-31T16:58:24Z'),null);
+  assert.equal(missingQuoteFill([{...fills[1],created_time:'2026-10-31T16:58:00Z'}],'COMBO','2026-10-31T16:58:24Z'),null);
+});
 
 test('two held fills qualify for combo without a second live game verification',()=>{
   const rows=['A','B'].map(ticker=>({market_ticker:ticker,event_ticker:'E',game_id:'G',sport:'NFL',strategy:'over',fill_count:'2.00',combo_legs:null,updated_at:new Date().toISOString()}));
