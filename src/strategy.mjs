@@ -473,7 +473,7 @@ export function externallyVerifiedEarlySoccerLead(first,second,signal,firstConfi
     !/soccer/.test(first?.type||'')||first.type!==second?.type||
     first.period!==2||second.period!==2||first.soccerExtraTime||second.soccerExtraTime||
     first.home!==second.home||first.away!==second.away||
-    Math.abs(second.home-second.away)<3)return signal;
+    Math.abs(second.home-second.away)<4)return signal;
   return {...signal,fraction:.20,reason:signal.reason.replace(/^Restricted 2% lead:/,'Externally verified 20% lead:')};
 }
 export function confirmedSoccerOneGoalClock(first,second){
@@ -569,8 +569,9 @@ export function earlyLeadSignal(game,market){
     if(game.period===8&&game.inningHalf===2&&game.outs>=2){minimum=7;stage='end of eighth inning'}
     if(game.period===9&&[1,2].includes(game.inningHalf)&&game.outs>=0&&game.outs<=2){minimum=5;stage='ninth inning'}
   }else if(soccer){
-    if(game.period===1&&Number.isFinite(game.remainingSeconds)&&game.remainingSeconds>0&&game.remainingSeconds<60){minimum=5;stage='end of first half'}
-    if(game.period===2&&!game.soccerExtraTime){minimum=3;stage='second half'}
+    // A second-half lead can qualify before the final ten minutes only at
+    // four goals or more; three goals must use leadSignal's late window.
+    if(game.period===2&&!game.soccerExtraTime){minimum=4;stage='second half'}
   }
   if(!Number.isFinite(minimum))return null;
   const margin=Math.abs(game.home-game.away);
