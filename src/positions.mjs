@@ -57,3 +57,10 @@ export function soccerOverCorrectionAffects(original,game){
   return Boolean(entry)&&Number.isFinite(total)&&total<Number(entry[1])&&total<=Number(entry[2]);
 }
 
+export function soccerCorrectionTargets(rows,statesByGame){
+  const affected=new Set(rows.filter(row=>soccerOverCorrectionAffects(row,statesByGame.get(row.game_id)))
+    .map(row=>row.market_ticker));
+  return new Set([...affected,...rows.filter(row=>Array.isArray(row.combo_legs)&&
+    row.combo_legs.some(leg=>affected.has(leg.market_ticker))).map(row=>row.market_ticker)]);
+}
+
