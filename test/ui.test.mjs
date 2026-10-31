@@ -51,9 +51,22 @@ test('weather card reports a paused scan without stale candidate counts',async()
   assert.equal(elements.get('weatherEligible').textContent,'—');
 });
 
-test('stale football cards explicitly say they were absent from the latest live scan',()=>{
-  assert.match(page,/Not in latest live scan · last seen/);
+test('delayed football cards retain their last check time without claiming a current market scan',()=>{
+  assert.match(page,/Market scan delayed · last checked/);
   assert.doesNotMatch(page,/Last seen .* · rechecking/);
+});
+
+test('recent live scores remain counted while the market check is delayed',async()=>{
+  const elements=new Map();
+  const element=()=>({children:[],style:{},classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){},append(...x){this.children.push(...x)},replaceChildren(...x){this.children=x}});
+  const document={getElementById:id=>{if(!elements.has(id))elements.set(id,element());return elements.get(id)},querySelectorAll:()=>[],createElement:element};
+  const game={title:'Live football',sport:'CFB',home:49,away:9,signals:[],stale:true,scoreStale:false,scanned_at:new Date(Date.now()-180000).toISOString()};
+  const context=vm.createContext({document,window:{addEventListener(){}},navigator:{},localStorage:{getItem(){return null},setItem(){}},
+    fetch:async()=>({ok:true,status:200,json:async()=>({games:[game],orders:[],alerts:[],scan:{}})}),AbortSignal,URLSearchParams,setInterval(){}});
+  vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],context);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(elements.get('gamesCount').textContent,1);
+  assert.equal(elements.get('games').children[0].children[2].textContent.startsWith('Market scan delayed'),true);
 });
 
 test('combo controls show live buy and sell liquidity separately',()=>{
