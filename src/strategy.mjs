@@ -1,6 +1,7 @@
 import { golfState } from './golf.mjs';
+import { VERIFY_DWELL_MS } from './combos.mjs';
 export const KALSHI_ONLY_FRACTION=.10;
-export const SOCCER_OVER_STABILITY_MS=15000;
+export const SOCCER_OVER_STABILITY_MS=10000;
 export function soccerOverWaitMs(firstSeen,now=Date.now()){
   const first=firstSeen instanceof Date?firstSeen.getTime():Date.parse(firstSeen||'');
   return Number.isFinite(first)?Math.max(0,first+SOCCER_OVER_STABILITY_MS-now):Infinity;
@@ -132,7 +133,7 @@ export function gameState(m, live) {
     /baseball/.test(family)?d.inning_half===2||/bottom/i.test(String(d.inning_half||periodText))?'home':d.inning_half===1||/top/i.test(String(d.inning_half||periodText))?'away':null:
     tennis&&d.server===m.details?.first_competitor_id?(firstIsHome?'home':'away'):
     tennis&&d.server===m.details?.second_competitor_id?(firstIsHome?'away':'home'):null;
-  // Only a final-whistle countdown can establish the last 45 seconds in soccer.
+  // Only a final-whistle countdown can establish a late soccer entry window.
   // The displayed minute alone excludes unknown stoppage time.
   const matchRemainingSeconds=/soccer/.test(family)?N(d.match_remaining_seconds):NaN;
   // Soccer feeds include extra-time goals in same-game scores, while the
@@ -302,12 +303,12 @@ export function playerOverSpec(game,market){
   if(!Number.isInteger(value)||value<0)return null;
   return {id,name,metric:suffix,value};
 }
-// Two separate exchange reads three seconds apart must retain the qualifying
+// Two separate exchange reads ten seconds apart must retain the qualifying
 // score. The feed may legitimately have no new update between reads.
 export function confirmedOver(first,second,market){
   if(!overSignal(first,market)||!overSignal(second,market))return false;
   if(first.id!==second.id||first.feedId!==first.id||second.feedId!==second.id)return false;
-  const dwell=6000;
+  const dwell=VERIFY_DWELL_MS;
   if(!Number.isFinite(first.observedAt)||!Number.isFinite(second.observedAt)||second.observedAt-first.observedAt<dwell)return false;
   if(Number.isFinite(first.updatedAt)&&Number.isFinite(second.updatedAt)&&second.updatedAt<first.updatedAt)return false;
   if([first,second].some(s=>Number.isFinite(s.updatedAt)&&(s.updatedAt>s.observedAt+5000||s.observedAt-s.updatedAt>30000)))return false;
@@ -343,7 +344,7 @@ export function kalshiOnlyOver(first,second,market){
   const initialSegment=periodValue(first,market),laterSegment=periodValue(second,market);
   if(Boolean(initialSegment)!==Boolean(laterSegment)||initialSegment&&
     (initialSegment.home!==laterSegment.home||initialSegment.away!==laterSegment.away))return false;
-  if(!kalshiUpdatePairOk(first,second)||second.observedAt-first.observedAt<6000)return false;
+  if(!kalshiUpdatePairOk(first,second)||second.observedAt-first.observedAt<VERIFY_DWELL_MS)return false;
   return confirmedOver(first,second,market);
 }
 export function kalshiOnlyLead(first,second,market){
@@ -353,7 +354,7 @@ export function kalshiOnlyLead(first,second,market){
     !signal(first)||!signal(second)||first.id!==second.id||first.feedId!==first.id||second.feedId!==second.id||
     !first.scoreConsistent||!second.scoreConsistent||first.home!==second.home||first.away!==second.away||
     !Object.is(first.period,second.period)||!first.periodConsistent||!second.periodConsistent||
-    !Number.isFinite(first.observedAt)||!Number.isFinite(second.observedAt)||second.observedAt-first.observedAt<6000||
+    !Number.isFinite(first.observedAt)||!Number.isFinite(second.observedAt)||second.observedAt-first.observedAt<VERIFY_DWELL_MS||
     !kalshiUpdatePairOk(first,second)||
     [first,second].some(s=>s.updatedAt>s.observedAt+5000||s.observedAt-s.updatedAt>30000)||
     !/^table_tennis_/.test(first.type)&&Number.isFinite(first.remainingSeconds)&&Number.isFinite(second.remainingSeconds)&&second.remainingSeconds>first.remainingSeconds||
@@ -407,13 +408,18 @@ export function leadSignal(game, market) {
   const h=game.homeUnits,a=game.awayUnits;
   if (!Number.isFinite(h)||!Number.isFinite(a)) return null;
   const margin=Math.abs(h-a),trailerScore=Math.min(h,a);
-  const finalWhistleSeconds=soccer&&game.soccerMinute>=89&&Number.isFinite(game.matchRemainingSeconds)&&game.matchRemainingSeconds>0?game.matchRemainingSeconds:Infinity;
+  const finalWhistleSeconds=soccer&&Number.isFinite(game.matchRemainingSeconds)&&game.matchRemainingSeconds>0?game.matchRemainingSeconds:Infinity;
+  // A two-goal lead still needs a reliable final-whistle countdown. An
+  // elapsed minute cannot account for stoppage time or prove this window.
+  if(soccer&&margin===2&&finalWhistleSeconds>=300 ||
+    soccer&&margin===1&&finalWhistleSeconds>=30)return null;
+  if(soccer&&margin===1&&game.soccerMinute<89)return null;
   // A three-goal soccer lead can receive the 20% tier only near the end.
   // When a final countdown is available it takes precedence over an estimated minute.
   if(soccer&&margin>=3&&!(Number.isFinite(game.matchRemainingSeconds)?
     game.matchRemainingSeconds>0&&game.matchRemainingSeconds<600:
     Number.isFinite(game.soccerMinute)&&game.soccerMinute>80&&game.soccerMinute<90))return null;
-  const minimum=basketball?5:football?10:hockey?3:baseball?2:soccer?finalWhistleSeconds<45?1:finalWhistleSeconds<120?2:3:null;
+  const minimum=basketball?5:football?10:hockey?3:baseball?2:soccer?finalWhistleSeconds<30?1:finalWhistleSeconds<300?2:3:null;
   const closeLeaderPossession=game.possessionSide===(h>a?'home':'away');
   const closeLeadThreshold=basketball?4:football?7:hockey?1:Infinity;
   const closeLead=game.remainingSeconds>0&&game.remainingSeconds<21&&
@@ -459,7 +465,7 @@ export function externallyVerifiedEarlySoccerLead(first,second,signal,firstConfi
 export function confirmedSoccerOneGoalClock(first,second){
   if(!/soccer/.test(second.type)||Math.abs(second.home-second.away)!==1)return true;
   return first.clockRunning&&second.clockRunning&&
-    Number.isFinite(first.matchRemainingSeconds)&&first.matchRemainingSeconds>0&&first.matchRemainingSeconds<45&&
+    Number.isFinite(first.matchRemainingSeconds)&&first.matchRemainingSeconds>0&&first.matchRemainingSeconds<30&&
     Number.isFinite(second.matchRemainingSeconds)&&second.matchRemainingSeconds>0&&
     second.matchRemainingSeconds<first.matchRemainingSeconds;
 }
