@@ -13,7 +13,7 @@ import { manifest, worker } from './pwa.mjs';
 import { vapidIdentity, validateSubscription, deliverPush } from './push.mjs';
 import { favorableSettlement } from './settlements.mjs';
 import { authorized, checkCredentials, sessionCookie, loginPage } from './dashboard_auth.mjs';
-import { discoverCurrentMilestones, eligibleForMarkets, linkedEventTickers, gameTimeLabel, storedClockSeconds, mapBatches } from './discovery.mjs';
+import { discoverCurrentMilestones, scanMilestones, eligibleForMarkets, linkedEventTickers, gameTimeLabel, storedClockSeconds, mapBatches } from './discovery.mjs';
 import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOverDecision, verifyIndependentTableTennisLeadDecision, verifyIndependentTableTennisMatch } from './score_verification.mjs';
 import { verificationStatus } from './verification_status.mjs';
@@ -1264,7 +1264,7 @@ async function exitComebacks(games,events,positions){
         [id,position.ticker,gameId,count,bid]);
       if(!claim.rowCount)continue;
       try{
-        const result=await kalshi('/portfolio/events/orders',{method:'POST',auth:true,body:{ticker:position.ticker,client_order_id:id,side:'ask',count:count.toFixed(2),price:bid.toFixed(4),time_in_force:targetReached&&!corrected?'fill_or_kill':'immediate_or_cancel',self_trade_prevention_type:'taker_at_cross',post_only:false,reduce_only:true}});
+        const result=await kalshi('/portfolio/events/orders',{method:'POST',auth:true,body:{ticker:position.ticker,client_order_id:id,side:'ask',count:count.toFixed(2),price:bid.toFixed(4),time_in_force:'immediate_or_cancel',self_trade_prevention_type:'taker_at_cross',post_only:false,reduce_only:true}});
         const filledCount=Number(result.fill_count_fp??result.fill_count??0);
         await pool.query(`UPDATE exit_attempts SET status=$2,order_id=$3,filled_count=$4,updated_at=now() WHERE id=$1`,[id,filledCount>0?'filled':'unfilled',result.order_id||null,filledCount]);
         if(filledCount>0)await invalidateBalance();
@@ -1384,6 +1384,9 @@ async function scan(cachedMilestones,discoveryCount){
     if(live()||exitOnly())await Promise.all([reconcileCombos(),reconcileComboUpgrades()]);
     if(live()&&!cachedMilestones)try{await reconcileFundingTransfers()}catch(e){console.warn('Transfer history unavailable:',e.message)}
     ms=cachedMilestones||await milestones();discoveryCount??=ms.length;
+    const {rows:recentLive}=await pool.query(`SELECT id FROM game_snapshots
+      WHERE status='live' AND scanned_at>now()-interval '15 minutes'`);
+    ms=scanMilestones(ms,new Set(recentLive.map(row=>row.id)));
     await upgradeTables();
     await ensureScanStatus();const liveMap=await liveBatch(ms);
     const games=ms.map(m=>({milestone:m,state:gameState(m,liveMap.get(m.id))})).filter(g=>
@@ -1825,11 +1828,6 @@ async function state(){
     WHERE a.status='filled' ORDER BY a.created_at DESC`),
   pool.query('SELECT * FROM weather_scan_status WHERE id=1')
 ]);
-  for(const game of snap.rows){
-    game.stale=new Date(game.scanned_at).getTime()<new Date(stats.rows[0]?.last_scan||0).getTime()-2000 ||
-      Date.now()-new Date(game.scanned_at).getTime()>30000;
-    if(game.stale)for(const signal of game.signals||[])signal.execution='Rechecking live game; last status: '+signal.execution;
-  }
   const awaiting=[...new Set(snap.rows.flatMap(g=>(g.signals||[]).filter(s=>s.execution==='Awaiting score verification').map(s=>s.ticker)))];
   if(awaiting.length){
     const {rows}=await pool.query(`SELECT DISTINCT ON (market_ticker) market_ticker,passed,created_at,evidence->>'mode' AS mode,
@@ -1845,6 +1843,11 @@ async function state(){
         signal.verification_checked_at=result.created_at;
       }
     }
+  }
+  for(const game of snap.rows){
+    game.stale=new Date(game.scanned_at).getTime()<new Date(stats.rows[0]?.last_scan||0).getTime()-2000 ||
+      Date.now()-new Date(game.scanned_at).getTime()>30000;
+    if(game.stale)for(const signal of game.signals||[])signal.execution='Rechecking live game; last status: '+signal.execution;
   }
   let balance=null,positions=null,accountError=null,positionsError=null;
   if(configured()){
