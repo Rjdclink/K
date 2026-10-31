@@ -4,7 +4,7 @@ import pg from 'pg';
 import { page } from './ui.mjs';
 import { historyPage } from './history_ui.mjs';
 import { completedTrade, manualSaleFill, reconcileManualSaleFills } from './history.mjs';
-import { gameState, overSignal, confirmedOver, kalshiOnlyOver, kalshiOnlyLead, leadSignal, confirmedSoccerOneGoalClock, soccerOneGoalWindowOpen, soccerOverStable, soccerOverWaitMs, stableSoccerLeadFraction, additionalLeadSignal, cricketLeadSignal, drawSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback, timedProfitExitAllowed, KALSHI_ONLY_FRACTION } from './strategy.mjs';
+import { gameState, overSignal, confirmedOver, kalshiOnlyOver, kalshiOnlyLead, leadSignal, confirmedSoccerOneGoalClock, soccerOneGoalWindowOpen, soccerOverStable, soccerOverWaitMs, stableSoccerLeadFraction, externallyVerifiedEarlySoccerLead, additionalLeadSignal, cricketLeadSignal, drawSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback, timedProfitExitAllowed, KALSHI_ONLY_FRACTION } from './strategy.mjs';
 import { reviewMiss } from './ai.mjs';
 import { kalshiSignature } from './auth.mjs';
 import { marketShard, shardCash, transferPlan, comboShardBudget } from './funding.mjs';
@@ -1458,7 +1458,7 @@ async function scan(cachedMilestones,discoveryCount){
         if(c.signal.strategy==='lead' && /basketball/.test(state.type) &&
           (freshState.period!==state.period || !freshState.periodConsistent ||
             freshState.remainingSeconds>state.remainingSeconds))continue;
-        let leadFirstDecision=null;
+        let leadFirstDecision=null,leadSecondDecision=null;
         if(c.signal.strategy==='lead'&&!freshState.golf){
           leadFirstDecision=tableTennisSignal(c.state,c.market)?
             await verifyIndependentTableTennisLeadDecision(c.state,c.milestone):
@@ -1499,6 +1499,7 @@ async function scan(cachedMilestones,discoveryCount){
           const decision=tableTennisSignal(freshState,quote)?
             await verifyIndependentTableTennisLeadDecision(freshState,c.milestone):
             await auditedOver(freshState,c.milestone,{cache:scoreboardCache,market:quote,firstObservation:c.state,allowUnavailable:true});
+          leadSecondDecision=decision;
           if(decision===false)continue;
           if(decision===null){
             if(leadFirstDecision!==null||Date.now()-freshState.observedAt>10000||
@@ -1510,11 +1511,13 @@ async function scan(cachedMilestones,discoveryCount){
           }
         }
         if(!soccerOneGoalWindowOpen(freshState))continue;
-        const verifiedFraction=stableSoccerLeadFraction(c.state,freshState,stillQualifies);
+        const verifiedSignal=externallyVerifiedEarlySoccerLead(c.state,freshState,stillQualifies,
+          leadFirstDecision===true,leadSecondDecision===true);
+        const verifiedFraction=stableSoccerLeadFraction(c.state,freshState,verifiedSignal);
         const oneGoalSoccer=/soccer/.test(freshState.type)&&Math.abs(freshState.home-freshState.away)===1;
         const specificCap=Boolean(tennisSignal(freshState,quote)||cricketLeadSignal(freshState,quote)||drawSignal(freshState,quote));
-        c.signal=kalshiOnly?{...stillQualifies,fraction:oneGoalSoccer||specificCap?verifiedFraction:Math.min(verifiedFraction,KALSHI_ONLY_FRACTION),reason:stillQualifies.reason+'; Kalshi-only two score reads, 6 seconds apart'}:
-          {...stillQualifies,fraction:verifiedFraction};
+        c.signal=kalshiOnly?{...verifiedSignal,fraction:oneGoalSoccer||specificCap?verifiedFraction:Math.min(verifiedFraction,KALSHI_ONLY_FRACTION),reason:verifiedSignal.reason+'; Kalshi-only two score reads, 6 seconds apart'}:
+          {...verifiedSignal,fraction:verifiedFraction};
         c.market=quote;
         c.state=state=freshState;
         const budget=Infinity;

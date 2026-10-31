@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {gameState,overSignal,confirmedOver,kalshiOnlyOver,kalshiOnlyLead,leadSignal,earlyLeadSignal,confirmedSoccerOneGoalClock,soccerOneGoalWindowOpen,soccerOverStable,soccerOverWaitMs,stableSoccerLeadFraction,tennisSignal,tableTennisSignal,orderSize,estimatedCostCents,overBudget,minimumProfitCents,netSettlementProfitCents,profitableCount,comeback,timedProfitExitAllowed,KALSHI_ONLY_FRACTION} from '../src/strategy.mjs';
+import {gameState,overSignal,confirmedOver,kalshiOnlyOver,kalshiOnlyLead,leadSignal,earlyLeadSignal,confirmedSoccerOneGoalClock,soccerOneGoalWindowOpen,soccerOverStable,soccerOverWaitMs,stableSoccerLeadFraction,externallyVerifiedEarlySoccerLead,tennisSignal,tableTennisSignal,orderSize,estimatedCostCents,overBudget,minimumProfitCents,netSettlementProfitCents,profitableCount,comeback,timedProfitExitAllowed,KALSHI_ONLY_FRACTION} from '../src/strategy.mjs';
 
 test('each trade has its own percentage of the full bankroll',()=>{
   const bankroll=14600,alreadyHeld=4372;
@@ -134,13 +134,13 @@ test('Kalshi-only late baseball lead uses inning state without a clock',()=>{
   assert.equal(kalshiOnlyLead(noTimestamp(now-3000),noTimestamp(now),market),false);
   assert.equal(kalshiOnlyLead(first,noTimestamp(now),market),false,'mixed timestamp availability fails closed');
 });
-test('Kalshi-only crossed player prop requires the same identified statistic on a newer update',()=>{
+test('a crossed player prop cannot use the Kalshi-only over fallback',()=>{
   const m={id:'nba-prop',title:'New York Knicks at Chicago Bulls',type:'basketball_game',details:{home_team_id:'chi',away_team_id:'nyk'}};
   const market={status:'active',event_ticker:'KXNBAREB-26OCT30NYKCHI',title:'Matas Buzelis: 6+ rebounds',yes_sub_title:'Matas Buzelis: 6+',floor_strike:5.5,strike_type:'greater',custom_strike:{basketball_player:'buzelis'},yes_ask_dollars:'0.91'};
   const now=Date.now();
   const state=(at,updated,rebounds)=>gameState(m,{milestone_id:m.id,_observed_at:new Date(at).toISOString(),details:{status:'live',home_score:127,away_score:133,quarter:4,last_updated_ts:updated/1000,player_stats:{buzelis:{rebounds}}}});
   const first=state(now-8000,now-9000,6),second=state(now,now-1000,6);
-  assert.equal(kalshiOnlyOver(first,second,market),true);
+  assert.equal(kalshiOnlyOver(first,second,market),false,'an independent player statistic is required');
   assert.equal(kalshiOnlyOver(first,state(now,now-1000,7),market),false);
   assert.equal(kalshiOnlyOver(first,state(now,now-9000,6),market),false);
   assert.equal(kalshiOnlyOver(first,second,{...market,custom_strike:{basketball_player:'someone_else'}}),false);
@@ -380,6 +380,23 @@ test('unknown soccer time cannot authorize 20%, but a late minute can use two Ka
   assert.equal(leadSignal(first,{...market,custom_strike:{soccer_team:'faisaly'}}),null);
   assert.equal(kalshiOnlyLead(first,state(now,2,0),market),false);
   assert.equal(kalshiOnlyLead(state(now-3000,3,0,'2nd',{time:"81'"}),second,market),false,'the two Kalshi reads still need six seconds');
+});
+test('early three-goal soccer lead gets 20% only after two exact independent confirmations',()=>{
+  const m={id:'three-goals',type:'soccer_tournament_multi_leg',title:'Bradford vs Huddersfield',
+    details:{home_team_id:'bra',away_team_id:'hud',main_game_event_ticker:'KXEFLL1GAME-TEST'}};
+  const market={status:'active',event_ticker:'KXEFLL1GAME-TEST',title:'Huddersfield wins',
+    custom_strike:{soccer_team:'hud'},yes_ask_dollars:'0.98'};
+  const state=(home,away,half='2nd')=>gameState(m,{milestone_id:m.id,details:{status:'live',home_score:home,away_score:away,half}});
+  const first=state(0,3),second=state(0,3),signal=earlyLeadSignal(second,market);
+  assert.equal(signal?.fraction,.02);
+  const upgraded=externallyVerifiedEarlySoccerLead(first,second,signal,true,true);
+  assert.equal(upgraded.fraction,.20);
+  assert.match(upgraded.reason,/^Externally verified 20% lead:/);
+  assert.equal(externallyVerifiedEarlySoccerLead(first,second,signal,true,null),signal,'a missing final external check stays at 2%');
+  assert.equal(externallyVerifiedEarlySoccerLead(first,second,signal,null,true),signal,'a missing initial external check stays at 2%');
+  assert.equal(externallyVerifiedEarlySoccerLead(first,state(1,3),signal,true,true),signal,'changed lead cannot be upgraded');
+  assert.equal(externallyVerifiedEarlySoccerLead(first,state(0,3,'1st'),signal,true,true),signal,'the game must still be in the second half');
+  assert.equal(externallyVerifiedEarlySoccerLead(first,second,{...signal,fraction:.10},true,true).fraction,.10,'other tiers stay unchanged');
 });
 test('one-goal soccer winner requires a final-whistle countdown and stable possession for higher tiers',()=>{
   const m={id:'soccer-close',title:'Abha vs Al-Faisaly',type:'soccer_tournament_multi_leg',details:{home_team_id:'abha',away_team_id:'faisaly'}};
