@@ -32,13 +32,14 @@ export function oneAndHalfExitEligible(position,sale){
   return proceedsCents>=Math.ceil(1.5*acquisitionCents-1e-8);
 }
 
-// The existing positive-profit exit is limited to fast-moving single match
-// winners; the separate 1.5x target can also apply to other holdings.
+// Positive-profit exits apply to fast-moving single match winners; the
+// separate 1.5x target can also apply to other holdings.
 export function positiveExitEligible(trade, gameType, profitCents) {
   if (trade?.strategy !== 'lead' || !Number.isFinite(profitCents) || profitCents <= 0) return false;
   if (Array.isArray(trade.combo_legs) && trade.combo_legs.length >= 2) return false;
-  const fast = (sport, type = '') => /basketball|^tennis(?:_|$)/i.test(String(type)) ||
-    /^(?:NBA|WNBA|NCAAB|NCAAW|Basketball|eBasketball|Tennis)$/i.test(String(sport));
+  const fast = (sport, type = '') => /basketball|^tennis(?:_|$)|^cricket_match$/i.test(String(type)) ||
+    /^(?:NBA|WNBA|NCAAB|NCAAW|Basketball|eBasketball|Tennis)$/i.test(String(sport)) ||
+    /\b(?:ODI|T20|Test International|Cricket)\b/i.test(String(sport));
   return fast(trade.sport, gameType);
 }
 

@@ -18,16 +18,23 @@ test('sale P&L uses executable shares, proportional cost basis and both fees',()
   assert.equal(estimatedSaleProfitCents(held,{count:21,price:.92},.75),null);
 });
 
-test('positive sale exits single basketball and tennis positions only after fees',()=>{
+test('positive sale exits single basketball, tennis and cricket winners only after fees',()=>{
   const trade=(sport,strategy='lead')=>({sport,strategy});
   assert.equal(positiveExitEligible(trade('Tennis'),'tennis_tournament_singles',1),true);
   assert.equal(positiveExitEligible(trade('NBA'),'basketball_game',1),true);
+  assert.equal(positiveExitEligible(trade('ODI (M)'),'cricket_match',1),true);
+  assert.equal(positiveExitEligible(trade('Senior Women T20'),undefined,1),true,'a live scoreboard can disappear before the cash-out');
+  assert.equal(positiveExitEligible(trade('Test International (M)'),undefined,1),true);
+  assert.equal(positiveExitEligible(trade('ODI (M)'),'cricket_match',0),false);
+  assert.equal(positiveExitEligible(trade('ODI (M)'),'cricket_match',-1),false);
+  assert.equal(positiveExitEligible(trade('ODI (M)','over'),'cricket_match',100),false);
   assert.equal(positiveExitEligible(trade('Tennis'),'tennis_tournament_singles',0),false);
   assert.equal(positiveExitEligible(trade('Tennis'),'tennis_tournament_singles',-1),false);
   assert.equal(positiveExitEligible(trade('Tennis','over'),'tennis_tournament_singles',100),false);
   assert.equal(positiveExitEligible(trade('Table tennis'),'table_tennis_match',1),false);
   assert.equal(positiveExitEligible(trade('Soccer'),'soccer_game',1),false);
   assert.equal(positiveExitEligible({strategy:'lead',combo_legs:[{sport:'Soccer',strategy:'lead'},{sport:'Tennis',strategy:'lead'}]},'',1),false);
+  assert.equal(positiveExitEligible({sport:'ODI (M)',strategy:'lead',combo_legs:[{sport:'ODI (M)'},{sport:'Tennis'}]},'cricket_match',100),false);
   assert.equal(positiveExitEligible({strategy:'lead',combo_legs:[{sport:'Soccer',strategy:'lead'},{sport:'Football',strategy:'lead'}]},'',1),false);
 });
 
