@@ -219,7 +219,6 @@ async function syncTradeHistory(settlements){
   }
   // The fills API accepts one ticker, not a comma-joined list. Query each
   // unfinished or exited trade separately so its buy and sale both reconcile.
-  const fillsByTicker=new Map();
   const {rows:[saleTable]}=await pool.query("SELECT to_regclass('manual_sales') AS name");
   const manualSales=saleTable?.name?(await pool.query("SELECT ticker,result,created_at FROM manual_sales WHERE status='complete' AND ticker=ANY($1::text[])",[pending.map(item=>item.market_ticker)])).rows:[];
   const manualByTicker=new Map();
@@ -230,7 +229,9 @@ async function syncTradeHistory(settlements){
     list.push(fill);
     manualByTicker.set(sale.ticker,list);
   }
-  for(const ticker of new Set(pending.map(item=>item.market_ticker))){
+  const tickers=[...new Set(pending.map(item=>item.market_ticker))];
+  tickers.sort((a,b)=>Number(manualByTicker.has(b))-Number(manualByTicker.has(a)));
+  for(const ticker of tickers){
     const allFills=[];
     let cursor='',complete=false;
     for(let pageNumber=0;pageNumber<10;pageNumber++){
@@ -242,18 +243,21 @@ async function syncTradeHistory(settlements){
     }
     if(!complete)throw Error('Trade history fills exceed pagination safety limit');
     const known=new Set(allFills.map(fill=>fill.order_id));
-    fillsByTicker.set(ticker,allFills.concat((manualByTicker.get(ticker)||[]).filter(fill=>!known.has(fill.order_id))));
-  }
-  for(const entry of pending){
-    const completed=completedTrade(entry,fillsByTicker.get(entry.market_ticker)||[],settled.get(entry.market_ticker));
-    if(!completed)continue;
-    const sport=([['basketball','Basketball'],['hockey','Hockey'],['football','Football'],['baseball','Baseball'],['soccer','Soccer'],['tennis','Tennis']]
-      .find(([family])=>String(entry.sport_family||'').includes(family))||[])[1]||entry.sport;
-    await pool.query(`INSERT INTO trade_history(id,market_ticker,sport,teams,occurred_at,profit_cents,outcome)
-      VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(id) DO UPDATE SET
-        occurred_at=EXCLUDED.occurred_at,profit_cents=EXCLUDED.profit_cents,outcome=EXCLUDED.outcome`,
-      [entry.id,entry.market_ticker,entry.combo_legs?.length?`${entry.combo_legs.length}-pick combo`:sport,
-        entry.combo_legs?.length?entry.combo_legs.map(l=>l.title).join(' / '):entry.teams,completed.occurredAt,completed.profitCents,completed.outcome]);
+    const fills=allFills.concat((manualByTicker.get(ticker)||[]).filter(fill=>!known.has(fill.order_id)));
+    for(const entry of pending.filter(item=>item.market_ticker===ticker)){
+      const completed=completedTrade(entry,fills,settled.get(ticker));
+      if(!completed){
+        if(manualByTicker.has(ticker))console.warn('Manual sale history still awaiting verified entry fills:',JSON.stringify({ticker,fillCount:fills.length,buyOrderPresent:fills.some(fill=>fill.order_id===entry.order_id),saleOrderPresent:fills.some(fill=>fill.action==='sell')}));
+        continue;
+      }
+      const sport=([['basketball','Basketball'],['hockey','Hockey'],['football','Football'],['baseball','Baseball'],['soccer','Soccer'],['tennis','Tennis']]
+        .find(([family])=>String(entry.sport_family||'').includes(family))||[])[1]||entry.sport;
+      await pool.query(`INSERT INTO trade_history(id,market_ticker,sport,teams,occurred_at,profit_cents,outcome)
+        VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(id) DO UPDATE SET
+          occurred_at=EXCLUDED.occurred_at,profit_cents=EXCLUDED.profit_cents,outcome=EXCLUDED.outcome`,
+        [entry.id,entry.market_ticker,entry.combo_legs?.length?`${entry.combo_legs.length}-pick combo`:sport,
+          entry.combo_legs?.length?entry.combo_legs.map(l=>l.title).join(' / '):entry.teams,completed.occurredAt,completed.profitCents,completed.outcome]);
+    }
   }
 }
 async function syncSettlementAlerts(){
