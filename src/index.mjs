@@ -4,7 +4,7 @@ import pg from 'pg';
 import { page } from './ui.mjs';
 import { historyPage } from './history_ui.mjs';
 import { completedTrade } from './history.mjs';
-import { gameState, overSignal, confirmedOver, kalshiOnlyOver, kalshiOnlyLead, leadSignal, confirmedSoccerOneGoalClock, soccerOneGoalWindowOpen, soccerOverStable, soccerOverWaitMs, stableSoccerLeadFraction, additionalLeadSignal, cricketLeadSignal, drawSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, netSettlementProfitCents, comeback, timedProfitExitAllowed, KALSHI_ONLY_FRACTION } from './strategy.mjs';
+import { gameState, overSignal, confirmedOver, kalshiOnlyOver, kalshiOnlyLead, leadSignal, confirmedSoccerOneGoalClock, soccerOneGoalWindowOpen, soccerOverStable, soccerOverWaitMs, stableSoccerLeadFraction, additionalLeadSignal, cricketLeadSignal, drawSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback, timedProfitExitAllowed, KALSHI_ONLY_FRACTION } from './strategy.mjs';
 import { reviewMiss } from './ai.mjs';
 import { kalshiSignature } from './auth.mjs';
 import { marketShard, shardCash, transferPlan, comboShardBudget } from './funding.mjs';
@@ -23,6 +23,7 @@ import { weatherContract } from './weather.mjs';
 import { scanWeatherMarkets } from './weather_scanner.mjs';
 import { sellQuote } from './sell.mjs';
 import { yesDepthAtAsk, bestYesAsk, bestAsksForTickers } from './orderbook.mjs';
+import { filledOrderGateCount } from './entry_floor.mjs';
 
 const API='https://external-api.kalshi.com/trade-api/v2';
 const pool = new pg.Pool({connectionString:process.env.DATABASE_URL, max:4, idleTimeoutMillis:15000});
@@ -290,6 +291,32 @@ async function allOpenPositions(){
   }
   throw Error('Open positions exceed the pagination safety limit');
 }
+// Serialize final buy decisions across the scan's parallel singles, weather and
+// combo jobs. Count the same filled, open positions shown on the dashboard;
+// recent in-flight attempts occupy a slot until Kalshi reports their fill.
+async function withEntryProfitFloor({ticker,count,price,fees,strategy,bankroll},send){
+  for(;;){
+    const client=await pool.connect();let busy=false;
+    try{
+      await client.query('BEGIN');
+      const {rows:[lock]}=await client.query('SELECT pg_try_advisory_xact_lock(83027546) AS acquired');
+      if(!lock.acquired){busy=true;await client.query('ROLLBACK')}
+      else{
+        const positions=await allOpenPositions();
+        const {rows}=await client.query(`SELECT market_ticker,status FROM trade_attempts
+          WHERE status='filled' OR status IN ('reserved','check_order','retrying','combo_pending')
+            AND updated_at>now()-interval '2 minutes'`);
+        const required=minimumProfitCents(strategy,bankroll,'',NaN,filledOrderGateCount(positions,rows,ticker));
+        if(netSettlementProfitCents(count,price,fees)<required){await client.query('COMMIT');return null}
+        const result=await send();
+        await client.query('COMMIT');
+        return result;
+      }
+    }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}
+    finally{client.release()}
+    if(busy)await new Promise(resolve=>setTimeout(resolve,100));
+  }
+}
 async function milestones(){
   const started=Date.now(),found=await discoverCurrentMilestones(kalshi);
   console.info('Sports discovery:',JSON.stringify({milestones:found.length,elapsedMs:Date.now()-started}));
@@ -484,7 +511,9 @@ async function submit(signal,game,event,market,balance,bankroll,budgetCents=Infi
   try{
     // A partial IOC fill can be below the minimum net profit. Require the
     // entire quantity at the limit price or no entry at all.
-    const result=await kalshi('/portfolio/events/orders',{method:'POST',auth:true,body:{ticker:market.ticker,client_order_id:id,side:'bid',count:count.toFixed(2),price:price.toFixed(4),time_in_force:'fill_or_kill',self_trade_prevention_type:'taker_at_cross',post_only:false}});
+    const result=await withEntryProfitFloor({ticker:market.ticker,count,price,fees:feeReserve(event,market),strategy:signal.strategy,bankroll},
+      ()=>kalshi('/portfolio/events/orders',{method:'POST',auth:true,body:{ticker:market.ticker,client_order_id:id,side:'bid',count:count.toFixed(2),price:price.toFixed(4),time_in_force:'fill_or_kill',self_trade_prevention_type:'taker_at_cross',post_only:false}}));
+    if(!result){await pool.query(`UPDATE trade_attempts SET status='unfilled',error='Below filled-order net profit floor',updated_at=now() WHERE id=$1`,[id]);return false}
     const filled=Number(result.fill_count_fp??result.fill_count??result.order?.fill_count_fp??0);
     await pool.query(`UPDATE trade_attempts SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE id=$1`,[id,filled>0?'filled':'unfilled',result.order_id||result.order?.order_id||null,filled]);
     if(filled>0)await invalidateBalance();
@@ -522,7 +551,9 @@ async function recoverPending(signal,game,event,market,balance,bankroll,budgetCe
     await pool.query(`UPDATE trade_attempts SET status='unfilled',error='Final whistle window elapsed before retry',updated_at=now() WHERE id=$1`,[row.id]);
     return false;
   }
-  try{const result=await kalshi('/portfolio/events/orders',{method:'POST',auth:true,body:{ticker:row.market_ticker,client_order_id:row.id,side:'bid',count:Number(row.count).toFixed(2),price:Number(row.limit_price).toFixed(4),time_in_force:'fill_or_kill',self_trade_prevention_type:'taker_at_cross',post_only:false}});
+  try{const result=await withEntryProfitFloor({ticker:row.market_ticker,count:Number(row.count),price:Number(row.limit_price),fees:feeReserve(event,market),strategy:signal.strategy,bankroll},
+    ()=>kalshi('/portfolio/events/orders',{method:'POST',auth:true,body:{ticker:row.market_ticker,client_order_id:row.id,side:'bid',count:Number(row.count).toFixed(2),price:Number(row.limit_price).toFixed(4),time_in_force:'fill_or_kill',self_trade_prevention_type:'taker_at_cross',post_only:false}}));
+    if(!result){await pool.query(`UPDATE trade_attempts SET status='check_order',retries=0,error='Below filled-order net profit floor',updated_at=now() WHERE id=$1`,[row.id]);return false}
     const filled=Number(result.fill_count_fp??result.fill_count??result.order?.fill_count_fp??result.order?.fill_count??0);await pool.query(`UPDATE trade_attempts SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE id=$1`,[row.id,filled>0?'filled':'unfilled',result.order_id||result.order?.order_id||null,filled]);return filled>0
   }catch(e){await pool.query(`UPDATE trade_attempts SET status='check_order',error=$2,updated_at=now() WHERE id=$1`,[row.id,'Recovery response uncertain: '+String(e.message).slice(0,200)]);return false}
 }
@@ -610,7 +641,9 @@ async function upgradeHeldOver(c,preflight,original,scoreboardCache){
   await pool.query(`CREATE TABLE IF NOT EXISTS order_verifications(order_id uuid PRIMARY KEY,verification_id uuid NOT NULL,created_at timestamptz DEFAULT now())`);
   await pool.query('INSERT INTO order_verifications(order_id,verification_id) VALUES($1,$2) ON CONFLICT DO NOTHING',[id,state.verificationId]);
   try{
-    const result=await kalshi('/portfolio/events/orders',{method:'POST',auth:true,body:{ticker:quote.ticker,client_order_id:id,side:'bid',count:count.toFixed(2),price:price.toFixed(4),time_in_force:'fill_or_kill',self_trade_prevention_type:'taker_at_cross',post_only:false}});
+    const result=await withEntryProfitFloor({ticker:quote.ticker,count,price,fees,strategy:'over',bankroll},
+      ()=>kalshi('/portfolio/events/orders',{method:'POST',auth:true,body:{ticker:quote.ticker,client_order_id:id,side:'bid',count:count.toFixed(2),price:price.toFixed(4),time_in_force:'fill_or_kill',self_trade_prevention_type:'taker_at_cross',post_only:false}}));
+    if(!result){await pool.query(`UPDATE ${upgradeTable} SET status='unfilled',error='Below filled-order net profit floor',updated_at=now() WHERE id=$1`,[id]);return {verified:true,filled:false}}
     const filled=Number(result.fill_count_fp??result.fill_count??result.order?.fill_count_fp??0);
     await pool.query(`UPDATE ${upgradeTable} SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE id=$1`,
       [id,filled>0?'filled':'unfilled',result.order_id||result.order?.order_id||null,filled]);
@@ -780,8 +813,11 @@ async function upgradeVerifiedCombos(scanStarted){
             WHERE combo_upgrades.status='unfilled' AND combo_upgrades.updated_at<now()-interval '20 seconds'
             RETURNING market_ticker`,[combo.market_ticker,combo.id,JSON.stringify(proofs.map(p=>p.verification_id)),rfq,q.id]);
           if(!reserved.rowCount)break;
-          try{await kalshi('/communications/rfqs/'+encodeURIComponent(rfq)+'/quotes/'+encodeURIComponent(q.id)+'/accept',
-            {auth:true,method:'PUT',body:{accepted_side:'no'}});await reconcileComboUpgrades()}
+          try{const accepted=await withEntryProfitFloor({ticker:combo.market_ticker,count:terms.count,price:terms.yesCost,fees,strategy:combo.strategy,bankroll:currentBankroll},
+            ()=>kalshi('/communications/rfqs/'+encodeURIComponent(rfq)+'/quotes/'+encodeURIComponent(q.id)+'/accept',
+              {auth:true,method:'PUT',body:{accepted_side:'no'}}));
+            if(!accepted){await pool.query(`UPDATE combo_upgrades SET status='unfilled',error='Below filled-order net profit floor',updated_at=now() WHERE market_ticker=$1`,[combo.market_ticker]);break}
+            await reconcileComboUpgrades()}
           catch(e){await pool.query(`UPDATE combo_upgrades SET status='uncertain',error=$2,updated_at=now() WHERE market_ticker=$1`,[combo.market_ticker,String(e.message).slice(0,250)])}
           return true;
         }
@@ -902,7 +938,9 @@ async function upgradeVerifiedCombos(scanStarted){
         if(!inserted.rowCount)continue;
         try{
           // Accepting the maker's NO bid buys YES (the complementary price).
-          await kalshi('/communications/rfqs/'+encodeURIComponent(rfq)+'/quotes/'+encodeURIComponent(q.id)+'/accept',{auth:true,method:'PUT',body:{accepted_side:'no'}});
+          const accepted=await withEntryProfitFloor({ticker,count:terms.count,price:terms.yesCost,fees,strategy,bankroll:Number(latest.balance)+Number(latest.portfolio_value)},
+            ()=>kalshi('/communications/rfqs/'+encodeURIComponent(rfq)+'/quotes/'+encodeURIComponent(q.id)+'/accept',{auth:true,method:'PUT',body:{accepted_side:'no'}}));
+          if(!accepted){await pool.query(`UPDATE trade_attempts SET status='unfilled',error='Below filled-order net profit floor',updated_at=now() WHERE id=$1`,[id]);continue}
           await reconcileCombos();
           return {filled:true,pending:true,legs,ticker};
         }catch(e){console.error('Combo accept uncertain; reconciliation required:',ticker,e.message);return {filled:false,pending:true,legs,ticker}}
@@ -944,13 +982,14 @@ async function checkHeldCombinations(fills,verifiedSince=null){
   const ready=await pool.query(`SELECT a.id,a.market_ticker FROM trade_attempts a
     LEFT JOIN combo_fill_triggers t ON t.fill_id=a.id
     WHERE a.status='filled' AND a.combo_legs IS NULL AND a.market_ticker=ANY($1::text[])
-      AND (t.completed_at IS NULL OR ($2::timestamptz IS NOT NULL AND a.reason ILIKE '%Kalshi-only%'
+      AND (t.completed_at IS NULL OR t.attempted_at<now()-interval '1 minute'
+        OR ($2::timestamptz IS NOT NULL AND a.reason ILIKE '%Kalshi-only%'
         AND EXISTS (SELECT 1 FROM fallback_verifications f WHERE f.market_ticker=a.market_ticker
           AND f.original_id=a.id AND f.verified_at >= $2::timestamptz AND t.completed_at<f.first_verified_at)
         AND NOT EXISTS (SELECT 1 FROM trade_attempts c WHERE c.status='combo_pending'
           AND c.combo_legs @> jsonb_build_array(jsonb_build_object('market_ticker',a.market_ticker)))))
       AND (t.attempted_at IS NULL OR t.attempted_at<now()-interval '20 seconds')
-    ORDER BY a.created_at DESC LIMIT 25`,[[...held],verifiedSince]);
+    ORDER BY t.attempted_at ASC NULLS FIRST,a.created_at DESC LIMIT 25`,[[...held],verifiedSince]);
   if(!ready.rowCount)return {filled:false,pending:false};
   await ensureScoreTime();
   const snapshots=await pool.query('SELECT id,title,sport,sport_family,home,away,status,signals,GREATEST(score_observed_at,scanned_at) AS scanned_at,clock_seconds FROM game_snapshots WHERE id=ANY($1::text[])',
