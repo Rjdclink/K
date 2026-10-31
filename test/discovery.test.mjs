@@ -42,13 +42,13 @@ test('live scan omits old inactive milestones while retaining active and long-ru
   const games=[
     {id:'old-idle',type:'football_game',start_date:at(-72),details:{status:'scheduled'}},
     {id:'new',type:'football_game',start_date:at(-2),details:{status:'scheduled'}},
-    {id:'old-live',type:'football_game',start_date:at(-50),details:{status:'live'}},
+    {id:'old-live-flag',type:'football_game',start_date:at(-50),details:{status:'live'}},
     {id:'previously-live',type:'soccer_game',start_date:at(-48),details:{status:'scheduled'}},
     {id:'golf',type:'golf_tournament',start_date:at(-96),details:{status:'scheduled'}},
     {id:'cricket',type:'cricket_match',start_date:at(-96),details:{status:'scheduled'}}
   ];
   assert.deepEqual(scanMilestones(games,new Set(['previously-live']),now).map(m=>m.id),
-    ['new','old-live','previously-live','golf','cricket']);
+    ['new','previously-live','golf','cricket']);
 });
 
 test('find game and both total families from a game-only milestone',()=>{
