@@ -177,12 +177,34 @@ test('a successful dashboard refresh consumes alerts without a separate request'
   const context=vm.createContext({document,window:{addEventListener(){}},navigator:{},localStorage:{getItem:key=>stored.get(key)||null,setItem:(key,value)=>stored.set(key,value)},fetch:async url=>{
     requests.push(url);
     return {status:200,ok:true,json:async()=>({live:false,exitOnly:false,credentials:false,aiConfigured:false,balance:null,games:[],orders:[],scan:{scanned:0,signals:0},alerts:[{id:8}]})};
-  },AbortSignal,setInterval(){}});
+  },AbortSignal,URLSearchParams,setInterval(){}});
   vm.runInContext(script,context);
   await new Promise(resolve=>setImmediate(resolve));
   assert.equal(stored.get('kAlertCursor'),'8');
   assert.equal(requests.length,1);
   await vm.runInContext('pollAlertsFallback()',context);
   assert.equal(requests.length,1);
+});
+
+test('dashboard renders positions before delayed sell quotes and updates them afterward',async()=>{
+  const elements=new Map(),requests=[];
+  const element=()=>({children:[],style:{},classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){},append(...items){this.children.push(...items)},replaceChildren(...items){this.children=items}});
+  const document={getElementById:id=>{if(!elements.has(id))elements.set(id,element());return elements.get(id)},querySelectorAll:()=>[],createElement:element};
+  let releaseQuote;
+  const quote=new Promise(resolve=>{releaseQuote=resolve});
+  const context=vm.createContext({document,window:{addEventListener(){}},navigator:{},localStorage:{getItem(){return null},setItem(){}},fetch:url=>{
+    requests.push(url);
+    if(url.startsWith('/api/sell-quotes'))return quote;
+    return Promise.resolve({ok:true,status:200,json:async()=>({live:false,exitOnly:false,credentials:false,aiConfigured:false,balance:null,games:[],orders:[{market_ticker:'M',strategy:'lead',sport:'Soccer',reason:'Home leads 2–0',game_title:'Away vs Home'}],scan:{scanned:0,signals:0},alerts:[]})});
+  },AbortSignal,URLSearchParams,setInterval(){}});
+  vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],context);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(elements.get('orders').children.length,1,JSON.stringify({error:elements.get('error')?.textContent,requests}));
+  assert.equal(elements.get('orders').children[0].children.at(-1).disabled,true);
+  assert.equal(requests.filter(url=>url.startsWith('/api/sell-quotes')).length,1);
+  releaseQuote({ok:true,json:async()=>({quotes:[{ticker:'M',sell_quote:{count:10,price:.92},sell_profit_cents:149}]})});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(elements.get('orders').children[0].children.at(-1).disabled,false);
+  assert.equal(elements.get('orders').children[0].children.at(-1).textContent,'↗ +$1.49');
 });
 

@@ -1528,6 +1528,8 @@ async function refreshOpenClocks(){
     }));
   }catch(e){console.warn('Dashboard clock refresh deferred:',e.message)}
 }
+let recentDashboardPositions=null,recentDashboardBalance=null;
+const dashboardDeadline=ms=>new Promise(resolve=>setTimeout(()=>resolve(null),ms));
 async function state(){
   await ensureScoreTime();
   await pool.query(`CREATE TABLE IF NOT EXISTS combo_diagnostics (id bigserial PRIMARY KEY,
@@ -1563,15 +1565,18 @@ async function state(){
   let balance=null,positions=null,accountError=null,positionsError=null;
   if(configured()){
     const [balanceResult,positionsResult]=await Promise.allSettled([
-      accountBalance(),allOpenPositions()
+      Promise.race([accountBalance().then(value=>(recentDashboardBalance=value)),dashboardDeadline(4000)]),
+      Promise.race([allOpenPositions().then(value=>{recentDashboardPositions={value,at:Date.now()};return value}),dashboardDeadline(4000)])
     ]);
     if(balanceResult.status==='fulfilled'){
-      const value=balanceResult.value;
-      if(Number.isFinite(Number(value.balance))&&Number.isFinite(Number(value.portfolio_value)))balance=value;
-      else accountError='Kalshi returned an incomplete balance response';
+      const value=balanceResult.value||recentDashboardBalance;
+      if(value&&Number.isFinite(Number(value.balance))&&Number.isFinite(Number(value.portfolio_value)))balance=value;
+      else accountError=balanceResult.value?'Kalshi returned an incomplete balance response':'Live balance is taking longer than usual; retrying';
     }else accountError=String(balanceResult.reason?.message||balanceResult.reason);
-    if(positionsResult.status==='fulfilled')positions=positionsResult.value;
+    if(positionsResult.status==='fulfilled')positions=positionsResult.value||
+      (recentDashboardPositions&&Date.now()-recentDashboardPositions.at<60000?recentDashboardPositions.value:null);
     else positionsError=String(positionsResult.reason?.message||positionsResult.reason);
+    if(!positions&&!positionsError)positionsError='Live positions are taking longer than usual; retrying';
   }else accountError='Kalshi credentials are missing from the Neon function environment';
   const open=new Set((positions?.market_positions||[]).filter(p=>Number(p.position_fp??p.position??0)!==0).map(p=>p.ticker));
   const {rows:comboIssues}=await pool.query(`SELECT checked_at,leg_tickers,status,detail FROM combo_diagnostics
@@ -1587,13 +1592,11 @@ async function state(){
     return {...o,position,fill_count:count,allocated_cents:allocated,
       potential_profit_cents:actual?Math.floor(count*100-allocated):netSettlementProfitCents(count,Number(o.limit_price),2)};
   }):[];
-  await Promise.all(orders.map(async o=>{try{
-    const {quote,market}=await currentSell(o.market_ticker,positions,true);
-    o.sell_quote=quote;
-    o.selected_name=o.strategy==='lead'?market?.yes_sub_title||String(market?.title||'').replace(/\s+wins?\b.*/i,''):
+  for(const o of orders){
+    o.selected_name=o.strategy==='lead'?String(o.reason||'').match(/(?:^|: )([^;:]+?) leads \d/i)?.[1]||null:
       String(o.reason||'').match(/\bby ([^;]+);/)?.[1]||null;
-    if(o.sell_quote)o.sell_profit_cents=estimatedSaleProfitCents(o.position,o.sell_quote,o.limit_price);
-  }catch{o.sell_quote=null}delete o.position}));
+    delete o.position;
+  }
   const comboIssue=comboIssues.find(issue=>issue.leg_tickers.length>=2&&
     issue.leg_tickers.every(ticker=>open.has(ticker)))||null;
   if(comboIssue)comboIssue.leg_names=comboIssue.leg_tickers.map(ticker=>orders.find(o=>o.market_ticker===ticker)?.game_title||ticker);
@@ -1682,6 +1685,21 @@ export default {async fetch(req){const url=new URL(req.url);
         new Promise(resolve=>setTimeout(resolve,1500))]);
       const [snapshot,alerts]=await Promise.all([state(),settlementAlerts(since).catch(e=>{console.error('Dashboard alerts unavailable:',e);return null})]);
       return json({...snapshot,alerts});
+    }
+    if(req.method==='GET'&&url.pathname==='/api/sell-quotes'){
+      const tickers=[...new Set(url.searchParams.getAll('ticker'))];
+      if(!tickers.length||tickers.length>20||tickers.some(t=>!/^[A-Z0-9-]{1,180}$/.test(t)))return json({error:'Invalid tickers'},400);
+      const positions=await allOpenPositions();
+      const held=new Map((positions.market_positions||[]).filter(p=>Number(p.position_fp??p.position??0)>0).map(p=>[p.ticker,p]));
+      const {rows}=await pool.query('SELECT DISTINCT ON (market_ticker) market_ticker,strategy,reason,limit_price FROM trade_attempts WHERE status=$1 AND market_ticker=ANY($2::text[]) ORDER BY market_ticker,created_at DESC',['filled',tickers]);
+      const attempts=new Map(rows.map(o=>[o.market_ticker,o]));
+      const results=await Promise.allSettled(tickers.filter(t=>held.has(t)&&attempts.has(t)).map(async ticker=>{
+        const {quote,market}=await currentSell(ticker,positions,true),attempt=attempts.get(ticker);
+        return {ticker,sell_quote:quote,sell_profit_cents:quote?estimatedSaleProfitCents(held.get(ticker),quote,attempt.limit_price):null,
+          selected_name:attempt.strategy==='lead'?market?.yes_sub_title||String(market?.title||'').replace(/\s+wins?\b.*/i,''):
+            String(attempt.reason||'').match(/\bby ([^;]+);/)?.[1]||null};
+      }));
+      return json({quotes:results.filter(r=>r.status==='fulfilled').map(r=>r.value)});
     }
     if(req.method==='GET'&&url.pathname==='/api/history'){
       const beforeTime=url.searchParams.get('before_time'),beforeId=url.searchParams.get('before_id');
