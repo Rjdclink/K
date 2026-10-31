@@ -1557,7 +1557,7 @@ async function scan(cachedMilestones,discoveryCount){
   const client=await pool.connect();await client.query('BEGIN');
   const lock=await client.query('SELECT pg_try_advisory_xact_lock(83027543) AS acquired');
   if(!lock.rows[0].acquired){await client.query('ROLLBACK');client.release();return {skipped:'scan in progress'}};
-  let scanned=0,signals=0,submitted=0,ms;const executionErrors=[],scanStarted=new Date();let openPositions=null;
+  let scanned=0,signals=0,submitted=0,ms,scanLockHeld=true;const executionErrors=[],scanStarted=new Date();let openPositions=null;
   try{
     if(live()||exitOnly())await Promise.all([reconcileCombos(),reconcileComboUpgrades()]);
     if(live()&&!cachedMilestones)try{await reconcileFundingTransfers()}catch(e){console.warn('Transfer history unavailable:',e.message)}
@@ -1959,6 +1959,9 @@ async function scan(cachedMilestones,discoveryCount){
       finally{await recordDecision({source:'scan',market:c.market,signal:c.signal,game:state,stage,outcome,detail,startedAt})}
     }
     await Promise.all([workersDone,leadWorkers,...immediateUpgradeJobs]);
+    // Single-trade checks are complete. Combo RFQs and diagnostics have their
+    // own claims and may outlive this minute's scan; let the next live scan run.
+    await client.query('ROLLBACK');client.release();scanLockHeld=false;
     if(live()){
       try{
         const combo=await comboJob;
@@ -1975,7 +1978,7 @@ async function scan(cachedMilestones,discoveryCount){
     try{await syncSettlementAlerts()}catch(e){console.error('Settlement alert scan failed:',e)}
     return {scanned,signals,submitted,active:active.length,discovered:discoveryCount,next:games.filter(g=>g.state.verifiedLive || (new Date(g.milestone.start_date).getTime()>Date.now()-3600000 && new Date(g.milestone.start_date).getTime()<Date.now()+3600000)).map(g=>g.milestone)};
   }catch(e){console.error('Scan failed:',e);await pool.query('UPDATE scan_status SET last_scan=now(),last_error=$1,scanned=$2,signals=$3 WHERE id=1',[String(e.message).slice(0,250),scanned,signals]);return {error:e.message,scanned,signals,next:ms}}
-  finally{await client.query('ROLLBACK');client.release()}
+  finally{if(scanLockHeld){await client.query('ROLLBACK');client.release()}}
 }
 async function refreshOpenClocks(){
   // Only the dashboard visitor requests this five-second refresh; the scanner
