@@ -99,7 +99,7 @@ test('in-page login avoids repeated browser Basic Auth challenges',async()=>{
     assert.match(await dashboard.text(),/href="\/history" aria-label="Trade history"/);
     const history=await request('/history',{headers:{cookie}});
     assert.equal(history.status,200);
-    assert.match(await history.text(),/Completed trades since history began/);
+    assert.match(await history.text(),/A fresh view begins at 12:15 p.m. Chicago time each day/);
     const basic='Basic '+Buffer.from('rjdc:'+secret).toString('base64');
     assert.equal((await request('/',{headers:{authorization:basic}})).status,200);
   }finally{
@@ -125,12 +125,17 @@ test('history returns losses with signed totals and supports a loss-only view',a
     const body=await response.json();
     assert.equal(body.history[0].profit_cents,-478);
     assert.equal(body.summary.loss_cents,'-1284');
-    assert.deepEqual(calls.find(call=>call.sql.includes('LIMIT 51')).params,[null,null,'loss']);
+    assert.deepEqual(calls.find(call=>call.sql.includes('LIMIT 51')).params,[null,null,'loss','today']);
+    assert.match(calls.find(call=>call.sql.includes('LIMIT 51')).sql,/history_view_config/);
+    const full=await app.fetch(new Request(base+'/api/history?view=full',{headers}));
+    assert.equal(full.status,200);
+    assert.equal(calls.findLast(call=>call.sql.includes('LIMIT 51')).params[3],'full');
     assert.equal((await app.fetch(new Request(base+'/api/history?filter=unknown',{headers}))).status,400);
     const page=await app.fetch(new Request(base+'/history',{headers}));
     const html=await page.text();
     assert.match(html,/data-filter="loss"/);
-    assert.match(html,/No realized losses since history began/);
+    assert.match(html,/No realized losses in this view/);
+    assert.match(html,/id="historyScope"/);
   }finally{
     pg.Pool.prototype.query=originalQuery;
     if(previousPassword===undefined)delete process.env.DASHBOARD_PASSWORD;else process.env.DASHBOARD_PASSWORD=previousPassword;
