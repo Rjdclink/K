@@ -1,4 +1,4 @@
-import { stableSoccerLeadFraction, fallbackLeadFraction, KALSHI_ONLY_FRACTION } from './strategy.mjs';
+import { fallbackLeadFraction, KALSHI_ONLY_FRACTION, reducedAllocation } from './strategy.mjs';
 
 export function leaderHasControl(game){
   if(game?.darts){
@@ -19,15 +19,14 @@ export function finalLeadFraction(first,second,signal,externallyVerified,market)
   if(signal?.strategy!=='lead')return signal?.fraction;
   if(!externallyVerified){
     const robust=market?fallbackLeadFraction(first,second,market):null;
-    if(robust!==null)return Math.min(.15,robust+(leaderHasControl(first)&&leaderHasControl(second)?.02:0));
+    if(robust!==null)return Math.max(reducedAllocation(robust),
+      reducedAllocation(Math.min(.15,robust+(leaderHasControl(first)&&leaderHasControl(second)?.02:0))));
   }
-  let fraction=stableSoccerLeadFraction(first,second,signal);
-  const alreadySized=second.sport==='CFB'||
-    signal.allocationPolicy==='early_football'||
-    /soccer/.test(second.type)&&Math.abs(second.home-second.away)===1;
+  let fraction=signal.fraction;
+  const alreadySized=second.sport==='CFB'||signal.allocationPolicy==='early_football';
   if(!alreadySized&&leaderHasControl(first)&&leaderHasControl(second)){
-    // Preserve existing higher soccer ceilings; newly boosted tiers stop at 35%.
+    // Limit the raw possession bonus before the five-point reduction.
     fraction=Math.min(Math.max(.35,signal.fraction),Math.round(fraction*100+5)/100);
   }
-  return externallyVerified?fraction:Math.min(fraction,KALSHI_ONLY_FRACTION);
+  return reducedAllocation(externallyVerified?fraction:Math.min(fraction,KALSHI_ONLY_FRACTION));
 }
