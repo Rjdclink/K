@@ -201,3 +201,17 @@ CREATE TABLE IF NOT EXISTS trade_history (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS trade_history_occurred_idx ON trade_history(occurred_at DESC,id DESC);
+
+CREATE TABLE IF NOT EXISTS execution_diagnostics (
+  source text NOT NULL, market_ticker text NOT NULL, strategy text NOT NULL,
+  game_id text NOT NULL, checked_at timestamptz NOT NULL, stage text NOT NULL,
+  outcome text NOT NULL, detail text, context jsonb NOT NULL,
+  PRIMARY KEY(source,market_ticker,strategy)
+);
+CREATE TABLE IF NOT EXISTS combo_exclusions (
+  exclusion_key text PRIMARY KEY,leg_tickers jsonb NOT NULL,status text NOT NULL,
+  detail text NOT NULL,created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS sports_discovery_cache (
+  id integer PRIMARY KEY,milestones jsonb NOT NULL,discovered_at timestamptz NOT NULL
+);

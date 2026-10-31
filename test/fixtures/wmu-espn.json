@@ -1,0 +1,83 @@
+{
+  "game": {
+    "type": "football_game",
+    "sport": "CFB",
+    "homeName": "Western Michigan",
+    "awayName": "Bowling Green",
+    "home": 20,
+    "away": 10,
+    "period": 4,
+    "remainingSeconds": 204,
+    "scoreKnown": true
+  },
+  "milestone": {
+    "title": "Bowling Green at Western Michigan",
+    "start_date": "2026-10-31T16:00:00Z"
+  },
+  "espn": {
+    "events": [
+      {
+        "id": "401866452",
+        "date": "2026-10-31T16:00Z",
+        "status": {
+          "type": {
+            "id": "2",
+            "name": "STATUS_IN_PROGRESS",
+            "state": "in",
+            "detail": "3:09 - 4th Quarter",
+            "completed": false,
+            "description": "In Progress",
+            "shortDetail": "3:09 - 4th"
+          },
+          "clock": 189,
+          "period": 4,
+          "displayClock": "3:09"
+        },
+        "competitions": [
+          {
+            "status": {
+              "type": {
+                "id": "2",
+                "name": "STATUS_IN_PROGRESS",
+                "state": "in",
+                "detail": "3:09 - 4th Quarter",
+                "completed": false,
+                "description": "In Progress",
+                "shortDetail": "3:09 - 4th"
+              },
+              "clock": 189,
+              "period": 4,
+              "displayClock": "3:09"
+            },
+            "competitors": [
+              {
+                "homeAway": "home",
+                "score": "20",
+                "team": {
+                  "id": "2711",
+                  "displayName": "Western Michigan Broncos",
+                  "shortDisplayName": "W Michigan",
+                  "name": "Broncos",
+                  "abbreviation": "WMU",
+                  "location": "Western Michigan"
+                }
+              },
+              {
+                "homeAway": "away",
+                "score": "10",
+                "team": {
+                  "id": "189",
+                  "displayName": "Bowling Green Falcons",
+                  "shortDisplayName": "Bowling Green",
+                  "name": "Falcons",
+                  "abbreviation": "BGSU",
+                  "location": "Bowling Green"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
