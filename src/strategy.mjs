@@ -336,8 +336,10 @@ export function kalshiOnlyOver(first,second,market){
   // Require an independent score before treating a crossed soccer total as final.
   if(/soccer/.test(first?.type||'')||/soccer/.test(second?.type||''))return false;
   const player=playerOverSpec(first,market),nextPlayer=playerOverSpec(second,market);
+  // Player statistics can be corrected after the exchange's two live reads.
+  // Only an exact independent player and statistic check can authorize entry.
+  if(player||nextPlayer)return false;
   if(!overSignal(first,market)||!overSignal(second,market))return false;
-  if(player&&(!nextPlayer||player.id!==nextPlayer.id||player.value!==nextPlayer.value))return false;
   const initialSegment=periodValue(first,market),laterSegment=periodValue(second,market);
   if(Boolean(initialSegment)!==Boolean(laterSegment)||initialSegment&&
     (initialSegment.home!==laterSegment.home||initialSegment.away!==laterSegment.away))return false;
@@ -444,6 +446,15 @@ export function stableSoccerLeadFraction(first,second,signal){
   const leader=second.home>second.away?'home':'away';
   return first.possessionSide===leader&&second.possessionSide===leader?signal.fraction:
     second.matchRemainingSeconds<20?.35:.10;
+}
+export function externallyVerifiedEarlySoccerLead(first,second,signal,firstConfirmed,secondConfirmed){
+  if(!firstConfirmed||!secondConfirmed||signal?.fraction!==.02||
+    !/^Restricted 2% lead:/.test(signal.reason)||
+    !/soccer/.test(first?.type||'')||first.type!==second?.type||
+    first.period!==2||second.period!==2||first.soccerExtraTime||second.soccerExtraTime||
+    first.home!==second.home||first.away!==second.away||
+    Math.abs(second.home-second.away)<3)return signal;
+  return {...signal,fraction:.20,reason:signal.reason.replace(/^Restricted 2% lead:/,'Externally verified 20% lead:')};
 }
 export function confirmedSoccerOneGoalClock(first,second){
   if(!/soccer/.test(second.type)||Math.abs(second.home-second.away)!==1)return true;
