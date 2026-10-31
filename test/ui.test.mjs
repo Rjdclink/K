@@ -3,6 +3,21 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {page} from '../src/ui.mjs';
 
+test('ask counter excludes watch rows, missing depth, terminal prices, and already-filled signals',async()=>{
+  const elements=new Map();
+  const element=()=>({children:[],style:{},classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){},append(...x){this.children.push(...x)},replaceChildren(...x){this.children=x}});
+  const document={getElementById:id=>{if(!elements.has(id))elements.set(id,element());return elements.get(id)},querySelectorAll:()=>[],createElement:element};
+  const valid={strategy:'lead',ticker:'M',ask:'.97',ask_size:'60',execution:'Awaiting score verification'};
+  const signals=[valid,{...valid,ticker:'N',execution:'Below profit floor'},
+    {strategy:'watch',execution:'Tracking'}, {...valid,strategy:'watch'},
+    {...valid,ask_size:'0'},{...valid,ask:'1.00'},{...valid,execution:'Already filled'},{...valid,ask_size:undefined}];
+  const context=vm.createContext({document,window:{addEventListener(){}},navigator:{},localStorage:{getItem(){return null},setItem(){}},
+    fetch:async()=>({ok:true,status:200,json:async()=>({games:[{title:'Game',signals}],orders:[],alerts:[],scan:{}})}),AbortSignal,URLSearchParams,setInterval(){}});
+  vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],context);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(elements.get('askCount').textContent,2,'a real ask can exist even when a different gate blocks the trade');
+});
+
 test('game summary puts preflight and available-ask counts above other metrics',()=>{
   const names=['Preflight candidates','Signals with an ask','Score rule matches','Kalshi milestones assessed','Weather series monitored'];
   const positions=names.map(name=>page.indexOf('<span>'+name));

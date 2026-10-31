@@ -48,9 +48,10 @@ function sameTeam(expected,aliases){
   return key.length>=3 && aliases.some(name=>clean(name)===key||alternate&&clean(name)===alternate||franchise&&clean(name)===franchise||
     stripped.length>=5&&clubName(name)===stripped);
 }
-function teamAliases(t,fox=false){
+function teamAliases(t,fox=false,collegeFootball=false){
   if(fox)return [t?.imageAltText,t?.longName,t?.stackedNameBottom,t?.abbreviation,t?.shortName,`${t?.name||''} ${t?.longName||''}`,`${t?.stackedNameTop||''} ${t?.stackedNameBottom||''}`];
-  return [t?.displayName,t?.shortDisplayName,t?.name,t?.abbreviation,`${t?.abbreviation||''} ${t?.name||''}`,`${t?.location||''} ${t?.name||''}`];
+  return [t?.displayName,t?.shortDisplayName,t?.name,t?.abbreviation,`${t?.abbreviation||''} ${t?.name||''}`,`${t?.location||''} ${t?.name||''}`,
+    ...(collegeFootball?[t?.location]:[])];
 }
 function clockCompatible(game,period,clock){
   if(Number.isFinite(game.period)&&Number.isFinite(Number(period))&&Number(period)>0&&game.period!==Number(period))return false;
@@ -71,7 +72,7 @@ export function espnMatches(data,game,milestone){
   if(!Array.isArray(data?.events))return [];
   return data.events.flatMap(e=>{
     const c=e.competitions?.[0],home=c?.competitors?.find(t=>t.homeAway==='home'),away=c?.competitors?.find(t=>t.homeAway==='away');
-    if(!home||!away||!sameFixture(game,milestone,teamAliases(home.team),teamAliases(away.team),e.date))return [];
+    if(!home||!away||!sameFixture(game,milestone,teamAliases(home.team,false,game.sport==='CFB'),teamAliases(away.team,false,game.sport==='CFB'),e.date))return [];
     const status=c.status||e.status;
     const periods=(home.linescores||[]).map((part,i)=>({number:i+1,home:score(part.value),away:score(away.linescores?.[i]?.value)}));
     // Use the last play only when scoring events account for the full score.

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 // Kalshi combinations are separate YES markets. Two confirmed, still-held
 // single fills qualify as legs; an RFQ alone is never a fill.
 // Creating markets and waiting for an RFQ maker can take longer than a scan.
@@ -74,7 +75,50 @@ export async function collectionsForEvents(eventTickers,get){
   }));
   return [...new Map(responses.flat().map(c=>[c.collection_ticker,c])).values()];
 }
+function contractTerms(m){
+  return {ticker:m.ticker,event:m.event_ticker,type:m.strike_type,floor:m.floor_strike,cap:m.cap_strike,
+    custom:Object.entries(m.custom_strike||{}).sort(([a],[b])=>a.localeCompare(b)),
+    rules:m.rules_primary,secondary:m.rules_secondary,close:m.close_time};
+}
+export function comboExclusionKey(legs){
+  const terms=legs.map(l=>contractTerms(l.market)).sort((a,b)=>a.ticker.localeCompare(b.ticker));
+  return createHash('sha256').update(JSON.stringify(terms)).digest('hex');
+}
+export function comboGroupRejection(legs){
+  for(const {market:m,comboExcluded} of legs){
+    if(comboExcluded)return 'already_decided';
+    if(m.status&&!['active','open'].includes(m.status)||m.result&&!['not_determined'].includes(m.result))return 'already_decided';
+  }
+  for(let i=0;i<legs.length;i++)for(let j=i+1;j<legs.length;j++){
+    const a=legs[i].market,b=legs[j].market;
+    if(a.ticker===b.ticker)return 'duplicate_leg';
+    // Only infer implication for the same contract family, subject, rules,
+    // and direction. Different players/teams/periods remain independent legs.
+    if(!a.event_ticker||a.event_ticker!==b.event_ticker||a.strike_type!=='greater'||b.strike_type!=='greater'||
+      a.floor_strike==null||b.floor_strike==null||!Number.isFinite(Number(a.floor_strike))||!Number.isFinite(Number(b.floor_strike))||
+      a.cap_strike!=null||b.cap_strike!=null||!a.rules_primary||!b.rules_primary)continue;
+    const ta=contractTerms(a),tb=contractTerms(b);
+    ta.ticker=tb.ticker='';ta.floor=tb.floor=null;
+    ta.rules=ta.rules.split(String(a.floor_strike)).join('<threshold>');
+    tb.rules=tb.rules.split(String(b.floor_strike)).join('<threshold>');
+    if(JSON.stringify(ta)===JSON.stringify(tb))return 'redundant_legs';
+  }
+  return null;
+}
+export function exchangeComboExclusion(error,legs){
+  const message=String(error?.message||error);
+  if(!/^Kalshi 400 POST \/multivariate_event_collections\//.test(message))return null;
+  const status=/already (?:been )?decided/i.test(message)?'already_decided':/already guarantees/i.test(message)?'redundant_legs':null;
+  if(!status)return null;
+  let details;try{details=JSON.parse(message.split(' details=')[1])}catch{return null}
+  if(typeof details!=='string')return null;
+  const tickers=details.split(',').map(s=>s.trim());
+  const selected=legs.filter(l=>tickers.includes(l.market.ticker));
+  if(selected.length!==tickers.length||(status==='already_decided'?selected.length!==1:selected.length<2))return null;
+  return {key:comboExclusionKey(selected),status,tickers,detail:message};
+}
 export function comboCollection(collections,legs){
+  if(comboGroupRejection(legs))return null;
   return (collections||[]).find(c=>(c.is_all_yes===true || c.is_all_yes===false && /every associated market resolves to YES/i.test(String(c.functional_description||''))) &&
     (c.is_single_market_per_event===false || c.is_single_market_per_event===true && new Set(legs.map(l=>l.event.event_ticker)).size===legs.length) &&
     Number(c.size_min)<=legs.length && (!Number(c.size_max)||Number(c.size_max)>=legs.length) &&
@@ -109,7 +153,7 @@ function combinationAt(items,k,index){
   }
   return chosen;
 }
-export function plannedComboGroups(collections,candidates,maxPlans=COMBO_RFQ_PLANS,rotation=0){
+export function plannedComboGroups(collections,candidates,maxPlans=COMBO_RFQ_PLANS,rotation=0,excluded=new Set()){
   const compatible=(collections||[]).filter(c=>c.is_all_yes===true ||
     c.is_all_yes===false&&/every associated market resolves to YES/i.test(String(c.functional_description||'')));
   const eligible=compatible.map(collection=>{
@@ -147,7 +191,8 @@ export function plannedComboGroups(collections,candidates,maxPlans=COMBO_RFQ_PLA
       if(BigInt(step)>=total)continue;
         const rank=(BigInt(offset)*2n+BigInt(step))%total;
         const legs=combinationAt(pools,size,rank).map((pool,i)=>pool[(offset+step+i)%pool.length]);
-        if(!comboCollection([collection],legs))continue;
+        if(!comboCollection([collection],legs)||excluded.has(comboExclusionKey(legs)))continue;
+        if(legs.some((a,i)=>legs.slice(i+1).some(b=>excluded.has(comboExclusionKey([a,b])))))continue;
         const key=legs.map(l=>l.market.ticker).sort().join('|');
         if(seen.has(key))continue;
         seen.add(key);selected.push({legs,collection});added++;
@@ -173,7 +218,9 @@ export function comboPairDiagnostics(collections,candidates){
   const pairs=[];
   for(let i=0;i<candidates.length;i++)for(let j=i+1;j<candidates.length;j++){
     const legs=[candidates[i],candidates[j]];
-    pairs.push({tickers:legs.map(c=>c.market.ticker).sort(),collection:comboCollection(collections,legs)?.collection_ticker||null});
+    const rejection=comboGroupRejection(legs);
+    pairs.push({tickers:legs.map(c=>c.market.ticker).sort(),collection:comboCollection(collections,legs)?.collection_ticker||null,
+      ...(rejection?{rejection}:{})});
   }
   return pairs;
 }

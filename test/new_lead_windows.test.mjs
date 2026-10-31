@@ -31,10 +31,10 @@ test('Germany BBL 30-point winner is a Q4 signal even though a zero-sized ask ca
 });
 test('football uses 28 then 21, hockey four then three, and rugby is excluded',()=>{
   const football=team('football_game','NFL',28,0);
-  assert.equal(earlyLeadSignal(football.state(3,'00:30'),football.market)?.fraction,.02);
+  assert.equal(earlyLeadSignal(football.state(3,'00:30'),football.market)?.fraction,.05);
   assert.equal(earlyLeadSignal(football.state(3,'00:30',27,0),football.market),null);
-  assert.equal(earlyLeadSignal(football.state(4,'15:00',21,0),football.market)?.fraction,.02);
-  assert.equal(earlyLeadSignal(football.state(4,'08:00',21,0),football.market)?.fraction,.02);
+  assert.equal(earlyLeadSignal(football.state(4,'15:00',21,0),football.market)?.fraction,.05);
+  assert.equal(earlyLeadSignal(football.state(4,'08:00',21,0),football.market)?.fraction,.05);
   assert.equal(earlyLeadSignal(football.state(4,'15:00',20,0),football.market),null);
   const hockey=team('hockey_match','NHL',4,0);
   assert.equal(earlyLeadSignal(hockey.state(2,'00:30'),hockey.market)?.fraction,.02);
