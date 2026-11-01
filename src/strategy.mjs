@@ -512,7 +512,7 @@ export function tableTennisSignal(game,market){
   if(Object.values(strike).some(value=>typeof value==='string'&&[t.firstId,t.secondId].includes(value))&&
     !Object.values(strike).includes(selectedId))return null;
   const margin=Math.abs(t.firstPoints-t.secondPoints);
-  return {strategy:'lead',reason:`Table tennis deciding set ${first?t.firstPoints:t.secondPoints}–${first?t.secondPoints:t.firstPoints}; sets ${before}–${before}, independently verified before order`,fraction:margin>=6?.15:.10};
+  return {strategy:'lead',reason:`Table tennis deciding set ${first?t.firstPoints:t.secondPoints}–${first?t.secondPoints:t.firstPoints}; sets ${before}–${before}`,fraction:margin>=6?.15:.10};
 }
 export function collegeFootballPossessionOptional(game){
   return game.sport==='CFB'&&/football/.test(game.type)&&game.period===4&&
