@@ -65,27 +65,37 @@ test('revised hockey and inning-based baseball winners reject superseded thresho
  }
 });
 
-test('soccer winner requires three goals and strictly under ten minutes on the final-whistle clock',()=>{
+test('soccer winner allows early +3 and late +2 strictly under 7:30 on a live elapsed clock',()=>{
  const soccer=(margin,minute,remaining)=>team('soccer_match','Soccer',margin,2,0,{half:'2nd',time:`${minute}'`,match_remaining_seconds:remaining,clock:''});
- let {state,market}=soccer(3,80,599);
+ let {state,market}=soccer(3,47,2580);
  assert.ok(leadSignal(state,market));
  assert.equal(earlyLeadSignal(state,market),null);
- assert.equal(leadSignal(soccer(3,47,2580).state,market),null);
- assert.equal(leadSignal(soccer(3,47,599).state,market),null);
- assert.equal(leadSignal(soccer(3,80,600).state,market),null);
- assert.equal(leadSignal(soccer(2,85,299).state,market),null);
+ assert.equal(leadSignal(soccer(2,47,2580).state,market),null);
+ assert.equal(leadSignal(soccer(3,50,2400).state,market),null);
+ assert.equal(leadSignal(soccer(3,80,599).state,market),null);
+ assert.equal(leadSignal(soccer(2,82,450).state,market),null);
+ assert.ok(leadSignal(soccer(2,82,449).state,market));
+ assert.ok(leadSignal(soccer(2,84,NaN).state,market));
+ assert.ok(leadSignal(soccer(4,84,NaN).state,market));
+ assert.ok(leadSignal(soccer(4,84,NaN).state,{...market,yes_ask_dollars:'1.0000'}),
+   'the score rule remains visible even when the orderbook has no executable ask');
+ assert.equal(leadSignal(soccer(2,84,0).state,market),null);
  assert.ok(leadSignal(soccer(3,85,299).state,market));
- assert.equal(leadSignal(soccer(3,85,NaN).state,market),null);
  assert.equal(leadSignal(soccer(3,90,10).state,market),null);
  assert.equal(leadSignal(soccer(1,89,10).state,market),null);
- assert.equal(confirmedSoccerWinnerClock(soccer(3,80,599).state,soccer(3,80,598).state),true);
- assert.equal(confirmedSoccerWinnerClock(soccer(3,80,599).state,soccer(3,80,599).state),false);
- assert.equal(confirmedSoccerWinnerClock(soccer(3,80,600).state,soccer(3,80,599).state),false);
- assert.match(leadWatchReason(soccer(3,75,900).state),/3-goal lead/);
- assert.equal(leadWatchReason(soccer(2,85,299).state),null);
- assert.equal(leadWatchReason(soccer(3,47,2580).state),null);
- assert.equal(soccerWinnerWindowOpen({...state,observedAt:now},now),true);
- assert.equal(soccerWinnerWindowOpen({...state,observedAt:now,matchRemainingSeconds:5},now),false);
+ assert.equal(confirmedSoccerWinnerClock(soccer(2,82,449).state,soccer(2,82,448).state),true);
+ assert.equal(confirmedSoccerWinnerClock(soccer(2,82,449).state,soccer(2,82,449).state),false);
+ assert.equal(confirmedSoccerWinnerClock(soccer(2,82,450).state,soccer(2,82,449).state),false);
+ assert.equal(confirmedSoccerWinnerClock(soccer(2,84,NaN).state,soccer(2,84,NaN).state),true);
+ assert.equal(confirmedSoccerWinnerClock(soccer(3,47,2580).state,soccer(3,47,2579).state),true);
+ assert.match(leadWatchReason(soccer(3,47,2580).state),/3-goal lead/);
+ assert.match(leadWatchReason(soccer(2,75,900).state),/2-goal lead/);
+ assert.match(leadWatchReason(soccer(4,84,NaN).state),/score and regulation clock qualify/);
+ assert.equal(leadWatchReason(soccer(2,47,2580).state),null);
+ assert.equal(soccerWinnerWindowOpen({...soccer(2,84,NaN).state,observedAt:now},now),true);
+ assert.equal(soccerWinnerWindowOpen({...soccer(2,83,5).state,observedAt:now},now),false);
+ assert.equal(soccerWinnerWindowOpen({...soccer(2,84,0).state,observedAt:now},now),false);
+ assert.equal(soccerWinnerWindowOpen({...state,observedAt:now,matchRemainingSeconds:NaN},now),true);
 });
 
 test('rugby +15 is one tier; cricket +30 and golf +4 use the revised thresholds',()=>{

@@ -161,8 +161,8 @@ export function gameState(m, live) {
     /baseball/.test(family)?d.inning_half===2||/bottom/i.test(String(d.inning_half||periodText))?'home':d.inning_half===1||/top/i.test(String(d.inning_half||periodText))?'away':null:
     (tennis||tableTennis)&&d.server===m.details?.first_competitor_id?(firstIsHome?'home':'away'):
     (tennis||tableTennis)&&d.server===m.details?.second_competitor_id?(firstIsHome?'away':'home'):null;
-  // Only a final-whistle countdown can establish a late soccer entry window.
-  // The displayed minute alone excludes unknown stoppage time.
+  // Keep the feed's final-whistle countdown when available. Late winner
+  // entries can also use the live elapsed regulation minute.
   const matchRemainingSeconds=/soccer/.test(family)?N(d.match_remaining_seconds):NaN;
   // Soccer feeds include extra-time goals in same-game scores, while the
   // matching Kalshi totals and winner markets settle on regulation only.
@@ -264,9 +264,11 @@ export function leadWatchReason(game){
     if(game.period===rule[0]&&seconds<=rule[1]&&margin>=rule[2])
       return `Tracking ${margin}-point lead; waiting for final winner window`;
   }
-  if(/soccer/.test(type)&&game.period===2&&!game.soccerExtraTime&&margin>=3&&
-    Number.isFinite(game.soccerMinute)&&game.soccerMinute>=75&&game.soccerMinute<90)
-    return `Tracking ${margin}-goal lead; waiting for the late winner window`;
+  if(/soccer/.test(type)&&game.period===2&&!game.soccerExtraTime&&
+    Number.isFinite(game.soccerMinute)&&game.soccerMinute>=45&&game.soccerMinute<90&&
+    (game.soccerMinute<50&&margin>=3||game.soccerMinute>=75&&margin>=2))
+    return `Tracking ${margin}-goal lead; ${game.soccerMinute<50&&margin>=3||game.soccerMinute>82.5&&margin>=2?
+      'score and regulation clock qualify; checking winner market and ask':'waiting for the late winner window'}`;
   return null;
 }
 export function overSignal(game, market) {
@@ -559,10 +561,13 @@ export function strongKalshiOnlyLead(first,second,market){
   const margin=Math.abs(second.homeUnits-second.awayUnits);
   if(/soccer/.test(type))return first.period===2&&second.period===2&&
     first.clockRunning&&second.clockRunning&&
-    Number.isFinite(first.matchRemainingSeconds)&&first.matchRemainingSeconds>0&&
-    first.matchRemainingSeconds<300&&second.matchRemainingSeconds<first.matchRemainingSeconds&&
-    Number.isFinite(second.matchRemainingSeconds)&&second.matchRemainingSeconds>0&&
-    second.matchRemainingSeconds<300&&margin>=3;
+    (Number.isFinite(first.matchRemainingSeconds)&&first.matchRemainingSeconds>0&&
+      first.matchRemainingSeconds<300&&second.matchRemainingSeconds<first.matchRemainingSeconds&&
+      Number.isFinite(second.matchRemainingSeconds)&&second.matchRemainingSeconds>0&&
+      second.matchRemainingSeconds<300||
+      Number.isFinite(first.soccerMinute)&&first.soccerMinute>85&&
+      Number.isFinite(second.soccerMinute)&&second.soccerMinute>=first.soccerMinute&&second.soccerMinute<90)&&
+    margin>=3;
   if(/hockey/.test(type))return first.period===3&&second.period===3&&
     Number.isFinite(first.remainingSeconds)&&first.remainingSeconds>0&&
     first.remainingSeconds<120&&second.remainingSeconds<first.remainingSeconds&&
@@ -623,12 +628,18 @@ export function leadSignal(game, market) {
   const segments=/baseball/.test(game.type)?9:/hockey/.test(game.type)?3:/soccer/.test(game.type)?2:basketball&&['NCAAB','NCAAW'].includes(game.sport)?2:/basketball|football/.test(game.type)?4:Infinity;
   const baseball=/baseball/.test(game.type);
   const seconds=game.remainingSeconds,margin=Math.abs(game.homeUnits-game.awayUnits);
+  const soccerEarly=soccer&&game.period===2&&game.periodConsistent&&
+    Number.isFinite(game.soccerMinute)&&game.soccerMinute>=45&&game.soccerMinute<50;
+  // The displayed elapsed minute is enough to establish the regulation-time
+  // window when this live feed omits its final-whistle countdown.
   const soccerLate=soccer&&game.period===2&&game.periodConsistent&&
-    Number.isFinite(game.soccerMinute)&&game.soccerMinute>=80&&game.soccerMinute<90&&
-    Number.isFinite(game.matchRemainingSeconds)&&game.matchRemainingSeconds>0&&game.matchRemainingSeconds<600;
+    Number.isFinite(game.soccerMinute)&&game.soccerMinute<90&&
+    (!Number.isFinite(game.matchRemainingSeconds)||game.matchRemainingSeconds>0)&&
+    (game.soccerMinute>82.5||Number.isFinite(game.matchRemainingSeconds)&&
+      game.matchRemainingSeconds>0&&game.matchRemainingSeconds<450&&game.soccerMinute>=82);
   const baseballEighth=baseball&&game.period===8&&game.inningHalf===2&&game.outs===2;
   const baseballNinth=baseball&&game.period===9&&[1,2].includes(game.inningHalf)&&game.outs>=1&&game.outs<=2;
-  const finalTime=baseball?baseballEighth||baseballNinth:soccer?soccerLate:
+  const finalTime=baseball?baseballEighth||baseballNinth:soccer?soccerEarly||soccerLate:
     game.period===segments&&game.periodConsistent&&Number.isFinite(seconds)&&seconds>0&&
     (basketball?game.sport==='NBA'?seconds<450:game.sport==='WNBA'?seconds<=300:seconds<90:
       hockey?seconds<120:game.sport==='CFB'?cfbLeadWindow(game):seconds<360);
@@ -639,7 +650,7 @@ export function leadSignal(game, market) {
       game.sport==='WNBA'?(seconds<90?8:11):game.sport==='NBA'?(seconds<90?8:seconds<390?20:25):8:
     football?game.sport==='CFB'?(seconds>=CFB_MIDDLE_WINDOW_SECONDS?CFB_EARLY_MINIMUM:
       seconds>=CFB_LEAD_WINDOW_SECONDS?CFB_MIDDLE_MINIMUM:CFB_LEAD_MINIMUM):seconds<120?10:11:
-    hockey?4:baseball?baseballEighth?5:4:soccer?3:null;
+    hockey?4:baseball?baseballEighth?5:4:soccer?soccerEarly?3:2:null;
   if(minimum===null||margin<minimum)return null;
   const leader = h>a ? game.homeName : game.awayName;
   const trailer = h>a ? game.awayName : game.homeName;
@@ -691,11 +702,13 @@ export function externallyVerifiedEarlySoccerLead(first,second,signal,firstConfi
   return {...signal,fraction:.20,reason:signal.reason.replace(/^Restricted 2% lead:/,'Externally verified 20% lead:')};
 }
 export function confirmedSoccerWinnerClock(first,second){
-  if(!/soccer/.test(second.type)||Math.abs(second.home-second.away)<3)return true;
+  if(!/soccer/.test(second.type)||Math.abs(second.home-second.away)!==2)return true;
   return first.clockRunning&&second.clockRunning&&
-    Number.isFinite(first.matchRemainingSeconds)&&first.matchRemainingSeconds>0&&first.matchRemainingSeconds<600&&
-    Number.isFinite(second.matchRemainingSeconds)&&second.matchRemainingSeconds>0&&second.matchRemainingSeconds<600&&
-    second.matchRemainingSeconds<first.matchRemainingSeconds;
+    (Number.isFinite(first.matchRemainingSeconds)&&first.matchRemainingSeconds>0&&first.matchRemainingSeconds<450&&
+      Number.isFinite(second.matchRemainingSeconds)&&second.matchRemainingSeconds>0&&second.matchRemainingSeconds<450&&
+      second.matchRemainingSeconds<first.matchRemainingSeconds||
+      Number.isFinite(first.soccerMinute)&&first.soccerMinute>82.5&&
+      Number.isFinite(second.soccerMinute)&&second.soccerMinute>=first.soccerMinute&&second.soccerMinute<90);
 }
 export function confirmedDrawClock(first,second,market){
   if(!drawSignal(first,market))return true;
@@ -706,9 +719,13 @@ export function confirmedDrawClock(first,second,market){
     Number.isFinite(before)&&Number.isFinite(after)&&before>after&&after>0;
 }
 export function soccerWinnerWindowOpen(game,now=Date.now()){
-  if(!/soccer/.test(game.type)||Math.abs(game.home-game.away)<3)return true;
-  return Number.isFinite(game.observedAt)&&Number.isFinite(game.matchRemainingSeconds)&&
-    game.matchRemainingSeconds*1000-(now-game.observedAt)>5000;
+  if(!/soccer/.test(game.type)||Math.abs(game.home-game.away)!==2)return true;
+  const regulation=Number.isFinite(game.soccerMinute)?(90-game.soccerMinute)*60:NaN;
+  if(Number.isFinite(game.matchRemainingSeconds)&&game.matchRemainingSeconds<=0)return false;
+  const remaining=Number.isFinite(game.matchRemainingSeconds)&&game.matchRemainingSeconds>0?
+    Math.min(regulation,game.matchRemainingSeconds):regulation;
+  return Number.isFinite(game.observedAt)&&Number.isFinite(remaining)&&
+    remaining*1000-(now-game.observedAt)>5000;
 }
 // Clock-free games use the deciding set, leg and throw data in their feed.
 // A missing contract identity or a missing decisive field never grants entry.
