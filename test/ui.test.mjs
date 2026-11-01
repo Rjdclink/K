@@ -183,6 +183,12 @@ test('filled order timer is bright red, advances each second and reanchors to li
   const clock=vm.runInContext('clockDisplay',context),scoreDisplay=vm.runInContext('scoreDisplay',context),order=vm.runInContext('order',context);
   const start=1_000_000,base={market_ticker:'GAME',sport:'Basketball',allocated_cents:100,potential_profit_cents:25,clock_seconds:278,clock_observed_at:new Date(start).toISOString(),game_status:'live',clock_label:'Quarter 4 left',home_score:79,away_score:71,score_scanned_at:new Date(start).toISOString()};
   assert.equal(clock(base,start),'04:38');
+  assert.equal(clock({...base,sport:'NFL',clock_label:'Quarter 1 left',clock_seconds:109},start),'46:49');
+  assert.equal(clock({...base,sport:'Football',sport_family:'football_game',clock_label:'Quarter 1 left',clock_seconds:109},start),'46:49');
+  assert.equal(clock({...base,sport:'NFL',clock_label:'Quarter 2 left',clock_seconds:109},start),'31:49');
+  assert.equal(clock({...base,sport:'NBA',clock_label:'Quarter 1 left',clock_seconds:109},start),'37:49');
+  assert.equal(clock({...base,sport:'NCAAB',clock_label:'Half 1 left',clock_seconds:109},start),'21:49');
+  assert.equal(clock({...base,sport:'NHL',clock_label:'Period 1 left',clock_seconds:109},start),'41:49');
   assert.equal(clock(base,start+1000),'04:37');
   assert.equal(clock(base,start+2000),'04:36');
   assert.equal(clock({...base,clock_seconds:276,clock_observed_at:new Date(start+2000).toISOString()},start+2000),'04:36');
@@ -206,6 +212,9 @@ test('filled order timer is bright red, advances each second and reanchors to li
   elements.push(timer,score);
   assert.equal(timer.className,'live-timer');
   assert.equal(timer.textContent,'04:38');
+  const firstQuarter=order({...base,sport:'NFL',clock_label:'Quarter 1 left',clock_seconds:109,clock_observed_at:new Date().toISOString()});
+  assert.equal(firstQuarter.children[3].children[0].textContent,'46:49');
+  assert.equal(firstQuarter.children[4].textContent,'Quarter 1');
   assert.equal(score.textContent,'Away 71 · Home 79');
   timer.clock.clock_observed_at=new Date(Date.now()-2000).toISOString();
   score.game.home_score=81;
