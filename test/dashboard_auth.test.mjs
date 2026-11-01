@@ -143,7 +143,10 @@ test('history returns losses with signed totals and supports a loss-only view',a
     const html=await page.text();
     assert.match(html,/data-filter="loss"/);
     assert.match(html,/No realized losses in this view/);
-    assert.match(html,/id="historyScope"/);
+    assert.doesNotMatch(html,/id="historyScope"/);
+    assert.doesNotMatch(html,/Total trade history|↺ Full/);
+    assert.match(html,/view='today'/);
+    assert.doesNotMatch(html,/location.search/);
   }finally{
     pg.Pool.prototype.query=originalQuery;
     if(previousPassword===undefined)delete process.env.DASHBOARD_PASSWORD;else process.env.DASHBOARD_PASSWORD=previousPassword;
