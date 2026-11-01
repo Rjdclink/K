@@ -49,7 +49,7 @@ test('CFB and soccer follow the same verification-based allocation',()=>{
   assert.equal(finalLeadFraction(soccer,soccer,{...lead,fraction:.40},false),.10);
   assert.equal(finalLeadFraction(cfb,cfb,{strategy:'over',fraction:.30},true),.30);
   const tied={...game('basketball_game'),home:10,away:10,homeUnits:10,awayUnits:10};
-  assert.equal(finalLeadFraction(tied,tied,{...lead,fraction:.05},true),.10,'ordinary basketball allocation stays capped');
+  assert.equal(finalLeadFraction(tied,tied,{...lead,fraction:.05},true),.20,'ordinary international allocation uses its verification cap');
 });
 test('both live entry paths use the final verified allocation and funding rechecks recalculate it',()=>{
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
@@ -87,7 +87,7 @@ test('strong Kalshi-only leads use 20% only after two stable reads and a score c
   check({...team,type:'hockey_match',sport:'NHL',period:3,home:6,homeUnits:6,away:1,awayUnits:1,remainingSeconds:80},market,.20);
   check({...team,type:'hockey_match',sport:'NHL',period:3,home:5,homeUnits:5,away:1,awayUnits:1,remainingSeconds:80},market,.10,false);
 });
-test('NBA +25 under 7:30 and +20 under 6:30 use single-read sizing',()=>{
+test('NBA +18 under 7:30 and +12 under 6:30 use single-read sizing',()=>{
   const market={status:'active',event_ticker:'KXGAME-TEST',title:'Home wins',yes_sub_title:'Home',
     custom_strike:{basketball_team:'home'},yes_ask_dollars:'.95'};
   const g={...game('basketball_game'),sport:'NBA',period:4,remainingSeconds:389,home:120,away:100,
@@ -101,10 +101,10 @@ test('NBA +25 under 7:30 and +20 under 6:30 use single-read sizing',()=>{
   assert.equal(nbaSingleReadLead(fresh,market,now),true);
   assert.equal(nbaSingleReadLead({...fresh,remainingSeconds:449,home:125,homeUnits:125},market,now),true);
   assert.equal(nbaSingleReadLead({...fresh,remainingSeconds:450,home:125,homeUnits:125},market,now),false);
-  assert.equal(nbaSingleReadLead({...fresh,remainingSeconds:449,home:124,homeUnits:124},market,now),false);
+  assert.equal(nbaSingleReadLead({...fresh,remainingSeconds:449,home:117,homeUnits:117},market,now),false);
   assert.equal(finalLeadFraction(fresh,{...fresh,remainingSeconds:449,home:125,homeUnits:125},lead,false,market),.10);
-  assert.equal(nbaSingleReadLead({...fresh,remainingSeconds:390},market,now),false);
-  assert.equal(nbaSingleReadLead({...fresh,home:119,homeUnits:119},market,now),false);
+  assert.equal(nbaSingleReadLead({...fresh,remainingSeconds:390,home:112,homeUnits:112},market,now),false);
+  assert.equal(nbaSingleReadLead({...fresh,home:111,homeUnits:111},market,now),false);
   assert.equal(nbaSingleReadLead({...fresh,updatedAt:now-31000},market,now),false);
   assert.equal(nbaSingleReadLead({...fresh,feedId:'other'},market,now),false);
   assert.equal(nbaSingleReadLead({...fresh,possessionSide:'away'},market,now),false);

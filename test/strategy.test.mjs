@@ -411,7 +411,7 @@ test('ITF men and women accept only the match-clinching deciding-set service gam
   assert.equal(tennisSignal(state(now,5,4,'cov','live',women),womenMarket)?.fraction,.15);
   assert.equal(tennisSignal(state(now,5,4,'del','live',women),womenMarket),null,'the leader must serve');
 });
-test('a basketball lead under eight points never enters, even under 21 seconds',()=>{
+test('small basketball leads below every configured minimum never enter',()=>{
   const market={status:'active',title:'New York wins',yes_sub_title:'New York',yes_ask_dollars:'0.95'};
   const now=Date.now();
   for(const league of ['NBA','WNBA','NCAAW']){

@@ -1,7 +1,7 @@
 // Only fetch event families used by the two entry strategies and comeback exits.
 // The exchange remains authoritative: a guessed ticker is ignored unless an
 // open event and its market are actually returned by Kalshi.
-import { cricketOneInningsFormat, cfbLeadApproaching } from './strategy.mjs';
+import { cricketOneInningsFormat, cfbLeadApproaching, basketballLeadProfile } from './strategy.mjs';
 const supportedType=type=>/basketball|baseball|football|hockey|soccer|tennis|golf|handball|rugby|lacrosse|volleyball|darts/.test(String(type||'').toLowerCase());
 
 export async function mapBatches(items,limit,task){
@@ -63,8 +63,8 @@ export function nearEntryPhase(game){
   const type=String(game?.type||''),period=Number(game?.period),seconds=Number(game?.remainingSeconds);
   if(/football/.test(type))return game.sport==='CFB'?cfbLeadApproaching(game):period>=4&&seconds>=0&&seconds<=480;
   if(/basketball/.test(type)){
-    const college=['NCAAB','NCAAW'].includes(game.sport),final=college?2:4;
-    return period>=final&&seconds>=0&&seconds<=(college?180:game.sport==='NBA'?540:420);
+    const profile=basketballLeadProfile(game);
+    return Boolean(profile)&&period>=profile.period&&seconds>=0&&seconds<=profile.tiers[0][1]+90;
   }
   if(/hockey/.test(type))return period>=3&&seconds>=0&&seconds<=180;
   if(/soccer/.test(type))return period===2&&!game.soccerExtraTime&&
