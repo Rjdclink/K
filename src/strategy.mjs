@@ -200,7 +200,7 @@ export function periodValue(game,market){
 }
 export function endWindow(game){
   if(!game.verifiedLive||!game.scoreKnown||!game.periodConsistent)return false;
-  if(/basketball/.test(game.type))return game.period===(['NCAAB','NCAAW'].includes(game.sport)?2:4) && game.remainingSeconds>0 && game.remainingSeconds<(game.sport==='NBA'?420:game.sport==='WNBA'?300:90);
+  if(/basketball/.test(game.type))return game.period===(['NCAAB','NCAAW'].includes(game.sport)?2:4) && game.remainingSeconds>0 && game.remainingSeconds<(game.sport==='NBA'?390:game.sport==='WNBA'?300:90);
   if(/football/.test(game.type))return game.period===4 && game.remainingSeconds>0 && game.remainingSeconds<(game.sport==='CFB'?CFB_LEAD_WINDOW_SECONDS:360);
   if(/hockey/.test(game.type))return game.period===3 && game.remainingSeconds>0 && game.remainingSeconds<420;
   if(/baseball/.test(game.type))return game.period===9;
@@ -224,7 +224,9 @@ export function leadWatchReason(game){
     const college=['NCAAB','NCAAW'].includes(game.sport),final=college?2:4;
     const near=college?180:game.sport==='NBA'?540:game.sport==='WNBA'?420:180;
     if(game.period===final&&Number.isFinite(seconds)&&seconds>0&&seconds<=near&&margin>=8)
-      return `Tracking ${margin}-point lead; waiting for the final-period winner window`;
+      return game.sport==='NBA'&&seconds<390&&margin>=20||game.sport==='NBA'&&seconds<90&&margin>=8?
+        `Tracking ${margin}-point lead; NBA score and clock rule reached; checking market and verification`:
+        `Tracking ${margin}-point lead; waiting for the final-period winner window`;
   }
   if(/hockey/.test(type)){
     if(game.period===3&&Number.isFinite(seconds)&&seconds>0&&seconds<=180&&margin>=4)
@@ -446,6 +448,21 @@ function fallbackReducedLeader(game,units){
 }
 export function fallbackLeadFraction(first,second,market){
   const units=fallbackScoringUnits(second),type=String(second?.type||'');
+  if(/^tennis_/.test(type)){
+    if(first?.type!==type||first.home!==second.home||first.away!==second.away||
+      !tennisSignal(first,market)||!tennisSignal(second,market))return null;
+    const survives=state=>{
+      const t=state.tennis;
+      if(!t)return false;
+      const firstLeading=t.firstGames>t.secondGames;
+      const leaderPoints=firstLeading?t.firstPoints:t.secondPoints;
+      const opponentPoints=firstLeading?t.secondPoints:t.firstPoints;
+      if(leaderPoints!==40||![0,15].includes(opponentPoints)||t.advantage)return false;
+      const reduced={...state,tennis:{...t,[firstLeading?'firstPoints':'secondPoints']:30}};
+      return Boolean(tennisSignal(reduced,market));
+    };
+    return survives(first)&&survives(second) ? .10 : null;
+  }
   if(!Number.isInteger(units)||!/basketball|baseball|football|hockey|soccer|rugby|handball|lacrosse|volleyball|table_tennis/.test(type)||
     first?.type!==type||first.home!==second.home||first.away!==second.away)return null;
   const deciding=/volleyball|table_tennis/.test(type);
@@ -477,6 +494,32 @@ export function fallbackLeadFraction(first,second,market){
     next=reduced;percent+=5;
   }
   return percent/100;
+}
+// The 20% Kalshi-only tier is limited to a stronger state that remains an
+// eligible winner after one scoring unit is taken away. The caller still
+// requires two fresh, unchanged Kalshi reads and an unavailable external feed.
+export function strongKalshiOnlyLead(first,second,market){
+  if(!kalshiOnlyLead(first,second,market))return false;
+  const type=String(second.type||'');
+  if(/^table_tennis_/.test(type)){
+    const t=second.tableTennis;
+    return Boolean(t&&Math.max(t.firstPoints,t.secondPoints)>=9&&
+      Math.abs(t.firstPoints-t.secondPoints)>=7);
+  }
+  if(/^tennis_/.test(type))return true; // The tennis fallback itself requires 40–0 or 40–15.
+  const margin=Math.abs(second.homeUnits-second.awayUnits);
+  if(/soccer/.test(type))return first.period===2&&second.period===2&&
+    first.clockRunning&&second.clockRunning&&
+    Number.isFinite(first.matchRemainingSeconds)&&first.matchRemainingSeconds>0&&
+    first.matchRemainingSeconds<300&&second.matchRemainingSeconds<first.matchRemainingSeconds&&
+    Number.isFinite(second.matchRemainingSeconds)&&second.matchRemainingSeconds>0&&
+    second.matchRemainingSeconds<300&&margin>=3;
+  if(/hockey/.test(type))return first.period===3&&second.period===3&&
+    Number.isFinite(first.remainingSeconds)&&first.remainingSeconds>0&&
+    first.remainingSeconds<120&&second.remainingSeconds<first.remainingSeconds&&
+    Number.isFinite(second.remainingSeconds)&&second.remainingSeconds>0&&
+    second.remainingSeconds<120&&margin>=5;
+  return false;
 }
 export function confirmedExternalLead(first,second,market){
   const signal=s=>leadSignal(s,market)||additionalLeadSignal(s,market)||cricketLeadSignal(s,market)||drawSignal(s,market)||earlyLeadSignal(s,market)||tennisSignal(s,market)||tableTennisSignal(s,market);
@@ -540,13 +583,13 @@ export function leadSignal(game, market) {
   const baseballNinth=baseball&&game.period===9&&[1,2].includes(game.inningHalf)&&game.outs>=1&&game.outs<=2;
   const finalTime=baseball?baseballEighth||baseballNinth:soccer?soccerEarly||soccerLate:
     game.period===segments&&game.periodConsistent&&Number.isFinite(seconds)&&seconds>0&&
-    (basketball?game.sport==='NBA'?seconds<=420:game.sport==='WNBA'?seconds<=300:seconds<90:
+    (basketball?game.sport==='NBA'?seconds<390:game.sport==='WNBA'?seconds<=300:seconds<90:
       hockey?seconds<120:seconds<(game.sport==='CFB'?CFB_LEAD_WINDOW_SECONDS:360));
   if (!game.verifiedLive || !game.scoreKnown || soccer&&!game.scoreConsistent || !finalTime || market.status!=='active' && market.status!=='open') return null;
   const h=game.homeUnits,a=game.awayUnits;
   if (!Number.isFinite(h)||!Number.isFinite(a)) return null;
   const minimum=basketball?['NCAAB','NCAAW'].includes(game.sport)?8:
-      game.sport==='WNBA'?(seconds<90?8:11):game.sport==='NBA'?(seconds<90?8:13):8:
+      game.sport==='WNBA'?(seconds<90?8:11):game.sport==='NBA'?(seconds<90?8:20):8:
     football?game.sport==='CFB'?CFB_LEAD_MINIMUM:seconds<120?10:11:
     hockey?4:baseball?baseballEighth?5:4:soccer?soccerEarly?3:2:null;
   if(minimum===null||margin<minimum)return null;
