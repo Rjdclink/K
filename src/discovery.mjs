@@ -69,7 +69,9 @@ export function nearEntryPhase(game){
   if(/hockey/.test(type))return period>=3&&seconds>=0&&seconds<=180;
   if(/soccer/.test(type))return period===2&&!game.soccerExtraTime&&
     Number.isFinite(game.soccerMinute)&&
-    (game.soccerMinute>=45&&game.soccerMinute<50||game.soccerMinute>=75);
+    (game.soccerMinute>=75||game.soccerMinute>=45&&
+      Number.isFinite(game.homeUnits)&&Number.isFinite(game.awayUnits)&&
+      Math.abs(game.homeUnits-game.awayUnits)>=3);
   if(/baseball/.test(type))return period>=9||period===8&&game.inningHalf===2&&game.outs>=1;
   if(/rugby|handball|lacrosse/.test(type)){
     const final=/lacrosse/.test(type)?4:2,buffer=/rugby/.test(type)?300:600;

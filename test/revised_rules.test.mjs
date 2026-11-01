@@ -65,14 +65,16 @@ test('revised hockey and inning-based baseball winners reject superseded thresho
  }
 });
 
-test('soccer winner allows early +3 and late +2 strictly under 7:30 on a live elapsed clock',()=>{
+test('soccer winner allows +3 throughout the second half and +2 strictly under 7:30',()=>{
  const soccer=(margin,minute,remaining)=>team('soccer_match','Soccer',margin,2,0,{half:'2nd',time:`${minute}'`,match_remaining_seconds:remaining,clock:''});
  let {state,market}=soccer(3,47,2580);
  assert.ok(leadSignal(state,market));
  assert.equal(earlyLeadSignal(state,market),null);
  assert.equal(leadSignal(soccer(2,47,2580).state,market),null);
- assert.equal(leadSignal(soccer(3,50,2400).state,market),null);
- assert.equal(leadSignal(soccer(3,80,599).state,market),null);
+ assert.ok(leadSignal(soccer(3,50,2400).state,market));
+ assert.ok(leadSignal(soccer(3,77,NaN).state,market));
+ assert.ok(leadSignal(soccer(3,80,599).state,market));
+ assert.equal(leadSignal(soccer(2,77,NaN).state,market),null);
  assert.equal(leadSignal(soccer(2,82,450).state,market),null);
  assert.ok(leadSignal(soccer(2,82,449).state,market));
  assert.ok(leadSignal(soccer(2,84,NaN).state,market));
@@ -92,6 +94,7 @@ test('soccer winner allows early +3 and late +2 strictly under 7:30 on a live el
  assert.equal(confirmedSoccerWinnerClock(soccer(2,84,NaN).state,soccer(2,84,NaN).state),true);
  assert.equal(confirmedSoccerWinnerClock(soccer(3,47,2580).state,soccer(3,47,2579).state),true);
  assert.match(leadWatchReason(soccer(3,47,2580).state),/3-goal lead/);
+ assert.match(leadWatchReason(soccer(3,77,NaN).state),/late winner rule reached/);
  assert.match(leadWatchReason(soccer(2,75,900).state),/2-goal lead/);
  assert.match(leadWatchReason(soccer(4,84,NaN).state),/late winner rule reached/);
  assert.match(leadWatchReason(soccer(4,93,NaN).state),/late winner rule reached/);
