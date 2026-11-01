@@ -28,8 +28,9 @@ test('revised CFB and NFL winners replace the old early football and last-second
 });
 
 test('revised NBA, WNBA and college windows enforce score, clock and no college possession',()=>{
- assert.ok(signal('basketball_game','NBA',13,4,420));
- assert.equal(signal('basketball_game','NBA',12,4,420),null);
+ assert.equal(signal('basketball_game','NBA',20,4,390),null);
+ assert.equal(signal('basketball_game','NBA',19,4,389),null);
+ assert.ok(signal('basketball_game','NBA',20,4,389));
  assert.equal(signal('basketball_game','NBA',8,4,90),null);
  assert.ok(signal('basketball_game','NBA',8,4,89));
  assert.ok(signal('basketball_game','WNBA',11,4,300));
