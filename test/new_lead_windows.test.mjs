@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {gameState,cricketLeadSignal,drawSignal,confirmedDrawClock,earlyLeadSignal,kalshiOnlyLead} from '../src/strategy.mjs';
+import {readFileSync} from 'node:fs';
+import {gameState,cricketLeadSignal,drawSignal,confirmedDrawClock,earlyLeadSignal,kalshiOnlyLead,leadWatchReason} from '../src/strategy.mjs';
 import {eligibleForMarkets} from '../src/discovery.mjs';
+import {finalLeadFraction} from '../src/lead_allocation.mjs';
 
 const at=Date.now();
 const team=(type,league,home,away,extra={})=>{
@@ -10,6 +12,35 @@ const team=(type,league,home,away,extra={})=>{
   const state=(period,clock,homeScore=home,awayScore=away,other={})=>gameState(m,{milestone_id:m.id,_observed_at:new Date(at).toISOString(),details:{status:'live',period,clock,home_score:homeScore,away_score:awayScore,home_team_name:'Alpha',away_team_name:'Beta',...extra,...other}});
   return {m,market,state};
 };
+test('tied soccer enters strictly under 50 seconds in stoppage with the exact tie contract',()=>{
+  const milestone={id:'soccer-draw',type:'soccer_match',title:'Alpha vs Beta',
+    details:{league:'Soccer',main_game_event_ticker:'KXSOCCERGAME-TEST'}};
+  const market={status:'active',event_ticker:'KXSOCCERGAME-TEST',ticker:'KXSOCCERGAME-TEST-TIE',
+    title:'Tie',rules_primary:'Resolves Yes if Tie after 90 minutes plus stoppage time.',yes_ask_dollars:'.94'};
+  const state=(seconds,more={})=>gameState(milestone,{milestone_id:milestone.id,
+    _observed_at:new Date(at).toISOString(),details:{status:'live',period:2,half:'2nd',
+      time:"90+3'",match_remaining_seconds:seconds,home_score:1,away_score:1,...more}});
+  const first=state(49),second=state(48);
+  assert.match(leadWatchReason(state(120)),/tied soccer score/);
+  assert.equal(leadWatchReason(state(121)),null);
+  const signal=drawSignal(first,market);
+  assert.equal(drawSignal(state(50),market),null);
+  assert.equal(drawSignal(state(0),market),null);
+  assert.equal(signal?.fraction,.05);
+  assert.equal(finalLeadFraction(first,second,signal,true,market),.05);
+  assert.equal(confirmedDrawClock(first,second,market),true);
+  assert.equal(confirmedDrawClock(first,state(49),market),false);
+  assert.equal(drawSignal(state(49,{away_score:0}),market),null);
+  assert.equal(drawSignal(state(49,{match_status:'overtime'}),market),null);
+  assert.equal(drawSignal(state(49,{clock_running:false}),market),null);
+  assert.equal(drawSignal(first,{...market,title:'Alpha wins'}),null);
+  assert.equal(drawSignal(first,{...market,rules_primary:'Resolves Yes if Tie after extra time.'}),null);
+  assert.equal(drawSignal(first,{...market,event_ticker:'OTHER-GAME'}),null);
+  assert.equal(kalshiOnlyLead(first,second,market),false);
+  const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
+  assert.match(source,/!drawSignal\(first,ruleMarket\)/);
+  assert.match(source,/drawSignal\(second,quote\)/);
+});
 test('Test cricket winner entries stay disabled without a finite number of balls',()=>{
   const m={id:'test',type:'cricket_match',title:'Bangladesh vs West Indies',details:{league:'Test International (M)',home_team_id:'ban',away_team_id:'wi',main_game_event_ticker:'KXTESTMATCH-TEST'}};
   const market={status:'active',event_ticker:'KXTESTMATCH-TEST',title:'Bangladesh wins',rules_primary:'If Bangladesh wins the professional Test match, then Yes.',custom_strike:{cricket_team:'ban'},yes_ask_dollars:'0.70'};

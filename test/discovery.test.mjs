@@ -102,7 +102,8 @@ test('fast market checks start near each sport entry rather than at the start of
   assert.equal(nearEntryPhase({type:'soccer_game',period:2,soccerMinute:46}),true);
   assert.equal(nearEntryPhase({type:'soccer_game',period:2,soccerMinute:74}),false);
   assert.equal(nearEntryPhase({type:'soccer_game',period:2,soccerMinute:75}),true);
-  assert.equal(nearEntryPhase({type:'soccer_game',period:2,soccerMinute:90}),false);
+  assert.equal(nearEntryPhase({type:'soccer_game',period:2,soccerMinute:93}),true);
+  assert.equal(nearEntryPhase({type:'soccer_game',period:2,soccerMinute:93,soccerExtraTime:true}),false);
 });
 
 test('find game and both total families from a game-only milestone',()=>{

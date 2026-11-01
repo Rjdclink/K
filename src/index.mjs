@@ -1509,12 +1509,14 @@ async function watchLeadWindows(until){
               stage:'entry_rule',outcome:'skipped',startedAt:Date.now()};
             try{
               const ruleMarket={...market,yes_ask_dollars:undefined};
-              if(!leadSignal(first,ruleMarket)&&!earlyLeadSignal(first,ruleMarket)&&!additionalLeadSignal(first,ruleMarket))continue;
+              if(!leadSignal(first,ruleMarket)&&!drawSignal(first,ruleMarket)&&
+                !earlyLeadSignal(first,ruleMarket)&&!additionalLeadSignal(first,ruleMarket))continue;
               decision.stage='ask_liquidity';
               const offered=await recoverSummaryAsk(market,{fresh:true});
               decision.market=offered||market;
               if(!hasAsk(offered))continue;
-              const firstSignal=leadSignal(first,offered)||earlyLeadSignal(first,offered)||additionalLeadSignal(first,offered);
+              const firstSignal=leadSignal(first,offered)||drawSignal(first,offered)||
+                earlyLeadSignal(first,offered)||additionalLeadSignal(first,offered);
               if(!firstSignal)continue;
               const directNba=nbaSingleReadLead(first,offered);
               decision.signal=firstSignal;
@@ -1540,7 +1542,8 @@ async function watchLeadWindows(until){
                 quote.rules_primary!==offered.rules_primary||quote.close_time!==offered.close_time||
                 JSON.stringify(quote.custom_strike||{})!==JSON.stringify(offered.custom_strike||{}))continue;
               decision.market=quote;decision.stage='entry_rule_recheck';
-              const signal=leadSignal(second,quote)||earlyLeadSignal(second,quote)||additionalLeadSignal(second,quote);
+              const signal=leadSignal(second,quote)||drawSignal(second,quote)||
+                earlyLeadSignal(second,quote)||additionalLeadSignal(second,quote);
               if(!signal||!second.verifiedLive||!second.scoreConsistent)continue;
               decision.stage=directNba?'single_score_audit':'score_pair_verification';
               const confirmed=directNba?await auditSingleReadNbaLead(second,quote,milestone):
