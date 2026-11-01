@@ -596,8 +596,8 @@ function signalExecution(c,filled,account,balance,bankroll){
   }
   const local=shardCash(account,marketShard(c.event,c.market));
   const singleRead=c.signal.strategy==='lead'&&proBasketballLeadRules(c.state)&&
-    (c.state.remainingSeconds<450&&Math.abs(c.state.home-c.state.away)>=25||
-      c.state.remainingSeconds<390&&Math.abs(c.state.home-c.state.away)>=20)||
+    (c.state.remainingSeconds<450&&Math.abs(c.state.home-c.state.away)>=18||
+      c.state.remainingSeconds<390&&Math.abs(c.state.home-c.state.away)>=12)||
     c.signal.strategy==='over'&&Boolean(cushionedOverSignal(c.state,c.market));
   if(local===null)return 'Shard balance unavailable';
   if(local<estimatedCostCents(raw,price,fees)){
@@ -1496,7 +1496,7 @@ async function watchCorrectedOvers(until){
 }
 // Poll near-qualifying leaders while broad discovery and combo RFQs run. The
 // watch itself never authorizes an order: exact winner contract, fresh score
-// Most winner entries require the score pair and verification. The NBA +20
+// Most winner entries require the score pair and verification. The NBA +18/+12
 // route uses one fresh Kalshi score; ask, cash and profit gates still apply.
 async function watchLeadWindows(until){
   if(!live())return;

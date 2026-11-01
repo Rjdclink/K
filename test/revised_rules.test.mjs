@@ -29,44 +29,30 @@ test('revised CFB and NFL winners replace the old early football and last-second
  assert.equal(signal('football_game','NFL',9,4,19),null);
 });
 
-test('revised NBA, WNBA and college windows enforce score, clock and no college possession',()=>{
- assert.equal(signal('basketball_game','NBA',20,4,390),null);
- assert.equal(signal('basketball_game','NBA',25,4,450),null);
- assert.equal(signal('basketball_game','NBA',24,4,449),null);
- assert.ok(signal('basketball_game','NBA',25,4,449));
- assert.equal(signal('basketball_game','NBA',19,4,389),null);
- assert.ok(signal('basketball_game','NBA',20,4,389));
- assert.equal(signal('basketball_game','NBA',8,4,90),null);
- assert.ok(signal('basketball_game','NBA',8,4,89));
- assert.ok(signal('basketball_game','WNBA',11,4,300));
- assert.equal(signal('basketball_game','WNBA',10,4,300),null);
- assert.ok(signal('basketball_game','WNBA',8,4,89));
- assert.ok(signal('basketball_game','NCAAB',8,2,89,{possession_team_id:null}));
- assert.equal(signal('basketball_game','NCAAB',8,2,90),null);
- assert.equal(signal('basketball_game','NCAAB',30,1,20),null);
- const {state,market}=team('basketball_game','NCAAB',30,1,20);
- assert.equal(earlyLeadSignal(state,market),null);
+test('basketball tiers include the stated lead and exclude the exact time boundary',()=>{
+ const categories=[['NBA',4,[[18,450],[12,390],[8,90]]],['WNBA',4,[[11,360],[7,90]]],
+   ['NCAAB',2,[[16,300],[10,270],[8,150]]],['NCAAW',2,[[16,300],[10,270],[8,150]]],
+   ...['China CBA','Italy Serie A','LNB Elite','Japan B League'].map(s=>[s,4,[[16,300],[10,270],[8,150]]])];
+ for(const [league,period,tiers] of categories)for(const [points,seconds] of tiers){
+   assert.ok(signal('basketball_game',league,points,period,seconds-1),`${league} +${points} under ${seconds}`);
+   assert.ok(signal('basketball_game',league,points+1,period,seconds-1));
+   assert.equal(signal('basketball_game',league,points-1,period,seconds-1),null);
+   assert.equal(signal('basketball_game',league,points,period,seconds),null);
+   assert.equal(signal('basketball_game',league,points,period-1,seconds-1),null);
+ }
+ for(const league of ['NCAAB','NCAAW','China CBA','Italy Serie A']){
+   const period=league.startsWith('NCAA')?2:4;
+   const {state,market}=team('basketball_game',league,16,period,299,{possession_team_id:null});
+   assert.ok(leadSignal(state,market));
+   assert.match(leadWatchReason(state),/score and clock qualify/);
+   assert.equal(nbaSingleReadLead({...state,updatedAt:now-1000},market,now),false);
+ }
+ assert.equal(signal('basketball_game','NBA',18,4,449,{possession_team_id:'away'}),null);
+ assert.equal(signal('basketball_game','WNBA',11,4,359,{possession_team_id:'away'}),null);
  const first=team('basketball_game','NCAAB',12,2,70,{possession_team_id:'home'});
  const second=team('basketball_game','NCAAB',12,2,60,{possession_team_id:'away'});
  first.state.observedAt=now-12000;
- assert.equal(kalshiOnlyLead(first.state,second.state,first.market),true,
-   'the fallback still waits ten seconds but cannot require stable college possession');
-});
-
-test('CBA and international professional basketball use the commanding-lead tiers',()=>{
- for(const league of ['China CBA','Italy Serie A','LNB Elite','Japan B League']){
-   const {state,market}=team('basketball_game',league,21,4,126);
-   assert.ok(leadSignal(state,market),league+' +21 at 2:06 qualifies');
-   assert.equal(nbaSingleReadLead({...state,updatedAt:now-1000},market,now),true);
-   assert.equal(finalLeadFraction(state,state,leadSignal(state,market),false,market),.10);
-   assert.match(leadWatchReason(state),/score and clock rule reached/);
-   assert.ok(signal('basketball_game',league,25,4,449));
-   assert.equal(signal('basketball_game',league,25,4,450),null);
-   assert.equal(signal('basketball_game',league,20,4,390),null);
-   assert.ok(signal('basketball_game',league,20,4,389));
-   assert.equal(signal('basketball_game',league,19,4,126),null);
-   assert.equal(signal('basketball_game',league,21,4,126,{possession_team_id:'away'}),null);
- }
+ assert.equal(kalshiOnlyLead(first.state,second.state,first.market),true);
 });
 
 test('revised hockey and inning-based baseball winners reject superseded thresholds',()=>{
