@@ -111,7 +111,7 @@ test('one fresh Kalshi score admits only a crossed over with a conservative cush
   const football={...prop(3),type:'football_game',playerStats:{pat:{passing_yards:240}}};
   assert.equal(singleReadCushionedOver(football,yardage,now),null,'a single play can change many yards');
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
-  assert.match(source,/if\(!c.upgradeFill&&\(soccerSingleReadOver\(c.state,c.market\)\|\|cushionedOverSignal\(c.state,c.market\)\)\)/);
+  assert.match(source,/if\(!c.upgradeFill&&!playerOverSpec\(c.state,c.market\)\)/);
   assert.match(source,/if\(singleReadOver&&!directOverSignal\)continue/);
   assert.match(source,/if\(!kalshiOnly&&!singleReadOver&&await auditedOver/);
 });

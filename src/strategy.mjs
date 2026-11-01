@@ -1,4 +1,4 @@
-import { golfState } from './golf.mjs';
+import { golfState, golfSignal } from './golf.mjs';
 import { VERIFY_DWELL_MS } from './combos.mjs';
 export const KALSHI_ONLY_FRACTION=.10;
 export const SOCCER_OVER_STABILITY_MS=10000;
@@ -407,8 +407,13 @@ export function soccerSingleReadOver(game,market,now=Date.now()){
   return cushionedOverSignal(game,market)||signal;
 }
 export function singleReadOverSignal(game,market,now=Date.now()){
-  return /soccer/.test(String(game?.type||''))?soccerSingleReadOver(game,market,now):
-    singleReadCushionedOver(game,market,now);
+  // Player-prop overs retain their independent statistic confirmation.
+  if(!game||playerOverSpec(game,market))return null;
+  if(/soccer/.test(String(game.type||'')))return soccerSingleReadOver(game,market,now);
+  if(game.feedId!==game.id||!game.verifiedLive||!game.scoreKnown||!game.scoreConsistent||!game.periodConsistent||
+    !Number.isFinite(game.observedAt)||now<game.observedAt||now-game.observedAt>10000||
+    Number.isFinite(game.updatedAt)&&(game.updatedAt>game.observedAt+5000||game.observedAt-game.updatedAt>30000))return null;
+  return cushionedOverSignal(game,market)||overSignal(game,market);
 }
 export function fallbackOverFraction(game,market){
   const signal=overSignal(game,market),units=fallbackScoringUnits(game);
@@ -723,7 +728,7 @@ export function leadFraction(game,margin,minimum){
 export function nbaSingleReadLead(game,market,now=Date.now()){
   return proBasketballLeadRules(game)&&/basketball/.test(String(game.type||''))&&
     game.period===4&&game.feedId===game.id&&game.scoreConsistent&&game.periodConsistent&&
-    Number.isFinite(game.observedAt)&&now>=game.observedAt&&now-game.observedAt<=10000&&
+    Number.isFinite(game.observedAt)&&now>=game.observedAt&&now-game.observedAt<=30000&&
     Number.isFinite(game.updatedAt)&&game.updatedAt<=game.observedAt+5000&&
     game.observedAt-game.updatedAt<=30000&&
     Number.isFinite(game.remainingSeconds)&&game.remainingSeconds>0&&game.remainingSeconds<450&&
@@ -744,6 +749,14 @@ export function soccerSingleReadLead(game,market,now=Date.now()){
     game.homeUnits===game.awayUnits&&game.matchRemainingSeconds*1000<=now-game.observedAt||
     !soccerWinnerWindowOpen(game,now))return false;
   return Boolean(leadSignal(game,market)||drawSignal(game,market));
+}
+export function kalshiSingleReadLead(game,market,now=Date.now()){
+  if(/soccer/.test(String(game?.type||'')))return soccerSingleReadLead(game,market,now);
+  if(!game||game.feedId!==game.id||!game.verifiedLive||!game.scoreKnown||!game.scoreConsistent||!game.periodConsistent||
+    !Number.isFinite(game.observedAt)||now<game.observedAt||now-game.observedAt>30000||
+    Number.isFinite(game.updatedAt)&&(game.updatedAt>game.observedAt+5000||game.observedAt-game.updatedAt>30000))return false;
+  return Boolean(golfSignal(game,market)||leadSignal(game,market)||additionalLeadSignal(game,market)||
+    cricketLeadSignal(game,market)||drawSignal(game,market)||earlyLeadSignal(game,market)||tennisSignal(game,market)||tableTennisSignal(game,market));
 }
 export function externallyVerifiedEarlySoccerLead(first,second,signal,firstConfirmed,secondConfirmed){
   if(!firstConfirmed||!secondConfirmed||signal?.fraction!==.02||
