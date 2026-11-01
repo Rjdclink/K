@@ -40,9 +40,12 @@ export function valueCandidate(game,market,event){
   const ask=dollars(market.yes_ask_dollars),size=dollars(market.yes_ask_size_fp);
   if(!Number.isFinite(ask)||ask<=0||ask>=1||!Number.isFinite(size)||size<=0)return null;
   const leader=game.home>game.away?'home':'away';
-  const role=side===leader?'favorite':'underdog';
+  // An underdog in this research card is the team currently ahead while
+  // still offered below 50¢. A cheap quote for the trailing team is simply
+  // a long-shot comeback, not a winning underdog.
+  if(side!==leader)return null;
+  const role=ask<.50?'leading underdog':'favorite';
   if(role==='favorite'&&ask<.85)return null;
-  if(role==='underdog'&&ask>=.50)return null;
   return {ticker:market.ticker,team:side==='home'?game.homeName:game.awayName,role,
     ask,kalshiQuoteImpliedChance:ask,size,remaining:window.remaining,score:`${game.away}–${game.home}`,
     model_probability:null,fee_cents:null,edge_cents:null,
