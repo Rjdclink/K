@@ -6,6 +6,8 @@ export const COMBO_ATTEMPT_MS=45000;
 export const VERIFY_DWELL_MS=10000;
 // Bound RFQs per attempt, not the number of distinct held singles considered.
 export const COMBO_RFQ_PLANS=12;
+export const COMBO_CASH_RESERVE_CENTS=700;
+export const singleSpendableCash=cash=>Math.max(0,Math.floor(Number(cash)||0)-COMBO_CASH_RESERVE_CENTS);
 export function comboAllocation(){return .35;}
 export function comboAllowedCents(fraction,bankrollCents){return Math.floor(fraction*bankrollCents);}
 export function comboMinimumCents(fraction,bankrollCents){return fraction===comboAllocation()?Math.ceil(.20*bankrollCents):0;}

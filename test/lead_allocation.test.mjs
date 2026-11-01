@@ -5,11 +5,12 @@ import vm from 'node:vm';
 import {finalLeadFraction,leaderHasControl,directLeadFraction,leadEntryFraction,threeGoalWinner,verifiedOverFraction} from '../src/lead_allocation.mjs';
 import {gameState,earlyLeadSignal,kalshiOnlyLead,nbaSingleReadLead} from '../src/strategy.mjs';
 import {overContractKey} from '../src/over_verification.mjs';
+import {singleSpendableCash} from '../src/combos.mjs';
 
 const lead={strategy:'lead',fraction:.15};
 const game=(type,possessionSide='home')=>({type,sport:'Other',home:30,away:10,homeUnits:30,awayUnits:10,possessionSide});
 test('three-goal preflight checks the purchase floor before claiming eligibility',()=>{
- const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8'),context=vm.createContext({hasAsk:()=>true,feeReserve:()=>0,contractCount:()=>10,profitableCount:n=>n,estimatedCostCents:n=>95*n,minimumThreeGoalSpend:()=>1500,shardCash:()=>2000,marketShard:()=>0,proBasketballLeadRules:()=>false,process:{env:{}}});
+ const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8'),context=vm.createContext({singleSpendableCash,hasAsk:()=>true,feeReserve:()=>0,contractCount:()=>10,profitableCount:n=>n,estimatedCostCents:n=>95*n,minimumThreeGoalSpend:()=>1500,shardCash:()=>2000,marketShard:()=>0,proBasketballLeadRules:()=>false,process:{env:{}}});
  vm.runInContext(source.slice(source.indexOf('const signalKey='),source.indexOf('async function ensureShardFunding(')),context);
  const c={signal:{strategy:'lead',fraction:.20},market:{ticker:'H',yes_ask_dollars:'.95'},state:{type:'hockey_match'},event:{}};
  assert.equal(vm.runInContext('signalExecution',context)(c,new Set(),{balance:2000},2000,10000),'Below 15% minimum purchase amount');

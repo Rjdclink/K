@@ -2,26 +2,26 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
-import {filledComboWindow,availableComboFills,heldComboLeg,comboAllocation,plannedComboGroups} from '../src/combos.mjs';
+import {filledComboWindow,availableComboFills,heldComboLeg,comboAllocation,plannedComboGroups,singleSpendableCash} from '../src/combos.mjs';
 
 const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
 const functionSource=(name,next)=>source.slice(source.indexOf('async function '+name+'('),source.indexOf('async function '+next+'('));
 const order={id:'fill-id',market_ticker:'NEW',strategy:'lead',count:10,limit_price:.95,created_at:new Date(Date.now()-60000),updated_at:new Date(Date.now()-30000),retries:0};
-function harness({filled=2,recovery=false,retry=false,age=0}={}){
+function harness({filled=2,recovery=false,retry=false,age=0,balance=10000}={}){
   const events=[];
-  const context=vm.createContext({console,Date,URLSearchParams,JSON,Math,Number,
+  const context=vm.createContext({console,Date,URLSearchParams,JSON,Math,Number,singleSpendableCash,
     pool:{query:async(sql,values)=>{
       if(sql.startsWith('SELECT * FROM trade_attempts'))return {rows:[order]};
       if(sql.startsWith('UPDATE trade_attempts'))events.push(['ledger',values]);
       return {rows:[],rowCount:sql.includes("SET retries=1")?1:0};
-    }},profitableCount:n=>n,contractCount:()=>10,feeReserve:()=>2,estimatedCostCents:()=>950,minimumThreeGoalSpend:()=>0,soccerWinnerWindowOpen:()=>true,
+    }},profitableCount:n=>n,contractCount:cash=>cash>=950?10:0,feeReserve:()=>2,estimatedCostCents:()=>950,minimumThreeGoalSpend:()=>0,soccerWinnerWindowOpen:()=>true,
     reserve:async()=>order.id,withEntryProfitFloor:async(_,send)=>send(),
     kalshi:async path=>path.startsWith('/portfolio/orders')?{orders:retry?[]:[{client_order_id:order.id,fill_count_fp:String(filled),order_id:'exchange'}]}:{fill_count_fp:String(filled),order_id:'exchange'},
     confirmedSingleFill:async(id,ticker)=>events.push(['notify',id,ticker]),reviewMiss:async()=>({retry:true,reason:'verified recovery'})});
   const name=recovery?'recoverPending':'submit';
   vm.runInContext(functionSource(name,recovery?'reconcileUpgrade':'recoverPending'),context);
   return {events,run:()=>context[name]({strategy:'lead',reason:'Alpha leads',fraction:.1},{id:'game',type:'football_game',verificationId:'verified',observedAt:Date.now()-age},
-    {event_ticker:'E'},{ticker:'NEW',yes_ask_dollars:'.95'},10000,10000)};
+    {event_ticker:'E'},{ticker:'NEW',yes_ask_dollars:'.95'},balance,10000)};
 }
 test('confirmed immediate fills notify after ledger persistence; zero fills never notify',async()=>{
   for(const filled of [0,2]){
@@ -29,6 +29,10 @@ test('confirmed immediate fills notify after ledger persistence; zero fills neve
     assert.equal(h.events.filter(e=>e[0]==='notify').length,filled>0?1:0);
     if(filled){assert.equal(h.events[0][0],'ledger');assert.deepEqual(h.events.at(-1),['notify','fill-id','NEW'])}
   }
+});
+test('new and retried singles preserve the combo cash floor',async()=>{
+ for(const recovery of [false,true])assert.equal(await harness({recovery,retry:recovery,balance:1600}).run(),false);
+ assert.equal(await harness({balance:1700}).run(),true);
 });
 test('both recovered existing fills and confirmed retry fills notify the combo checker',async()=>{
   for(const retry of [false,true]){
