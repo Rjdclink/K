@@ -6,19 +6,20 @@ export const PLAYER_PROP_WINDOW_MS=7*60*1000;
 export const CFB_LEAD_WINDOW_SECONDS=270;
 export const CFB_LEAD_MINIMUM=12;
 export const CFB_MIDDLE_WINDOW_SECONDS=300;
-export const CFB_MIDDLE_MINIMUM=17;
+export const CFB_MIDDLE_MINIMUM=15;
 export const CFB_EARLY_WINDOW_SECONDS=450;
-export const CFB_EARLY_MINIMUM=24;
+export const CFB_EARLY_MINIMUM=18;
+export const CRICKET_LEAD_MINIMUM=15;
 export function cfbLeadWindow(game){
   if(game?.sport!=='CFB'||!/football/.test(String(game.type||''))||game.period!==4||
     !Number.isFinite(game.remainingSeconds)||game.remainingSeconds<=0||
     !Number.isFinite(game.homeUnits)||!Number.isFinite(game.awayUnits))return false;
   const seconds=game.remainingSeconds,margin=Math.abs(game.homeUnits-game.awayUnits);
-  return seconds<CFB_LEAD_WINDOW_SECONDS&&margin>=CFB_LEAD_MINIMUM||
-    seconds<CFB_MIDDLE_WINDOW_SECONDS&&margin>=CFB_MIDDLE_MINIMUM||
-    seconds<CFB_EARLY_WINDOW_SECONDS&&margin>=CFB_EARLY_MINIMUM;
+  return seconds<=CFB_LEAD_WINDOW_SECONDS&&margin>=CFB_LEAD_MINIMUM||
+    seconds<=CFB_MIDDLE_WINDOW_SECONDS&&margin>=CFB_MIDDLE_MINIMUM||
+    seconds<=CFB_EARLY_WINDOW_SECONDS&&margin>=CFB_EARLY_MINIMUM;
 }
-export function cfbEarlyLead(game){return cfbLeadWindow(game)&&game.remainingSeconds>=CFB_LEAD_WINDOW_SECONDS;}
+export function cfbEarlyLead(game){return cfbLeadWindow(game)&&game.remainingSeconds>CFB_LEAD_WINDOW_SECONDS;}
 export function cfbLeadApproaching(game){
   const seconds=game?.remainingSeconds,margin=Math.abs(game?.homeUnits-game?.awayUnits);
   return game?.sport==='CFB'&&/football/.test(String(game.type||''))&&game.period===4&&
@@ -100,7 +101,7 @@ function cricketFinalInnings(m,d){
   if(counts.home!==max/2||counts.away!==max/2||
     Number.isFinite(N(d.home_total_runs))&&N(d.home_total_runs)!==scores.home||
     Number.isFinite(N(d.away_total_runs))&&N(d.away_total_runs)!==scores.away)return null;
-  const format=/\btest\b/i.test(league)?null:/\b(?:T20|D20|IPL|Major League Cricket|Caribbean Premier League)\b/i.test(league)?20:
+  const format=/\btest\b/i.test(league)?null:/\b(?:T20|D20|IPL|Indian Premier League|Major League Cricket|Caribbean Premier League)\b/i.test(league)?20:
     /\b(?:ODI|Pro 50|One Day)\b/i.test(league)?50:null;
   const wickets=N(board['wickets.'+max]),balls=N(board['balls.'+max]);
   const overs=String(board['overs.'+max]??'').match(/^(\d{1,2})(?:\.([0-5]))?$/);
@@ -109,7 +110,12 @@ function cricketFinalInnings(m,d){
     !Number.isFinite(balls)?oversBalls:NaN;
   const ballsRemaining=format!=null&&Number.isInteger(bowled)&&bowled>=0&&bowled<=format*6?format*6-bowled:null;
   const wicketsRemaining=Number.isInteger(wickets)&&wickets>=0&&wickets<=9?10-wickets:null;
-  return {homeTotal:scores.home,awayTotal:scores.away,innings:max,ballsRemaining,wicketsRemaining,mainEvent:m.details?.main_game_event_ticker};
+  const allotted=N(d.allotted_overs),target=N(d.target_runs??d.target_score??board.target_runs??board['Target Score']);
+  const defending=board['batting.1']===home?scores.home:scores.away;
+  const targetAdjusted=[d.dls_applied,d.dl_applied].some(value=>value===true||value===1||value==='true')||
+    Number.isFinite(allotted)&&allotted>0&&format!==null&&allotted!==format||
+    Number.isFinite(target)&&target>0&&target!==defending+1;
+  return {homeTotal:scores.home,awayTotal:scores.away,innings:max,ballsRemaining,wicketsRemaining,targetAdjusted,mainEvent:m.details?.main_game_event_ticker};
 }
 export function gameState(m, live) {
   if(m.type==='golf_tournament')return golfState(m,live);
@@ -241,9 +247,9 @@ export function periodValue(game,market){
 export function endWindow(game){
   if(!game.verifiedLive||!game.scoreKnown||!game.periodConsistent)return false;
   if(/basketball/.test(game.type))return Boolean(basketballEntryTier(game));
-  if(/football/.test(game.type))return game.sport==='CFB'?cfbLeadWindow(game):game.period===4 && game.remainingSeconds>0 && game.remainingSeconds<360;
-  if(/hockey/.test(game.type))return game.period===3 && game.remainingSeconds>0 && game.remainingSeconds<420;
-  if(/baseball/.test(game.type))return game.period===9;
+  if(/football/.test(game.type))return game.sport==='CFB'?cfbLeadWindow(game):game.period===4 && game.remainingSeconds>0 && game.remainingSeconds<=450;
+  if(/hockey/.test(game.type))return game.period===3 && game.remainingSeconds>0 && game.remainingSeconds<=210;
+  if(/baseball/.test(game.type))return game.period===8&&game.inningHalf===2&&game.outs===2;
   if(/soccer/.test(game.type))return game.period===2 && Number.isFinite(game.soccerMinute) && game.soccerMinute>=83 && !game.soccerExtraTime;
   return false;
 }
@@ -261,10 +267,10 @@ export function leadWatchReason(game){
   if(/football/.test(type)){
     if(game.sport==='CFB')return cfbLeadApproaching(game)?
       (cfbLeadWindow(game)?
-        `Tracking ${margin}-point college-football lead; score and clock qualify (+24 under 7:30, +17 under 5:00, or +12 under 4:30 in Q4); checking winner market and verification`:
-        `Tracking ${margin}-point college-football lead; entry at +24 under 7:30, +17 under 5:00, or +12 under 4:30 in Q4; earlier tiers require external verification`):null;
-    if(game.period===4&&Number.isFinite(seconds)&&seconds>0&&seconds<=480&&margin>=10)
-      return `Tracking ${margin}-point lead; fourth-quarter winner window and possession required`;
+        `Tracking ${margin}-point college-football lead; score and clock qualify (18+ at 7:30 or less, 15+ at 5:00 or less, or 12+ at 4:30 or less in Q4); checking seller`:
+        `Tracking ${margin}-point college-football lead; entry at 18+ and 7:30 or less, 15+ and 5:00 or less, or 12+ and 4:30 or less in Q4`):null;
+    if(game.period===4&&Number.isFinite(seconds)&&seconds>0&&seconds<=540&&margin>=8)
+      return `Tracking ${margin}-point lead; NFL entry requires 11+ at 7:30 or less, or 8+ at 2:00 or less in Q4; ${(seconds<=450&&margin>=11||seconds<=120&&margin>=8)?'score and clock qualify; checking seller':'waiting for score and clock threshold'}`;
   }
   if(/basketball/.test(type)){
     const profile=basketballLeadProfile(game),tier=basketballEntryTier(game);
@@ -278,12 +284,11 @@ export function leadWatchReason(game){
     }
   }
   if(/hockey/.test(type)){
-    if(game.period===3&&Number.isFinite(seconds)&&seconds>0&&seconds<=180&&margin>=4)
-      return `Tracking ${margin}-goal lead; third-period winner clock required`;
+    if(game.period===3&&Number.isFinite(seconds)&&seconds>0&&seconds<=300&&margin>=2)
+      return `Tracking ${margin}-goal lead; entry requires 2+ at 3:30 or less in period 3; ${seconds<=210?'score and clock qualify; checking seller':'waiting for clock threshold'}`;
   }
   if(/baseball/.test(type)&&
-    (game.period===8&&game.inningHalf===2&&game.outs>=1&&margin>=5||
-      game.period===9&&[1,2].includes(game.inningHalf)&&game.outs>=1&&game.outs<=2&&margin>=4))
+    game.period===8&&game.inningHalf===2&&game.outs>=1&&margin>=5)
     return `Tracking ${margin}-run lead; checking the late-inning winner market`;
   if(/rugby|handball|lacrosse/.test(type)&&Number.isFinite(seconds)&&seconds>0){
     const rule=/rugby/.test(type)?[2,180,15]:/handball/.test(type)?[2,600,4]:[4,600,3];
@@ -426,7 +431,7 @@ export function fallbackOverFraction(game,market){
 // The live cricket score is a team run total only in limited-over formats
 // with one innings per side. Test/first-class and non-run props need separate
 // contract-specific scoring and cannot borrow this signal.
-export const cricketOneInningsFormat=competition=>/\b(?:T20|D20|ODI|IPL|Pro 50|One Day|Major League Cricket|Caribbean Premier League)\b/i.test(String(competition||''));
+export const cricketOneInningsFormat=competition=>/\b(?:T20|D20|ODI|IPL|Indian Premier League|Pro 50|One Day|Major League Cricket|Caribbean Premier League)\b/i.test(String(competition||''));
 export function cricketOverSignal(game,market){
   if(game?.type!=='cricket_match'||!game.verifiedLive||!game.scoreKnown||!game.scoreConsistent||
     !cricketOneInningsFormat(game.competition)||
@@ -684,22 +689,21 @@ export function leadSignal(game, market) {
     (game.soccerMinute>82.5||Number.isFinite(game.matchRemainingSeconds)&&
       game.matchRemainingSeconds>0&&game.matchRemainingSeconds<450&&game.soccerMinute>=82);
   const baseballEighth=baseball&&game.period===8&&game.inningHalf===2&&game.outs===2;
-  const baseballNinth=baseball&&game.period===9&&[1,2].includes(game.inningHalf)&&game.outs>=1&&game.outs<=2;
-  const finalTime=baseball?baseballEighth||baseballNinth:soccer?soccerSecondHalf:
+  const finalTime=baseball?baseballEighth:soccer?soccerSecondHalf:
     game.period===segments&&game.periodConsistent&&Number.isFinite(seconds)&&seconds>0&&
     (basketball?Boolean(basketballEntryTier(game)):
-      hockey?seconds<120:game.sport==='CFB'?cfbLeadWindow(game):seconds<360);
+      hockey?seconds<=210:game.sport==='CFB'?cfbLeadWindow(game):seconds<=450);
   if (!game.verifiedLive || !game.scoreKnown || soccer&&!game.scoreConsistent || !finalTime || market.status!=='active' && market.status!=='open') return null;
   const h=game.homeUnits,a=game.awayUnits;
   if (!Number.isFinite(h)||!Number.isFinite(a)) return null;
   const minimum=basketball?basketballEntryTier(game)?.[0]??null:
-    football?game.sport==='CFB'?(seconds>=CFB_MIDDLE_WINDOW_SECONDS?CFB_EARLY_MINIMUM:
-      seconds>=CFB_LEAD_WINDOW_SECONDS?CFB_MIDDLE_MINIMUM:CFB_LEAD_MINIMUM):seconds<120?10:11:
-    hockey?4:baseball?baseballEighth?5:4:soccer?soccerLate?2:3:null;
+    football?game.sport==='CFB'?(seconds<=CFB_LEAD_WINDOW_SECONDS?CFB_LEAD_MINIMUM:
+      seconds<=CFB_MIDDLE_WINDOW_SECONDS?CFB_MIDDLE_MINIMUM:CFB_EARLY_MINIMUM):seconds<=120?8:11:
+    hockey?2:baseball?5:soccer?soccerLate?2:3:null;
   if(minimum===null||margin<minimum)return null;
   const leader = h>a ? game.homeName : game.awayName;
   const trailer = h>a ? game.awayName : game.homeName;
-  const possessionOptional=collegeFootballPossessionOptional(game)||basketball&&!basketballLeadProfile(game)?.possession;
+  const possessionOptional=football||basketball&&!basketballLeadProfile(game)?.possession;
   if(!hockey&&!soccer&&!baseball&&!possessionOptional&&game.possessionSide!==(h>a?'home':'away'))return null;
   const description = `${market.title||''} ${market.yes_sub_title||''}`;
   const teamId=Object.entries(market.custom_strike||{}).find(([k,v])=>/_team$/.test(k)&&typeof v==='string')?.[1];
@@ -708,7 +712,7 @@ export function leadSignal(game, market) {
   if (!/win|winner|victory/i.test(description) || /wins? by|spread|handicap|margin of victory/i.test(description) || market.event_ticker && !/GAME(?:-|$)/i.test(market.event_ticker) || !identityMatches) return null;
   if(soccer && !/after 90 minutes plus stoppage time/i.test(market.rules_primary||''))return null;
   const fraction=leadFraction(game,margin,minimum);
-  const timing=baseball?'9th inning':soccer?Number.isFinite(game.soccerMinute)?`${game.soccerMinute}' of regulation plus stoppage`:'second half (no clock)':`${basketball?`period ${game.period}, `:''}${game.clock} remaining`;
+  const timing=baseball?'bottom of 8th inning, two outs':soccer?Number.isFinite(game.soccerMinute)?`${game.soccerMinute}' of regulation plus stoppage`:'second half (no clock)':`${basketball?`period ${game.period}, `:''}${game.clock} remaining`;
   return {strategy:'lead', reason:`${leader||market.yes_sub_title} leads ${h}–${a} ${game.unit} (${margin} ${game.unit} ahead); ${timing}`, fraction};
 }
 export function leadFraction(game,margin,minimum){
@@ -838,14 +842,14 @@ export function additionalLeadSignal(game,market){
 }
 export function cricketLeadSignal(game,market){
   const c=game?.cricket;
-  if(!c||c.innings!==2||!game.verifiedLive||!game.scoreKnown||!game.scoreConsistent||
+  if(!c||c.innings!==2||c.targetAdjusted||!game.verifiedLive||!game.scoreKnown||!game.scoreConsistent||
     !Number.isInteger(c.ballsRemaining)||c.ballsRemaining<1||c.ballsRemaining>9||
     !Number.isInteger(c.wicketsRemaining)||c.wicketsRemaining<1||c.wicketsRemaining>2||
     !['active','open'].includes(market?.status)||market.event_ticker!==c.mainEvent||
     !Number.isFinite(N(market.yes_ask_dollars))||N(market.yes_ask_dollars)<.90||
     !/\bwins?\b/i.test(String(market.rules_primary||''))||/\b(?:draw|tie|spread|handicap)\b/i.test(String(market.title||'')))return null;
   const home=c.homeTotal>c.awayTotal,margin=Math.abs(c.homeTotal-c.awayTotal);
-  if(margin<30||market.custom_strike?.cricket_team!==(home?game.homeTeamId:game.awayTeamId))return null;
+  if(margin<CRICKET_LEAD_MINIMUM||market.custom_strike?.cricket_team!==(home?game.homeTeamId:game.awayTeamId))return null;
   return {strategy:'lead',fraction:.10,comboEligible:false,
     reason:'Restricted 10% late cricket chase; verified match totals '+c.homeTotal+'–'+c.awayTotal+
       ' runs ('+margin+' ahead); '+c.ballsRemaining+' balls and '+c.wicketsRemaining+' wickets left'};

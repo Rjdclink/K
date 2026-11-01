@@ -31,7 +31,7 @@ test('late baseball commanding leads enter the fast watch before the winner wind
   const state=(inning,half,outs,home,away)=>gameState(m,{milestone_id:m.id,details:{status:'live',inning,inning_half:half,outs,home_score:home,away_score:away}});
   assert.match(leadWatchReason(state(8,'bottom',1,8,3)),/late-inning winner market/);
   assert.equal(leadWatchReason(state(8,'bottom',1,7,3)),null);
-  assert.match(leadWatchReason(state(9,'top',1,8,4)),/late-inning winner market/);
+  assert.equal(leadWatchReason(state(9,'top',1,8,4)),null);
   assert.equal(leadWatchReason(state(8,'top',2,8,3)),null);
 });
 

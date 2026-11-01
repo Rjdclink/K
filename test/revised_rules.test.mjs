@@ -15,18 +15,16 @@ function team(type,league,margin,period,seconds,extra={}){
 }
 const signal=(type,league,margin,period,seconds,extra={})=>{const {state,market}=team(type,league,margin,period,seconds,extra);return leadSignal(state,market)};
 
-test('revised CFB and NFL winners replace the old early football and last-seconds routes',()=>{
- assert.ok(signal('football_game','CFB',12,4,269,{possession_team_id:'away'}));
- assert.equal(signal('football_game','CFB',11,4,269),null);
- assert.ok(signal('football_game','CFB',20,4,270));
- assert.ok(signal('football_game','CFB',17,4,299,{possession_team_id:'away'}));
- assert.ok(signal('football_game','CFB',24,4,449,{possession_team_id:'away'}));
- const {state,market}=team('football_game','NFL',40,3,30);
- assert.equal(earlyLeadSignal(state,market),null);
- assert.ok(signal('football_game','NFL',11,4,359));
- assert.equal(signal('football_game','NFL',10,4,121),null);
- assert.ok(signal('football_game','NFL',10,4,119));
- assert.equal(signal('football_game','NFL',9,4,19),null);
+test('football uses inclusive score/time cutoffs and ignores possession',()=>{
+ for(const [league,tiers] of [['CFB',[[18,450],[15,300],[12,270]]],['NFL',[[11,450],[8,120]]]]){
+  for(const [points,seconds] of tiers)for(const possession of ['home','away',null]){
+   assert.ok(signal('football_game',league,points,4,seconds,{possession_team_id:possession}));
+   assert.ok(signal('football_game',league,points+1,4,seconds,{possession_team_id:possession}));
+   assert.equal(signal('football_game',league,points-1,4,seconds,{possession_team_id:possession}),null);
+   assert.equal(signal('football_game',league,points,4,seconds+1,{possession_team_id:possession}),null);
+   assert.equal(signal('football_game',league,points,3,seconds,{possession_team_id:possession}),null);
+  }
+ }
 });
 
 test('basketball tiers include the stated lead and exclude the exact time boundary',()=>{
@@ -57,10 +55,11 @@ test('basketball tiers include the stated lead and exclude the exact time bounda
 
 test('revised hockey and inning-based baseball winners reject superseded thresholds',()=>{
  assert.ok(signal('hockey_match','NHL',4,3,119));
- assert.equal(signal('hockey_match','NHL',3,3,119),null);
- assert.equal(signal('hockey_match','NHL',4,3,120),null);
+ assert.equal(signal('hockey_match','NHL',1,3,119),null);
+ assert.equal(signal('hockey_match','NHL',2,3,211),null);
+ assert.ok(signal('hockey_match','NHL',2,3,210));
  const baseball=(margin,inning,half,outs)=>team('baseball_game','MLB',margin,inning,0,{inning,inning_half:half,outs,clock:''});
- for(const [margin,inning,half,outs,allowed] of [[5,8,'bottom',2,true],[4,8,'bottom',2,false],[5,8,'top',2,false],[4,9,'top',1,true],[3,9,'top',1,false],[4,9,'top',0,false]]){
+ for(const [margin,inning,half,outs,allowed] of [[5,8,'bottom',2,true],[4,8,'bottom',2,false],[5,8,'top',2,false],[4,9,'top',1,false],[20,9,'bottom',2,false],[3,9,'top',1,false],[4,9,'top',0,false]]){
    const {state,market}=baseball(margin,inning,half,outs);
    assert.equal(Boolean(leadSignal(state,market)),allowed,`${margin} in ${half} ${inning}, ${outs} outs`);
    assert.equal(earlyLeadSignal(state,market),null);
@@ -130,7 +129,7 @@ test('soccer entry reuses one Kalshi score for 30 seconds on the correct contrac
   assert.equal(soccerSingleReadLead({...tie,matchRemainingSeconds:50},tieMarket,now),false);
 });
 
-test('rugby +15 is one tier; cricket +30 and golf +4 use the revised thresholds',()=>{
+test('rugby +15 is one tier; cricket +15 and golf +4 use the revised thresholds',()=>{
  const rugby=team('rugby_match','United Rugby Championship',15,2,179);
  assert.equal(additionalLeadSignal(rugby.state,{...rugby.market,event_ticker:'KXRUGBYMATCH-TEST'})?.fraction,.10);
  const weaker=team('rugby_match','United Rugby Championship',14,2,179);
@@ -140,7 +139,9 @@ test('rugby +15 is one tier; cricket +30 and golf +4 use the revised thresholds'
  const cricket={type:'cricket_match',verifiedLive:true,scoreKnown:true,scoreConsistent:true,homeTeamId:'home',awayTeamId:'away',cricket:{innings:2,ballsRemaining:9,wicketsRemaining:2,homeTotal:130,awayTotal:100,mainEvent:'KXCRICKETMATCH-TEST'}};
  const cm={status:'active',event_ticker:'KXCRICKETMATCH-TEST',title:'Home wins',rules_primary:'Home wins',custom_strike:{cricket_team:'home'},yes_ask_dollars:'.95'};
  assert.ok(cricketLeadSignal(cricket,cm));
- assert.equal(cricketLeadSignal({...cricket,cricket:{...cricket.cricket,homeTotal:129}},cm),null);
+ assert.ok(cricketLeadSignal({...cricket,cricket:{...cricket.cricket,homeTotal:115}},cm));
+ assert.equal(cricketLeadSignal({...cricket,cricket:{...cricket.cricket,homeTotal:115,targetAdjusted:true}},cm),null);
+ assert.equal(cricketLeadSignal({...cricket,cricket:{...cricket.cricket,homeTotal:114}},cm),null);
  const gm={id:'g',type:'golf_tournament',title:'Open',details:{tour:'pga',main_game_event_ticker:'KXGOLFMATCH-TEST'}};
  const golf=board=>golfState(gm,{milestone_id:'g',details:{status:'inprogress',current_round:4,leaderboard:board}});
  const b=[{competitor_id:'a',total_score:-10,current_round_thru:18},{competitor_id:'b',total_score:-6,current_round_thru:17}];
