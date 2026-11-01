@@ -89,6 +89,22 @@ test('combo controls show live buy and sell liquidity separately',()=>{
   assert.match(unavailable[1].textContent,/No bid/);
 });
 
+test('a filled combo shows each leg’s teams and score, with honest stale and missing labels',()=>{
+ const element=()=>({children:[],classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){},append(...x){this.children.push(...x)}});
+ const document={getElementById:()=>element(),querySelectorAll:()=>[],createElement:element};
+ const ctx=vm.createContext({document,window:{addEventListener(){}},navigator:{},localStorage:{getItem(){return null}},fetch:()=>new Promise(()=>{}),AbortSignal,setInterval(){}});
+ vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],ctx);
+ const render=vm.runInContext('order',ctx),at=new Date().toISOString();
+ const legs=[{sport:'Soccer',title:'Umea at Sollentuna',score:{away:3,home:0,status:'live',observed_at:at}},
+  {sport:'Hockey',title:'Panther vs Grizzlys',home_name:'Panther',away_name:'Grizzlys',score:{away:4,home:1,status:'final',observed_at:at}},
+  {sport:'Rugby',title:'C vs D',score:null}];
+ const detail=render({strategy:'lead',market_ticker:'COMBO',combo_legs:legs}).children[1].textContent;
+ assert.match(detail,/Umea 3 · Sollentuna 0/);
+ assert.match(detail,/Final · Panther vs Grizzlys · Grizzlys 4 · Panther 1/);
+ assert.match(detail,/C vs D · Score unavailable/);
+ const old=render({strategy:'lead',combo_legs:[{...legs[0],score:{...legs[0].score,observed_at:new Date(Date.now()-120000).toISOString()}}]}).children[1].textContent;
+ assert.match(old,/Last score · Umea 3 · Sollentuna 0/);
+});
 test('game list prioritizes preflights then available asks in descending counts',()=>{
   const element={classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){}};
   const document={getElementById:()=>element,querySelectorAll:()=>[],createElement:()=>({children:[],append(...items){this.children.push(...items)}})};

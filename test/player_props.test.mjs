@@ -10,7 +10,7 @@ test('non-basketball player overs use an exact linked player statistic and exter
     custom_strike:{soccer_player:'p1'},yes_sub_title:'John Doe: 2+',title:'John Doe: 2+ goals',rules_primary:'John Doe goals',yes_ask_dollars:'.95'};
   const player=playerOverSpec(game,market);
   assert.equal(player?.value,3);
-  assert.equal(overSignal({...game,playerStats:{p1:{goals:2}}},market)?.fraction,.10);
+  assert.equal(overSignal({...game,playerStats:{p1:{goals:2}}},market)?.fraction,.15);
   assert.equal(overSignal(game,market)?.strategy,'over');
   assert.equal(overSignal({...game,playerStats:null},market),null);
   assert.equal(playerStatAgreement({boxscore:{players:[{statistics:[{name:'scoring',names:['G'],athletes:[{athlete:{displayName:'John Doe'},stats:['3']}]}]}]}},player),true);

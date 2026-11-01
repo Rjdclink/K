@@ -84,6 +84,14 @@ test('history includes a later verified combo add-on only after its actual fill'
   assert.equal(completedTrade(combo,[buy],yes),null);
   assert.equal(completedTrade(combo,[buy,{...second,order_id:'other'}],yes),null);
 });
+test('history counts a manual combo add-on and its actual fee',()=>{
+  const combo={...entry,manual_combo_buys:[{order_id:'manual-add-on',fill_count:5}]};
+  const extra={...buy,order_id:'manual-add-on',count_fp:'5',yes_price_dollars:'.90',fee_cost:'.15',created_time:'2026-10-28T13:05:00Z'};
+  const settled={ticker:entry.market_ticker,market_result:'yes',settled_time:'2026-10-28T14:00:00Z'};
+  assert.equal(completedTrade(combo,[buy,extra],settled)?.profitCents,225);
+  assert.equal(completedTrade(combo,[buy],settled),null);
+  assert.equal(completedTrade(combo,[buy,{...extra,order_id:'untracked'}],settled),null);
+});
 
 
 test('recorded automatic exits normalize canonical NO buys into YES sales and recover losses',()=>{

@@ -1,6 +1,6 @@
 import { golfState, golfSignal } from './golf.mjs';
 import { VERIFY_DWELL_MS } from './combos.mjs';
-export const KALSHI_ONLY_FRACTION=.10;
+export const KALSHI_ONLY_FRACTION=.15;
 export const SOCCER_OVER_STABILITY_MS=10000;
 export const PLAYER_PROP_WINDOW_MS=7*60*1000;
 export const CFB_LEAD_WINDOW_SECONDS=270;
@@ -27,7 +27,7 @@ export function cfbLeadApproaching(game){
     (seconds<=390&&margin>=CFB_LEAD_MINIMUM||seconds<=420&&margin>=CFB_MIDDLE_MINIMUM||
       seconds<=570&&margin>=CFB_EARLY_MINIMUM);
 }
-export const reducedAllocation=fraction=>fraction>.10?Math.round((fraction-.05)*100)/100:fraction;
+export const reducedAllocation=fraction=>fraction>.15?Math.round((fraction-.05)*100)/100:fraction;
 export function soccerOverWaitMs(firstSeen,now=Date.now()){
   const first=firstSeen instanceof Date?firstSeen.getTime():Date.parse(firstSeen||'');
   return Number.isFinite(first)?Math.max(0,first+SOCCER_OVER_STABILITY_MS-now):Infinity;
@@ -250,7 +250,7 @@ export function endWindow(game){
   if(/football/.test(game.type))return game.sport==='CFB'?cfbLeadWindow(game):game.period===4 && game.remainingSeconds>0 && game.remainingSeconds<=450;
   if(/hockey/.test(game.type))return game.period===3 && game.remainingSeconds>0 && game.remainingSeconds<=405;
   if(/baseball/.test(game.type))return game.period===8&&game.inningHalf===2&&game.outs===2;
-  if(/soccer/.test(game.type))return game.period===2 && Number.isFinite(game.soccerMinute) && game.soccerMinute>=83 && !game.soccerExtraTime;
+  if(/soccer/.test(game.type))return soccerLeadClock(game,1200);
   return false;
 }
 // Keep a small, fast-polled set of games near a winner-entry window. This is
@@ -296,12 +296,12 @@ export function leadWatchReason(game){
       return `Tracking ${margin}-point lead; waiting for final winner window`;
   }
   if(/soccer/.test(type)&&game.period===2&&!game.soccerExtraTime&&
-    Number.isFinite(game.soccerMinute)&&game.soccerMinute>=45&&
-    (margin>=3||game.soccerMinute>=75&&margin>=2))
-    return `Tracking ${margin}-goal lead; ${margin>=3&&game.soccerMinute>=50||game.soccerMinute>82.5&&margin>=2?
+    Number.isFinite(game.soccerMinute)&&game.soccerMinute>=60&&
+    (margin>=3||game.soccerMinute>=80&&margin>=2))
+    return `Tracking ${margin}-goal lead; ${margin>=3&&soccerLeadClock(game,1200)||soccerLeadClock(game,300)&&margin>=2?
       'late winner rule reached; checking winner market and ask':
-      margin>=3?'entry starts at 50\u2032 elapsed (five minutes into the second half)':
-      'entry requires +2 strictly under 7:30 remaining'}`;
+      margin>=3?'entry requires +3 strictly under 20:00 remaining':
+      'entry requires +2 strictly under 5:00 remaining'}`;
   return null;
 }
 export function overSignal(game, market) {
@@ -360,7 +360,7 @@ export function overSignal(game, market) {
   const lastPlay=game.lastScoringPlay;
   const robust=gameTotal&&!teamTotal&&!player&&!segment&&Number.isInteger(lastPlay)&&lastPlay>0&&scored-lastPlay>strike;
   const cushionedPlayer=player&&scored-1>strike;
-  return {strategy:'over', reason:`${scored} ${player?.metric||'scored'}${team?` by ${team}`:''}; line ${strike} already passed${segment?`; segment ${segment[1]}`:''}${cushionedPlayer?'; still crossed if one player statistic is removed':''}${robust?`; still crossed if the latest ${lastPlay}-unit scoring play is removed`:''}`, fraction:(robust||cushionedPlayer)?.40:.10,scored,strike};
+  return {strategy:'over', reason:`${scored} ${player?.metric||'scored'}${team?` by ${team}`:''}; line ${strike} already passed${segment?`; segment ${segment[1]}`:''}${cushionedPlayer?'; still crossed if one player statistic is removed':''}${robust?`; still crossed if the latest ${lastPlay}-unit scoring play is removed`:''}`, fraction:(robust||cushionedPlayer)?.40:.15,scored,strike};
 }
 // A Kalshi-only check cannot establish which scoring event was last. Remove
 // the largest ordinary single scoring play for that sport from the displayed
@@ -423,7 +423,7 @@ export function fallbackOverFraction(game,market){
   if(!signal||playerOverSpec(game,market)||!Number.isInteger(units)||
     !Number.isFinite(signal.scored)||!Number.isFinite(signal.strike)||signal.scored-units<=signal.strike)return null;
   const excess=signal.scored-units-signal.strike;
-  return excess>=units?.10:.05;
+  return excess>=units?.15:.05;
 }
 // The live cricket score is a team run total only in limited-over formats
 // with one innings per side. Test/first-class and non-run props need separate
@@ -560,7 +560,7 @@ export function fallbackLeadFraction(first,second,market){
       const reduced={...state,tennis:{...t,[firstLeading?'firstPoints':'secondPoints']:30}};
       return Boolean(tennisSignal(reduced,market));
     };
-    return survives(first)&&survives(second) ? .10 : null;
+    return survives(first)&&survives(second) ? .15 : null;
   }
   if(!Number.isInteger(units)||!/basketball|baseball|football|hockey|soccer|rugby|handball|lacrosse|volleyball|table_tennis/.test(type)||
     first?.type!==type||first.home!==second.home||first.away!==second.away)return null;
@@ -662,6 +662,13 @@ export function tableTennisSignal(game,market){
 export function collegeFootballPossessionOptional(game){
   return cfbLeadWindow(game);
 }
+export function soccerLeadClock(game,limit){
+  const minute=game?.soccerMinute;
+  if(!/soccer/.test(game?.type||'')||game.period!==2||game.soccerExtraTime||
+    !Number.isFinite(minute)||minute<90-limit/60)return false;
+  return Number.isFinite(game.matchRemainingSeconds)?game.matchRemainingSeconds>0&&game.matchRemainingSeconds<limit:
+    minute>90-limit/60&&minute<90;
+}
 export function leadSignal(game, market) {
   if(game.soccerExtraTime)return null;
   if(!/basketball|baseball|football|hockey|soccer/.test(game.type)||/esports|table_tennis/.test(game.type))return null;
@@ -676,15 +683,8 @@ export function leadSignal(game, market) {
   const segments=/baseball/.test(game.type)?9:/hockey/.test(game.type)?3:/soccer/.test(game.type)?2:basketball&&game.sport==='NCAAB'?2:/basketball|football/.test(game.type)?4:Infinity;
   const baseball=/baseball/.test(game.type);
   const seconds=game.remainingSeconds,margin=Math.abs(game.homeUnits-game.awayUnits);
-  const soccerSecondHalf=soccer&&game.period===2&&game.periodConsistent&&
-    Number.isFinite(game.soccerMinute)&&game.soccerMinute>=50;
-  // The displayed elapsed minute is enough to establish the regulation-time
-  // window when this live feed omits its final-whistle countdown.
-  const soccerLate=soccer&&game.period===2&&game.periodConsistent&&
-    Number.isFinite(game.soccerMinute)&&
-    (!Number.isFinite(game.matchRemainingSeconds)||game.matchRemainingSeconds>0)&&
-    (game.soccerMinute>82.5||Number.isFinite(game.matchRemainingSeconds)&&
-      game.matchRemainingSeconds>0&&game.matchRemainingSeconds<450&&game.soccerMinute>=82);
+  const soccerSecondHalf=soccer&&game.periodConsistent&&soccerLeadClock(game,1200);
+  const soccerLate=soccer&&game.periodConsistent&&soccerLeadClock(game,300);
   const baseballEighth=baseball&&game.period===8&&game.inningHalf===2&&game.outs===2;
   const finalTime=baseball?baseballEighth:soccer?soccerSecondHalf:
     game.period===segments&&game.periodConsistent&&Number.isFinite(seconds)&&seconds>0&&
@@ -771,11 +771,10 @@ export function externallyVerifiedEarlySoccerLead(first,second,signal,firstConfi
 }
 export function confirmedSoccerWinnerClock(first,second){
   if(!/soccer/.test(second.type)||Math.abs(second.home-second.away)!==2)return true;
-  return first.clockRunning&&second.clockRunning&&
-    (Number.isFinite(first.matchRemainingSeconds)&&first.matchRemainingSeconds>0&&first.matchRemainingSeconds<450&&
-      Number.isFinite(second.matchRemainingSeconds)&&second.matchRemainingSeconds>0&&second.matchRemainingSeconds<450&&
+  return first.clockRunning&&second.clockRunning&&soccerLeadClock(first,300)&&soccerLeadClock(second,300)&&
+    (Number.isFinite(first.matchRemainingSeconds)&&Number.isFinite(second.matchRemainingSeconds)&&
       second.matchRemainingSeconds<first.matchRemainingSeconds||
-      Number.isFinite(first.soccerMinute)&&first.soccerMinute>82.5&&
+      Number.isFinite(first.soccerMinute)&&first.soccerMinute>85&&
       Number.isFinite(second.soccerMinute)&&second.soccerMinute>=first.soccerMinute);
 }
 export function confirmedDrawClock(first,second,market){
@@ -787,14 +786,12 @@ export function confirmedDrawClock(first,second,market){
     Number.isFinite(before)&&Number.isFinite(after)&&before>after&&after>0;
 }
 export function soccerWinnerWindowOpen(game,now=Date.now()){
-  if(!/soccer/.test(game.type)||Math.abs(game.home-game.away)!==2)return true;
+  if(!/soccer/.test(game.type)||Math.abs(game.home-game.away)<2)return true;
+  if(!soccerLeadClock(game,Math.abs(game.home-game.away)===2?300:1200))return false;
   const regulation=Number.isFinite(game.soccerMinute)?(90-game.soccerMinute)*60:NaN;
   if(Number.isFinite(game.matchRemainingSeconds)&&game.matchRemainingSeconds<=0)return false;
-  if(Number.isFinite(game.soccerMinute)&&game.soccerMinute>=90&&
-    !Number.isFinite(game.matchRemainingSeconds))
-    return game.clockRunning&&Number.isFinite(game.observedAt)&&now>=game.observedAt&&now-game.observedAt<=30000;
   const remaining=Number.isFinite(game.matchRemainingSeconds)&&game.matchRemainingSeconds>0?
-    Math.min(regulation,game.matchRemainingSeconds):regulation;
+    regulation>0?Math.min(regulation,game.matchRemainingSeconds):game.matchRemainingSeconds:regulation;
   return Number.isFinite(game.observedAt)&&Number.isFinite(remaining)&&
     remaining*1000-(now-game.observedAt)>5000;
 }
@@ -835,7 +832,7 @@ export function additionalLeadSignal(game,market){
   }else return null;
   if(margin<minimum&&!/volleyball/.test(family))return null;
   const decisive=/volleyball/.test(family)?Math.abs((game.volleyball.current?.home??0)-(game.volleyball.current?.away??0)):margin;
-  return {strategy:'lead',reason:`${leader} leads; ${label}; margin ${decisive}`,fraction:decisive>=very?.15:.10};
+  return {strategy:'lead',reason:`${leader} leads; ${label}; margin ${decisive}`,fraction:/rugby/.test(family)||decisive>=very?.15:.10};
 }
 export function cricketLeadSignal(game,market){
   const c=game?.cricket;
@@ -847,8 +844,8 @@ export function cricketLeadSignal(game,market){
     !/\bwins?\b/i.test(String(market.rules_primary||''))||/\b(?:draw|tie|spread|handicap)\b/i.test(String(market.title||'')))return null;
   const home=c.homeTotal>c.awayTotal,margin=Math.abs(c.homeTotal-c.awayTotal);
   if(margin<CRICKET_LEAD_MINIMUM||market.custom_strike?.cricket_team!==(home?game.homeTeamId:game.awayTeamId))return null;
-  return {strategy:'lead',fraction:.10,comboEligible:false,
-    reason:'Restricted 10% late cricket chase; verified match totals '+c.homeTotal+'–'+c.awayTotal+
+  return {strategy:'lead',fraction:.15,comboEligible:false,
+    reason:'Restricted 15% late cricket chase; verified match totals '+c.homeTotal+'–'+c.awayTotal+
       ' runs ('+margin+' ahead); '+c.ballsRemaining+' balls and '+c.wicketsRemaining+' wickets left'};
 }
 export function earlyLeadSignal(game,market){
@@ -1000,8 +997,8 @@ export function orderSize(balanceCents, askDollars, askSize, fraction, cap=1, ba
 export function overBudget(balanceCents, portfolioValueCents) {
   const cash=N(balanceCents), value=N(portfolioValueCents);
   if (![cash,value].every(Number.isFinite) || Math.min(cash,value)<0) return 0;
-  // Each ordinary over has its own 10% bankroll limit. Existing positions do not
+  // Each ordinary over has its own 15% bankroll limit. Existing positions do not
   // reduce another trade's limit; cash availability is checked separately.
-  return Math.floor((cash+value)*0.10);
+  return Math.floor((cash+value)*0.15);
 }
 

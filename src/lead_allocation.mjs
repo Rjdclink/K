@@ -3,7 +3,7 @@ import { timedOverEntryValid } from './over_verification.mjs';
 
 export function verifiedOverFraction(signal,game,market){
   if(signal?.strategy!=='over')return signal?.fraction;
-  if(!timedOverEntryValid(game,market))return Math.min(.10,signal.fraction);
+  if(!timedOverEntryValid(game,market))return Math.min(.15,signal.fraction);
   return signal.fraction===.40?.40:.20;
 }
 
@@ -21,7 +21,7 @@ export function lateCommandingLead(game,market){
 
 export function directLeadFraction(game,signal,market){
   return signal?.strategy==='lead'&&lateCommandingLead(game,market)?.20:
-    Math.min(.10,signal?.fraction??.10);
+    Math.min(.15,signal?.fraction??.15);
 }
 
 export function leaderHasControl(game){
@@ -44,7 +44,7 @@ export function finalLeadFraction(first,second,signal,externallyVerified,market)
     const margin=Math.abs(second.homeUnits-second.awayUnits),seconds=second.remainingSeconds;
     if(!Number.isFinite(margin)||!Number.isFinite(seconds))return KALSHI_ONLY_FRACTION;
     if(lateCommandingLead(second,market))return .20;
-    if(margin<20)return .10; // The +9 and +12 NBA routes retain their lower allocation.
+    if(margin<20)return .15; // The +9 and +12 NBA routes retain their lower allocation.
     return Math.min(.15,.05+(seconds<240||margin>=25?.05:0)+
       (seconds<120||margin>=30?.05:0));
   }

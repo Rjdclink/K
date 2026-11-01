@@ -11,7 +11,7 @@ test('winner allocations are uniform after independent verification',()=>{
   for(const type of ['hockey_match','football_game','baseball_game','rugby_match','handball_match','lacrosse_game','table_tennis_match']){
     const g=game(type);
     assert.equal(finalLeadFraction(g,g,lead,true),.20,type);
-    assert.equal(finalLeadFraction(g,g,lead,false),.10,type+' fallback cap');
+    assert.equal(finalLeadFraction(g,g,lead,false),.15,type+' fallback cap');
     assert.equal(finalLeadFraction({...g,possessionSide:null},g,lead,true),.20,'both observations must establish control');
     assert.equal(finalLeadFraction(g,{...g,possessionSide:'away'},lead,true),.20);
   }
@@ -44,10 +44,10 @@ test('tennis serve, table-tennis serve, and darts turn must identify the leading
 test('CFB and soccer follow the same verification-based allocation',()=>{
   const cfb={...game('football_game'),sport:'CFB'};
   assert.equal(finalLeadFraction(cfb,cfb,{...lead,fraction:.35},true),.20);
-  assert.equal(finalLeadFraction(cfb,cfb,{...lead,fraction:.35},false),.10);
+  assert.equal(finalLeadFraction(cfb,cfb,{...lead,fraction:.35},false),.15);
   const soccer={...game('soccer_match'),home:2,away:0,homeUnits:2,awayUnits:0,matchRemainingSeconds:19};
   assert.equal(finalLeadFraction(soccer,soccer,{...lead,fraction:.40},true),.20);
-  assert.equal(finalLeadFraction(soccer,soccer,{...lead,fraction:.40},false),.10);
+  assert.equal(finalLeadFraction(soccer,soccer,{...lead,fraction:.40},false),.15);
   assert.equal(finalLeadFraction(cfb,cfb,{strategy:'over',fraction:.30},true),.30);
   const tied={...game('basketball_game'),home:10,away:10,homeUnits:10,awayUnits:10};
   assert.equal(finalLeadFraction(tied,tied,{...lead,fraction:.05},true),.20,'ordinary international allocation uses its verification cap');
@@ -70,10 +70,10 @@ test('strong Kalshi-only leads use 20% only after two stable reads and a score c
       ...(/hockey/.test(state.type)?{remainingSeconds:state.remainingSeconds-1}:{})};
     assert.equal(kalshiOnlyLead(a,b,market),qualifies);
     assert.equal(finalLeadFraction(a,b,lead,false,market),expected);
-    assert.equal(finalLeadFraction({...a,observedAt:now-3000},b,lead,false,market),.10,'short dwell never unlocks 20%');
+    assert.equal(finalLeadFraction({...a,observedAt:now-3000},b,lead,false,market),.15,'short dwell never unlocks 20%');
   };
   check(table,tableMarket,.20);
-  check({...table,tableTennis:{...table.tableTennis,firstPoints:10,secondPoints:4}},tableMarket,.10);
+  check({...table,tableTennis:{...table.tableTennis,firstPoints:10,secondPoints:4}},tableMarket,.15);
 
   const market={event_ticker:'KXGAME-TEST',status:'active',title:'Home wins',yes_sub_title:'Home',
     custom_strike:{soccer_team:'home',hockey_team:'home'},rules_primary:'Home wins after 90 minutes plus stoppage time.',yes_ask_dollars:'0.95'};
@@ -82,11 +82,11 @@ test('strong Kalshi-only leads use 20% only after two stable reads and a score c
     matchRemainingSeconds:240,remainingSeconds:240,clockRunning:true};
   check({...team,type:'soccer_match'},market,.20);
   check({...team,type:'soccer_match',matchRemainingSeconds:NaN},market,.20);
-  check({...team,type:'soccer_match',soccerMinute:83,matchRemainingSeconds:449,home:3,homeUnits:3},market,.10,false);
-  check({...team,type:'soccer_match',soccerMinute:50,matchRemainingSeconds:2400,home:5,homeUnits:5},market,.10);
-  check({...team,type:'soccer_match',home:2,homeUnits:2},market,.10,false);
+  check({...team,type:'soccer_match',soccerMinute:83,matchRemainingSeconds:449,home:3,homeUnits:3},market,.15,false);
+  check({...team,type:'soccer_match',soccerMinute:50,matchRemainingSeconds:2400,home:5,homeUnits:5},market,.15,false);
+  check({...team,type:'soccer_match',home:2,homeUnits:2},market,.15,false);
   check({...team,type:'hockey_match',sport:'NHL',period:3,home:6,homeUnits:6,away:1,awayUnits:1,remainingSeconds:80},market,.20);
-  check({...team,type:'hockey_match',sport:'NHL',period:3,home:5,homeUnits:5,away:1,awayUnits:1,remainingSeconds:80},market,.10);
+  check({...team,type:'hockey_match',sport:'NHL',period:3,home:5,homeUnits:5,away:1,awayUnits:1,remainingSeconds:80},market,.15);
 });
 test('NBA +18 under 7:30 and +12 under 6:30 use single-read sizing',()=>{
   const market={status:'active',event_ticker:'KXGAME-TEST',title:'Home wins',yes_sub_title:'Home',
@@ -97,7 +97,7 @@ test('NBA +18 under 7:30 and +12 under 6:30 use single-read sizing',()=>{
   assert.equal(finalLeadFraction(g,{...g,home:126,homeUnits:126},lead,true,market),.10);
   assert.equal(finalLeadFraction(g,{...g,remainingSeconds:119},lead,true,market),.15);
   assert.equal(finalLeadFraction(g,g,lead,false,market),.05);
-  assert.equal(finalLeadFraction(g,{...g,home:108,homeUnits:108,remainingSeconds:60},lead,true,market),.10);
+  assert.equal(finalLeadFraction(g,{...g,home:108,homeUnits:108,remainingSeconds:60},lead,true,market),.15);
   const now=Date.now(),fresh={...g,id:'game',feedId:'game',observedAt:now,updatedAt:now-1000};
   assert.equal(nbaSingleReadLead(fresh,market,now),true);
   assert.equal(nbaSingleReadLead({...fresh,remainingSeconds:449,home:125,homeUnits:125},market,now),true);
@@ -123,12 +123,12 @@ test('very late commanding leads may use 20%, while ordinary late entries retain
   const base={...game('basketball_game'),sport:'NBA',period:4,remainingSeconds:104,
     verifiedLive:true,scoreKnown:true,scoreConsistent:true,periodConsistent:true};
   assert.equal(finalLeadFraction({...base,homeUnits:30,awayUnits:10},{...base,homeUnits:30,awayUnits:10},lead,false),.20);
-  assert.equal(finalLeadFraction({...base,homeUnits:19,awayUnits:10},{...base,homeUnits:19,awayUnits:10},lead,false),.10);
+  assert.equal(finalLeadFraction({...base,homeUnits:19,awayUnits:10},{...base,homeUnits:19,awayUnits:10},lead,false),.15);
   assert.equal(finalLeadFraction(base,{...base,remainingSeconds:105},lead,false),.15);
   const college={...base,sport:'NCAAB',period:2,homeUnits:26,awayUnits:10};
   assert.equal(directLeadFraction(college,lead),.20);
-  assert.equal(directLeadFraction({...college,homeUnits:20},lead),.10);
-  assert.equal(directLeadFraction({...college,remainingSeconds:105},lead),.10);
+  assert.equal(directLeadFraction({...college,homeUnits:20},lead),.15);
+  assert.equal(directLeadFraction({...college,remainingSeconds:105},lead),.15);
 });
 test('timed independent checks unlock 20% for uncushioned overs and preserve 40% cushions',()=>{
   const now=Date.now(),market={ticker:'OVER',event_ticker:'KXNBATOTAL-TEST',status:'active',
@@ -141,7 +141,7 @@ test('timed independent checks unlock 20% for uncushioned overs and preserve 40%
     firstExternalAt:now-200000,firstExternalId:'one',pairedAt:now,pairedExternalId:'two',route:'elapsed'};
   assert.equal(verifiedOverFraction({strategy:'over',fraction:.10},{...state,overVerification:proof},market),.20);
   assert.equal(verifiedOverFraction({strategy:'over',fraction:.40},{...state,overVerification:proof},market),.40);
-  assert.equal(verifiedOverFraction({strategy:'over',fraction:.40},state,market),.10);
+  assert.equal(verifiedOverFraction({strategy:'over',fraction:.40},state,market),.15);
   assert.equal(verifiedOverFraction({strategy:'over',fraction:.10},{...state,overVerification:{...proof,pairedAt:now-11000}},market),.10);
 });
 test('tennis two-match-point fallback permits 20% with an unchanged deciding set',()=>{
@@ -159,5 +159,5 @@ test('tennis two-match-point fallback permits 20% with an unchanged deciding set
   assert.equal(kalshiOnlyLead(first,second,market),true);
   assert.equal(finalLeadFraction(first,second,lead,false,market),.20);
   assert.equal(kalshiOnlyLead(state(now-12000,30),state(now,30),market),false);
-  assert.equal(finalLeadFraction(first,state(now-3000),lead,false,market),.10);
+  assert.equal(finalLeadFraction(first,state(now-3000),lead,false,market),.15);
 });

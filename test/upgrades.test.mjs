@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 import {remainingVerifiedOverCents,upgradeEligible} from '../src/upgrades.mjs';
 import {orderSize,estimatedCostCents} from '../src/strategy.mjs';
 
-test('verified over top-up deducts held exposure and fees from the total 10% cap',()=>{
+test('verified over top-up deducts held exposure and fees from the total 15% cap',()=>{
   const position={ticker:'OVER',position_fp:'10.00',market_exposure_dollars:'29.00',fees_paid_dollars:'1.00'};
-  assert.equal(remainingVerifiedOverCents(position,100000),7000);
-  const count=orderSize(30000,'.94','1000',.10,1,100000,remainingVerifiedOverCents(position,100000),2);
+  assert.equal(remainingVerifiedOverCents(position,100000),12000);
+  const count=orderSize(30000,'.94','1000',.15,1,100000,remainingVerifiedOverCents(position,100000),2);
   assert.ok(count>0);
-  assert.ok(estimatedCostCents(count,.94,2)+3000<=10000);
-  assert.equal(remainingVerifiedOverCents({...position,market_exposure_dollars:'99.00'},100000),0);
+  assert.ok(estimatedCostCents(count,.94,2)+3000<=15000);
+  assert.equal(remainingVerifiedOverCents({...position,market_exposure_dollars:'149.00'},100000),0);
   assert.equal(remainingVerifiedOverCents({...position,fees_paid_dollars:null},100000),0);
   assert.equal(remainingVerifiedOverCents({...position,position_fp:'0.00'},100000),0);
   assert.equal(remainingVerifiedOverCents(position,100000,.40),37000,'a robust verified over may reach 40% inclusive of its held cost');
@@ -19,7 +19,7 @@ test('verified over top-up deducts held exposure and fees from the total 10% cap
 test('held overs can upgrade after timed proof to 20%, or to 40% with a scoring cushion',()=>{
   const fill={status:'filled',strategy:'over',reason:'score; Kalshi-only two reads',market_ticker:'OVER',event_ticker:'GAME',game_id:'m1'};
   const position={ticker:'OVER',position_fp:'10.00'};
-  const candidate={market:{ticker:'OVER'},event:{event_ticker:'GAME'},milestone:{id:'m1'},signal:{strategy:'over',fraction:.10}};
+  const candidate={market:{ticker:'OVER'},event:{event_ticker:'GAME'},milestone:{id:'m1'},signal:{strategy:'over',fraction:.15}};
   assert.equal(upgradeEligible(fill,position,candidate),true);
   assert.equal(upgradeEligible(fill,position,{...candidate,signal:{strategy:'over',fraction:.40}}),true);
   assert.equal(upgradeEligible(fill,position,{...candidate,signal:{strategy:'over',fraction:.20}}),true);

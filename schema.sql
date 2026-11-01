@@ -157,6 +157,20 @@ CREATE TABLE IF NOT EXISTS exit_attempts (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS manual_sales (
+  id uuid PRIMARY KEY,ticker text NOT NULL,status text NOT NULL,result jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE manual_sales ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+CREATE TABLE IF NOT EXISTS manual_combo_buys (
+  id uuid PRIMARY KEY,ticker text NOT NULL,status text NOT NULL,result jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE manual_combo_buys ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+CREATE TABLE IF NOT EXISTS exit_fill_ledger (
+  order_id text PRIMARY KEY,market_ticker text NOT NULL,filled_count numeric(12,2) NOT NULL,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS settlement_alerts (
   id bigserial PRIMARY KEY,
   ticker text NOT NULL,

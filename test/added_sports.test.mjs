@@ -7,8 +7,8 @@ const winner=(family,team='home')=>({status:'active',event_ticker:`KX${family.to
 const clockGame=(family,lead,clock,period)=>gameState({id:family,type:`${family}_match`,title:'Away at Home',details:{home_team_id:'home',away_team_id:'away'}},{details:{status:'live',home_score:lead,away_score:0,period,period_remaining_time:clock}});
 for(const [family,needed,very,window,period] of [['handball',5,8,'03:00',2],['rugby',15,27,'02:59',2],['lacrosse',4,7,'03:00',4]])test(`${family} final period lead tiers and clock boundary`,()=>{
   assert.equal(eligibleForMarkets(clockGame(family,needed,window,period)),true);
-  assert.equal(additionalLeadSignal(clockGame(family,needed,window,period),winner(family))?.fraction,.10);
-  assert.equal(additionalLeadSignal(clockGame(family,very,window,period),winner(family))?.fraction,family==='rugby'?.10:.15);
+  assert.equal(additionalLeadSignal(clockGame(family,needed,window,period),winner(family))?.fraction,family==='rugby'?.15:.10);
+  assert.equal(additionalLeadSignal(clockGame(family,very,window,period),winner(family))?.fraction,.15);
   assert.equal(additionalLeadSignal(clockGame(family,needed-1,window,period),winner(family)),null);
   if(family==='rugby')assert.equal(additionalLeadSignal(clockGame(family,needed,'03:00',period),winner(family)),null);
   assert.equal(additionalLeadSignal(clockGame(family,very,window,period-1),winner(family)),null);
@@ -21,7 +21,7 @@ test('rugby fixture with competitor IDs and a vs title matches its named Kalshi 
   const market={status:'active',event_ticker:'KXURCMATCH-26OCT301545LIOGLA',title:'Glasgow Warriors wins',yes_sub_title:'Glasgow Warriors',custom_strike:{rugby_team:'glasgow-id'}};
   assert.equal(state.homeName,'Glasgow Warriors');
   assert.equal(state.homeTeamId,'glasgow-id');
-  assert.equal(additionalLeadSignal(state,market)?.fraction,.10);
+  assert.equal(additionalLeadSignal(state,market)?.fraction,.15);
   assert.equal(additionalLeadSignal(state,{...market,custom_strike:{rugby_team:'lions-id'}}),null,'the other team cannot borrow this lead');
 });
 test('volleyball deciding set uses live set points and has no clock prerequisite',()=>{

@@ -6,17 +6,23 @@ export const COMBO_ATTEMPT_MS=45000;
 export const VERIFY_DWELL_MS=10000;
 // Bound RFQs per attempt, not the number of distinct held singles considered.
 export const COMBO_RFQ_PLANS=12;
-export function comboAllocation(){return .20;}
+export function comboAllocation(){return .35;}
 export function comboAllowedCents(fraction,bankrollCents){return Math.floor(fraction*bankrollCents);}
+export function comboMinimumCents(fraction,bankrollCents){return fraction===comboAllocation()?Math.ceil(.20*bankrollCents):0;}
+export function comboMeetsMinimum(fraction,bankrollCents,newCostCents,heldCostCents=0){
+  return heldCostCents+newCostCents>=comboMinimumCents(fraction,bankrollCents);
+}
 // Maker RFQs quote close to target cost; leave room for the fee before asking.
 export function comboRfqTargetCents(budgetCents){return Math.max(0,Math.floor(budgetCents*.97));}
 export function comboLegAllocation(legs,verifiedFraction){
-  // Crossed overs retain their own 10% combination ceiling. A winner combo
-  // gets 20% only if every leg has an independent verification record.
+  // Crossed overs retain their own 15% combination ceiling. A winner combo
+  // gets 35% only if every leg has an independent verification record.
   return Math.min(verifiedFraction,legs.length&&legs.every(l=>l.signal?.strategy==='lead'&&
-    l.signal.externallyVerified===true)?.20:.10);
+    l.signal.externallyVerified===true)?.35:.15);
 }
-export function remainingVerifiedComboCents(position,bankroll,fraction=.10){
+export function comboHeldFraction(legs){return comboLegAllocation(legs.map(l=>({signal:{strategy:l.strategy,
+  externallyVerified:l.externallyVerified===true||l.kalshiOnly===false}})),comboAllocation())}
+export function remainingVerifiedComboCents(position,bankroll,fraction=.15){
   const held=Number(position?.position_fp),exposure=Number(position?.market_exposure_dollars),fees=Number(position?.fees_paid_dollars);
   if(!Number.isFinite(held)||held<=0||position?.market_exposure_dollars==null||
     position?.fees_paid_dollars==null||!Number.isFinite(exposure)||exposure<0||
@@ -299,5 +305,5 @@ export function quoteForYes(quote,ticker,budgetCents,feeMultiplier=2,bankrollCen
   if(debitCents>budgetCents||profitCents<=0)return null;
   return {count,yesCost,debitCents,profitCents};
 }
-export function comboLegs(legs){return legs.map(c=>({game_id:c.milestone.id,event_ticker:c.event.event_ticker,market_ticker:c.market.ticker,strategy:c.signal.strategy,title:c.state.title,sport:c.state.sport,kalshiOnly:c.signal.kalshiOnly===true}));}
+export function comboLegs(legs){return legs.map(c=>({game_id:c.milestone.id,event_ticker:c.event.event_ticker,market_ticker:c.market.ticker,strategy:c.signal.strategy,title:c.state.title,sport:c.state.sport,home_name:c.state.homeName,away_name:c.state.awayName,kalshiOnly:c.signal.kalshiOnly===true,externallyVerified:c.signal.externallyVerified===true}));}
 

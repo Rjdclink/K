@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
 import {mapBatches} from '../src/discovery.mjs';
-import {nextComboBatch,comboPairDiagnostics,comboExclusionKey,comboLegAllocation,comboAllowedCents,comboRfqTargetCents,selectedComboMarkets,quoteForYes} from '../src/combos.mjs';
+import {nextComboBatch,comboPairDiagnostics,comboExclusionKey,comboLegAllocation,comboAllowedCents,comboMinimumCents,comboMeetsMinimum,comboRfqTargetCents,selectedComboMarkets,quoteForYes} from '../src/combos.mjs';
 import {marketShard,shardCash,comboShardBudget} from '../src/funding.mjs';
 const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
 const execute=source.slice(source.indexOf('async function executeCombo('),source.indexOf('async function checkCurrentHeldCombinations('));
@@ -25,7 +25,7 @@ function harness({interruptAfterMarket=Infinity}={}){
   async release(p){if(['creating_market','creating_rfq','rfq_open'].includes(p.job.phase))p.job.phase='complete'}
  };
  const context=vm.createContext({console:{info(){},warn(){},error(){}},Date:Clock,Number,Math,JSON,Map,Set,Promise,URLSearchParams,
-  COMBO_ATTEMPT_MS:45000,COMBO_RFQ_PLANS:12,comboPlanner:planner,comboExclusionKey,comboPairDiagnostics,comboLegAllocation,comboAllowedCents,comboRfqTargetCents,selectedComboMarkets,quoteForYes,
+  COMBO_ATTEMPT_MS:45000,COMBO_RFQ_PLANS:12,comboPlanner:planner,comboExclusionKey,comboPairDiagnostics,comboLegAllocation,comboAllowedCents,comboMinimumCents,comboMeetsMinimum,comboRfqTargetCents,selectedComboMarkets,quoteForYes,
   marketShard,shardCash,comboShardBudget,mapBatches,ensureComboAudit:async()=>{},collectionsForEvents:async()=>[c],
   recordComboRejection:async()=>{},exchangeComboExclusion:()=>null,feeReserve:()=>2,profitableCount:()=>1,
   pool:{query:async()=>({rows:[],rowCount:0})},setTimeout:callback=>{time+=45000;callback()},
