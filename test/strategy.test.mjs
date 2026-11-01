@@ -416,7 +416,7 @@ test('small basketball leads below every configured minimum never enter',()=>{
   const now=Date.now();
   for(const league of ['NBA','WNBA','NCAAW']){
     const m={...milestone,details:{league}};
-    const final=league==='NCAAW'?2:4;
+    const final=4;
     const at=(when,lead,clock='00:20',possession='home',period=final)=>gameState(m,{milestone_id:m.id,_observed_at:new Date(when).toISOString(),details:{...live(100+lead,100,period).details,clock,possession,last_updated_ts:(when-500)/1000}});
     assert.equal(leadSignal(at(now,4),market),null);
     assert.equal(leadSignal(at(now,5),market),null);
