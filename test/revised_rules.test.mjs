@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {gameState,leadSignal,leadWatchReason,earlyLeadSignal,additionalLeadSignal,cricketLeadSignal,overSignal,confirmedSoccerWinnerClock,soccerWinnerWindowOpen,kalshiOnlyLead,soccerSingleReadLead} from '../src/strategy.mjs';
+import {gameState,leadSignal,leadWatchReason,earlyLeadSignal,additionalLeadSignal,cricketLeadSignal,overSignal,confirmedSoccerWinnerClock,soccerWinnerWindowOpen,kalshiOnlyLead,soccerSingleReadLead,nbaSingleReadLead} from '../src/strategy.mjs';
 import {golfState,golfSignal} from '../src/golf.mjs';
 import {finalLeadFraction} from '../src/lead_allocation.mjs';
 import {comboLegAllocation,comboAllocation} from '../src/combos.mjs';
@@ -53,6 +53,22 @@ test('revised NBA, WNBA and college windows enforce score, clock and no college 
    'the fallback still waits ten seconds but cannot require stable college possession');
 });
 
+test('CBA and international professional basketball use the commanding-lead tiers',()=>{
+ for(const league of ['China CBA','Italy Serie A','LNB Elite','Japan B League']){
+   const {state,market}=team('basketball_game',league,21,4,126);
+   assert.ok(leadSignal(state,market),league+' +21 at 2:06 qualifies');
+   assert.equal(nbaSingleReadLead({...state,updatedAt:now-1000},market,now),true);
+   assert.equal(finalLeadFraction(state,state,leadSignal(state,market),false,market),.10);
+   assert.match(leadWatchReason(state),/score and clock rule reached/);
+   assert.ok(signal('basketball_game',league,25,4,449));
+   assert.equal(signal('basketball_game',league,25,4,450),null);
+   assert.equal(signal('basketball_game',league,20,4,390),null);
+   assert.ok(signal('basketball_game',league,20,4,389));
+   assert.equal(signal('basketball_game',league,19,4,126),null);
+   assert.equal(signal('basketball_game',league,21,4,126,{possession_team_id:'away'}),null);
+ }
+});
+
 test('revised hockey and inning-based baseball winners reject superseded thresholds',()=>{
  assert.ok(signal('hockey_match','NHL',4,3,119));
  assert.equal(signal('hockey_match','NHL',3,3,119),null);
@@ -65,13 +81,16 @@ test('revised hockey and inning-based baseball winners reject superseded thresho
  }
 });
 
-test('soccer winner allows +3 throughout the second half and +2 strictly under 7:30',()=>{
+test('soccer winner allows +3 from 50 minutes elapsed and +2 strictly under 7:30',()=>{
  const soccer=(margin,minute,remaining)=>team('soccer_match','Soccer',margin,2,0,{half:'2nd',time:`${minute}'`,match_remaining_seconds:remaining,clock:''});
  let {state,market}=soccer(3,47,2580);
- assert.ok(leadSignal(state,market));
+ assert.equal(leadSignal(state,market),null);
+ for(const minute of [45,46,49,49.99])assert.equal(leadSignal(soccer(3,minute,NaN).state,market),null);
  assert.equal(earlyLeadSignal(state,market),null);
  assert.equal(leadSignal(soccer(2,47,2580).state,market),null);
  assert.ok(leadSignal(soccer(3,50,2400).state,market));
+ assert.equal(soccerSingleReadLead(soccer(3,46,2640).state,market,now),false);
+ assert.equal(soccerSingleReadLead(soccer(3,50,2400).state,market,now),true);
  assert.ok(leadSignal(soccer(3,77,NaN).state,market));
  assert.ok(leadSignal(soccer(3,80,599).state,market));
  assert.equal(leadSignal(soccer(2,77,NaN).state,market),null);
@@ -94,6 +113,7 @@ test('soccer winner allows +3 throughout the second half and +2 strictly under 7
  assert.equal(confirmedSoccerWinnerClock(soccer(2,84,NaN).state,soccer(2,84,NaN).state),true);
  assert.equal(confirmedSoccerWinnerClock(soccer(3,47,2580).state,soccer(3,47,2579).state),true);
  assert.match(leadWatchReason(soccer(3,47,2580).state),/3-goal lead/);
+ assert.match(leadWatchReason(soccer(3,47,2580).state),/entry starts at 50/);
  assert.match(leadWatchReason(soccer(3,77,NaN).state),/late winner rule reached/);
  assert.match(leadWatchReason(soccer(2,75,900).state),/2-goal lead/);
  assert.match(leadWatchReason(soccer(4,84,NaN).state),/late winner rule reached/);

@@ -8,7 +8,7 @@ import pg from 'pg';
 import { page } from './ui.mjs';
 import { historyPage } from './history_ui.mjs';
 import { completedTrade, manualSaleFill, reconcileManualSaleFills, settlementLookupCandidates } from './history.mjs';
-import { gameState, overSignal, cushionedOverSignal, playerOverSpec, confirmedOver, kalshiOnlyOver, singleReadCushionedOver, kalshiOnlyLead, fallbackOverFraction, fallbackScoringUnits, confirmedExternalLead, leadSignal, nbaSingleReadLead, soccerSingleReadLead, confirmedSoccerWinnerClock, confirmedDrawClock, soccerWinnerWindowOpen, externallyVerifiedEarlySoccerLead, leadWatchReason, additionalLeadSignal, cricketLeadSignal, drawSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback, PLAYER_PROP_WINDOW_MS } from './strategy.mjs';
+import { gameState, overSignal, cushionedOverSignal, playerOverSpec, confirmedOver, kalshiOnlyOver, singleReadCushionedOver, kalshiOnlyLead, fallbackOverFraction, fallbackScoringUnits, confirmedExternalLead, leadSignal, proBasketballLeadRules, nbaSingleReadLead, soccerSingleReadLead, confirmedSoccerWinnerClock, confirmedDrawClock, soccerWinnerWindowOpen, externallyVerifiedEarlySoccerLead, leadWatchReason, additionalLeadSignal, cricketLeadSignal, drawSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback, PLAYER_PROP_WINDOW_MS } from './strategy.mjs';
 import { reviewMiss } from './ai.mjs';
 import { kalshiSignature } from './auth.mjs';
 import { marketShard, shardCash, transferPlan, comboShardBudget, awaitShardCash } from './funding.mjs';
@@ -219,7 +219,7 @@ async function auditSingleReadNbaLead(game,market,milestone){
   if(!nbaSingleReadLead(game,market))return false;
   await auditTable();const id=randomUUID();
   await pool.query('INSERT INTO verification_records(id,market_ticker,passed,evidence) VALUES($1,$2,true,$3)',
-    [id,market.ticker,JSON.stringify({mode:'kalshi_only_nba_single_read',game,milestoneId:milestone.id,
+    [id,market.ticker,JSON.stringify({mode:'kalshi_only_basketball_single_read',game,milestoneId:milestone.id,
       removedScoringUnits:4,allocation:finalLeadFraction(game,game,leadSignal(game,market),false,market)})]);
   game.verificationId=id;
   return true;
@@ -595,7 +595,7 @@ function signalExecution(c,filled,account,balance,bankroll){
     return 'Below minimum net profit after fees';
   }
   const local=shardCash(account,marketShard(c.event,c.market));
-  const singleRead=c.signal.strategy==='lead'&&c.state.sport==='NBA'&&
+  const singleRead=c.signal.strategy==='lead'&&proBasketballLeadRules(c.state)&&
     (c.state.remainingSeconds<450&&Math.abs(c.state.home-c.state.away)>=25||
       c.state.remainingSeconds<390&&Math.abs(c.state.home-c.state.away)>=20)||
     c.signal.strategy==='over'&&Boolean(cushionedOverSignal(c.state,c.market));
@@ -1595,7 +1595,7 @@ async function watchLeadWindows(until){
               if(!confirmed)continue;
               if(independent===true)second.verificationId=first.verificationId;
               const verified={...signal,fraction:directSoccer?Math.min(.10,signal.fraction):finalLeadFraction(first,second,signal,independent===true,quote),
-                reason:signal.reason+(directNba?'; Kalshi-only NBA single read; external and second score waived':
+                reason:signal.reason+(directNba?'; Kalshi-only basketball single read; external and second score waived':
                   directSoccer?'; Kalshi soccer live score and executable seller checked':
                   independent===true?'':`; Kalshi-only reads, one ${fallbackScoringUnits(second)}-unit score removed`)};
               decision.signal=verified;decision.stage='cash_and_score_age';
@@ -2158,7 +2158,7 @@ async function scan(cachedMilestones,discoveryCount){
         if(verifiedFraction===null)continue;
         c.signal={...(directOverSignal||verifiedSignal),fraction:verifiedFraction,
           reason:(directOverSignal?.reason||verifiedSignal.reason)+(singleReadOver?'; Kalshi-only cushion single read; external and second score waived':
-            directNba?'; Kalshi-only NBA single read; external and second score waived':
+            directNba?'; Kalshi-only basketball single read; external and second score waived':
             directSoccer?'; Kalshi soccer live score and executable seller checked':
             kalshiOnly?`; Kalshi-only reads, one ${fallbackScoringUnits(freshState)}-unit score removed`:'')};
         c.market=quote;

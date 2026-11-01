@@ -7,7 +7,7 @@ import {gameState,earlyLeadSignal,kalshiOnlyLead,nbaSingleReadLead} from '../src
 const lead={strategy:'lead',fraction:.15};
 const game=(type,possessionSide='home')=>({type,sport:'Other',home:30,away:10,homeUnits:30,awayUnits:10,possessionSide});
 test('winner allocations are uniform after independent verification',()=>{
-  for(const type of ['basketball_game','hockey_match','football_game','baseball_game','rugby_match','handball_match','lacrosse_game','table_tennis_match']){
+  for(const type of ['hockey_match','football_game','baseball_game','rugby_match','handball_match','lacrosse_game','table_tennis_match']){
     const g=game(type);
     assert.equal(finalLeadFraction(g,g,lead,true),.20,type);
     assert.equal(finalLeadFraction(g,g,lead,false),.10,type+' fallback cap');
@@ -49,7 +49,7 @@ test('CFB and soccer follow the same verification-based allocation',()=>{
   assert.equal(finalLeadFraction(soccer,soccer,{...lead,fraction:.40},false),.10);
   assert.equal(finalLeadFraction(cfb,cfb,{strategy:'over',fraction:.30},true),.30);
   const tied={...game('basketball_game'),home:10,away:10,homeUnits:10,awayUnits:10};
-  assert.equal(finalLeadFraction(tied,tied,{...lead,fraction:.05},true),.20,'draw has no leader');
+  assert.equal(finalLeadFraction(tied,tied,{...lead,fraction:.05},true),.10,'ordinary basketball allocation stays capped');
 });
 test('both live entry paths use the final verified allocation and funding rechecks recalculate it',()=>{
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
@@ -82,7 +82,7 @@ test('strong Kalshi-only leads use 20% only after two stable reads and a score c
   check({...team,type:'soccer_match'},market,.20);
   check({...team,type:'soccer_match',matchRemainingSeconds:NaN},market,.20);
   check({...team,type:'soccer_match',soccerMinute:83,matchRemainingSeconds:449,home:3,homeUnits:3},market,.10,false);
-  check({...team,type:'soccer_match',soccerMinute:47,matchRemainingSeconds:2580,home:5,homeUnits:5},market,.10);
+  check({...team,type:'soccer_match',soccerMinute:50,matchRemainingSeconds:2400,home:5,homeUnits:5},market,.10);
   check({...team,type:'soccer_match',home:2,homeUnits:2},market,.10,false);
   check({...team,type:'hockey_match',sport:'NHL',period:3,home:6,homeUnits:6,away:1,awayUnits:1,remainingSeconds:80},market,.20);
   check({...team,type:'hockey_match',sport:'NHL',period:3,home:5,homeUnits:5,away:1,awayUnits:1,remainingSeconds:80},market,.10,false);
