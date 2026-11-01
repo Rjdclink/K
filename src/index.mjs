@@ -239,7 +239,7 @@ function ensureOverWindows(){return overWindowsReady??=pool.query(`CREATE TABLE 
 async function overProgress(game,market,timing){
   const seconds=Math.ceil(timing.remainingMs/1000);
   const message=timing.stage==='first_wait'?`Waiting for first external check (${seconds}s; minimum 20s)`:
-    timing.stage==='final_wait'?`First external check passed; waiting for paired checks (${seconds}s; 3m or cushion)`:
+    timing.stage==='final_wait'?`First external check passed; waiting for paired checks (${seconds}s remaining)`:
     'Awaiting score verification';
   await reportVerifiedGate(game,market.ticker,message);
 }

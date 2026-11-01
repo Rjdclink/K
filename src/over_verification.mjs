@@ -1,4 +1,4 @@
-import { overSignal, overCushionUnits, periodValue } from './strategy.mjs';
+import { overSignal, overCushionUnits, playerOverSpec, variableValuePlayerMetric, periodValue } from './strategy.mjs';
 export function sameSportsContract(a,b){
   return Boolean(a&&b&&['ticker','event_ticker','rules_primary','floor_strike','cap_strike','close_time']
     .every(key=>a[key]===b[key])&&JSON.stringify(a.custom_strike||{})===JSON.stringify(b.custom_strike||{}));
@@ -6,6 +6,7 @@ export function sameSportsContract(a,b){
 
 export const OVER_EXTERNAL_DELAY_MS=20000;
 export const OVER_CONFIRM_DELAY_MS=180000;
+export const OVER_VARIABLE_CONFIRM_DELAY_MS=240000;
 export const OVER_FRESH_MS=10000;
 export const OVER_MAX_GAP_MS=90000;
 const sorted=value=>Array.isArray(value)?value.map(sorted):value&&typeof value==='object'?
@@ -23,8 +24,8 @@ export function freshOverObservation(game,now=Date.now()){
 export function freshOverState(game,market,now=Date.now()){
   return freshOverObservation(game,now)&&Boolean(overSignal(game,market));
 }
-// Share the full-play cushion with candidate ranking and allocation. Yardage
-// has no fixed safe play bound.
+// Share the full-play cushion with candidate ranking and allocation. Variable
+// player stats have no fixed safe play bound.
 export function overCushion(game,market){
   const signal=overSignal(game,market),units=overCushionUnits(game,market);
   return signal&&Number.isInteger(units)&&signal.scored-units>signal.strike?units:null;
@@ -37,9 +38,9 @@ export function overTiming(window,game,market,now=Date.now()){
   if(external===null)return {stage:'first_external',remainingMs:0};
   if(!Number.isFinite(external)||external<initial+OVER_EXTERNAL_DELAY_MS||external>now||!window.first_external_id)return {stage:'invalid'};
   const cushion=overCushion(game,market);
-  if(elapsed<OVER_CONFIRM_DELAY_MS&&cushion===null)
-    return {stage:'final_wait',remainingMs:OVER_CONFIRM_DELAY_MS-elapsed};
-  return {stage:'paired',route:elapsed>=OVER_CONFIRM_DELAY_MS?'elapsed':'cushion',cushionUnits:cushion};
+  const delay=variableValuePlayerMetric(playerOverSpec(game,market)?.metric)?OVER_VARIABLE_CONFIRM_DELAY_MS:OVER_CONFIRM_DELAY_MS;
+  if(elapsed<delay&&cushion===null)return {stage:'final_wait',remainingMs:delay-elapsed,minimumMs:delay};
+  return {stage:'paired',route:elapsed>=delay?'elapsed':'cushion',cushionUnits:cushion};
 }
 export function sameOverReading(first,second,market){
   const a=overSignal(first,market),b=overSignal(second,market);

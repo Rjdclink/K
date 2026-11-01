@@ -317,10 +317,10 @@ export function playerPropEarlyWindow(game){
   return Boolean(timing&&Number.isInteger(period)&&period>=1&&period<=timing[0]&&
     Number.isFinite(seconds)&&seconds>=0&&seconds<=timing[1]&&(timing[0]-period)*timing[1]+seconds>=600);
 }
+export const variableValuePlayerMetric=metric=>['PASSYDS','RUSHYDS','RECYDS','PTS','PRA','RBI'].includes(metric);
 export function overCushionUnits(game,market){
   const player=playerOverSpec(game,market);
-  return player?['PASSYDS','RUSHYDS','RECYDS'].includes(player.metric)?null:
-    ['PTS','PRA'].includes(player.metric)?fallbackScoringUnits(game):player.metric==='RBI'?4:1:fallbackScoringUnits(game);
+  return player?variableValuePlayerMetric(player.metric)?null:1:fallbackScoringUnits(game);
 }
 export function overSignal(game, market) {
   const player=playerOverSpec(game,market);

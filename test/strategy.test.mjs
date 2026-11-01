@@ -77,9 +77,9 @@ test('a whole-game over gets 40% only when removing the independently recorded l
   assert.equal(overSignal(score(1,0),soccerMarket)?.fraction,.15);
   assert.equal(overSignal({...score(2,0),lastScoringPlay:1},soccerMarket)?.fraction,.40);
   const player={...market,event_ticker:'KXNBAPTS-26OCT30BOSNYK',title:'Player: 20+ points',yes_sub_title:'Player: 20+',floor_strike:19.5,custom_strike:{basketball_player:'p'}};
-  assert.equal(overSignal(gameState({...milestone,details:{...milestone.details,home_team_id:'ny',away_team_id:'bos'}},{details:{...live(81,88).details,clock:'10:00',player_stats:{p:{points:30}}}}),player)?.fraction,.40);
-  assert.equal(overSignal({...gameState({...milestone,details:{...milestone.details,home_team_id:'ny',away_team_id:'bos'}},{details:{...live(81,88).details,clock:'10:00',player_stats:{p:{points:30}}}}),lastScoringPlay:3},player)?.fraction,.40,
-    'the extra player statistic, not the whole-game scoring play, sets this cap');
+  assert.equal(overSignal(gameState({...milestone,details:{...milestone.details,home_team_id:'ny',away_team_id:'bos'}},{details:{...live(81,88).details,clock:'10:00',player_stats:{p:{points:30}}}}),player)?.fraction,.15);
+  assert.equal(overSignal({...gameState({...milestone,details:{...milestone.details,home_team_id:'ny',away_team_id:'bos'}},{details:{...live(81,88).details,clock:'10:00',player_stats:{p:{points:30}}}}),lastScoringPlay:3},player)?.fraction,.15,
+    'a whole-game scoring play does not change the variable-value player cap');
 });
 test('one fresh Kalshi score admits only a crossed over with a conservative cushion',()=>{
   const now=Date.now();
@@ -103,8 +103,8 @@ test('one fresh Kalshi score admits only a crossed over with a conservative cush
     yes_sub_title:'Pat Player: 20+',floor_strike:19.5};
   const pointProp=value=>({...prop(3),playerStats:{pat:{points:value}}});
   assert.equal(singleReadCushionedOver(pointProp(23),points,now),null);
-  assert.equal(singleReadCushionedOver(pointProp(24),points,now)?.fraction,.40,
-    'basketball points use a four-point correction');
+  assert.equal(singleReadCushionedOver(pointProp(24),points,now),null,
+    'variable-value basketball points require timed independent verification');
   const yardage={...player,event_ticker:'KXNFLPASSYDS-TEST',title:'Pat Player: 200+ passing yards',
     yes_sub_title:'Pat Player: 200+',floor_strike:199.5,
     custom_strike:{football_player:'pat'}};
