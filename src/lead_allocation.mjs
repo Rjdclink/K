@@ -18,6 +18,12 @@ export function lateCommandingLead(game,market){
   if(/soccer/.test(game.type||''))return game.period===2&&game.soccerMinute>85&&margin>=3;
   return false;
 }
+export function independentlyVerifiedLeadFraction(game,market){
+  if(!lateCommandingLead(game,market))return .20;
+  const margin=Math.abs(game.homeUnits-game.awayUnits),type=game.type||'';
+  const top=/basketball/.test(type)?game.sport==='NBA'?30:25:/hockey/.test(type)?7:/football/.test(type)?28:/soccer/.test(type)?4:Infinity;
+  return margin>=top?.30:.25;
+}
 
 export function directLeadFraction(game,signal,market){
   return signal?.strategy==='lead'&&lateCommandingLead(game,market)?.20:
@@ -40,6 +46,7 @@ export function leaderHasControl(game){
 export function finalLeadFraction(first,second,signal,externallyVerified,market){
   if(signal?.strategy!=='lead')return signal?.fraction;
   if(/^Restricted 5% draw\b/.test(signal.reason||''))return .05;
+  if(externallyVerified&&lateCommandingLead(second,market))return independentlyVerifiedLeadFraction(second,market);
   if(proBasketballLeadRules(second)){
     const margin=Math.abs(second.homeUnits-second.awayUnits),seconds=second.remainingSeconds;
     if(!Number.isFinite(margin)||!Number.isFinite(seconds))return KALSHI_ONLY_FRACTION;

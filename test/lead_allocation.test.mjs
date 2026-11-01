@@ -20,6 +20,16 @@ test('winner allocations are uniform after independent verification',()=>{
   const golf={type:'golf_tournament',golf:{}};
   assert.equal(finalLeadFraction(golf,golf,{...lead,fraction:.10},true),.20,'golf has no possession bonus');
 });
+test('an independent scoreboard raises only late commanding winners with stronger margins',()=>{
+ const base={verifiedLive:true,scoreKnown:true,scoreConsistent:true,periodConsistent:true,awayUnits:0};
+ const tiers=[['basketball_game','NBA',4,90,0,20,30],['basketball_game','NCAAB',2,90,0,16,25],
+  ['hockey_match','NHL',3,90,0,5,7],['football_game','NFL',4,60,0,21,28],['soccer_match','Soccer',2,240,86,3,4]];
+ for(const [type,sport,period,remainingSeconds,soccerMinute,low,high] of tiers){
+  const g={...base,type,sport,period,remainingSeconds,soccerMinute,homeUnits:low};
+  assert.equal(finalLeadFraction(g,g,lead,true),.25);assert.equal(finalLeadFraction({...g,homeUnits:high},{...g,homeUnits:high},lead,true),.30);
+  assert.equal(directLeadFraction({...g,homeUnits:high},lead),.20);
+ }
+});
 test('rugby competitor IDs can identify the leader in possession without guessing',()=>{
   const milestone={id:'rugby',type:'rugby_match',title:'Home vs Away',details:{league:'United Rugby Championship',
     home_competitor_id:'home-id',away_competitor_id:'away-id'}};
@@ -57,6 +67,11 @@ test('both live entry paths use the final verified allocation and funding rechec
   assert.match(source,/directKalshiLead\?directLeadFraction\(second,signal,quote\):finalLeadFraction\(first,second,signal,false,quote\)/);
   assert.match(source,/finalLeadFraction\(c.state,freshState,verifiedSignal,!kalshiOnly,quote\)/);
   assert.match(source,/directKalshiLead\?directLeadFraction\(checked,still,executable\):finalLeadFraction\(state,checked,still,!kalshiOnly,executable\)/);
+  assert.match(source,/verifyCommandingLead\(second,milestone,quote,scoreboardCache\)/);
+  assert.match(source,/verifyCommandingLead\(freshState,c.milestone,quote,scoreboardCache\)/);
+  assert.match(source,/verifyCommandingLead\(checked,c.milestone,executable,scoreboardCache\)/);
+  assert.match(source,/if\(independentLead===false\)continue/);
+  assert.equal((source.match(/beforeDispatch:\(\)=>\{if\(signal.strategy==='over'\)assertTimedOverEntry\(game,market\);if\(signal.strategy==='lead'\)assertFreshLead\(game\)\}/g)||[]).length,2);
 });
 test('strong Kalshi-only leads use 20% only after two stable reads and a score cushion',()=>{
   const now=Date.now(),observed=(age)=>({observedAt:now-age,updatedAt:now-age-1000,

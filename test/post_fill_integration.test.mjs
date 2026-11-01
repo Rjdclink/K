@@ -7,7 +7,7 @@ import {filledComboWindow,availableComboFills,heldComboLeg,comboAllocation,plann
 const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
 const functionSource=(name,next)=>source.slice(source.indexOf('async function '+name+'('),source.indexOf('async function '+next+'('));
 const order={id:'fill-id',market_ticker:'NEW',strategy:'lead',count:10,limit_price:.95,created_at:new Date(Date.now()-60000),updated_at:new Date(Date.now()-30000),retries:0};
-function harness({filled=2,recovery=false,retry=false}={}){
+function harness({filled=2,recovery=false,retry=false,age=0}={}){
   const events=[];
   const context=vm.createContext({console,Date,URLSearchParams,JSON,Math,Number,
     pool:{query:async(sql,values)=>{
@@ -20,7 +20,7 @@ function harness({filled=2,recovery=false,retry=false}={}){
     confirmedSingleFill:async(id,ticker)=>events.push(['notify',id,ticker]),reviewMiss:async()=>({retry:true,reason:'verified recovery'})});
   const name=recovery?'recoverPending':'submit';
   vm.runInContext(functionSource(name,recovery?'reconcileUpgrade':'recoverPending'),context);
-  return {events,run:()=>context[name]({strategy:'lead',reason:'Alpha leads',fraction:.1},{id:'game',type:'football_game',verificationId:'verified'},
+  return {events,run:()=>context[name]({strategy:'lead',reason:'Alpha leads',fraction:.1},{id:'game',type:'football_game',verificationId:'verified',observedAt:Date.now()-age},
     {event_ticker:'E'},{ticker:'NEW',yes_ask_dollars:'.95'},10000,10000)};
 }
 test('confirmed immediate fills notify after ledger persistence; zero fills never notify',async()=>{
@@ -37,6 +37,9 @@ test('both recovered existing fills and confirmed retry fills notify the combo c
     const zero=harness({filled:0,recovery:true,retry});assert.equal(await zero.run(),false);
     assert.equal(zero.events.some(e=>e[0]==='notify'),false);
   }
+});
+test('a lead older than thirty seconds cannot submit or retry its order',async()=>{
+ for(const recovery of [false,true]){const h=harness({recovery,retry:recovery,age:31000});assert.equal(await h.run(),false);assert.equal(h.events.length,0)}
 });
 test('the immediate check reloads held fills, bypasses the retry timer, and uses both new and old positions',async()=>{
   const rows=['OLD','NEW'].map((ticker,i)=>({...order,id:'id-'+i,market_ticker:ticker,event_ticker:'E'+i,game_id:'G'+i,
