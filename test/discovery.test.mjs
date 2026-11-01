@@ -59,7 +59,7 @@ test('market pass prioritizes entry windows across sports and rotates early game
     game('cfb-early','football_game',2,120,'CFB'),game('nba-early','basketball_game',2,120,'NBA'),
     game('nhl-early','hockey_game',1,120,'NHL'),game('soccer-early','soccer_game',1,120,'Soccer'),
     game('mlb-early','baseball_game',5,120,'MLB'),
-    game('cfb-late','football_game',4,240,'CFB'),game('nba-close','basketball_game',3,90,'NBA'),
+    {...game('cfb-late','football_game',4,240,'CFB'),state:{type:'football_game',sport:'CFB',period:4,remainingSeconds:240,homeUnits:32,awayUnits:20}},game('nba-close','basketball_game',3,90,'NBA'),
     game('nhl-close','hockey_game',2,90,'NHL'),
     {...game('soccer-late','soccer_game',2,120,'Soccer'),state:{type:'soccer_game',period:2,soccerMinute:85}},
     {...game('mlb-late','baseball_game',8,120,'MLB'),state:{type:'baseball_game',period:8,inningHalf:2,outs:2}},
@@ -80,7 +80,10 @@ test('market pass prioritizes entry windows across sports and rotates early game
 
 test('fast market checks start near each sport entry rather than at the start of a final period',()=>{
   assert.equal(nearEntryPhase({type:'football_game',sport:'CFB',period:4,remainingSeconds:750}),false);
-  assert.equal(nearEntryPhase({type:'football_game',sport:'CFB',period:4,remainingSeconds:389}),true);
+  assert.equal(nearEntryPhase({type:'football_game',sport:'CFB',period:4,remainingSeconds:389,homeUnits:32,awayUnits:20}),true);
+  assert.equal(nearEntryPhase({type:'football_game',sport:'CFB',period:4,remainingSeconds:451,homeUnits:44,awayUnits:20}),true);
+  assert.equal(nearEntryPhase({type:'football_game',sport:'CFB',period:4,remainingSeconds:421,homeUnits:37,awayUnits:20}),false);
+  assert.equal(nearEntryPhase({type:'football_game',sport:'CFB',period:4,remainingSeconds:301,homeUnits:37,awayUnits:20}),true);
   assert.equal(nearEntryPhase({type:'basketball_game',sport:'NBA',period:4,remainingSeconds:660}),false);
   assert.equal(nearEntryPhase({type:'basketball_game',sport:'NBA',period:4,remainingSeconds:500}),true);
   assert.equal(nearEntryPhase({type:'rugby_match',period:2,remainingSeconds:1900}),false);
