@@ -215,3 +215,10 @@ CREATE TABLE IF NOT EXISTS combo_exclusions (
 CREATE TABLE IF NOT EXISTS sports_discovery_cache (
   id integer PRIMARY KEY,milestones jsonb NOT NULL,discovered_at timestamptz NOT NULL
 );
+CREATE TABLE IF NOT EXISTS player_prop_windows (
+  market_ticker text PRIMARY KEY,
+  game_id text NOT NULL,
+  first_crossed timestamptz NOT NULL DEFAULT now(),
+  last_seen timestamptz NOT NULL DEFAULT now(),
+  last_value integer NOT NULL
+);

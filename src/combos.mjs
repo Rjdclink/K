@@ -6,19 +6,22 @@ export const COMBO_ATTEMPT_MS=45000;
 export const VERIFY_DWELL_MS=10000;
 // Bound RFQs per attempt, not the number of distinct held singles considered.
 export const COMBO_RFQ_PLANS=12;
-export function comboAllocation(){return .10;}
+export function comboAllocation(){return .20;}
 export function comboAllowedCents(fraction,bankrollCents){return Math.floor(fraction*bankrollCents);}
 // Maker RFQs quote close to target cost; leave room for the fee before asking.
 export function comboRfqTargetCents(budgetCents){return Math.max(0,Math.floor(budgetCents*.97));}
 export function comboLegAllocation(legs,verifiedFraction){
-  return Math.min(.10,verifiedFraction);
+  // Crossed overs retain their own 10% combination ceiling. A winner combo
+  // gets 20% only if every leg has an independent verification record.
+  return Math.min(verifiedFraction,legs.length&&legs.every(l=>l.signal?.strategy==='lead'&&
+    l.signal.externallyVerified===true)?.20:.10);
 }
-export function remainingVerifiedComboCents(position,bankroll){
+export function remainingVerifiedComboCents(position,bankroll,fraction=.10){
   const held=Number(position?.position_fp),exposure=Number(position?.market_exposure_dollars),fees=Number(position?.fees_paid_dollars);
   if(!Number.isFinite(held)||held<=0||position?.market_exposure_dollars==null||
     position?.fees_paid_dollars==null||!Number.isFinite(exposure)||exposure<0||
     !Number.isFinite(fees)||fees<0||!Number.isFinite(bankroll)||bankroll<=0)return 0;
-  return Math.max(0,Math.floor(bankroll*.10)-Math.ceil(exposure*100)-Math.ceil(fees*100));
+  return Math.max(0,Math.floor(bankroll*fraction)-Math.ceil(exposure*100)-Math.ceil(fees*100));
 }
 export function availableComboFills(fills,usedLegTickers){
   return fills.filter(r=>!/Restricted 20% cricket final innings/i.test(r.reason||'')&&
@@ -252,7 +255,7 @@ export function heldComboLeg(row,market,snapshot={}){
       Number(snapshot.home)+Number(snapshot.away)<=Number(market.floor_strike)))return null;
   const kalshiOnly=/Kalshi-only/i.test(row.reason||'');
   const freshSnapshot=snapshot.status==='live'&&Date.now()-Date.parse(snapshot.scanned_at||'')<90000;
-  const robustOver=row.strategy==='over'&&Number(row.fraction)===.35&&
+  const robustOver=row.strategy==='over'&&Number(row.fraction)===.40&&
     /still crossed if the latest \d+-unit scoring play is removed/i.test(row.reason||'')&&
     freshSnapshot&&(snapshot.signals||[]).some(s=>s.ticker===row.market_ticker&&
       /still crossed if the latest \d+-unit scoring play is removed/i.test(s.reason||''));

@@ -1,4 +1,4 @@
-import { fallbackLeadFraction, KALSHI_ONLY_FRACTION, reducedAllocation } from './strategy.mjs';
+import { KALSHI_ONLY_FRACTION } from './strategy.mjs';
 
 export function leaderHasControl(game){
   if(game?.darts){
@@ -12,21 +12,9 @@ export function leaderHasControl(game){
     game.possessionSide===(home>away?'home':'away');
 }
 
-// Apply a possession/serve/turn bonus only when both score observations
-// identify control. Unknown control never earns a bonus. Entry rules remain
-// in the sport-specific signal functions; this function cannot create one.
+// A qualifying winner has one verification-based ceiling across sports.
+// Entry rules stay in sport-specific signal functions; this cannot create one.
 export function finalLeadFraction(first,second,signal,externallyVerified,market){
   if(signal?.strategy!=='lead')return signal?.fraction;
-  if(!externallyVerified){
-    const robust=market?fallbackLeadFraction(first,second,market):null;
-    if(robust!==null)return Math.max(reducedAllocation(robust),
-      reducedAllocation(Math.min(.15,robust+(leaderHasControl(first)&&leaderHasControl(second)?.02:0))));
-  }
-  let fraction=signal.fraction;
-  const alreadySized=second.sport==='CFB'||signal.allocationPolicy==='early_football';
-  if(!alreadySized&&leaderHasControl(first)&&leaderHasControl(second)){
-    // Limit the raw possession bonus before the five-point reduction.
-    fraction=Math.min(Math.max(.35,signal.fraction),Math.round(fraction*100+5)/100);
-  }
-  return reducedAllocation(externallyVerified?fraction:Math.min(fraction,KALSHI_ONLY_FRACTION));
+  return externallyVerified?.20:KALSHI_ONLY_FRACTION;
 }

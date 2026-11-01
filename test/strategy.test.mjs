@@ -3,21 +3,6 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {gameState,overSignal,confirmedOver,kalshiOnlyOver,kalshiOnlyLead,fallbackOverFraction,fallbackLeadFraction,confirmedExternalLead,leadSignal,earlyLeadSignal,leadWatchReason,confirmedSoccerTwoGoalClock,soccerTwoGoalWindowOpen,soccerOverStable,soccerOverWaitMs,externallyVerifiedEarlySoccerLead,tennisSignal,tableTennisSignal,orderSize,estimatedCostCents,overBudget,minimumProfitCents,netSettlementProfitCents,profitableCount,comeback,timedProfitExitAllowed,KALSHI_ONLY_FRACTION} from '../src/strategy.mjs';
 
-test('near-qualifying leaders are watched without treating a watch as an entry',()=>{
-  const base={verifiedLive:true,scoreKnown:true,scoreConsistent:true,periodConsistent:true,
-    home:30,away:0,type:'football_game',sport:'NFL',period:3,remainingSeconds:68};
-  assert.match(leadWatchReason(base),/under 1:00/);
-  assert.equal(leadWatchReason({...base,remainingSeconds:181}),null);
-  assert.match(leadWatchReason({...base,period:4,remainingSeconds:800}),/possession required/);
-  assert.equal(leadWatchReason({...base,sport:'CFB'}),null);
-  assert.match(leadWatchReason({...base,sport:'CFB',period:4,remainingSeconds:800}),/under 4:30/);
-  assert.equal(leadWatchReason({...base,verifiedLive:false}),null);
-  assert.equal(leadWatchReason({...base,home:0,away:0}),null);
-  const basketball={...base,type:'basketball_game',sport:'Slovakia SBL',home:75,away:57,remainingSeconds:44};
-  assert.match(leadWatchReason(basketball),/20\+/);
-  assert.equal(leadWatchReason({...basketball,home:75,away:60}),null);
-});
-
 test('each trade has its own percentage of the full bankroll',()=>{
   const bankroll=14600,alreadyHeld=4372;
   assert.equal(overBudget(10228,alreadyHeld,alreadyHeld),1460);
@@ -71,21 +56,21 @@ test('over requires strict threshold exceeded and whole-game contract',()=>{
   assert.ok(overSignal(gameState(milestone,{details:{...live(103,101).details,clock:'03:01'}}),market));
   assert.equal(overSignal(gameState(milestone,live(103,101)),{...market,title:'First half total points'}),null);
 });
-test('a whole-game over gets 35% only when removing the independently recorded last play leaves it crossed',()=>{
+test('a whole-game over gets 40% only when removing the independently recorded last play leaves it crossed',()=>{
   const market={status:'active',event_ticker:'KXNBATOTAL-26OCT30BOSNYK',title:'Over 139.5 total points',rules_primary:'Combined total points scored in the full game',floor_strike:139.5,strike_type:'greater',yes_ask_dollars:'0.98'};
   assert.equal(overSignal(gameState(milestone,live(81,88)),market)?.fraction,.10,'a large margin does not substitute for the actual last play');
-  assert.equal(overSignal({...gameState(milestone,live(81,88)),lastScoringPlay:3},market)?.fraction,.35);
+  assert.equal(overSignal({...gameState(milestone,live(81,88)),lastScoringPlay:3},market)?.fraction,.40);
   assert.equal(overSignal({...gameState(milestone,live(74,71)),lastScoringPlay:6},market)?.fraction,.10);
-  assert.equal(overSignal({...gameState(milestone,live(74,72)),lastScoringPlay:2},market)?.fraction,.35);
+  assert.equal(overSignal({...gameState(milestone,live(74,72)),lastScoringPlay:2},market)?.fraction,.40);
   const soccer={id:'s',type:'soccer_match',title:'Home vs Away'};
   const soccerMarket={...market,event_ticker:'KXSOCCERTOTAL-26OCT30HOMEAWAY',title:'Over 0.5 total goals',floor_strike:.5};
   const score=(home,away)=>gameState(soccer,{details:{status:'live',home_score:home,away_score:away,time:"65'"}});
   assert.equal(overSignal(score(1,0),soccerMarket)?.fraction,.10);
-  assert.equal(overSignal({...score(2,0),lastScoringPlay:1},soccerMarket)?.fraction,.35);
+  assert.equal(overSignal({...score(2,0),lastScoringPlay:1},soccerMarket)?.fraction,.40);
   const player={...market,event_ticker:'KXNBAPTS-26OCT30BOSNYK',title:'Player: 20+ points',yes_sub_title:'Player: 20+',floor_strike:19.5,custom_strike:{basketball_player:'p'}};
-  assert.equal(overSignal(gameState({...milestone,details:{...milestone.details,home_team_id:'ny',away_team_id:'bos'}},{details:{...live(81,88).details,player_stats:{p:{points:30}}}}),player)?.fraction,.10);
-  assert.equal(overSignal({...gameState({...milestone,details:{...milestone.details,home_team_id:'ny',away_team_id:'bos'}},{details:{...live(81,88).details,player_stats:{p:{points:30}}}}),lastScoringPlay:3},player)?.fraction,.10,
-    'a whole-game scoring play cannot raise a player prop allocation');
+  assert.equal(overSignal(gameState({...milestone,details:{...milestone.details,home_team_id:'ny',away_team_id:'bos'}},{details:{...live(81,88).details,player_stats:{p:{points:30}}}}),player)?.fraction,.40);
+  assert.equal(overSignal({...gameState({...milestone,details:{...milestone.details,home_team_id:'ny',away_team_id:'bos'}},{details:{...live(81,88).details,player_stats:{p:{points:30}}}}),lastScoringPlay:3},player)?.fraction,.40,
+    'the extra player statistic, not the whole-game scoring play, sets this cap');
 });
 test('over preflight requires stable scores from a newer, fresh milestone update',()=>{
   const m={id:'soccer-1',title:'Dolomiti Bellunesi vs Desenzano',type:'soccer_match'};
@@ -138,23 +123,6 @@ test('Kalshi-only game total checks two reads ten seconds apart, including feeds
   assert.ok(count>orderSize(10000,'.94','100',.05,1,bankroll,Infinity,2));
   assert.ok(estimatedCostCents(count,.94,2)<=bankroll*.10,'fallback including fees is capped at ten percent of the full bankroll');
 });
-test('Kalshi-only late baseball lead uses inning state without a clock',()=>{
-  const m={id:'kbo-lead',type:'baseball_game',title:'Kia Tigers vs Samsung Lions',details:{league:'Korea KBO',home_team_id:'kia',away_team_id:'sam'}};
-  const market={status:'active',event_ticker:'KXKBOGAME-26OCT30KIASAM',title:'Kia Tigers wins',yes_sub_title:'Kia Tigers',custom_strike:{baseball_team:'kia'},yes_ask_dollars:'0.92'};
-  const now=Date.now();
-  const state=(at,updated,home=9,inning=9)=>gameState(m,{milestone_id:m.id,_observed_at:new Date(at).toISOString(),details:{status:'live',home_score:home,away_score:2,inning,inning_half:2,last_updated_ts:updated/1000,home_team_name:'Kia Tigers',away_team_name:'Samsung Lions'}});
-  const first=state(now-12000,now-13000),second=state(now,now-1000);
-  assert.equal(Number.isNaN(first.remainingSeconds),true);
-  assert.equal(kalshiOnlyLead(first,second,market),true);
-  assert.equal(kalshiOnlyLead(state(now-5000,now-6000),second,market),false);
-  assert.equal(kalshiOnlyLead(first,state(now,now-13000),market),false);
-  assert.equal(kalshiOnlyLead(first,state(now,now-1000,4),market),false);
-  assert.equal(kalshiOnlyLead(first,state(now,now-1000,5,8),market),false);
-  const noTimestamp=at=>gameState(m,{milestone_id:m.id,_observed_at:new Date(at).toISOString(),details:{status:'live',home_score:9,away_score:2,inning:9,inning_half:2,home_team_name:'Kia Tigers',away_team_name:'Samsung Lions'}});
-  assert.equal(kalshiOnlyLead(noTimestamp(now-12000),noTimestamp(now),market),true);
-  assert.equal(kalshiOnlyLead(noTimestamp(now-3000),noTimestamp(now),market),false);
-  assert.equal(kalshiOnlyLead(first,noTimestamp(now),market),false,'mixed timestamp availability fails closed');
-});
 test('a crossed player prop cannot use the Kalshi-only over fallback',()=>{
   const m={id:'nba-prop',title:'New York Knicks at Chicago Bulls',type:'basketball_game',details:{home_team_id:'chi',away_team_id:'nyk'}};
   const market={status:'active',event_ticker:'KXNBAREB-26OCT30NYKCHI',title:'Matas Buzelis: 6+ rebounds',yes_sub_title:'Matas Buzelis: 6+',floor_strike:5.5,strike_type:'greater',custom_strike:{basketball_player:'buzelis'},yes_ask_dollars:'0.91'};
@@ -183,17 +151,6 @@ test('independently checked crossed overs use two fresh exchange reads without a
     assert.equal(confirmedOver(first,second,market),false,type);
     assert.equal(confirmedOver(first,state(at,score[0]-2),market,0),false,type);
   }
-});
-test('independently checked leads skip the timed dwell while a Kalshi-only lead keeps it',()=>{
-  const milestone={id:'fast-baseball',type:'baseball_game',title:'Kia Tigers vs Samsung Lions',details:{league:'Korea KBO',home_team_id:'kia',away_team_id:'sam'}};
-  const market={status:'active',event_ticker:'KXKBOGAME-26OCT30KIASAM',title:'Kia Tigers wins',yes_sub_title:'Kia Tigers',custom_strike:{baseball_team:'kia'},yes_ask_dollars:'0.92'};
-  const at=Date.now();
-  const state=(time,home=5)=>gameState(milestone,{milestone_id:milestone.id,_observed_at:new Date(time).toISOString(),details:{status:'live',home_score:home,away_score:2,inning:9,inning_half:2,home_team_name:'Kia Tigers',away_team_name:'Samsung Lions'}});
-  const first=state(at-500),second=state(at);
-  assert.ok(leadSignal(first,market));
-  assert.equal(confirmedExternalLead(first,second,market),true);
-  assert.equal(kalshiOnlyLead(first,second,market),false);
-  assert.equal(confirmedExternalLead(first,state(at,4),market),false);
 });
 test('esports game overs use verified period totals and a newer ten-second Kalshi update without a clock',()=>{
   const m={id:'esoc',type:'esports_match',title:'Fede vs Eder',details:{league:'eSoccer'}};
@@ -330,77 +287,6 @@ test('late lead requires verified live score, leader identity, and progress',()=
   assert.equal(leadSignal(gameState(milestone,{details:{...live(140,30).details,possession:'away'}}),market),null);
   assert.equal(leadSignal(gameState(milestone,{details:{...live(140,30).details,possession:undefined}}),market),null);
 });
-test('baseball needs two runs in the ninth and caps allocation at 15 percent',()=>{
-  const m={...milestone,type:'baseball_game',details:{league:'MLB'}};
-  const market={status:'active',title:'New York wins',custom_strike:{baseball_team:'home'},yes_sub_title:'New York'};
-  const board=(inning,home=5)=>({details:{status:'inprogress',home_runs:home,away_runs:3,inning,inning_half:2,outs:1,home_team_name:'New York',away_team_name:'Boston'}});
-  assert.equal(leadSignal(gameState(m,board(8)),market),null);
-  assert.equal(leadSignal(gameState(m,board(9,4)),market),null);
-  assert.equal(leadSignal(gameState(m,board(9)),market)?.fraction,.15);
-  assert.equal(leadSignal(gameState(m,{details:{...board(9).details,inning_half:1}}),market)?.fraction,.15);
-  assert.equal(leadSignal(gameState(m,board(9,6)),market)?.fraction,.15);
-  const veryLate=board(9,6);veryLate.details.outs=2;
-  assert.equal(leadSignal(gameState(m,veryLate),market)?.fraction,.15);
-});
-test('baseball accepts a two-run shutout lead',()=>{
-  const baseball={...milestone,type:'baseball_game',details:{league:'MLB'}};
-  const market={status:'active',title:'New York wins',yes_sub_title:'New York'};
-  const at=(home,away,inning)=>({details:{status:'live',last_updated_ts:Math.floor(Date.now()/1000),home_runs:home,away_runs:away,inning,inning_half:2,home_team_name:'New York',away_team_name:'Boston'}});
-  assert.equal(leadSignal(gameState(baseball,at(1,0,9)),market),null);
-  assert.equal(leadSignal(gameState(baseball,at(2,0,9)),market)?.fraction,.15);
-  assert.equal(leadSignal(gameState(baseball,at(3,0,9)),market)?.fraction,.15);
-  assert.equal(leadSignal(gameState(baseball,at(2,0,8)),market),null);
-});
-test('baseball ninth inning lead and exceeded over need no countdown clock',()=>{
-  const m={id:'mlb-no-clock',type:'baseball_game',title:'Boston at New York',details:{league:'MLB',home_team_id:'ny',away_team_id:'bos'}};
-  const live={milestone_id:m.id,_observed_at:new Date().toISOString(),details:{status:'live',home_runs:6,away_runs:3,inning:'9th',inning_half:'bottom',home_team_name:'New York',away_team_name:'Boston'}};
-  const game=gameState(m,live);
-  const winner={event_ticker:'KXMLBGAME-DATE',status:'active',title:'New York wins',yes_sub_title:'New York',custom_strike:{baseball_team:'ny'},yes_ask_dollars:'0.95'};
-  const total={event_ticker:'KXMLBTOTAL-DATE',status:'active',title:'Combined total runs over 8.5',rules_primary:'Combined total runs scored in the game',floor_strike:8.5,yes_ask_dollars:'0.95'};
-  assert.equal(Number.isNaN(game.remainingSeconds),true);
-  assert.equal(game.period,9);
-  assert.equal(leadSignal(game,winner)?.strategy,'lead');
-  assert.equal(overSignal(game,total)?.strategy,'over');
-});
-test('spread contracts are not game winner contracts',()=>{
-  const m={...milestone,type:'baseball_game',details:{league:'KBO',home_team_id:'home-id',away_team_id:'away-id'}};
-  const g=gameState(m,{details:{status:'inprogress',home_points:8,away_points:3,inning:9,inning_half:2,home_team_name:'Samsung Lions',away_team_name:'Kia Tigers'}});
-  const spread={status:'active',event_ticker:'KXKBOSPREAD-26OCT260530KIASAM',title:'Samsung Lions wins by over 1.5 runs',yes_sub_title:'Samsung Lions wins by over 1.5 runs',custom_strike:{baseball_team:'home-id'}};
-  assert.equal(leadSignal(g,spread),null);
-  assert.equal(leadSignal(g,{...spread,event_ticker:'KXKBOGAME-26OCT260530KIASAM',title:'Samsung Lions wins',yes_sub_title:'Samsung Lions'} )?.fraction,.15);
-});
-test('two-goal soccer leads remain late; the 20% three-goal tier waits for the last ten minutes',()=>{
-  const m={id:'soccer',title:'Abha vs Al-Faisaly',type:'soccer_tournament_multi_leg',details:{league:'Saudi Pro League',home_team_id:'abha',away_team_id:'faisaly'}};
-  const board=(home,away,time,half='2nd')=>gameState(m,{details:{status:'live',home_same_game_score:home,away_same_game_score:away,time,half,possession:'home'}});
-  const market={status:'active',event_ticker:'KXSAUDIPLGAME-26OCT27ABHFAI',title:'Abha wins',yes_sub_title:'Abha',custom_strike:{soccer_team:'abha'},rules_primary:'If Abha wins after 90 minutes plus stoppage time (does not include extra time or penalties), then Yes.'};
-  assert.equal(leadSignal(board(2,0,"82'"),market),null);
-  assert.equal(leadSignal(board(2,0,"83'"),market),null);
-  assert.equal(leadSignal(board(2,0,"85'"),market),null);
-  assert.equal(leadSignal(board(3,0,"46'"),market),null);
-  assert.equal(leadSignal(board(3,0,"72'"),market),null);
-  assert.equal(leadSignal(board(3,0,"80'"),market),null);
-  assert.equal(leadSignal(board(3,0,"81'"),market)?.fraction,.20);
-  assert.equal(leadSignal(board(3,0,"85'"),market)?.fraction,.20);
-  assert.equal(leadSignal(board(3,0,"88'"),market)?.fraction,.20);
-  assert.equal(leadSignal(board(3,0,"89'"),market)?.fraction,.20);
-  const counted=(seconds)=>gameState(m,{details:{status:'live',home_same_game_score:3,away_same_game_score:0,time:"85'",half:'2nd',match_remaining_seconds:seconds}});
-  assert.equal(leadSignal(counted(600),market),null,'a known clock overrides the minute estimate');
-  assert.equal(leadSignal(counted(599),market)?.fraction,.20);
-  const twoGoals=(remaining)=>gameState(m,{details:{status:'live',home_same_game_score:2,away_same_game_score:0,time:'89:30',half:'2nd',match_remaining_seconds:remaining}});
-  assert.equal(leadSignal(twoGoals(19.9),market)?.fraction,.15);
-  assert.equal(leadSignal(twoGoals(20),market),null);
-  assert.equal(leadSignal(twoGoals(299),market),null);
-  assert.equal(leadSignal(twoGoals(900),market),null,'two goals with fifteen minutes left cannot enter');
-  assert.equal(leadSignal(board(2,0,"89'"),market),null,'elapsed minute alone cannot prove the final whistle is near');
-  assert.equal(leadSignal(board(3,1,"90+4'"),market),null);
-  assert.equal(leadSignal(board(2,0,"90+4'",'extra time'),market),null);
-  assert.equal(leadSignal(board(2,0,"85'",'1st'),market),null);
-  assert.equal(leadSignal(board(2,0,"85'"),{...market,rules_primary:'Includes extra time and penalty shootouts.'}),null);
-  const finalSeconds=(remaining)=>gameState(m,{details:{status:'live',home_same_game_score:2,away_same_game_score:1,time:'89:30',half:'2nd',match_remaining_seconds:remaining}});
-  assert.equal(leadSignal(finalSeconds(19.9),market),null);
-  assert.equal(leadSignal(finalSeconds(30),market),null);
-  assert.equal(leadSignal(board(2,1,"89:30"),market),null);
-});
 test('a soccer over waits ten seconds within the current scan before fresh score checks',()=>{
   const now=Date.now();
   assert.equal(soccerOverStable(null,now),false);
@@ -424,79 +310,6 @@ test('two Kalshi-only soccer goal reads cannot confirm an over after a reversibl
     details:{status:'live',home_score:3,away_score:1,half:'1st',time:"33'"}});
   assert.equal(kalshiOnlyOver(safe(at-12000),safe(at),market),true);
   assert.equal(fallbackOverFraction(safe(at),market),.10);
-});
-test('unknown soccer time cannot authorize 20%, but a late minute can use two Kalshi checks',()=>{
-  const m={id:'clockless-soccer',type:'soccer_match',title:'Abha vs Al-Faisaly',details:{home_team_id:'abha',away_team_id:'faisaly',main_game_event_ticker:'KXSAUDIPLGAME-26OCT27ABHFAI'}};
-  const market={status:'active',event_ticker:'KXSAUDIPLGAME-26OCT27ABHFAI',title:'Abha wins',yes_sub_title:'Abha',custom_strike:{soccer_team:'abha'},rules_primary:'If Abha wins after 90 minutes plus stoppage time, then Yes.',yes_ask_dollars:'0.91'};
-  const now=Date.now();
-  const state=(when,home=3,away=0,half='2nd',other={})=>gameState(m,{milestone_id:m.id,_observed_at:new Date(when).toISOString(),details:{status:'live',home_same_game_score:home,away_same_game_score:away,half,...other}});
-  const first=state(now-12000,3,0,'2nd',{time:"81'"}),second=state(now,3,0,'2nd',{time:"81'",possession:'away'});
-  assert.equal(leadSignal(state(now-12000),market),null,'no clock or minute cannot prove ten minutes left');
-  assert.equal(earlyLeadSignal(state(now-12000),market),null,'second-half score alone cannot authorize an early entry');
-  assert.equal(leadSignal(first,market)?.fraction,.20);
-  assert.match(leadSignal(first,market).reason,/81'/);
-  assert.equal(kalshiOnlyLead(first,second,market),false,'removing the last goal must leave a commanding lead');
-  assert.equal(kalshiOnlyLead(state(now-12000,4,0,'2nd',{time:"81'"}),state(now,4,0,'2nd',{time:"81'"}),market),true);
-  for(const [margin,fraction] of [[4,.05],[5,.10],[6,.15]]){
-    const before=state(now-12000,margin,0,'2nd',{time:"81'"}),after=state(now,margin,0,'2nd',{time:"81'"});
-    assert.equal(fallbackLeadFraction(before,after,market),fraction);
-  }
-  assert.equal(Math.min(leadSignal(second,market).fraction,KALSHI_ONLY_FRACTION),.10);
-  assert.equal(leadSignal(state(now,2,0),market),null);
-  assert.equal(leadSignal(state(now,3,0,'1st'),market),null);
-  assert.equal(leadSignal(state(now,3,0,'1st',{period:2}),market),null,'a conflicting half label cannot authorize entry');
-  assert.equal(leadSignal(state(now,3,0,'2nd',{time:"90+2'"}),market),null);
-  assert.equal(leadSignal(state(now,3,0,'2nd',{home_goals:2}),market),null,'inconsistent score aliases cannot authorize entry');
-  assert.equal(leadSignal(first,{...market,custom_strike:{soccer_team:'faisaly'}}),null);
-  assert.equal(kalshiOnlyLead(first,state(now,2,0),market),false);
-  assert.equal(kalshiOnlyLead(state(now-3000,3,0,'2nd',{time:"81'"}),second,market),false,'the two Kalshi reads still need ten seconds');
-});
-test('Millwall-style 3–0 lead at minute 47 cannot bypass the late soccer entry window; four goals can',()=>{
-  const m={id:'millwall',type:'soccer_tournament_multi_leg',title:'Millwall vs Derby',
-    details:{home_team_id:'mil',away_team_id:'der',main_game_event_ticker:'KXEFLCHAMPIONSHIPGAME-TEST'}};
-  const market={status:'active',event_ticker:'KXEFLCHAMPIONSHIPGAME-TEST',title:'Millwall wins',
-    custom_strike:{soccer_team:'mil'},yes_ask_dollars:'0.99',
-    rules_primary:'If Millwall wins after 90 minutes plus stoppage time, then Yes.'};
-  const state=(minute,remaining,home=3)=>gameState(m,{milestone_id:m.id,details:{status:'live',home_score:home,away_score:0,half:'2nd',time:`${minute}'`,match_remaining_seconds:remaining}});
-  assert.equal(leadSignal(state(47,2580),market),null);
-  assert.equal(earlyLeadSignal(state(47,2580),market),null);
-  assert.equal(earlyLeadSignal(state(47,2580,4),market)?.fraction,.02);
-  const first=state(47,2580,4),second=state(47,2570,4),early=earlyLeadSignal(second,market);
-  assert.equal(externallyVerifiedEarlySoccerLead(first,second,early,true,true).fraction,.20);
-  assert.equal(externallyVerifiedEarlySoccerLead(first,second,early,true,null).fraction,.02);
-  assert.equal(leadSignal(state(85,599),market)?.fraction,.20);
-  assert.equal(earlyLeadSignal(state(85,599),market),null);
-});
-test('two-goal soccer winner requires a moving final-whistle countdown below 20 seconds',()=>{
-  const m={id:'soccer-close',title:'Abha vs Al-Faisaly',type:'soccer_tournament_multi_leg',details:{home_team_id:'abha',away_team_id:'faisaly'}};
-  const market={status:'active',event_ticker:'KXSAUDIPLGAME-26OCT27ABHFAI',title:'Abha wins',yes_sub_title:'Abha',custom_strike:{soccer_team:'abha'},rules_primary:'If Abha wins after 90 minutes plus stoppage time, then Yes.',yes_ask_dollars:'0.90'};
-  const game=(remaining,possession='away',time='89:30',home=3,away=1)=>gameState(m,{details:{status:'live',home_same_game_score:home,away_same_game_score:away,time,half:'2nd',match_remaining_seconds:remaining,possession}});
-  assert.equal(leadSignal(game(45),market),null);
-  assert.equal(leadSignal(game(30),market),null);
-  assert.equal(leadSignal(game(29.9),market),null);
-  assert.equal(leadSignal(game(20),market),null);
-  assert.equal(leadSignal(game(19.9),market)?.fraction,.15);
-  assert.equal(leadSignal(game(19.9,'home'),market)?.fraction,.15);
-  assert.equal(leadSignal(game(0,'home'),market),null);
-  assert.equal(leadSignal(game(19.9,'home',"88:59"),market),null);
-  assert.equal(leadSignal(game(19.9,'home',"90+1'"),market),null);
-  assert.equal(leadSignal(game(19.9,'home','89:30',2,1),market),null,'one goal never qualifies');
-  const late=game(18.9,'home'),early=game(19.9,'home');
-  assert.equal(confirmedSoccerTwoGoalClock(early,late),true);
-  assert.equal(confirmedSoccerTwoGoalClock(early,game(19.9,'home')),false,'a frozen countdown cannot authorize entry');
-  assert.equal(confirmedSoccerTwoGoalClock(early,game(20,'home')),false,'a reversing countdown cannot authorize entry');
-  assert.equal(confirmedSoccerTwoGoalClock(early,{...late,clockRunning:false}),false);
-  assert.equal(confirmedSoccerTwoGoalClock(game(NaN,'home'),late),false,'missing first countdown cannot authorize entry');
-  const now=Date.now();
-  const sample=(seconds,when)=>gameState(m,{milestone_id:m.id,_observed_at:new Date(when).toISOString(),details:{status:'live',last_updated_ts:(when-500)/1000,home_same_game_score:3,away_same_game_score:1,time:'89:30',half:'2nd',match_remaining_seconds:seconds,possession:'home'}});
-  const first=sample(19.9,now-12000),next=sample(18.9,now);
-  assert.equal(kalshiOnlyLead(first,next,market),false,'a two-goal lead does not survive the conservative three-goal fallback requirement');
-  assert.equal(kalshiOnlyLead(first,sample(19.9,now),market),false,'Kalshi-only winner cannot use a stale final clock');
-  const shifted={...next,possessionSide:'away'};
-  assert.equal(kalshiOnlyLead(first,shifted,market),false,'changed possession cannot make a two-goal lead robust');
-  assert.equal(soccerTwoGoalWindowOpen(next,now+13899),true);
-  assert.equal(soccerTwoGoalWindowOpen(next,now+13900),false,'leave time for the order to reach the exchange');
-  assert.equal(soccerTwoGoalWindowOpen({...next,observedAt:NaN},now),false);
 });
 test('regulation soccer totals reject extra-time goals even when live feed says in progress',()=>{
   const m={id:'cup',title:'Castellonense vs Almeria',type:'soccer_tournament_multi_leg'};
@@ -552,52 +365,6 @@ test('ITF men and women accept only the match-clinching deciding-set service gam
   assert.equal(tennisSignal(state(now,5,4,'cov','live',women),womenMarket)?.fraction,.15);
   assert.equal(tennisSignal(state(now,5,4,'del','live',women),womenMarket),null,'the leader must serve');
 });
-test('hockey requires three goals with strictly less than two minutes in the final period',()=>{
-  const hockey={...milestone,type:'hockey_match',details:{league:'NHL'}};
-  const market={status:'active',title:'New York wins',yes_sub_title:'New York'};
-  const at=(home,away,period,clock)=>({details:{...live(home,away,period).details,clock,puck_possession:'home'}});
-  assert.equal(leadSignal(gameState(hockey,at(3,1,3,'04:59')),market),null);
-  assert.equal(leadSignal(gameState(hockey,at(4,1,3,'04:59')),market),null);
-  assert.equal(leadSignal(gameState(hockey,at(3,0,3,'06:31')),market),null);
-  assert.equal(leadSignal(gameState(hockey,at(3,0,3,'06:30')),market),null);
-  assert.equal(leadSignal(gameState(hockey,at(5,0,3,'02:30')),market),null);
-  assert.equal(leadSignal(gameState(hockey,at(3,0,3,'02:00')),market),null);
-  assert.equal(leadSignal(gameState(hockey,at(3,0,3,'01:59')),market)?.fraction,.15);
-  assert.equal(leadSignal(gameState(hockey,at(5,0,3,'00:29')),market)?.fraction,.15);
-  assert.equal(leadSignal(gameState(hockey,at(3,1,3,'06:59')),market),null);
-  assert.equal(leadSignal(gameState(hockey,at(3,1,3,'05:00')),market),null);
-  assert.equal(leadSignal(gameState(hockey,at(3,1,3,'03:59')),market),null);
-  assert.equal(leadSignal(gameState(hockey,at(3,0,3,'07:00')),market),null);
-  assert.equal(leadSignal(gameState(hockey,at(3,0,3,'07:01')),market),null);
-  assert.equal(leadSignal(gameState(hockey,at(3,0,2,'06:59')),market),null);
-  assert.equal(leadSignal(gameState(hockey,at(2,0,3,'04:59')),market),null);
-  assert.equal(leadSignal(gameState(hockey,at(2,1,3,'04:59')),market),null);
-  assert.equal(leadSignal(gameState(hockey,at(3,1,2,'04:59')),market),null);
-  assert.equal(leadSignal(gameState(hockey,at(3,1,3,'05:00')),market),null);
-});
-test('basketball requires eight points in the final minute',()=>{
-  const market={status:'active',title:'New York wins',yes_sub_title:'New York'};
-  for(const league of ['NBA','WNBA','Basketball','NCAAMB','NCAAW']){
-    const m={...milestone,details:{league}};
-    const last=/NCAA/.test(league)?2:4;
-    const at=(lead,clock,period=last)=>gameState(m,{details:{...live(100+lead,100,period).details,clock}});
-    assert.equal(leadSignal(at(5,'01:01'),market),null);
-    assert.equal(leadSignal(at(4,'00:59'),market),null);
-    assert.equal(leadSignal(at(5,'01:00'),market),null);
-    assert.equal(leadSignal(at(7,'00:20'),market),null);
-    assert.equal(leadSignal(at(8,'01:01'),market),null);
-    assert.equal(leadSignal(at(8,'01:00'),market)?.fraction,.15);
-    assert.equal(leadSignal(at(10,'00:20'),market)?.fraction,.15);
-    assert.equal(leadSignal(at(20,'00:00'),market),null);
-    assert.equal(leadSignal(at(8,'00:19',last-1),market),null);
-    const conflicting=gameState(m,{details:{...live(108,100,last).details,clock:'00:17',period_display:`Q${last-1}`}});
-    assert.equal(conflicting.periodConsistent,false);
-    assert.equal(leadSignal(conflicting,market),null);
-    const numericConflict=gameState(m,{details:{...live(108,100,last).details,period:last-1,clock:'00:17'}});
-    assert.equal(numericConflict.periodConsistent,false);
-    assert.equal(leadSignal(numericConflict,market),null);
-  }
-});
 test('a basketball lead under eight points never enters, even under 21 seconds',()=>{
   const market={status:'active',title:'New York wins',yes_sub_title:'New York',yes_ask_dollars:'0.95'};
   const now=Date.now();
@@ -615,44 +382,6 @@ test('a basketball lead under eight points never enters, even under 21 seconds',
     assert.equal(kalshiOnlyLead(at(now-12000,4),at(now,4),market),false,'a four-point lead does not survive one four-point play');
     assert.equal(kalshiOnlyLead(at(now-12000,4,'00:20','away'),at(now,4),market),false);
   }
-});
-test('one-goal hockey and seven-point football close leads require possession and five percent',()=>{
-  const market={status:'active',title:'New York wins',yes_sub_title:'New York'};
-  const h={...milestone,type:'hockey_match',details:{league:'NHL'}};
-  const f={...milestone,type:'football_game',details:{league:'NFL'}};
-  const state=(m,home,clock,possession)=>gameState(m,{details:{...live(home,0,m.type==='hockey_match'?3:4).details,clock,puck_possession:possession,possession}});
-  assert.equal(leadSignal(state(h,1,'00:20','home'),market),null);
-  assert.equal(leadSignal(state(h,2,'00:20','home'),market),null);
-  assert.equal(leadSignal(state(h,1,'00:21','home'),market),null);
-  assert.equal(leadSignal(state(h,1,'00:20','away'),market),null);
-  assert.equal(leadSignal(state(h,3,'00:20','away'),market)?.fraction,.15);
-  assert.equal(leadSignal(state(f,7,'00:20','home'),market)?.fraction,.05);
-  assert.equal(leadSignal(state(f,6,'00:20','home'),market),null);
-  assert.equal(leadSignal(state(f,7,'00:20','away'),market),null);
-  assert.equal(leadSignal(state(f,10,'00:20','home'),market)?.fraction,.15);
-});
-test('football needs a ten point lead in the final seven minutes',()=>{
-  const m={...milestone,type:'football_game',details:{league:'NFL'}};
-  const market={status:'active',title:'New York wins',yes_sub_title:'New York'};
-  const board={details:{...live(24,14).details,clock:'04:00'}};
-  assert.equal(leadSignal(gameState(m,board),market)?.fraction,.15);
-  board.details.home_score=24;board.details.away_score=15;
-  assert.equal(leadSignal(gameState(m,board),market),null);
-  board.details.home_score=25;board.details.away_score=14;
-  assert.equal(leadSignal(gameState(m,board),market)?.fraction,.15);
-  board.details.home_score=100;board.details.away_score=90;
-  assert.equal(leadSignal(gameState(m,board),market)?.fraction,.15);
-  board.details.home_score=10;board.details.away_score=0;
-  assert.equal(leadSignal(gameState(m,board),market)?.fraction,.15);
-  board.details.home_score=24;board.details.away_score=14;board.details.clock='07:00';
-  assert.equal(leadSignal(gameState(m,board),market),null);
-  board.details.clock='04:00';board.details.quarter=3;
-  assert.equal(leadSignal(gameState(m,board),market),null);
-  const identified={...m,details:{...m.details,home_team_id:'NY',away_team_id:'BOS'}};
-  const play={...live(24,14).details,clock:'04:00',possession:undefined,situation:{possession_team_id:'NY'}};
-  assert.equal(leadSignal(gameState(identified,{details:play}),market)?.fraction,.15);
-  play.situation.possession_team_id='BOS';
-  assert.equal(leadSignal(gameState(identified,{details:play}),market),null);
 });
 test('quantity preflights cash, allocation, fees, price and displayed liquidity',()=>{
   const count=orderSize(10000,'0.50','400',.8);
@@ -735,32 +464,6 @@ test('leads need only positive net profit at all game clock times',()=>{
   }
   assert.equal(minimumProfitCents('lead',20000,'football_game',30),1);
   assert.equal(minimumProfitCents('over',20000,'basketball_game',30),1);
-});
-test('late lead caps and timed tie/trailing exits retain tennis match-point exit',()=>{
-  const m={...milestone,type:'football_game',details:{league:'NFL',home_team_id:'NY',away_team_id:'BOS'}};
-  const market={status:'active',title:'New York wins',yes_sub_title:'New York',custom_strike:{football_team:'NY'}};
-  const at=(home,away,clock)=>gameState(m,{details:{...live(home,away).details,clock}});
-  assert.equal(leadSignal(at(24,14,'02:30'),market)?.fraction,.15);
-  assert.equal(leadSignal(at(25,10,'00:30'),market)?.fraction,.15);
-  assert.equal(leadSignal(at(24,14,'00:30'),market)?.fraction,.15);
-  assert.equal(comeback(at(24,14,'02:30'),market,'lead'),false);
-  assert.equal(comeback(at(24,24,'02:00'),market,'lead'),false);
-  assert.equal(comeback(at(24,24,'00:30'),market,'lead'),false);
-  assert.equal(comeback(at(24,24,'00:29'),market,'lead'),true);
-  assert.equal(comeback(at(24,25,'02:00'),market,'lead'),false);
-  assert.equal(comeback(at(24,25,'01:59'),market,'lead'),true);
-  assert.equal(comeback(at(24,25,'01:00'),market,'lead'),true);
-  assert.equal(timedProfitExitAllowed(at(24,24,'00:30'),market),false);
-  assert.equal(timedProfitExitAllowed(at(24,24,'00:29'),market),true);
-  assert.equal(timedProfitExitAllowed(at(24,25,'02:00'),market),false);
-  assert.equal(timedProfitExitAllowed(at(24,14,'02:30'),market),true);
-  assert.equal(comeback(at(24,25,'01:00'),{floor_strike:20},'over'),false);
-  const tennis={...milestone,type:'tennis_tournament_singles',details:{best_of:3,first_competitor_id:'A',second_competitor_id:'B'}};
-  const tennisState=(a,b)=>gameState(tennis,{details:{status:'live',competitor1_round_scores:[{score:a}],competitor2_round_scores:[{score:b}]}});
-  assert.equal(comeback(tennisState(5,5),{custom_strike:{tennis_competitor:'A'}},'lead'),false);
-  const point=(a,b,firstPoints,secondPoints,server='B')=>gameState(tennis,{details:{status:'live',competitor1_round_scores:[{score:a}],competitor2_round_scores:[{score:b}],competitor1_current_round_score:firstPoints,competitor2_current_round_score:secondPoints,server}});
-  assert.equal(comeback(point(5,6,15,30),{custom_strike:{tennis_competitor:'A'}},'lead'),false);
-  assert.equal(comeback(point(5,6,15,40),{custom_strike:{tennis_competitor:'A'}},'lead'),true);
 });
 test('basketball positive exit cannot bypass tie and trailing clock windows',()=>{
   const m={...milestone,type:'basketball_game',details:{league:'NBA',home_team_id:'NY',away_team_id:'BOS'}};

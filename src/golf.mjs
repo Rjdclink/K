@@ -8,7 +8,7 @@ export function golfSignal(game,market){
  const board=game.golf.board;
  if(board.length<2||board.some(p=>!Number.isFinite(p.total_score)||!Number.isInteger(p.current_round_thru)||p.current_round_thru<17||p.current_round_thru>18))return null;
  const ranked=[...board].sort((a,b)=>a.total_score-b.total_score),leader=ranked[0];
- if(ranked[1].total_score-leader.total_score<6||!board.some(p=>p.current_round_thru===17)||market.custom_strike?.golf_competitor!==leader.competitor_id||!market.yes_sub_title||!/wins/i.test(market.rules_primary||''))return null;
+ if(ranked[1].total_score-leader.total_score<4||!board.some(p=>p.current_round_thru===17)||market.custom_strike?.golf_competitor!==leader.competitor_id||!market.yes_sub_title||!/wins/i.test(market.rules_primary||''))return null;
  return {strategy:'lead',fraction:.10,reason:`${market.yes_sub_title} leads by ${ranked[1].total_score-leader.total_score} strokes; final round, at most one hole remaining per golfer`};
 }
 export function golfAgreement(data,game,milestone,event){

@@ -8,7 +8,7 @@ import pg from 'pg';
 import { page } from './ui.mjs';
 import { historyPage } from './history_ui.mjs';
 import { completedTrade, manualSaleFill, reconcileManualSaleFills, settlementLookupCandidates } from './history.mjs';
-import { gameState, overSignal, confirmedOver, kalshiOnlyOver, kalshiOnlyLead, fallbackOverFraction, fallbackScoringUnits, confirmedExternalLead, leadSignal, confirmedSoccerTwoGoalClock, confirmedDrawClock, soccerTwoGoalWindowOpen, externallyVerifiedEarlySoccerLead, leadWatchReason, additionalLeadSignal, cricketLeadSignal, drawSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback } from './strategy.mjs';
+import { gameState, overSignal, playerOverSpec, confirmedOver, kalshiOnlyOver, kalshiOnlyLead, fallbackOverFraction, fallbackScoringUnits, confirmedExternalLead, leadSignal, confirmedSoccerTwoGoalClock, confirmedDrawClock, soccerTwoGoalWindowOpen, externallyVerifiedEarlySoccerLead, leadWatchReason, additionalLeadSignal, cricketLeadSignal, drawSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback } from './strategy.mjs';
 import { reviewMiss } from './ai.mjs';
 import { kalshiSignature } from './auth.mjs';
 import { marketShard, shardCash, transferPlan, comboShardBudget, awaitShardCash } from './funding.mjs';
@@ -109,6 +109,10 @@ async function kalshi(path,opts={}){
 let balanceQueue=Promise.resolve();
 let candidateTableReady;
 function candidateTable(){return candidateTableReady??=pool.query(`CREATE TABLE IF NOT EXISTS candidate_windows (market_ticker text NOT NULL, strategy text NOT NULL, first_seen timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(market_ticker,strategy))`).catch(e=>{candidateTableReady=null;throw e})}
+let propWindowsReady;
+function ensurePropWindows(){return propWindowsReady??=pool.query(`CREATE TABLE IF NOT EXISTS player_prop_windows (
+  market_ticker text PRIMARY KEY,game_id text NOT NULL,first_crossed timestamptz NOT NULL DEFAULT now(),
+  last_seen timestamptz NOT NULL DEFAULT now(),last_value integer NOT NULL)`).catch(e=>{propWindowsReady=null;throw e})}
 let scanStatusReady;
 function ensureScanStatus(){return scanStatusReady??=pool.query('ALTER TABLE scan_status ADD COLUMN IF NOT EXISTS discovered integer NOT NULL DEFAULT 0').catch(e=>{scanStatusReady=null;throw e})}
 let scoreTimeReady;
@@ -730,13 +734,13 @@ async function upgradeHeldOver(c,preflight,original,scoreboardCache){
     current.rules_primary!==c.market.rules_primary||current.floor_strike!==c.market.floor_strike||
     current.cap_strike!==c.market.cap_strike||current.close_time!==c.market.close_time||
     JSON.stringify(current.custom_strike||{})!==JSON.stringify(c.market.custom_strike||{})||
-    !verifiedSignal||![.10,.35].includes(verifiedSignal.fraction))return {verified:false,filled:false};
+    !verifiedSignal||![.10,.40].includes(verifiedSignal.fraction))return {verified:false,filled:false};
   await upgradeTables();
   if(/Kalshi-only/i.test(original.reason||''))await pool.query(`INSERT INTO fallback_verifications(market_ticker,original_id,verification_id,verified_at) VALUES($1,$2,$3,now())
     ON CONFLICT(market_ticker) DO UPDATE SET original_id=EXCLUDED.original_id,verification_id=EXCLUDED.verification_id,
       first_verified_at=CASE WHEN fallback_verifications.original_id=EXCLUDED.original_id THEN fallback_verifications.first_verified_at ELSE now() END,verified_at=now()`,
   [current.ticker,original.id,state.verificationId]);
-  const robust=verifiedSignal.fraction===.35,upgradeTable=robust?'robust_over_upgrades':'position_upgrades';
+  const robust=verifiedSignal.fraction===.40,upgradeTable=robust?'robust_over_upgrades':'position_upgrades';
   const otherTable=robust?'position_upgrades':'robust_over_upgrades';
   let {rows:[other]}=await pool.query(`SELECT * FROM ${otherTable} WHERE market_ticker=$1`,[current.ticker]);
   if(other&&['reserved','check_order'].includes(other.status))other=await reconcileUpgrade(other,!robust);
@@ -807,7 +811,7 @@ async function immediatelyUpgradeFilledOver(c,scoreboardCache){
   second.verificationId=first.verificationId;
   second.lastScoringPlay=first.lastScoringPlay;
   const verifiedSignal=overSignal(second,c.market);
-  if(!verifiedSignal||![.10,.35].includes(verifiedSignal.fraction))return false;
+  if(!verifiedSignal||![.10,.40].includes(verifiedSignal.fraction))return false;
   const {rows:[fill]}=await pool.query(`SELECT id,market_ticker,event_ticker,game_id,sport,strategy,reason,status,combo_legs
     FROM trade_attempts WHERE market_ticker=$1 AND status='filled'`,[c.market.ticker]);
   if(!fill)return false;
@@ -923,7 +927,9 @@ async function upgradeVerifiedCombos(scanStarted){
       market.result&&!['','not_determined'].includes(String(market.result)))continue;
     const account=await accountBalance({fresh:true});
     const bankroll=Number(account.balance)+Number(account.portfolio_value);
-    const remaining=remainingVerifiedComboCents(held,bankroll),shard=marketShard({},market);
+    const upgradedFraction=combo.strategy==='lead'&&
+      (combo.combo_legs||[]).every(leg=>leg.strategy==='lead')?.20:.10;
+    const remaining=remainingVerifiedComboCents(held,bankroll,upgradedFraction),shard=marketShard({},market);
     const local=shardCash(account,shard),desired=Math.min(remaining,Number(account.balance));
     if(local===null||desired<100)continue;
     if(local<100){if(transferPlan(account,shard,desired))await ensureShardFunding({strategy:combo.strategy},{exchange_index:shard},market,account,desired);continue}
@@ -945,7 +951,7 @@ async function upgradeVerifiedCombos(scanStarted){
           const fresh=await accountBalance({fresh:true}),currentPositions=await allOpenPositions();
           const current=currentPositions.market_positions?.find(p=>p.ticker===combo.market_ticker);
           const currentBankroll=Number(fresh.balance)+Number(fresh.portfolio_value);
-          if(!current||terms.debitCents>remainingVerifiedComboCents(current,currentBankroll)||
+          if(!current||terms.debitCents>remainingVerifiedComboCents(current,currentBankroll,upgradedFraction)||
             terms.debitCents>Number(fresh.balance)||(shardCash(fresh,shard)??0)<terms.debitCents)break;
           const reserved=await pool.query(`INSERT INTO combo_upgrades(market_ticker,original_id,verification_ids,status,rfq_id,quote_id)
             VALUES($1,$2,$3,'pending',$4,$5)
@@ -1610,9 +1616,13 @@ async function scan(cachedMilestones,discoveryCount){
   let scanned=0,signals=0,submitted=0,ms,scanLockHeld=true;const executionErrors=[],scanStarted=new Date();let openPositions=null;
   try{
     ms=cachedMilestones||await milestones();discoveryCount??=ms.length;
+    await ensurePropWindows();
+    const {rows:propWatch}=await pool.query(`SELECT DISTINCT game_id FROM player_prop_windows
+      WHERE last_seen>now()-interval '3 minutes'`);
+    const propWatchIds=new Set(propWatch.map(row=>row.game_id));
     const {rows:recentLive}=await pool.query(`SELECT id,signals FROM game_snapshots
       WHERE status='live' AND scanned_at>now()-interval '30 minutes'`);
-    ms=scanMilestones(ms,new Set(recentLive.map(row=>row.id)));
+    ms=scanMilestones(ms,new Set([...recentLive.map(row=>row.id),...propWatchIds]));
     await upgradeTables();
     await ensureScanStatus();const liveMap=await liveBatch(ms);
     const games=ms.map(m=>({milestone:m,state:gameState(m,liveMap.get(m.id))})).filter(g=>
@@ -1636,8 +1646,8 @@ async function scan(cachedMilestones,discoveryCount){
     const {rows:heldGames}=await pool.query(`SELECT DISTINCT game_id FROM trade_attempts
       WHERE status='filled' AND game_id=ANY($1::text[])`,[marketCandidates.map(g=>g.milestone.id)]);
     const marketGames=prioritizeMarketGames(marketCandidates,{
-      signaledIds:new Set(recentLive.filter(row=>(row.signals||[]).some(signal=>
-        signal.strategy!=='watch'&&Number(signal.ask)>0&&Number(signal.ask)<1&&Number(signal.ask_size)>0)).map(row=>row.id)),
+      signaledIds:new Set([...propWatchIds,...recentLive.filter(row=>(row.signals||[]).some(signal=>
+        signal.strategy!=='watch'&&Number(signal.ask)>0&&Number(signal.ask)<1&&Number(signal.ask_size)>0)).map(row=>row.id)]),
       heldIds:new Set(heldGames.map(row=>row.game_id))
     });
     console.info('Live market priority:',JSON.stringify({live:marketCandidates.length,marketChecked:marketGames.length,earlyDeferred:marketCandidates.length-marketGames.length}));
@@ -1646,6 +1656,44 @@ async function scan(cachedMilestones,discoveryCount){
     // player stats immediately before deciding which props crossed their line.
     const currentLive=await liveBatch(marketGames.map(g=>g.milestone));
     for(const game of active){const latest=currentLive.get(game.milestone.id);if(latest){liveMap.set(game.milestone.id,latest);game.state=gameState(game.milestone,latest)}}
+    for(const game of marketGames){const latest=currentLive.get(game.milestone.id);
+      if(latest)game.state=gameState(game.milestone,latest)}
+    const crossingRows=[];
+    for(const {milestone,state} of marketGames){
+      if(!state.verifiedLive||!state.scoreConsistent)continue;
+      for(const ticker of linkedEventTickers(milestone))for(const market of events.get(ticker)?.markets||[]){
+        if(market.event_ticker!==ticker||!market.ticker||!['active','open'].includes(market.status))continue;
+        const player=playerOverSpec(state,market);
+        if(player&&player.value>Number(market.floor_strike))
+          crossingRows.push({ticker:market.ticker,game_id:state.id,value:player.value,
+            title:market.title||market.yes_sub_title||market.ticker});
+      }
+    }
+    const propWindows=new Map();
+    for(let i=0;i<crossingRows.length;i+=100){
+      const batch=crossingRows.slice(i,i+100);
+      const {rows}=await pool.query(`INSERT INTO player_prop_windows(market_ticker,game_id,first_crossed,last_seen,last_value)
+        SELECT ticker,game_id,clock_timestamp(),clock_timestamp(),value FROM
+          jsonb_to_recordset($1::jsonb) AS x(ticker text,game_id text,value integer)
+        ON CONFLICT(market_ticker) DO UPDATE SET
+          game_id=EXCLUDED.game_id,
+          first_crossed=CASE WHEN player_prop_windows.game_id=EXCLUDED.game_id AND
+            player_prop_windows.last_seen>now()-interval '3 minutes' THEN player_prop_windows.first_crossed
+            ELSE EXCLUDED.first_crossed END,
+          last_seen=EXCLUDED.last_seen,last_value=EXCLUDED.last_value
+        RETURNING market_ticker,game_id,first_crossed`,[JSON.stringify(batch)]);
+      for(const row of rows)propWindows.set(row.market_ticker,{gameId:row.game_id,at:row.first_crossed});
+    }
+    if(marketGames.length)await pool.query(`DELETE FROM player_prop_windows
+      WHERE game_id=ANY($1::text[]) AND NOT (market_ticker=ANY($2::text[]))`,
+      [marketGames.map(g=>g.milestone.id),crossingRows.map(row=>row.ticker)]);
+    const withPropWindow=state=>{
+      if(!state)return state;
+      state.playerPropFirstCrossedAt=Object.fromEntries([...propWindows].filter(([,row])=>row.gameId===state.id)
+        .map(([ticker,row])=>[ticker,row.at]));
+      return state;
+    };
+    for(const game of marketGames)withPropWindow(game.state);
     let balance=0,bankroll=0,account=null;
     const existingFills=await pool.query(`SELECT id,market_ticker,event_ticker,game_id,sport,strategy,reason,fill_count,limit_price,created_at,updated_at,combo_legs,status FROM trade_attempts WHERE status='filled'`);
     let filled=new Set(existingFills.rows.map(r=>`${r.market_ticker}:${r.strategy}`));
@@ -1715,6 +1763,10 @@ async function scan(cachedMilestones,discoveryCount){
     for(const [id,candidates] of snapshotCandidates){
       snapshotRows.get(id)[14]=JSON.stringify([
         ...candidates.map(c=>({strategy:c.signal.strategy,reason:c.signal.reason,ticker:c.market.ticker,title:c.market.title||c.market.yes_sub_title||'',ask:c.market.yes_ask_dollars,ask_size:c.market.yes_ask_size_fp,execution:signalExecution(c,filled,account,balance,bankroll)})),
+        ...crossingRows.filter(row=>row.game_id===id&&!candidates.some(c=>c.market.ticker===row.ticker))
+          .map(row=>({strategy:'watch',ticker:row.ticker,title:row.title,
+            reason:`${row.value} recorded; line crossed; waiting for the extra-stat cushion or 10-minute window`,
+            execution:`Waiting for prop window (${Math.max(0,Math.ceil((600000-(Date.now()-new Date(propWindows.get(row.ticker)?.at).getTime()))/60000))} min)`})),
         ...(snapshotRows.get(id).leadWatch?[{strategy:'watch',title:'Commanding lead watch',execution:snapshotRows.get(id).leadWatch}]:[])
       ]);
     }
@@ -1779,7 +1831,7 @@ async function scan(cachedMilestones,discoveryCount){
           const latest=await liveMilestone(c.milestone.id);
           if(!latest)continue;
           latest._observed_at=new Date().toISOString();
-          const state=gameState(c.milestone,latest);
+          const state=withPropWindow(gameState(c.milestone,latest));
           if(!confirmedOver(c.state,state,c.market,firstDecision===true?0:VERIFY_DWELL_MS))continue;
           if(firstDecision===true){
             state.verificationId=c.state.verificationId;
@@ -1844,13 +1896,14 @@ async function scan(cachedMilestones,discoveryCount){
         let kalshiOnly=preflight?.kalshiOnly===true;
         let freshState=c.signal.strategy==='over'?preflight?.state:
           gameState(c.milestone,(await liveBatch([c.milestone])).get(c.milestone.id));
+        freshState=withPropWindow(freshState);
         if(!freshState)continue;
         if(c.signal.strategy==='over'&&Date.now()-freshState.observedAt>10000){
           const remaining=kalshiOnly?VERIFY_DWELL_MS-(Date.now()-freshState.observedAt):0;
           if(remaining>0)await new Promise(resolve=>setTimeout(resolve,remaining));
           const next=await liveMilestone(c.milestone.id);
           if(!next)continue;
-          next._observed_at=new Date().toISOString();const rechecked=gameState(c.milestone,next);
+          next._observed_at=new Date().toISOString();const rechecked=withPropWindow(gameState(c.milestone,next));
           if(!confirmedOver(freshState,rechecked,c.market,kalshiOnly?VERIFY_DWELL_MS:0))continue;
           const decision=await auditedOver(rechecked,c.milestone,{market:c.market,firstObservation:freshState,allowUnavailable:true});
           if(decision===false||decision===null&&(!kalshiOnly||!await auditKalshiOnlyOver(freshState,rechecked,c.market,c.milestone)))continue;
@@ -1979,7 +2032,7 @@ async function scan(cachedMilestones,discoveryCount){
               const updated=await liveMilestone(c.milestone.id);
               if(!updated)continue;
               updated._observed_at=new Date().toISOString();
-              const checked=gameState(c.milestone,updated);
+              const checked=withPropWindow(gameState(c.milestone,updated));
               if(!checked.verifiedLive||checked.feedId!==c.milestone.id||
                 c.signal.strategy==='lead'&&(checked.home!==state.home||checked.away!==state.away))continue;
               const newest=await recoverSummaryAsk((await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market,{fresh:true});
