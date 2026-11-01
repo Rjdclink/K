@@ -255,6 +255,10 @@ export function leadWatchReason(game){
     if(game.period===3&&Number.isFinite(seconds)&&seconds>0&&seconds<=180&&margin>=4)
       return `Tracking ${margin}-goal lead; third-period winner clock required`;
   }
+  if(/baseball/.test(type)&&
+    (game.period===8&&game.inningHalf===2&&game.outs>=1&&margin>=5||
+      game.period===9&&[1,2].includes(game.inningHalf)&&game.outs>=1&&game.outs<=2&&margin>=4))
+    return `Tracking ${margin}-run lead; checking the late-inning winner market`;
   if(/rugby|handball|lacrosse/.test(type)&&Number.isFinite(seconds)&&seconds>0){
     const rule=/rugby/.test(type)?[2,180,15]:/handball/.test(type)?[2,600,4]:[4,600,3];
     if(game.period===rule[0]&&seconds<=rule[1]&&margin>=rule[2])

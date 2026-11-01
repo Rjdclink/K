@@ -26,6 +26,15 @@ test('table tennis deciding set uses four and six point tiers without a clock',(
   assert.equal(tableTennisSignal(state(4,10),market),null);
 });
 
+test('late baseball commanding leads enter the fast watch before the winner window',()=>{
+  const m={id:'baseball',type:'baseball_game',title:'Away at Home',details:{league:'MLB'}};
+  const state=(inning,half,outs,home,away)=>gameState(m,{milestone_id:m.id,details:{status:'live',inning,inning_half:half,outs,home_score:home,away_score:away}});
+  assert.match(leadWatchReason(state(8,'bottom',1,8,3)),/late-inning winner market/);
+  assert.equal(leadWatchReason(state(8,'bottom',1,7,3)),null);
+  assert.match(leadWatchReason(state(9,'top',1,8,4)),/late-inning winner market/);
+  assert.equal(leadWatchReason(state(8,'top',2,8,3)),null);
+});
+
 test('table tennis lead fallback verifies two live scores without using a clock',()=>{
   const m={id:'liga-clockless',type:'table_tennis_match',title:'Oleg Moshnikov vs Iurii Krivenkii',details:{league:'Russia Liga Pro',best_of:5,first_competitor_id:'oleg',second_competitor_id:'iurii'}};
   const market={event_ticker:'KXLIGAPROMATCH-DATE',status:'active',title:'Oleg Moshnikov',yes_sub_title:'Oleg Moshnikov',custom_strike:{table_tennis_competitor:'oleg'},yes_ask_dollars:'0.93'};
