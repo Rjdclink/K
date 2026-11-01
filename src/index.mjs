@@ -4,14 +4,14 @@ import { golfSignal, verifyGolf } from './golf.mjs';
 import { randomUUID } from 'node:crypto';
 import { apiPriority, withApiPriority, createPriorityGate } from './api_priority.mjs';
 import { createExecutionAudit } from './execution_audit.mjs';
-import { finalLeadFraction, directLeadFraction, leadEntryFraction, lateCommandingLead, verifiedOverFraction } from './lead_allocation.mjs';
+import { finalLeadFraction, directLeadFraction, leadEntryFraction, minimumThreeGoalSpend, lateCommandingLead, verifiedOverFraction } from './lead_allocation.mjs';
 import { createFillComboQueue } from './fill_combo_queue.mjs';
 import pg from 'pg';
 import { page } from './ui.mjs';
 import { historyPage } from './history_ui.mjs';
 import { completedTrade, manualSaleFill, reconcileManualSaleFills, settlementLookupCandidates } from './history.mjs';
 import { ensureExitLedger, recordExitFill } from './exit_ledger.mjs';
-import { gameState, overSignal, playerOverSpec, confirmedOver, kalshiOnlyLead, fallbackScoringUnits, confirmedExternalLead, leadSignal, proBasketballLeadRules, nbaSingleReadLead, kalshiSingleReadLead, confirmedSoccerWinnerClock, confirmedDrawClock, soccerWinnerWindowOpen, externallyVerifiedEarlySoccerLead, leadWatchReason, additionalLeadSignal, cricketLeadSignal, drawSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback } from './strategy.mjs';
+import { gameState, overSignal, playerOverSpec, confirmedOver, fallbackScoringUnits, confirmedExternalLead, leadSignal, proBasketballLeadRules, nbaSingleReadLead, kalshiSingleReadLead, confirmedSoccerWinnerClock, confirmedDrawClock, soccerWinnerWindowOpen, leadWatchReason, additionalLeadSignal, cricketLeadSignal, drawSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback } from './strategy.mjs';
 import { reviewMiss } from './ai.mjs';
 import { kalshiSignature } from './auth.mjs';
 import { marketShard, shardCash, transferPlan, comboShardBudget, awaitShardCash } from './funding.mjs';
@@ -363,17 +363,6 @@ async function pruneOverWindows(games){
   for(const w of rows){const state=states.get(w.game_id);
     if(!overSignal(state,w.contract))await pool.query('DELETE FROM over_verification_windows WHERE market_ticker=$1 AND generation=$2',[w.market_ticker,w.generation]);
   }
-}
-async function auditKalshiOnlyLead(first,second,market,milestone){
-  if(!kalshiOnlyLead(first,second,market))return false;
-  const signal=leadSignal(second,market)||additionalLeadSignal(second,market)||cricketLeadSignal(second,market)||
-    drawSignal(second,market)||earlyLeadSignal(second,market)||tennisSignal(second,market)||tableTennisSignal(second,market);
-  const allocation=finalLeadFraction(first,second,signal,false,market);
-  await auditTable();const id=randomUUID();
-  await pool.query('INSERT INTO verification_records(id,market_ticker,passed,evidence) VALUES($1,$2,true,$3)',
-    [id,market.ticker,JSON.stringify({mode:'kalshi_only_commanding_lead',first,second,milestoneId:milestone.id,dwellMs:second.observedAt-first.observedAt,removedScoringUnits:fallbackScoringUnits(second),allocation})]);
-  second.verificationId=id;
-  return true;
 }
 async function auditSingleReadNbaLead(game,market,milestone){
   if(!nbaSingleReadLead(game,market))return false;
@@ -894,6 +883,7 @@ async function submit(signal,game,event,market,balance,bankroll,budgetCents=Infi
   if(signal.strategy==='lead'&&/Kalshi-only live score and executable seller checked/.test(signal.reason||'')&&
     (!kalshiSingleReadLead(game,market)||!hasAsk(market)))return false;
   const price=Number(market.yes_ask_dollars);const count=profitableCount(contractCount(balance,market,signal.fraction,bankroll,budgetCents,feeReserve(event,market)),price,feeReserve(event,market),signal.strategy,availableCents,game.type,game.remainingSeconds);if(!count)return false;
+  if(estimatedCostCents(count,price,feeReserve(event,market))<minimumThreeGoalSpend(game,signal,market,bankroll))return false;
   if(['over','weather','lead'].includes(signal.strategy)&&!game.verificationId)return false;
   if(/Kalshi-only/i.test(signal.reason||'')){
     // A provisional position consumes its entire allowance for this game.
@@ -948,6 +938,7 @@ async function recoverPending(signal,game,event,market,balance,bankroll,budgetCe
     if(matched){const filled=Number(matched.fill_count_fp??matched.fill_count??0);await pool.query(`UPDATE trade_attempts SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE id=$1`,[row.id,filled>0?'filled':'unfilled',matched.order_id||null,filled]);if(filled>0)await confirmedSingleFill(row.id,row.market_ticker);return filled>0}
   }catch(e){console.warn('Order history unavailable; retry deferred:',e.message);return false}
   if(row.retries || Date.now()-new Date(row.updated_at).getTime()<15000)return false;
+  if(estimatedCostCents(Number(row.count),Number(row.limit_price),feeReserve(event,market))<minimumThreeGoalSpend(game,signal,market,bankroll))return false;
   if(signal.strategy==='over'&&!timedOverEntryValid(game,market))return false;
   if(signal.strategy==='lead'&&(!Number.isFinite(game.observedAt)||Date.now()-game.observedAt>30000))return false;
   // The supervisor reviews a missing submission. An unavailable model falls back to one bounded deterministic retry.

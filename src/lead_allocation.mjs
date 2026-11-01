@@ -1,5 +1,12 @@
-import { KALSHI_ONLY_FRACTION,strongKalshiOnlyLead,proBasketballLeadRules } from './strategy.mjs';
+import { KALSHI_ONLY_FRACTION,strongKalshiOnlyLead,proBasketballLeadRules,leadSignal } from './strategy.mjs';
 import { timedOverEntryValid } from './over_verification.mjs';
+export function threeGoalWinner(game,signal,market){
+  return Boolean(market&&signal?.strategy==='lead'&&/hockey|soccer/.test(game?.type||'')&&
+    Math.abs(game.homeUnits-game.awayUnits)>=3&&leadSignal(game,market));
+}
+export const minimumThreeGoalSpend=(game,signal,market,bankroll)=>
+  signal?.strategy==='lead'&&/hockey|soccer/.test(game?.type||'')&&Math.abs(game.homeUnits-game.awayUnits)>=3?
+    threeGoalWinner(game,signal,market)?Math.floor(bankroll*.15):Infinity:0;
 
 export function verifiedOverFraction(signal,game,market){
   if(signal?.strategy!=='over')return signal?.fraction;
@@ -26,6 +33,7 @@ export function independentlyVerifiedLeadFraction(game,market){
 }
 
 export function directLeadFraction(game,signal,market){
+  if(threeGoalWinner(game,signal,market))return .20;
   return signal?.strategy==='lead'&&lateCommandingLead(game,market)?.20:
     Math.min(.15,signal?.fraction??.15);
 }
@@ -59,5 +67,6 @@ export function finalLeadFraction(first,second,signal,externallyVerified,market)
     return Math.min(.15,.05+(seconds<240||margin>=25?.05:0)+
       (seconds<120||margin>=30?.05:0));
   }
+  if(threeGoalWinner(second,signal,market))return .20;
   return externallyVerified||market&&strongKalshiOnlyLead(first,second,market)?.20:KALSHI_ONLY_FRACTION;
 }

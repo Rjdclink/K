@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {finalLeadFraction,leaderHasControl,directLeadFraction,leadEntryFraction,verifiedOverFraction} from '../src/lead_allocation.mjs';
+import {finalLeadFraction,leaderHasControl,directLeadFraction,leadEntryFraction,threeGoalWinner,verifiedOverFraction} from '../src/lead_allocation.mjs';
 import {gameState,earlyLeadSignal,kalshiOnlyLead,nbaSingleReadLead} from '../src/strategy.mjs';
 import {overContractKey} from '../src/over_verification.mjs';
 
@@ -91,8 +91,8 @@ test('strong Kalshi-only leads use 20% only after two stable reads and a score c
       ...(/soccer/.test(state.type)?{matchRemainingSeconds:state.matchRemainingSeconds-1}:{}),
       ...(/hockey/.test(state.type)?{remainingSeconds:state.remainingSeconds-1}:{})};
     assert.equal(kalshiOnlyLead(a,b,market),qualifies);
-    assert.equal(finalLeadFraction(a,b,lead,false,market),expected);
-    assert.equal(finalLeadFraction({...a,observedAt:now-3000},b,lead,false,market),.15,'short dwell never unlocks 20%');
+    assert.equal(finalLeadFraction(a,b,lead,false,market),threeGoalWinner(b,lead,market)?Math.max(.20,expected):expected);
+    assert.equal(finalLeadFraction({...a,observedAt:now-3000},b,lead,false,market),threeGoalWinner(b,lead,market)?.20:.15);
   };
   check(table,tableMarket,.20);
   check({...table,tableTennis:{...table.tableTennis,firstPoints:10,secondPoints:4}},tableMarket,.15);

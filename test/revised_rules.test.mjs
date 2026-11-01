@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
 import {gameState,leadSignal,leadWatchReason,earlyLeadSignal,additionalLeadSignal,cricketLeadSignal,overSignal,confirmedSoccerWinnerClock,soccerWinnerWindowOpen,kalshiOnlyLead,soccerSingleReadLead,soccerSingleReadOver,singleReadOverSignal,kalshiSingleReadLead,nbaSingleReadLead} from '../src/strategy.mjs';
 import {golfState,golfSignal} from '../src/golf.mjs';
-import {finalLeadFraction} from '../src/lead_allocation.mjs';
+import {finalLeadFraction,directLeadFraction,minimumThreeGoalSpend} from '../src/lead_allocation.mjs';
 import {comboLegAllocation,comboAllocation} from '../src/combos.mjs';
 import {prioritizeMarketGames} from '../src/discovery.mjs';
 
@@ -70,6 +71,23 @@ test('revised hockey and inning-based baseball winners reject superseded thresho
    assert.equal(Boolean(leadSignal(state,market)),allowed,`${margin} in ${half} ${inning}, ${outs} outs`);
    assert.equal(earlyLeadSignal(state,market),null);
  }
+});
+test('three-goal hockey winners target at least fifteen percent of bankroll',()=>{
+ const {state,market}=team('hockey_match','NHL',3,3,405),winner=leadSignal(state,market);
+ assert.equal(minimumThreeGoalSpend(state,winner,market,10000),1500);
+ assert.equal(directLeadFraction(state,winner,market),.20);
+ assert.equal(finalLeadFraction(state,state,winner,false,market),.20);
+ assert.equal(minimumThreeGoalSpend(state,winner,{...market,yes_ask_dollars:'.50'},10000),Infinity);
+});
+test('three-goal soccer winner has the same floor; two-goal and draw do not',()=>{
+ const {state,market}=team('soccer_match','Soccer',3,2,0,{half:'2nd',time:"85'",match_remaining_seconds:299,clock:''}),winner=leadSignal(state,market);
+ assert.equal(minimumThreeGoalSpend(state,winner,market,10000),1500);
+ assert.equal(directLeadFraction(state,winner,market),.20);
+ assert.equal(minimumThreeGoalSpend({...state,homeUnits:state.awayUnits+2},{...winner},market,10000),0);
+});
+test('the initial order and a missing-order retry both enforce the goal-lead spend floor',()=>{
+ const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
+ assert.equal((source.match(/estimatedCostCents\([^\n]+<minimumThreeGoalSpend\(/g)||[]).length,2);
 });
 
 test('soccer winner allows +3 strictly under 20:00 and +2 strictly under 5:00',()=>{

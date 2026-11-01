@@ -15,7 +15,7 @@ test('fast and scan paths reject a changed contract while allowing a new ask',()
 const liveState=(m,raw)=>({...gameState(m,raw),verifiedLive:true});
 const state=(at,home=70,away=70)=>liveState(milestone,{milestone_id:'game',_observed_at:new Date(at).toISOString(),details:{status:'live',home_score:home,away_score:away,quarter:3,time_remaining:'5:00',last_updated_ts:at/1000}});
 const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
-const runtime=source.slice(source.indexOf('let overWindowsReady;'),source.indexOf('async function auditKalshiOnlyLead('));
+const runtime=source.slice(source.indexOf('let overWindowsReady;'),source.indexOf('async function auditSingleReadNbaLead('));
 function harness({home=70,away=70,seller=true,decisions=[]}={}){
  let time=start,window=null,ids=0,externalCount=0,kalshiCount=0;const events=[],proofs=[];
  class Clock extends Date{constructor(...args){super(...(args.length?args:[time]))}static now(){return time}}

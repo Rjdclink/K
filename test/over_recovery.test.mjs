@@ -8,7 +8,7 @@ test('local proof expiry preserves the recovery client ID and permits one later 
  let valid=true,expire=true;const sent=[];
  const context=vm.createContext({console,Date,Number,Math,URLSearchParams,
   timedOverEntryValid:()=>valid,assertTimedOverEntry:()=>{if(!valid)throw Object.assign(Error('expired locally'),{code:'LOCAL_OVER_PROOF_EXPIRED'})},
-  reviewMiss:async()=>{if(expire)valid=false;return {retry:true,reason:'verified recovery'}},contractCount:()=>10,profitableCount:n=>n,feeReserve:()=>2,soccerWinnerWindowOpen:()=>true,
+  reviewMiss:async()=>{if(expire)valid=false;return {retry:true,reason:'verified recovery'}},contractCount:()=>10,profitableCount:n=>n,feeReserve:()=>2,estimatedCostCents:()=>200,minimumThreeGoalSpend:()=>0,soccerWinnerWindowOpen:()=>true,
   confirmedSingleFill:async()=>{},withEntryProfitFloor:async(_,send)=>send(),
   pool:{query:async(sql,args)=>{
    if(sql.startsWith('SELECT * FROM trade_attempts'))return {rows:[row]};
