@@ -23,9 +23,8 @@ export function remainingVerifiedComboCents(position,bankroll,fraction=.10){
     !Number.isFinite(fees)||fees<0||!Number.isFinite(bankroll)||bankroll<=0)return 0;
   return Math.max(0,Math.floor(bankroll*fraction)-Math.ceil(exposure*100)-Math.ceil(fees*100));
 }
-export function availableComboFills(fills,usedLegTickers){
-  return fills.filter(r=>!/Restricted 20% cricket final innings/i.test(r.reason||'')&&
-    !(/Kalshi-only/i.test(r.reason||'')&&r.externally_verified!==true&&usedLegTickers.has(r.market_ticker)));
+export function availableComboFills(fills){
+  return fills.filter(r=>!/Restricted 20% cricket final innings/i.test(r.reason||''));
 }
 export function comboCandidates(candidates, strategy, max=6){
   const games=new Set(),events=new Set();

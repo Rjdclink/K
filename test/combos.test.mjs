@@ -114,7 +114,7 @@ test('verified winner combinations use twenty percent, fallback winners ten',()=
   assert.equal(comboLegAllocation([fallback,verified],comboAllocation(0)),.10);
   assert.equal(comboLegAllocation([fallback,verified],comboAllocation(4)),.10);
   assert.equal(comboLegAllocation([verified],comboAllocation(0)),.20);
-  assert.deepEqual(availableComboFills(rows,new Set(['UNVERIFIED'])),[rows[1],rows[2]],'a used unverified leg cannot stack another combo');
+  assert.deepEqual(availableComboFills(rows,new Set(['UNVERIFIED'])),rows,'an existing pair does not exclude its legs from a distinct triple');
   assert.deepEqual(availableComboFills([{...rows[0],externally_verified:true},rows[1]],new Set(['UNVERIFIED'])).map(r=>r.market_ticker),['UNVERIFIED','VERIFIED']);
 });
 test('even fresh independently verified robust overs keep the ten percent combo ceiling',()=>{

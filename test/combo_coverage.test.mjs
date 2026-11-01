@@ -21,6 +21,11 @@ test('four held contracts exhaust all six pairs, four triples and one four-pick 
  assert.equal(r.seen.size,11);assert.ok(r.passes>1);
  assert.deepEqual(nextComboBatch([c],legs,{cursor:r.cursor,known:r.seen}).plans,[]);
 });
+test('a new fill extends a recorded pair once without repeating the pair',()=>{
+ const legs=['A','B','C'].map(t=>leg(t)),c=collection(legs),known=new Set([comboExclusionKey(legs.slice(0,2))]);
+ const plans=nextComboBatch([c],legs,{known,requiredTicker:'C'}).plans;
+ assert.deepEqual(plans.map(p=>p.legs.map(l=>l.market.ticker).join('+')).sort(),['A+B+C','A+C','B+C']);
+});
 test('all alternative-contract Cartesian choices are reached, not two diagonal pairs',()=>{
  const legs=[leg('A1','A'),leg('A2','A'),leg('B1','B'),leg('B2','B')],c=collection(legs);
  const r=exhaust([c],legs,{budget:1});

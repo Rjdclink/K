@@ -1374,9 +1374,7 @@ async function checkHeldCombinations(fills,{requestedFill=null,superseded=()=>fa
   if(requestedFill&&(!held.has(requestedFill.market_ticker)||!fills.some(row=>
     row.market_ticker===requestedFill.market_ticker&&!row.combo_legs&&Number(row.fill_count)>0)))
     return {filled:false,pending:false,deferred:'New single is not yet in confirmed held positions'};
-  const used=await pool.query(`SELECT combo_legs FROM trade_attempts WHERE combo_legs IS NOT NULL AND status IN ('filled','combo_pending')`);
-  const unverifiedUsed=new Set(used.rows.flatMap(r=>(r.combo_legs||[]).map(l=>l.market_ticker)));
-  const available=availableComboFills(fills,unverifiedUsed);
+  const available=availableComboFills(fills);
   const singles=filledComboWindow(available,held,null);
   await pool.query(`CREATE TABLE IF NOT EXISTS combo_fill_triggers (
     fill_id uuid PRIMARY KEY, attempted_at timestamptz, completed_at timestamptz, combo_ticker text)`);
@@ -2310,7 +2308,6 @@ async function scan(cachedMilestones,discoveryCount){
       }catch(e){executionErrors.push('Combo: '+String(e.message).slice(0,180));console.error('Post-fill combo execution deferred:',e)}
     }
     if(live()){
-      try{await diagnoseHeldCombinations(existingFills.rows,openPositions)}catch(e){console.warn('Held combo diagnostic deferred:',e.message)}
       try{await diagnoseUnfilledCombo(opportunities,filled)}catch(e){console.warn('Unfilled combo diagnostic deferred:',e.message)}
     }
     // The next scan may already have published newer counts. Preserve its
