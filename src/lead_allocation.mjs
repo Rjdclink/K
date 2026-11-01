@@ -1,4 +1,4 @@
-import { KALSHI_ONLY_FRACTION } from './strategy.mjs';
+import { KALSHI_ONLY_FRACTION,strongKalshiOnlyLead } from './strategy.mjs';
 
 export function leaderHasControl(game){
   if(game?.darts){
@@ -12,9 +12,16 @@ export function leaderHasControl(game){
     game.possessionSide===(home>away?'home':'away');
 }
 
-// A qualifying winner has one verification-based ceiling across sports.
 // Entry rules stay in sport-specific signal functions; this cannot create one.
 export function finalLeadFraction(first,second,signal,externallyVerified,market){
   if(signal?.strategy!=='lead')return signal?.fraction;
-  return externallyVerified?.20:KALSHI_ONLY_FRACTION;
+  if(second?.sport==='NBA'&&/basketball/.test(second.type)){
+    if(!externallyVerified)return KALSHI_ONLY_FRACTION;
+    const margin=Math.abs(second.homeUnits-second.awayUnits),seconds=second.remainingSeconds;
+    if(!Number.isFinite(margin)||!Number.isFinite(seconds))return KALSHI_ONLY_FRACTION;
+    if(margin<20)return .10; // Retained +8 route in the final 90 seconds.
+    return Math.min(.15,.05+(seconds<240||margin>=25?.05:0)+
+      (seconds<120||margin>=30?.05:0));
+  }
+  return externallyVerified||market&&strongKalshiOnlyLead(first,second,market)?.20:KALSHI_ONLY_FRACTION;
 }
