@@ -841,7 +841,10 @@ async function ensureShardFunding(signal,event,market,account,desiredCents,sourc
   const {rows:[pending]}=await pool.query(`SELECT * FROM funding_transfers WHERE market_ticker=$1 AND strategy=$2 AND status IN ('pending','uncertain') ORDER BY created_at DESC LIMIT 1`,[market.ticker,signal.strategy]);
   // Funding belongs to the destination shard, not a market. Do not queue
   // competing transfers against the same source cash while one is settling.
-  if(!pending){const inFlight=await pool.query(`SELECT id,transfer_id,destination_shard FROM funding_transfers WHERE status IN ('pending','uncertain') AND (destination_shard=$1 OR source_shard=$2) LIMIT 1`,[destination,plan.sourceShard]);if(inFlight.rowCount)return Number(inFlight.rows[0].destination_shard)===destination?inFlight.rows[0].transfer_id||null:null}
+  if(!pending){const conflictingFunding=()=>pool.query(`SELECT id,transfer_id,destination_shard FROM funding_transfers WHERE status IN ('pending','uncertain') AND (destination_shard=$1 OR source_shard=$2) LIMIT 1`,[destination,plan.sourceShard]);
+    let inFlight=await conflictingFunding();
+    if(inFlight.rowCount){await reconcileFundingTransfers();inFlight=await conflictingFunding();
+      if(inFlight.rowCount)return Number(inFlight.rows[0].destination_shard)===destination?inFlight.rows[0].transfer_id||null:null}}
   if(pending){
     const history=await kalshi('/portfolio/intra_exchange_instance_transfers?limit=100',{auth:true});
     const matched=(history.transfers||[]).find(t=>t.client_transfer_id===pending.id);
@@ -882,10 +885,13 @@ async function stageCashAcrossShards(account,bankroll){
 async function reconcileFundingTransfers(){
   const pending=await pool.query(`SELECT id,transfer_id FROM funding_transfers WHERE status IN ('pending','uncertain') AND updated_at<now()-interval '10 seconds' ORDER BY created_at DESC LIMIT 100`);
   if(!pending.rowCount)return;
-  const history=await kalshi('/portfolio/intra_exchange_instance_transfers?limit=500',{auth:true});
+  const history=await kalshi('/portfolio/intra_exchange_instance_transfers?limit=500',{auth:true}).catch(e=>{console.warn('Transfer list unavailable; checking known IDs:',e.message);return {transfers:[]}});
   const completed=(history.transfers||[]).filter(t=>t.status==='complete');
   for(const row of pending.rows){const match=completed.find(t=>t.client_transfer_id===row.id||row.transfer_id&&t.transfer_id===row.transfer_id);
-    if(match){await pool.query(`UPDATE funding_transfers SET status='complete',transfer_id=$2,updated_at=now() WHERE id=$1`,[row.id,match.transfer_id]);await invalidateBalance()}}
+    let status=match?.status;
+    if(!status&&row.transfer_id)try{status=(await kalshi('/portfolio/intra_exchange_instance_transfers/'+encodeURIComponent(row.transfer_id),{auth:true})).transfer?.status}catch(e){console.warn('Transfer lookup deferred:',row.transfer_id,e.message)}
+    if(status==='complete'){await pool.query(`UPDATE funding_transfers SET status='complete',transfer_id=$2,updated_at=now() WHERE id=$1`,[row.id,match?.transfer_id||row.transfer_id]);await invalidateBalance()}
+    else if(['failed','rejected','canceled','cancelled'].includes(status))await pool.query(`UPDATE funding_transfers SET status='blocked',error=$2,updated_at=now() WHERE id=$1`,[row.id,'Kalshi transfer '+status]);}
 }
 async function submit(signal,game,event,market,balance,bankroll,budgetCents=Infinity,availableCents=bankroll,cashCents=balance){
   balance=Math.min(balance,singleSpendableCash(cashCents));
