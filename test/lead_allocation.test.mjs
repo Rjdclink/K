@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {finalLeadFraction,leaderHasControl} from '../src/lead_allocation.mjs';
-import {gameState,earlyLeadSignal,kalshiOnlyLead} from '../src/strategy.mjs';
+import {gameState,earlyLeadSignal,kalshiOnlyLead,nbaSingleReadLead} from '../src/strategy.mjs';
 
 const lead={strategy:'lead',fraction:.15};
 const game=(type,possessionSide='home')=>({type,sport:'Other',home:30,away:10,homeUnits:30,awayUnits:10,possessionSide});
@@ -85,16 +85,30 @@ test('strong Kalshi-only leads use 20% only after two stable reads and a score c
   check({...team,type:'hockey_match',sport:'NHL',period:3,home:6,homeUnits:6,away:1,awayUnits:1,remainingSeconds:80},market,.20);
   check({...team,type:'hockey_match',sport:'NHL',period:3,home:5,homeUnits:5,away:1,awayUnits:1,remainingSeconds:80},market,.10,false);
 });
-test('NBA 20-point route is strict at 6:30 and verified sizing increases with clock or margin',()=>{
+test('NBA 20-point route is strict at 6:30 and single-read sizing increases with clock or margin',()=>{
   const market={status:'active',event_ticker:'KXGAME-TEST',title:'Home wins',yes_sub_title:'Home',
     custom_strike:{basketball_team:'home'},yes_ask_dollars:'.95'};
   const g={...game('basketball_game'),sport:'NBA',period:4,remainingSeconds:389,home:120,away:100,
-    homeUnits:120,awayUnits:100,verifiedLive:true,scoreKnown:true,periodConsistent:true,homeName:'Home',awayName:'Away',homeTeamId:'home',awayTeamId:'away'};
+    homeUnits:120,awayUnits:100,verifiedLive:true,scoreKnown:true,scoreConsistent:true,periodConsistent:true,homeName:'Home',awayName:'Away',homeTeamId:'home',awayTeamId:'away'};
   assert.equal(finalLeadFraction(g,g,lead,true,market),.05);
   assert.equal(finalLeadFraction(g,{...g,home:126,homeUnits:126},lead,true,market),.10);
   assert.equal(finalLeadFraction(g,{...g,remainingSeconds:119},lead,true,market),.15);
-  assert.equal(finalLeadFraction(g,g,lead,false,market),.10);
+  assert.equal(finalLeadFraction(g,g,lead,false,market),.05);
   assert.equal(finalLeadFraction(g,{...g,home:108,homeUnits:108,remainingSeconds:60},lead,true,market),.10);
+  const now=Date.now(),fresh={...g,id:'game',feedId:'game',observedAt:now,updatedAt:now-1000};
+  assert.equal(nbaSingleReadLead(fresh,market,now),true);
+  assert.equal(nbaSingleReadLead({...fresh,remainingSeconds:390},market,now),false);
+  assert.equal(nbaSingleReadLead({...fresh,home:119,homeUnits:119},market,now),false);
+  assert.equal(nbaSingleReadLead({...fresh,updatedAt:now-31000},market,now),false);
+  assert.equal(nbaSingleReadLead({...fresh,feedId:'other'},market,now),false);
+  assert.equal(nbaSingleReadLead({...fresh,possessionSide:'away'},market,now),false);
+  assert.equal(nbaSingleReadLead(fresh,{...market,custom_strike:{basketball_team:'away'}},now),false);
+  assert.equal(nbaSingleReadLead(fresh,market,now+10001),false);
+  const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
+  assert.match(source,/if\(!directNba\)\{\s*decision.stage='independent_score'/);
+  assert.match(source,/if\(c.signal.strategy==='lead'&&!freshState.golf&&!directNba\)/);
+  assert.match(source,/if\(c.signal.strategy==='lead'&&!directNba\)/);
+  assert.match(source,/if\(directNba&&!await auditSingleReadNbaLead\(freshState,quote,c.milestone\)\)continue/);
 });
 test('tennis two-match-point fallback permits 20% with an unchanged deciding set',()=>{
   const m={id:'tennis-fallback',type:'tennis_tournament_singles',title:'Hurkacz vs Bergs',
