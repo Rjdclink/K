@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {discoverCurrentMilestones,scanMilestones,nearEntryPhase,prioritizeMarketGames,eligibleForMarkets,linkedEventTickers,winnerEventTickers,readyOverTickets,gameTimeLabel,storedClockSeconds,mapBatches} from '../src/discovery.mjs';
+import {discoverCurrentMilestones,scanMilestones,nearEntryPhase,prioritizeMarketGames,eligibleForMarkets,linkedEventTickers,entryEventTickers,winnerEventTickers,readyOverTickets,gameTimeLabel,storedClockSeconds,mapBatches} from '../src/discovery.mjs';
 import {gameState,overSignal,sportName} from '../src/strategy.mjs';
 
 test('bounded parallel live batches cover every milestone without losing result order',async()=>{
@@ -26,6 +26,16 @@ test('fast over queue reuses only executable over tickets awaiting independent v
   ]},{milestone:{id:'b'},signals:[{ticker:'E',strategy:'over',execution:'Awaiting score verification',ask:'.98',ask_size:'1'}]}];
   assert.deepEqual(readyOverTickets(rows,1).map(item=>item.signal.ticker),['A']);
   assert.deepEqual(readyOverTickets(rows).map(item=>item.signal.ticker),['A','E']);
+});
+
+test('closed prop windows skip prop catalogs but retain game totals and winners',()=>{
+  const milestone={type:'football_game',related_event_tickers:['KXNFLRECYDS-TEST','KXNFLTOTAL-TEST','KXNFLGAME-TEST']};
+  const late=entryEventTickers(milestone,{type:'football_game',period:4,remainingSeconds:500});
+  assert.ok(late.includes('KXNFLTOTAL-TEST')&&late.includes('KXNFLGAME-TEST')&&late.includes('KXNFL2HTOTAL-TEST'));
+  assert.ok(!late.some(t=>/RECYDS|1QTOTAL|1HTOTAL/.test(t)));
+  assert.ok(entryEventTickers(milestone,{type:'football_game',period:3,remainingSeconds:120}).includes('KXNFLRECYDS-TEST'));
+  assert.ok(entryEventTickers(milestone,{type:'football_game',period:3,remainingSeconds:120}).includes('KXNFL2HTOTAL-TEST'));
+  assert.ok(!entryEventTickers(milestone,{type:'football_game',period:3,remainingSeconds:120}).includes('KXNFL1HTOTAL-TEST'));
 });
 
 test('sports discovery traverses pages and includes esports and older live tournaments',async()=>{

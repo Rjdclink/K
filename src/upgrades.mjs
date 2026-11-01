@@ -5,7 +5,7 @@ export function remainingVerifiedOverCents(position,bankroll,fraction=.15){
   const fees=Number(position?.fees_paid_dollars);
   if(!Number.isFinite(held)||held<=0||position?.market_exposure_dollars==null||
     position?.fees_paid_dollars==null||!Number.isFinite(exposure)||exposure<0||
-    !Number.isFinite(fees)||fees<0||!Number.isFinite(bankroll)||bankroll<=0||![.15,.20,.40].includes(fraction))return 0;
+    !Number.isFinite(fees)||fees<0||!Number.isFinite(bankroll)||bankroll<=0||![.15,.20,.25,.40].includes(fraction))return 0;
   return Math.max(0,Math.floor(bankroll*fraction)-Math.ceil(exposure*100)-Math.ceil(fees*100));
 }
 export function upgradeEligible(fill,position,candidate){
@@ -13,6 +13,6 @@ export function upgradeEligible(fill,position,candidate){
     fill.strategy==='over'&&!fill.combo_legs&&
     fill.market_ticker===candidate.market?.ticker&&fill.event_ticker===candidate.event?.event_ticker&&
     fill.game_id===candidate.milestone?.id&&candidate.signal?.strategy==='over'&&
-    [.15,.20,.40].includes(candidate.signal.fraction)&&Number(position.position_fp)>0&&
+    [.15,.20,.25,.40].includes(candidate.signal.fraction)&&Number(position.position_fp)>0&&
     position.ticker===fill.market_ticker);
 }

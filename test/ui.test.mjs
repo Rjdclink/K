@@ -39,6 +39,11 @@ test('game summary puts preflight and available-ask counts above other metrics',
   assert.ok(positions.every(position=>position>=0));
   assert.deepEqual([...positions].sort((a,b)=>a-b),positions);
 });
+test('a funded shard transfer remains visible as a live preflight',()=>{
+  const context=vm.createContext({document:{getElementById(){return {addEventListener(){},classList:{add(){},remove(){}},style:{}}},querySelectorAll(){return []}},window:{addEventListener(){}},navigator:{},localStorage:{getItem(){return null}},fetch:()=>new Promise(()=>{}),AbortSignal,setInterval(){}});
+  vm.runInContext(page.match(/const preflightStates=[\s\S]*?(?=function compareSignals)/)[0],context);
+  assert.equal(vm.runInContext("isPreflight({strategy:'over',ask:'.99',ask_size:'300.96',execution:'Verification pending; shard transfer needed if confirmed'})",context),true);
+});
 test('weather card reports a paused scan without stale candidate counts',async()=>{
   const elements=new Map();
   const element=()=>({children:[],style:{},classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){},replaceChildren(...x){this.children=x}});

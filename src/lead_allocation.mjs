@@ -11,7 +11,7 @@ export const minimumThreeGoalSpend=(game,signal,market,bankroll)=>
 export function verifiedOverFraction(signal,game,market){
   if(signal?.strategy!=='over')return signal?.fraction;
   if(!timedOverEntryValid(game,market))return Math.min(.15,signal.fraction);
-  if(variableValuePlayerMetric(playerOverSpec(game,market)?.metric))return .15;
+  if(variableValuePlayerMetric(playerOverSpec(game,market)?.metric))return .25;
   if(game.overVerification?.route==='seller_cushion')return .40;
   return signal.fraction===.40?.40:.20;
 }

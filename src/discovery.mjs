@@ -1,7 +1,7 @@
 // Only fetch event families used by the two entry strategies and comeback exits.
 // The exchange remains authoritative: a guessed ticker is ignored unless an
 // open event and its market are actually returned by Kalshi.
-import { cricketOneInningsFormat, cfbLeadApproaching, basketballLeadProfile } from './strategy.mjs';
+import { cricketOneInningsFormat, cfbLeadApproaching, basketballLeadProfile, playerPropEarlyWindow } from './strategy.mjs';
 const supportedType=type=>/basketball|baseball|football|hockey|soccer|tennis|golf|handball|rugby|lacrosse|volleyball|darts/.test(String(type||'').toLowerCase());
 
 export async function mapBatches(items,limit,task){
@@ -98,6 +98,14 @@ export function prioritizeMarketGames(games,{signaledIds=new Set(),heldIds=new S
   return [...urgent,...selected];
 }
 
+export function entryEventTickers(milestone,game){
+  const tickers=linkedEventTickers(milestone);
+  return tickers.filter(t=>{
+    const series=String(t).split('-')[0],segment=series.match(/([1-9])(Q|P|H|INNING)(?:TEAM)?TOTAL$/);
+    const end=segment?.[2]==='H'&&/basketball|football/.test(game.type)&&game.sport!=='NCAAB'?Number(segment[1])*2:Number(segment?.[1]);
+    return !(segment&&Number(game.period)>end)&&!(!playerPropEarlyWindow(game)&&/(?:PTS|REB|AST|3PT|PRA|STL|BLK|GOALS|SAVES|SOG|HITS|RBI|HR|RUSHYDS|PASSYDS|RECYDS|RRYDS|RECPROT|PASSATT|PASSCOMP|PASSINT|PASSTDS)(?:PROT)?$/.test(series));
+  });
+}
 export function readyOverTickets(rows,limit=12){
   return rows.flatMap(({milestone,signals})=>(signals||[])
     .filter(signal=>signal.strategy==='over'&&

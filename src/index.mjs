@@ -20,7 +20,7 @@ import { manifest, worker } from './pwa.mjs';
 import { vapidIdentity, validateSubscription, deliverPush } from './push.mjs';
 import { favorableSettlement } from './settlements.mjs';
 import { authorized, checkCredentials, sessionCookie, loginPage } from './dashboard_auth.mjs';
-import { discoverCurrentMilestones, scanMilestones, eligibleForMarkets, prioritizeMarketGames, linkedEventTickers, winnerEventTickers, readyOverTickets, gameTimeLabel, storedClockSeconds, mapBatches } from './discovery.mjs';
+import { discoverCurrentMilestones, scanMilestones, eligibleForMarkets, prioritizeMarketGames, linkedEventTickers, entryEventTickers, winnerEventTickers, readyOverTickets, gameTimeLabel, storedClockSeconds, mapBatches } from './discovery.mjs';
 import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOverDecision, verifyIndependentTableTennisLeadDecision, verifyIndependentTableTennisMatch } from './score_verification.mjs';
 import { verificationStatus } from './verification_status.mjs';
@@ -134,7 +134,10 @@ async function kalshi(path,opts={}){
 // Serialize refreshes through Postgres and reuse a recent verified account snapshot.
 let balanceQueue=Promise.resolve();
 let candidateTableReady;
-function candidateTable(){return candidateTableReady??=pool.query(`CREATE TABLE IF NOT EXISTS candidate_windows (market_ticker text NOT NULL, strategy text NOT NULL, first_seen timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(market_ticker,strategy))`).catch(e=>{candidateTableReady=null;throw e})}
+function candidateTable(){return candidateTableReady??=(async()=>{
+  await pool.query(`CREATE TABLE IF NOT EXISTS candidate_windows (market_ticker text NOT NULL, strategy text NOT NULL, first_seen timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(market_ticker,strategy))`);
+  await pool.query(`ALTER TABLE candidate_windows ADD COLUMN IF NOT EXISTS last_ask_probe_at timestamptz NOT NULL DEFAULT '-infinity'`);
+})().catch(e=>{candidateTableReady=null;throw e})}
 let propWindowsReady;
 function ensurePropWindows(){return propWindowsReady??=pool.query(`CREATE TABLE IF NOT EXISTS player_prop_windows (
   market_ticker text PRIMARY KEY,game_id text NOT NULL,first_crossed timestamptz NOT NULL DEFAULT now(),
@@ -1831,10 +1834,12 @@ async function watchReadyOverTickets(until){
         const checkedAt=Date.now();
         try{
           const cached=rows.find(row=>row.milestone.id===milestone.id)?.live_score;
+          if(cached&&!entryEventTickers(milestone,gameState(milestone,cached)).some(t=>ticket.ticker.startsWith(t+'-')))continue;
           const useCached=/soccer/.test(milestone.type||'')&&Date.now()-Date.parse(cached?._observed_at||'')<=30000;
           const raw=useCached?cached:await liveMilestone(milestone.id);
           if(!raw)continue;
           if(!useCached)raw._observed_at=new Date().toISOString();state=gameState(milestone,raw);
+          if(!entryEventTickers(milestone,state).some(t=>ticket.ticker.startsWith(t+'-')))continue;
           const current=(await kalshi('/markets/'+encodeURIComponent(ticket.ticker))).market;
           const eventTicker=current?.event_ticker;
           if(!eventTicker||!linkedEventTickers(milestone).includes(eventTicker))continue;
@@ -2005,7 +2010,7 @@ async function scan(cachedMilestones,discoveryCount){
       lowBudget:earlySweep.length?12:0
     });
     console.info('Live market priority:',JSON.stringify({live:marketCandidates.length,marketChecked:marketGames.length,earlySweep:Boolean(earlySweep.length),earlyDeferred:marketCandidates.length-marketGames.length}));
-    const events=await marketMap(marketGames.flatMap(g=>linkedEventTickers(g.milestone)));
+    const events=await marketMap(marketGames.flatMap(g=>entryEventTickers(g.milestone,g.state)));
     // Market discovery can take longer than a scoring play. Refresh live
     // player stats immediately before deciding which props crossed their line.
     const currentLive=await liveBatch(marketGames.map(g=>g.milestone));
@@ -2015,7 +2020,7 @@ async function scan(cachedMilestones,discoveryCount){
     const crossingRows=[];
     for(const {milestone,state} of marketGames){
       if(!state.verifiedLive||!state.scoreConsistent)continue;
-      for(const ticker of linkedEventTickers(milestone))for(const market of events.get(ticker)?.markets||[]){
+      for(const ticker of entryEventTickers(milestone,state))for(const market of events.get(ticker)?.markets||[]){
         if(market.event_ticker!==ticker||!market.ticker||!['active','open'].includes(market.status))continue;
         const player=playerOverSpec(state,market);
         if(player&&player.value>Number(market.floor_strike))
@@ -2076,7 +2081,7 @@ async function scan(cachedMilestones,discoveryCount){
     const heldPositions=new Map((openPositions?.market_positions||[]).map(p=>[p.ticker,p]));
     for(const {milestone,state} of games){
       const candidates=[];
-      if(eligibleForMarkets(state))for(const ticker of linkedEventTickers(milestone)){const event=events.get(ticker);if(!event || !['Sports','Esports'].includes(event.category))continue;
+      if(eligibleForMarkets(state))for(const ticker of entryEventTickers(milestone,state)){const event=events.get(ticker);if(!event || !['Sports','Esports'].includes(event.category))continue;
         for(const market of event.markets||[]){if(market.event_ticker!==event.event_ticker)continue;
           const signal=overSignal(state,market)||golfSignal(state,market)||leadSignal(state,market)||additionalLeadSignal(state,market)||cricketLeadSignal(state,market)||drawSignal(state,market)||earlyLeadSignal(state,market)||tennisSignal(state,market)||tableTennisSignal(state,market);if(signal)candidates.push({signal:signal.strategy==='lead'?{...signal,fraction:finalLeadFraction(state,state,signal,false)}:signal,event,market,state,milestone})}}
       // Keep crossed, already-filled props visible with their status, but do
@@ -2096,7 +2101,12 @@ async function scan(cachedMilestones,discoveryCount){
     }
     const missing=[...allCandidates,...upgradeCandidates].filter(c=>!hasAsk(c.market));
     if(missing.length){
-      const quotes=await bestAsksForTickers(missing.map(c=>c.market.ticker),async tickers=>{
+      const unique=[...new Map(missing.map(c=>[signalKey(c),{market_ticker:c.market.ticker,strategy:c.signal.strategy}])).values()];
+      const {rows:due}=await pool.query(`INSERT INTO candidate_windows(market_ticker,strategy,last_ask_probe_at)
+        SELECT market_ticker,strategy,clock_timestamp() FROM jsonb_to_recordset($1::jsonb) AS x(market_ticker text,strategy text)
+        ON CONFLICT(market_ticker,strategy) DO UPDATE SET last_ask_probe_at=EXCLUDED.last_ask_probe_at
+          WHERE candidate_windows.last_ask_probe_at<clock_timestamp()-interval '60 seconds' RETURNING market_ticker`,[JSON.stringify(unique)]);
+      const quotes=await bestAsksForTickers(due.map(row=>row.market_ticker),async tickers=>{
         const q=new URLSearchParams();tickers.forEach(ticker=>q.append('tickers',ticker));
         return (await kalshi('/markets/orderbooks?'+q)).orderbooks;
       },async ticker=>({ticker,orderbook_fp:(await kalshi('/markets/'+encodeURIComponent(ticker)+'/orderbook')).orderbook_fp}),
@@ -2570,6 +2580,7 @@ async function handleRequest(req){const url=new URL(req.url);
     const discoveryJob=withApiPriority('background',()=>milestones())
       .then(found=>{discovered=found}).catch(error=>{discoveryError=error});
     cached=knownLive.map(row=>row.milestone);
+    if(cached.length){const {rows}=await pool.query('SELECT discovered FROM scan_status WHERE id=1');discoveryCount=rows[0]?.discovered??cached.length}
     if(!cached.length){await discoveryJob;if(discovered){cached=discovered;discoveryCount=discovered.length;discoveryApplied=true}}
     const correctionJob=withApiPriority('live',()=>watchCorrectedOvers(until)).catch(e=>console.error('Fast correction watcher failed:',e));
     const leadWatchJob=withApiPriority('live',()=>watchLeadWindows(until)).catch(e=>console.error('Fast lead watcher failed:',e));
