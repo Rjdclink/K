@@ -124,6 +124,7 @@ function ensureLeadWatch(){return leadWatchReady??=(async()=>{
   await pool.query(`CREATE TABLE IF NOT EXISTS lead_watch_milestones (
     game_id text PRIMARY KEY,milestone jsonb NOT NULL,updated_at timestamptz NOT NULL DEFAULT now())`);
   await pool.query('ALTER TABLE lead_watch_milestones ADD COLUMN IF NOT EXISTS watchable boolean NOT NULL DEFAULT false');
+  await pool.query('ALTER TABLE lead_watch_milestones ADD COLUMN IF NOT EXISTS live_score jsonb');
 })().catch(e=>{leadWatchReady=null;throw e})}
 function accountBalance({fresh=false}={}){
   const job=balanceQueue.catch(()=>{}).then(async()=>{
@@ -492,6 +493,14 @@ async function liveBatch(ms){
     }
     return {list,observedAt:new Date().toISOString()};});
   results.forEach(({list,observedAt})=>list.forEach(d=>map.set(d.milestone_id,{...d,_observed_at:observedAt})));
+  const soccerScores=ms.filter(m=>/soccer/.test(m.type||'')).map(m=>map.get(m.id)).filter(Boolean);
+  if(soccerScores.length){
+    await ensureLeadWatch();
+    await pool.query(`UPDATE lead_watch_milestones w SET live_score=s.data
+      FROM jsonb_to_recordset($1::jsonb) AS s(id text,data jsonb)
+      WHERE w.game_id=s.id AND (w.live_score IS NULL OR w.live_score->>'_observed_at'<s.data->>'_observed_at')`,
+      [JSON.stringify(soccerScores.map(data=>({id:data.milestone_id,data})))]);
+  }
   if(ms.length>100)console.info('Live batch:',JSON.stringify({milestones:ms.length,groups:groups.length,returned:map.size,elapsedMs:Date.now()-started}));
   return map;
 }
@@ -1498,14 +1507,23 @@ async function watchLeadWindows(until){
       // A game can enter a commanding-lead window while a full scan is busy.
       // The earlier watchable flag is only a dashboard hint; apply the rule
       // to every fresh fast read from recently registered live games.
-      const {rows}=await pool.query(`SELECT w.milestone FROM lead_watch_milestones w
+      const {rows}=await pool.query(`SELECT w.milestone,w.live_score FROM lead_watch_milestones w
         JOIN game_snapshots g ON g.id=w.game_id
         WHERE w.updated_at>now()-interval '15 minutes' AND g.status='live'
           AND GREATEST(g.score_observed_at,g.scanned_at)>now()-interval '15 minutes'
         ORDER BY w.updated_at DESC LIMIT 100`);
       const watching=rows.map(row=>row.milestone);
       if(watching.length){
-        const latest=await liveBatch(watching);
+        const cached=new Map(rows.filter(row=>/soccer/.test(row.milestone.type||'')&&
+          Date.now()-Date.parse(row.live_score?._observed_at||'')>=0&&
+          Date.now()-Date.parse(row.live_score?._observed_at||'')<=30000)
+          .map(row=>[row.milestone.id,row.live_score]));
+        const needed=watching.filter(m=>!cached.has(m.id));
+        async function* scorePasses(){
+          if(cached.size)yield cached;
+          if(needed.length&&Date.now()<until)yield await liveBatch(needed);
+        }
+        for await(const latest of scorePasses()){
         const possible=watching.map(milestone=>({milestone,state:gameState(milestone,latest.get(milestone.id))}))
           .filter(g=>leadWatchReason(g.state))
           .sort((a,b)=>(a.state.remainingSeconds||Infinity)-(b.state.remainingSeconds||Infinity));
@@ -1583,7 +1601,7 @@ async function watchLeadWindows(until){
               decision.signal=verified;decision.stage='cash_and_score_age';
               const account=await accountBalance({fresh:true}),balance=Number(account.balance),bankroll=balance+Number(account.portfolio_value);
               const local=shardCash(account,marketShard(event,quote));
-              if(local===null||local<=0||Date.now()-second.observedAt>10000)continue;
+              if(local===null||local<=0||Date.now()-second.observedAt>(directSoccer?30000:10000))continue;
               decision.stage='submission';
               if(await submit(verified,second,event,quote,Math.min(balance,local),bankroll)){
                 decision.outcome='filled';console.info('Fast lead watch filled:',quote.ticker);
@@ -1592,6 +1610,7 @@ async function watchLeadWindows(until){
             finally{await recordDecision(decision)}
           }
           }
+        }
         }
       }
     }catch(e){console.warn('Fast lead watch deferred:',e.message)}
@@ -1770,10 +1789,12 @@ async function scan(cachedMilestones,discoveryCount){
     await ensureLeadWatch();
     const watched=active;
     for(let i=0;i<watched.length;i+=50){
-      const batch=watched.slice(i,i+50),values=batch.map((_,n)=>`($${n*3+1},$${n*3+2}::jsonb,$${n*3+3}::boolean)`).join(',');
-      await pool.query(`INSERT INTO lead_watch_milestones(game_id,milestone,watchable) VALUES ${values}
-        ON CONFLICT(game_id) DO UPDATE SET milestone=EXCLUDED.milestone,watchable=EXCLUDED.watchable,updated_at=clock_timestamp()`,
-      batch.flatMap(g=>[g.milestone.id,JSON.stringify(g.milestone),Boolean(leadWatchReason(g.state))]));
+      const batch=watched.slice(i,i+50),values=batch.map((_,n)=>`($${n*4+1},$${n*4+2}::jsonb,$${n*4+3}::boolean,$${n*4+4}::jsonb)`).join(',');
+      await pool.query(`INSERT INTO lead_watch_milestones(game_id,milestone,watchable,live_score) VALUES ${values}
+        ON CONFLICT(game_id) DO UPDATE SET milestone=EXCLUDED.milestone,watchable=EXCLUDED.watchable,
+        live_score=CASE WHEN lead_watch_milestones.live_score->>'_observed_at'>EXCLUDED.live_score->>'_observed_at'
+          THEN lead_watch_milestones.live_score ELSE EXCLUDED.live_score END,updated_at=clock_timestamp()`,
+      batch.flatMap(g=>[g.milestone.id,JSON.stringify(g.milestone),Boolean(leadWatchReason(g.state)),JSON.stringify(liveMap.get(g.milestone.id)||null)]));
     }
     const marketCandidates=active.filter(g=>eligibleForMarkets(g.state)).map(g=>({...g,watchable:Boolean(leadWatchReason(g.state))}));
     const {rows:heldGames}=await pool.query(`SELECT DISTINCT game_id FROM trade_attempts
