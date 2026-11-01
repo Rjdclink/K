@@ -8,7 +8,7 @@ import pg from 'pg';
 import { page } from './ui.mjs';
 import { historyPage } from './history_ui.mjs';
 import { completedTrade, manualSaleFill, reconcileManualSaleFills, settlementLookupCandidates } from './history.mjs';
-import { gameState, overSignal, cushionedOverSignal, playerOverSpec, confirmedOver, kalshiOnlyOver, singleReadCushionedOver, kalshiOnlyLead, fallbackOverFraction, fallbackScoringUnits, confirmedExternalLead, leadSignal, proBasketballLeadRules, nbaSingleReadLead, soccerSingleReadLead, confirmedSoccerWinnerClock, confirmedDrawClock, soccerWinnerWindowOpen, externallyVerifiedEarlySoccerLead, leadWatchReason, additionalLeadSignal, cricketLeadSignal, drawSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback, PLAYER_PROP_WINDOW_MS } from './strategy.mjs';
+import { gameState, overSignal, cushionedOverSignal, playerOverSpec, confirmedOver, kalshiOnlyOver, singleReadOverSignal, soccerSingleReadOver, kalshiOnlyLead, fallbackOverFraction, fallbackScoringUnits, confirmedExternalLead, leadSignal, proBasketballLeadRules, nbaSingleReadLead, soccerSingleReadLead, confirmedSoccerWinnerClock, confirmedDrawClock, soccerWinnerWindowOpen, externallyVerifiedEarlySoccerLead, leadWatchReason, additionalLeadSignal, cricketLeadSignal, drawSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback, PLAYER_PROP_WINDOW_MS } from './strategy.mjs';
 import { reviewMiss } from './ai.mjs';
 import { kalshiSignature } from './auth.mjs';
 import { marketShard, shardCash, transferPlan, comboShardBudget, awaitShardCash } from './funding.mjs';
@@ -195,11 +195,11 @@ async function auditKalshiOnlyOver(first,second,market,milestone){
   return true;
 }
 async function auditSingleReadOver(game,market,milestone){
-  const signal=singleReadCushionedOver(game,market);
+  const signal=singleReadOverSignal(game,market);
   if(!signal)return null;
   await auditTable();const id=randomUUID();
   await pool.query('INSERT INTO verification_records(id,market_ticker,passed,evidence) VALUES($1,$2,true,$3)',
-    [id,market.ticker,JSON.stringify({mode:'kalshi_only_cushioned_over_single_read',game,
+    [id,market.ticker,JSON.stringify({mode:/soccer/.test(game.type)?'kalshi_soccer_single_read_and_executable_ask':'kalshi_only_cushioned_over_single_read',game,
       milestoneId:milestone.id,allocation:signal.fraction,reason:signal.reason})]);
   game.verificationId=id;
   return signal;
@@ -598,7 +598,7 @@ function signalExecution(c,filled,account,balance,bankroll){
   const singleRead=c.signal.strategy==='lead'&&proBasketballLeadRules(c.state)&&
     (c.state.remainingSeconds<450&&Math.abs(c.state.home-c.state.away)>=18||
       c.state.remainingSeconds<390&&Math.abs(c.state.home-c.state.away)>=12)||
-    c.signal.strategy==='over'&&Boolean(cushionedOverSignal(c.state,c.market));
+    c.signal.strategy==='over'&&Boolean(cushionedOverSignal(c.state,c.market)||soccerSingleReadOver(c.state,c.market));
   if(local===null)return 'Shard balance unavailable';
   if(local<estimatedCostCents(raw,price,fees)){
     if(transferPlan(account,marketShard(c.event,c.market),estimatedCostCents(raw,price,fees)))return singleRead?
@@ -664,6 +664,8 @@ async function reconcileFundingTransfers(){
     if(match){await pool.query(`UPDATE funding_transfers SET status='complete',transfer_id=$2,updated_at=now() WHERE id=$1`,[row.id,match.transfer_id]);await invalidateBalance()}}
 }
 async function submit(signal,game,event,market,balance,bankroll,budgetCents=Infinity,availableCents=bankroll){
+  if(signal.strategy==='over'&&/soccer/.test(game.type)&&/Kalshi-only single score/.test(signal.reason||'')&&
+    !soccerSingleReadOver(game,market))return false;
   if(signal.strategy==='lead'&&/Kalshi soccer live score and executable seller checked/.test(signal.reason||'')&&
     (!soccerSingleReadLead(game,market)||!hasAsk(market)))return false;
   const price=Number(market.yes_ask_dollars);const count=profitableCount(contractCount(balance,market,signal.fraction,bankroll,budgetCents,feeReserve(event,market)),price,feeReserve(event,market),signal.strategy,availableCents,game.type,game.remainingSeconds);if(!count)return false;
@@ -701,6 +703,8 @@ async function submit(signal,game,event,market,balance,bankroll,budgetCents=Infi
   }catch(e){const message=String(e.message),noLiquidity=/^Kalshi 409 .*fill or kill insufficient resting volume/i.test(message),terminal=/^Kalshi (400|401|403|404|422) /.test(message);await pool.query(`UPDATE trade_attempts SET status=$2,error=$3,updated_at=now() WHERE id=$1`,[id,noLiquidity?'unfilled':terminal?'rejected':'check_order',message.slice(0,250)]);if(/insufficient balance/i.test(message))await invalidateBalance();console.error('Order response:',market.ticker,e.message);return false}
 }
 async function recoverPending(signal,game,event,market,balance,bankroll,budgetCents=Infinity,availableCents=bankroll){
+  if(signal.strategy==='over'&&/soccer/.test(game.type)&&/Kalshi-only single score/.test(signal.reason||'')&&
+    !soccerSingleReadOver(game,market))return false;
   if(signal.strategy==='lead'&&/Kalshi soccer live score and executable seller checked/.test(signal.reason||'')&&
     (!soccerSingleReadLead(game,market)||!hasAsk(market)))return false;
   const {rows:[row]}=await pool.query(`SELECT * FROM trade_attempts WHERE market_ticker=$1 AND strategy=$2 AND status IN ('check_order','reserved')`,[market.ticker,signal.strategy]);
@@ -1628,7 +1632,7 @@ async function watchReadyOverTickets(until){
   while(Date.now()<until){
     const started=Date.now();
     try{
-      const {rows}=await pool.query(`SELECT w.milestone,g.signals FROM game_snapshots g
+      const {rows}=await pool.query(`SELECT w.milestone,w.live_score,g.signals FROM game_snapshots g
         JOIN lead_watch_milestones w ON w.game_id=g.id
         WHERE g.status='live' AND g.scanned_at>now()-interval '4 minutes'
           AND w.updated_at>now()-interval '4 minutes'
@@ -1641,16 +1645,18 @@ async function watchReadyOverTickets(until){
         let state=null,market={ticker:ticket.ticker},verified=null;
         const checkedAt=Date.now();
         try{
-          const raw=await liveMilestone(milestone.id);
+          const cached=rows.find(row=>row.milestone.id===milestone.id)?.live_score;
+          const useCached=/soccer/.test(milestone.type||'')&&Date.now()-Date.parse(cached?._observed_at||'')<=30000;
+          const raw=useCached?cached:await liveMilestone(milestone.id);
           if(!raw)continue;
-          raw._observed_at=new Date().toISOString();state=gameState(milestone,raw);
+          if(!useCached)raw._observed_at=new Date().toISOString();state=gameState(milestone,raw);
           const current=(await kalshi('/markets/'+encodeURIComponent(ticket.ticker))).market;
           const eventTicker=current?.event_ticker;
           if(!eventTicker||!linkedEventTickers(milestone).includes(eventTicker))continue;
           const event=(await marketMap([eventTicker])).get(eventTicker);
           if(!event||event.category!=='Sports')continue;
           const listed=(event.markets||[]).find(m=>m.ticker===ticket.ticker&&m.event_ticker===eventTicker);
-          if(!listed||!singleReadCushionedOver(state,listed))continue;
+          if(!listed||!singleReadOverSignal(state,listed))continue;
           stage='live_contract_and_orderbook';
           if(!current||current.status!=='active'&&current.status!=='open'||
             current.event_ticker!==eventTicker||current.rules_primary!==listed.rules_primary||
@@ -1661,20 +1667,20 @@ async function watchReadyOverTickets(until){
           market=hasAsk(market)?await executableQuote(market):null;
           if(!market)continue;
           stage='score_and_cash_recheck';
-          if(!singleReadCushionedOver(state,market))continue;
+          if(!singleReadOverSignal(state,market))continue;
           const account=await accountBalance({fresh:true});
           const balance=Number(account.balance),bankroll=balance+Number(account.portfolio_value);
           const local=shardCash(account,marketShard(event,market));
           if(local===null||local<=0)continue;
           const fee=feeReserve(event,market),price=Number(market.yes_ask_dollars);
-          const currentSignal=singleReadCushionedOver(state,market);
+          const currentSignal=singleReadOverSignal(state,market);
           if(!currentSignal)continue;
           const count=contractCount(Math.min(balance,local),market,currentSignal.fraction,bankroll,Infinity,fee);
           if(!profitableCount(count,price,fee,'over',bankroll,state.type,state.remainingSeconds))continue;
           verified=await auditSingleReadOver(state,market,milestone);
-          if(!verified||Date.now()-state.observedAt>10000)continue;
+          if(!verified||Date.now()-state.observedAt>(/soccer/.test(state.type)?30000:10000))continue;
           stage='submission';
-          const orderSignal={...verified,reason:verified.reason+'; Kalshi-only cushion single read; external and second score waived'};
+          const orderSignal={...verified,reason:verified.reason+'; Kalshi-only single score; live seller checked; external and second score waived'};
           if(await submit(orderSignal,state,event,market,Math.min(balance,local),bankroll)){
             outcome='filled';console.info('Fast over ticket filled:',market.ticker);
           }
@@ -1964,12 +1970,16 @@ async function scan(cachedMilestones,discoveryCount){
     const workersDone=Promise.all(Array.from({length:Math.min(20,overs.length)},async()=>{
       while(cursor<overs.length){const c=overs[cursor++];
         try{
-          if(!c.upgradeFill&&cushionedOverSignal(c.state,c.market)){
+          if(!c.upgradeFill&&(soccerSingleReadOver(c.state,c.market)||cushionedOverSignal(c.state,c.market))){
+            if(soccerSingleReadOver(c.state,c.market)){
+              overPreflights.set(signalKey(c),{state:c.state,singleRead:true});
+              continue;
+            }
             const directLive=await liveMilestone(c.milestone.id);
             if(directLive){
               directLive._observed_at=new Date().toISOString();
               const directState=withPropWindow(gameState(c.milestone,directLive));
-              if(singleReadCushionedOver(directState,c.market)){
+              if(singleReadOverSignal(directState,c.market)){
                 overPreflights.set(signalKey(c),{state:directState,singleRead:true});
                 continue;
               }
@@ -2054,13 +2064,13 @@ async function scan(cachedMilestones,discoveryCount){
           gameState(c.milestone,(await liveBatch([c.milestone])).get(c.milestone.id));
         freshState=withPropWindow(freshState);
         if(!freshState)continue;
-        if(singleReadOver&&Date.now()-freshState.observedAt>5000){
+        if(singleReadOver&&Date.now()-freshState.observedAt>(/soccer/.test(freshState.type)?30000:5000)){
           const latestScore=await liveMilestone(c.milestone.id);
           if(!latestScore)continue;
           latestScore._observed_at=new Date().toISOString();
           freshState=withPropWindow(gameState(c.milestone,latestScore));
         }
-        if(singleReadOver&&!singleReadCushionedOver(freshState,c.market))continue;
+        if(singleReadOver&&!singleReadOverSignal(freshState,c.market))continue;
         if(c.signal.strategy==='over'&&!singleReadOver&&Date.now()-freshState.observedAt>10000){
           const remaining=kalshiOnly?VERIFY_DWELL_MS-(Date.now()-freshState.observedAt):0;
           if(remaining>0)await new Promise(resolve=>setTimeout(resolve,remaining));
@@ -2157,7 +2167,7 @@ async function scan(cachedMilestones,discoveryCount){
           singleReadOver?directOverSignal.fraction:kalshiOnly?fallbackOverFraction(freshState,quote):verifiedSignal.fraction;
         if(verifiedFraction===null)continue;
         c.signal={...(directOverSignal||verifiedSignal),fraction:verifiedFraction,
-          reason:(directOverSignal?.reason||verifiedSignal.reason)+(singleReadOver?'; Kalshi-only cushion single read; external and second score waived':
+          reason:(directOverSignal?.reason||verifiedSignal.reason)+(singleReadOver?'; Kalshi-only single score; live seller checked; external and second score waived':
             directNba?'; Kalshi-only basketball single read; external and second score waived':
             directSoccer?'; Kalshi soccer live score and executable seller checked':
             kalshiOnly?`; Kalshi-only reads, one ${fallbackScoringUnits(freshState)}-unit score removed`:'')};
@@ -2232,7 +2242,7 @@ async function scan(cachedMilestones,discoveryCount){
               if(c.signal.strategy==='over'&&!singleReadOver&&!confirmedOver(state,checked,executable,0))continue;
               if(!kalshiOnly&&!singleReadOver&&await auditedOver(checked,c.milestone,{market:executable,allowUnavailable:true})!==true)continue;
               if(c.signal.strategy==='lead')c.signal={...c.signal,fraction:directSoccer?Math.min(.10,still.fraction):finalLeadFraction(state,checked,still,!kalshiOnly,executable)};
-              if(singleReadOver)c.signal={...fundedDirectOver,reason:fundedDirectOver.reason+'; Kalshi-only cushion single read; external and second score waived'};
+              if(singleReadOver)c.signal={...fundedDirectOver,reason:fundedDirectOver.reason+'; Kalshi-only single score; live seller checked; external and second score waived'};
               if(c.signal.strategy==='over'&&kalshiOnly){
                 const fraction=fallbackOverFraction(checked,executable);
                 if(fraction===null)continue;
