@@ -95,6 +95,14 @@ export function prioritizeMarketGames(games,{signaledIds=new Set(),heldIds=new S
   return [...urgent,...selected];
 }
 
+export function readyOverTickets(rows,limit=12){
+  return rows.flatMap(({milestone,signals})=>(signals||[])
+    .filter(signal=>signal.strategy==='over'&&
+      signal.execution==='Eligible for one fresh Kalshi score; checking live ask'&&
+      signal.ticker&&Number(signal.ask)>0&&Number(signal.ask)<1&&Number(signal.ask_size)>0)
+    .map(signal=>({milestone,signal}))).slice(0,limit);
+}
+
 export function linkedEventTickers(milestone){
   if(milestone.type==='golf_tournament')return [milestone.details?.main_game_event_ticker].filter(Boolean);
   const source=[...(milestone.related_event_tickers||[]),...(milestone.primary_event_tickers||[]),...(milestone.events||[]),milestone.details?.main_game_event_ticker].filter(Boolean);
@@ -123,6 +131,10 @@ export function linkedEventTickers(milestone){
       ...segments.flatMap(part=>[`${prefix}${part}TOTAL-${suffix}`,`${prefix}${part}TEAMTOTAL-${suffix}`])];
   });
   return [...new Set([...listed,...derived])];
+}
+
+export function winnerEventTickers(milestone){
+  return linkedEventTickers(milestone).filter(ticker=>/GAME$/.test(String(ticker).split('-')[0]));
 }
 
 export function gameTimeLabel(game){

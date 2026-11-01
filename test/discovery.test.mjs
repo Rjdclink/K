@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {discoverCurrentMilestones,scanMilestones,nearEntryPhase,prioritizeMarketGames,eligibleForMarkets,linkedEventTickers,gameTimeLabel,storedClockSeconds,mapBatches} from '../src/discovery.mjs';
+import {discoverCurrentMilestones,scanMilestones,nearEntryPhase,prioritizeMarketGames,eligibleForMarkets,linkedEventTickers,winnerEventTickers,readyOverTickets,gameTimeLabel,storedClockSeconds,mapBatches} from '../src/discovery.mjs';
 import {gameState,overSignal,sportName} from '../src/strategy.mjs';
 
 test('bounded parallel live batches cover every milestone without losing result order',async()=>{
@@ -15,6 +15,17 @@ test('bounded parallel live batches cover every milestone without losing result 
   });
   assert.deepEqual(results.flat(),ids);
   assert.equal(peak,12);
+});
+
+test('fast over queue reuses only live, executable single-read tickets from the last scan',()=>{
+  const rows=[{milestone:{id:'a'},signals:[
+    {ticker:'A',strategy:'over',execution:'Eligible for one fresh Kalshi score; checking live ask',ask:'.96',ask_size:'8'},
+    {ticker:'B',strategy:'over',execution:'No ask liquidity',ask:'1.0000',ask_size:'0'},
+    {ticker:'C',strategy:'over',execution:'Eligible for one fresh Kalshi score; checking live ask',ask:'1.0000',ask_size:'10'},
+    {ticker:'D',strategy:'lead',execution:'Eligible for one fresh Kalshi score; checking live ask',ask:'.90',ask_size:'10'}
+  ]},{milestone:{id:'b'},signals:[{ticker:'E',strategy:'over',execution:'Eligible for one fresh Kalshi score; checking live ask',ask:'.98',ask_size:'1'}]}];
+  assert.deepEqual(readyOverTickets(rows,1).map(item=>item.signal.ticker),['A']);
+  assert.deepEqual(readyOverTickets(rows).map(item=>item.signal.ticker),['A','E']);
 });
 
 test('sports discovery traverses pages and includes esports and older live tournaments',async()=>{
@@ -101,6 +112,10 @@ test('find game and both total families from a game-only milestone',()=>{
   assert.ok(discovered.includes('KXNBA1HTEAMTOTAL-26OCT28BOSBKN'));
   assert.equal(new Set(discovered).size,discovered.length);
   assert.deepEqual(linkedEventTickers({...m,related_event_tickers:[...m.related_event_tickers,'KXNBATOTAL-26OCT28BOSBKN']}),discovered);
+});
+test('fast lead watch finds actual linked winner events without a main event field',()=>{
+  const m={type:'baseball_game',related_event_tickers:['KXMLBGAME-26OCT31AB','KXMLBTOTAL-26OCT31AB','KXMLB1INNINGGAME-26OCT31AB']};
+  assert.deepEqual(winnerEventTickers(m),['KXMLBGAME-26OCT31AB']);
 });
 
 test('retain actual linked period total markets plus primary winner and tennis match',()=>{

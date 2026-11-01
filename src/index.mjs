@@ -17,7 +17,7 @@ import { manifest, worker } from './pwa.mjs';
 import { vapidIdentity, validateSubscription, deliverPush } from './push.mjs';
 import { favorableSettlement } from './settlements.mjs';
 import { authorized, checkCredentials, sessionCookie, loginPage } from './dashboard_auth.mjs';
-import { discoverCurrentMilestones, scanMilestones, eligibleForMarkets, prioritizeMarketGames, linkedEventTickers, gameTimeLabel, storedClockSeconds, mapBatches } from './discovery.mjs';
+import { discoverCurrentMilestones, scanMilestones, eligibleForMarkets, prioritizeMarketGames, linkedEventTickers, winnerEventTickers, readyOverTickets, gameTimeLabel, storedClockSeconds, mapBatches } from './discovery.mjs';
 import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOverDecision, verifyIndependentTableTennisLeadDecision, verifyIndependentTableTennisMatch } from './score_verification.mjs';
 import { verificationStatus } from './verification_status.mjs';
@@ -1481,20 +1481,27 @@ async function watchLeadWindows(until){
   while(Date.now()<until){
     const started=Date.now();
     try{
-      const {rows}=await pool.query(`SELECT milestone FROM lead_watch_milestones
-        WHERE watchable AND updated_at>now()-interval '4 minutes' ORDER BY updated_at DESC`);
+      // A game can enter a commanding-lead window while a full scan is busy.
+      // The earlier watchable flag is only a dashboard hint; apply the rule
+      // to every fresh fast read from recently registered live games.
+      const {rows}=await pool.query(`SELECT w.milestone FROM lead_watch_milestones w
+        JOIN game_snapshots g ON g.id=w.game_id
+        WHERE w.updated_at>now()-interval '15 minutes' AND g.status='live'
+          AND GREATEST(g.score_observed_at,g.scanned_at)>now()-interval '15 minutes'
+        ORDER BY w.updated_at DESC LIMIT 100`);
       const watching=rows.map(row=>row.milestone);
       if(watching.length){
         const latest=await liveBatch(watching);
         const possible=watching.map(milestone=>({milestone,state:gameState(milestone,latest.get(milestone.id))}))
           .filter(g=>leadWatchReason(g.state))
           .sort((a,b)=>(a.state.remainingSeconds||Infinity)-(b.state.remainingSeconds||Infinity));
-        const eventTickers=[...new Set(possible.map(g=>g.state.mainEvent).filter(Boolean))];
+        const eventTickers=[...new Set(possible.flatMap(g=>winnerEventTickers(g.milestone)))];
         const events=eventTickers.length?await marketMap(eventTickers):new Map();
         const scoreboardCache=new Map();
         for(const {milestone,state:first} of possible){
           if(Date.now()>=until)break;
-          const main=first.mainEvent,event=events.get(main);
+          for(const main of winnerEventTickers(milestone)){
+          const event=events.get(main);
           if(!event||event.category!=='Sports')continue;
           for(const market of event.markets||[]){
             if(Date.now()>=until||market.event_ticker!==main)continue;
@@ -1555,9 +1562,79 @@ async function watchLeadWindows(until){
             }catch(e){decision.outcome='error';decision.detail=String(e.message);console.warn('Fast lead candidate deferred:',market.ticker,e.message)}
             finally{await recordDecision(decision)}
           }
+          }
         }
       }
     }catch(e){console.warn('Fast lead watch deferred:',e.message)}
+    const pause=Math.max(0,3000-(Date.now()-started));
+    if(Date.now()+pause>=until)break;
+    if(pause)await new Promise(resolve=>setTimeout(resolve,pause));
+  }
+}
+// Recheck ready, cushioned over tickets directly. They already have an exact
+// event link in the latest scan, so a full catalog pass is unnecessary before
+// a fresh score, live orderbook, cash and the usual final buy gate.
+async function watchReadyOverTickets(until){
+  if(!live())return;
+  await ensureLeadWatch();
+  while(Date.now()<until){
+    const started=Date.now();
+    try{
+      const {rows}=await pool.query(`SELECT w.milestone,g.signals FROM game_snapshots g
+        JOIN lead_watch_milestones w ON w.game_id=g.id
+        WHERE g.status='live' AND g.scanned_at>now()-interval '4 minutes'
+          AND w.updated_at>now()-interval '4 minutes'
+          AND g.signals @> '[{"strategy":"over"}]'::jsonb
+        ORDER BY g.scanned_at DESC LIMIT 60`);
+      const tickets=readyOverTickets(rows);
+      for(const {milestone,signal:ticket} of tickets){
+        if(Date.now()>=until)break;
+        let stage='fresh_score',outcome='skipped',detail=null;
+        let state=null,market={ticker:ticket.ticker},verified=null;
+        const checkedAt=Date.now();
+        try{
+          const raw=await liveMilestone(milestone.id);
+          if(!raw)continue;
+          raw._observed_at=new Date().toISOString();state=gameState(milestone,raw);
+          const current=(await kalshi('/markets/'+encodeURIComponent(ticket.ticker))).market;
+          const eventTicker=current?.event_ticker;
+          if(!eventTicker||!linkedEventTickers(milestone).includes(eventTicker))continue;
+          const event=(await marketMap([eventTicker])).get(eventTicker);
+          if(!event||event.category!=='Sports')continue;
+          const listed=(event.markets||[]).find(m=>m.ticker===ticket.ticker&&m.event_ticker===eventTicker);
+          if(!listed||!singleReadCushionedOver(state,listed))continue;
+          stage='live_contract_and_orderbook';
+          if(!current||current.status!=='active'&&current.status!=='open'||
+            current.event_ticker!==eventTicker||current.rules_primary!==listed.rules_primary||
+            current.floor_strike!==listed.floor_strike||current.cap_strike!==listed.cap_strike||
+            current.close_time!==listed.close_time||
+            JSON.stringify(current.custom_strike||{})!==JSON.stringify(listed.custom_strike||{}))continue;
+          market=await recoverSummaryAsk(current,{fresh:true});
+          market=hasAsk(market)?await executableQuote(market):null;
+          if(!market)continue;
+          stage='score_and_cash_recheck';
+          if(!singleReadCushionedOver(state,market))continue;
+          const account=await accountBalance({fresh:true});
+          const balance=Number(account.balance),bankroll=balance+Number(account.portfolio_value);
+          const local=shardCash(account,marketShard(event,market));
+          if(local===null||local<=0)continue;
+          const fee=feeReserve(event,market),price=Number(market.yes_ask_dollars);
+          const currentSignal=singleReadCushionedOver(state,market);
+          if(!currentSignal)continue;
+          const count=contractCount(Math.min(balance,local),market,currentSignal.fraction,bankroll,Infinity,fee);
+          if(!profitableCount(count,price,fee,'over',bankroll,state.type,state.remainingSeconds))continue;
+          verified=await auditSingleReadOver(state,market,milestone);
+          if(!verified||Date.now()-state.observedAt>10000)continue;
+          stage='submission';
+          const orderSignal={...verified,reason:verified.reason+'; Kalshi-only cushion single read; external and second score waived'};
+          if(await submit(orderSignal,state,event,market,Math.min(balance,local),bankroll)){
+            outcome='filled';console.info('Fast over ticket filled:',market.ticker);
+          }
+        }catch(e){outcome='error';detail=String(e.message);console.warn('Fast over ticket deferred:',ticket.ticker,e.message)}
+        finally{await recordDecision({source:'fast_over',market:market||{ticker:ticket.ticker},
+          signal:verified||{strategy:'over'},game:state||{id:milestone.id},stage,outcome,detail,startedAt:checkedAt})}
+      }
+    }catch(e){console.warn('Fast over tickets deferred:',e.message)}
     const pause=Math.max(0,3000-(Date.now()-started));
     if(Date.now()+pause>=until)break;
     if(pause)await new Promise(resolve=>setTimeout(resolve,pause));
@@ -2225,7 +2302,7 @@ async function state(){
     game.stale=Date.now()-new Date(game.scanned_at).getTime()>30000;
     game.scoreStale=Date.now()-new Date(game.score_observed_at||game.scanned_at).getTime()>60000;
     if(game.stale)for(const signal of game.signals||[])signal.execution=signal.strategy==='watch'&&
-      signal.title==='Commanding lead watch'?'Waiting for a fresh market scan; live score may have changed':
+      signal.title==='Commanding lead watch'?'Lead tracked for fast score and quote checks; last catalog result is older':
       'Last market result: '+signal.execution;
   }
   let balance=null,positions=null,accountError=null,positionsError=null,balanceStale=false,balanceAsOf=null;
@@ -2320,6 +2397,7 @@ async function handleRequest(req){const url=new URL(req.url);
     if(!cached.length){await discoveryJob;if(discovered){cached=discovered;discoveryCount=discovered.length;discoveryApplied=true}}
     const correctionJob=withApiPriority('live',()=>watchCorrectedOvers(until)).catch(e=>console.error('Fast correction watcher failed:',e));
     const leadWatchJob=withApiPriority('live',()=>watchLeadWindows(until)).catch(e=>console.error('Fast lead watcher failed:',e));
+    const readyOverJob=withApiPriority('live',()=>watchReadyOverTickets(until)).catch(e=>console.error('Fast over ticket watcher failed:',e));
     try{
       while(Date.now()<until){
         if(discovered&&!discoveryApplied&&(cycles>0||!cached.length)){
@@ -2333,7 +2411,7 @@ async function handleRequest(req){const url=new URL(req.url);
         await new Promise(resolve=>setTimeout(resolve,pause));
       }
     }finally{
-      await Promise.all([correctionJob,leadWatchJob,discoveryJob]);
+      await Promise.all([correctionJob,leadWatchJob,readyOverJob,discoveryJob]);
       if(discoveryError)console.warn('Sports discovery deferred:',discoveryError.message);
     }
     const {next,...summary}=last;return json({...summary,cycles});

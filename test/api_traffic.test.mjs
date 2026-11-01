@@ -17,4 +17,9 @@ test('executable opportunities take priority over nonexecutable signals',()=>{
  assert.match(source,/if\(executable\(a\)!==executable\(b\)\)return executable\(a\)\?-1:1/);
  assert.match(source,/const pause=Math.max\(0,3000-/);
 });
+test('fast lead polling does not wait for the prior scan to mark a game watchable',()=>{
+ assert.match(source,/SELECT w\.milestone FROM lead_watch_milestones w\s+JOIN game_snapshots g ON g\.id=w\.game_id/);
+ assert.doesNotMatch(source,/WHERE watchable AND updated_at/);
+ assert.match(source,/\.filter\(g=>leadWatchReason\(g\.state\)\)/);
+});
 
