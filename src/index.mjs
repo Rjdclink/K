@@ -846,12 +846,10 @@ async function ensureShardFunding(signal,event,market,account,desiredCents,sourc
     if(inFlight.rowCount){await reconcileFundingTransfers();inFlight=await conflictingFunding();
       if(inFlight.rowCount)return Number(inFlight.rows[0].destination_shard)===destination?inFlight.rows[0].transfer_id||null:null}}
   if(pending){
-    const history=await kalshi('/portfolio/intra_exchange_instance_transfers?limit=100',{auth:true});
-    const matched=(history.transfers||[]).find(t=>t.client_transfer_id===pending.id);
-    if(matched?.status==='complete'){
-      await pool.query(`UPDATE funding_transfers SET status='complete',transfer_id=$2,updated_at=now() WHERE id=$1`,[pending.id,matched.transfer_id]);await invalidateBalance();return matched.transfer_id||null;
-    }
-    return pending.transfer_id||null; // Never resubmit an uncertain transfer blindly.
+    await reconcileFundingTransfers();
+    const {rows:[current]}=await pool.query('SELECT status,transfer_id FROM funding_transfers WHERE id=$1',[pending.id]);
+    if(current?.status==='complete')return current.transfer_id||null;
+    return current?.status==='blocked'?null:current?.transfer_id||null; // Never resubmit an uncertain transfer blindly.
   }
   const id=pending?.id||randomUUID(),amount=pending?.amount_centicents||plan.amountCenticents;
   if(Number(amount)<100)return false;
@@ -871,7 +869,7 @@ async function stageCashAcrossShards(account,bankroll){
   // ordinary available cash, never a trading reservation or combo reserve.
   const shards=[...new Set((account.balance_breakdown||[]).map(b=>Number(b.exchange_index)).filter(Number.isInteger))];
   if(!shards.length)return;
-  const target=Math.min(Math.floor(bankroll*.15),Math.floor(Number(account.balance)/shards.length));
+  const target=Math.min(Math.floor(bankroll*.15),Math.floor(singleSpendableCash(account.balance)/shards.length));
   if(target<100)return;
   const underfunded=shards.filter(shard=>(shardCash(account,shard)??0)<target)
     .sort((a,b)=>(shardCash(account,a)??0)-(shardCash(account,b)??0));
