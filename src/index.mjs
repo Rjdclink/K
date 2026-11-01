@@ -24,7 +24,7 @@ import { discoverCurrentMilestones, scanMilestones, eligibleForMarkets, prioriti
 import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOverDecision, verifyIndependentTableTennisLeadDecision, verifyIndependentTableTennisMatch } from './score_verification.mjs';
 import { verificationStatus } from './verification_status.mjs';
-import { COMBO_ATTEMPT_MS, VERIFY_DWELL_MS, COMBO_RFQ_PLANS, singleSpendableCash, comboAllocation, comboLegAllocation, comboHeldFraction, comboAllowedCents, comboMinimumCents, comboMeetsMinimum, comboRfqTargetCents, remainingVerifiedComboCents, availableComboFills, comboPairDiagnostics, comboExclusionKey, exchangeComboExclusion, comboLegs, filledComboWindow, heldComboLeg, quoteForYes, collectionsForEvents, selectedComboMarkets, liveComboMarket, missingQuoteFill, comboFillPages } from './combos.mjs';
+import { COMBO_ATTEMPT_MS, VERIFY_DWELL_MS, COMBO_RFQ_PLANS, singleSpendableCash, comboAllocation, comboLegAllocation, comboHeldFraction, comboAllowedCents, comboMinimumCents, comboMeetsMinimum, comboRfqTargetCents, comboQuotePath, remainingVerifiedComboCents, availableComboFills, comboPairDiagnostics, comboExclusionKey, exchangeComboExclusion, comboLegs, filledComboWindow, heldComboLeg, quoteForYes, collectionsForEvents, selectedComboMarkets, liveComboMarket, missingQuoteFill, comboFillPages } from './combos.mjs';
 import { selectedTeamName, selectedTeamSide } from './selected_team.mjs';
 import { estimatedSaleProfitCents, halfPotentialProfitExitEligible, oneAndHalfExitEligible, profitTargetAllowed, overCorrectionAffects, correctionExitTargets } from './positions.mjs';
 import { remainingVerifiedOverCents, upgradeEligible } from './upgrades.mjs';
@@ -1206,10 +1206,9 @@ async function upgradeVerifiedCombos(scanStarted){
       target_cost_dollars:(budget/100).toFixed(2),rest_remainder:false,obscure_creator_id:true}})).id;
     if(!rfq)continue;
     try{
-      const owner=(await kalshi('/communications/id',{auth:true})).communications_id;
       const deadline=Date.now()+COMBO_ATTEMPT_MS;
-      while(owner&&Date.now()<deadline){
-        const quotes=(await kalshi('/communications/quotes?'+new URLSearchParams({rfq_id:rfq,rfq_creator_user_id:owner,rfq_user_filter:'self',limit:'100'}),{auth:true})).quotes||[];
+      while(Date.now()<deadline){
+        const quotes=(await kalshi(comboQuotePath(rfq),{auth:true})).quotes||[];
         const fees=feeReserve(null,market);
         const offers=quotes.map(q=>({q,terms:quoteForYes(q,combo.market_ticker,budget,fees,bankroll)}))
           .filter(o=>o.terms&&comboMeetsMinimum(upgradedFraction,bankroll,o.terms.debitCents,
@@ -1366,13 +1365,11 @@ async function recordComboRejection(legs,collection,status,detail){
   if(!plans.length){console.warn('Combo no executable RFQ plan:',newTicker,'groups',groups.length,'funding',funding.length);if(funding.length){const p=funding[0];await ensureShardFunding({strategy:p.strategy},p.created,p.combo,account,p.desired)}return {filled:false,pending:false}}
   const quoteStats=new Map(plans.map(p=>[p.ticker,{received:0,eligible:0,sellOffers:0}]));
   try{
-    const communicationsId=(await kalshi('/communications/id',{auth:true})).communications_id;
-    if(!communicationsId)throw new Error('Kalshi communications ID missing');
-    console.info('Combo quote owner filter ready:',plans.length,'RFQs');
+    console.info('Combo RFQ quote polling ready:',plans.length,'RFQs');
     while(Date.now()<deadline&&!superseded()){
       const offers=(await mapBatches(plans,6,async plan=>{
         try{
-          const list=(await kalshi('/communications/quotes?'+new URLSearchParams({rfq_id:plan.rfq,rfq_creator_user_id:communicationsId,rfq_user_filter:'self',limit:'100'}),{auth:true})).quotes||[];
+          const list=(await kalshi(comboQuotePath(plan.rfq),{auth:true})).quotes||[];
           const fees=feeReserve({fee_multiplier_override:plan.combo.fee_multiplier_override},plan.combo);
           const eligible=list.map(q=>({plan,q,terms:quoteForYes(q,plan.ticker,plan.budget,fees,bankroll),fees})).filter(x=>x.terms&&
             comboMeetsMinimum(plan.fraction,bankroll,x.terms.debitCents)&&

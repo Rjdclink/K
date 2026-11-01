@@ -16,6 +16,7 @@ export function comboMeetsMinimum(fraction,bankrollCents,newCostCents,heldCostCe
 }
 // Maker RFQs quote close to target cost; leave room for the fee before asking.
 export function comboRfqTargetCents(budgetCents){return Math.max(0,Math.floor(budgetCents*.97));}
+export function comboQuotePath(rfqId){return '/communications/quotes?'+new URLSearchParams({rfq_id:rfqId,rfq_user_filter:'self',limit:'100'});}
 export function comboLegAllocation(legs,verifiedFraction){
   // Crossed overs retain their own 15% combination ceiling. A winner combo
   // gets 35% only if every leg has an independent verification record.

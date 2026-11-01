@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {VERIFY_DWELL_MS,COMBO_RFQ_PLANS,COMBO_CASH_RESERVE_CENTS,singleSpendableCash,comboAllocation,comboLegAllocation,comboHeldFraction,comboAllowedCents,comboMinimumCents,comboMeetsMinimum,comboRfqTargetCents,remainingVerifiedComboCents,availableComboFills,comboCandidates,comboCollection,compatibleComboGroups,prioritizedComboGroups,plannedComboGroups,comboPairDiagnostics,quoteForYes,comboLegs,filledComboWindow,eligibleFillTrigger,heldComboLeg,collectionsForEvents,selectedComboMarkets,liveComboMarket,missingQuoteFill,comboFillPages} from '../src/combos.mjs';
+import {VERIFY_DWELL_MS,COMBO_RFQ_PLANS,COMBO_CASH_RESERVE_CENTS,singleSpendableCash,comboAllocation,comboLegAllocation,comboHeldFraction,comboAllowedCents,comboMinimumCents,comboMeetsMinimum,comboRfqTargetCents,comboQuotePath,remainingVerifiedComboCents,availableComboFills,comboCandidates,comboCollection,compatibleComboGroups,prioritizedComboGroups,plannedComboGroups,comboPairDiagnostics,quoteForYes,comboLegs,filledComboWindow,eligibleFillTrigger,heldComboLeg,collectionsForEvents,selectedComboMarkets,liveComboMarket,missingQuoteFill,comboFillPages} from '../src/combos.mjs';
+test('combo quote lookup selects our RFQ without a mismatched user ID',()=>{
+ const query=new URL(comboQuotePath('123e4567-e89b-12d3-a456-426614174000'),'https://kalshi.test').searchParams;
+ assert.equal(query.get('rfq_user_filter'),'self');assert.equal(query.get('rfq_creator_user_id'),null);
+ assert.equal(query.get('rfq_id'),'123e4567-e89b-12d3-a456-426614174000');
+});
 test('singles leave seven dollars available for a separate combo purchase',()=>{
  assert.equal(COMBO_CASH_RESERVE_CENTS,700);assert.equal(singleSpendableCash(1249),549);assert.equal(singleSpendableCash(700),0);assert.equal(singleSpendableCash(63),0);
 });
