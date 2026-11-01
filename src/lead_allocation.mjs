@@ -29,6 +29,10 @@ export function directLeadFraction(game,signal,market){
   return signal?.strategy==='lead'&&lateCommandingLead(game,market)?.20:
     Math.min(.15,signal?.fraction??.15);
 }
+export function leadEntryFraction(first,second,signal,market,independent,direct){
+  return independent===true?finalLeadFraction(first,second,signal,true,market):
+    direct?directLeadFraction(second,signal,market):finalLeadFraction(first,second,signal,false,market);
+}
 
 export function leaderHasControl(game){
   if(game?.darts){

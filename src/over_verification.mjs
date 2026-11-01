@@ -1,4 +1,8 @@
 import { overSignal, playerOverSpec, fallbackScoringUnits, periodValue } from './strategy.mjs';
+export function sameSportsContract(a,b){
+  return Boolean(a&&b&&['ticker','event_ticker','rules_primary','floor_strike','cap_strike','close_time']
+    .every(key=>a[key]===b[key])&&JSON.stringify(a.custom_strike||{})===JSON.stringify(b.custom_strike||{}));
+}
 
 export const OVER_EXTERNAL_DELAY_MS=20000;
 export const OVER_CONFIRM_DELAY_MS=210000;

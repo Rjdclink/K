@@ -1,12 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {finalLeadFraction,leaderHasControl,directLeadFraction,verifiedOverFraction} from '../src/lead_allocation.mjs';
+import {finalLeadFraction,leaderHasControl,directLeadFraction,leadEntryFraction,verifiedOverFraction} from '../src/lead_allocation.mjs';
 import {gameState,earlyLeadSignal,kalshiOnlyLead,nbaSingleReadLead} from '../src/strategy.mjs';
 import {overContractKey} from '../src/over_verification.mjs';
 
 const lead={strategy:'lead',fraction:.15};
 const game=(type,possessionSide='home')=>({type,sport:'Other',home:30,away:10,homeUnits:30,awayUnits:10,possessionSide});
+test('one allocation authority selects independent, direct, and ordinary lead caps',()=>{
+ const g=game('hockey_match');
+ assert.equal(leadEntryFraction(g,g,lead,{},true,false),.20);
+ assert.equal(leadEntryFraction(g,g,lead,{},null,true),.15);
+ assert.equal(leadEntryFraction(g,g,lead,{},null,false),.15);
+});
 test('winner allocations are uniform after independent verification',()=>{
   for(const type of ['hockey_match','football_game','baseball_game','rugby_match','handball_match','lacrosse_game','table_tennis_match']){
     const g=game(type);
@@ -64,9 +70,9 @@ test('CFB and soccer follow the same verification-based allocation',()=>{
 });
 test('both live entry paths use the final verified allocation and funding rechecks recalculate it',()=>{
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
-  assert.match(source,/directKalshiLead\?directLeadFraction\(second,signal,quote\):finalLeadFraction\(first,second,signal,false,quote\)/);
-  assert.match(source,/finalLeadFraction\(c.state,freshState,verifiedSignal,!kalshiOnly,quote\)/);
-  assert.match(source,/directKalshiLead\?directLeadFraction\(checked,still,executable\):finalLeadFraction\(state,checked,still,!kalshiOnly,executable\)/);
+  assert.match(source,/leadEntryFraction\(first,second,signal,quote,independentLead,directKalshiLead\)/);
+  assert.match(source,/leadEntryFraction\(c.state,freshState,verifiedSignal,quote,independentLead,directKalshiLead\)/);
+  assert.match(source,/leadEntryFraction\(state,checked,still,executable,independentLead,directKalshiLead\)/);
   assert.match(source,/verifyCommandingLead\(second,milestone,quote,scoreboardCache\)/);
   assert.match(source,/verifyCommandingLead\(freshState,c.milestone,quote,scoreboardCache\)/);
   assert.match(source,/verifyCommandingLead\(checked,c.milestone,executable,scoreboardCache\)/);

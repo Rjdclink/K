@@ -3,10 +3,15 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
 import {gameState,overSignal,confirmedOver} from '../src/strategy.mjs';
-import {overContractKey,freshOverObservation,freshOverState,overTiming,overCushion,sameOverReading,timedOverEntryValid,OVER_FRESH_MS,OVER_MAX_GAP_MS} from '../src/over_verification.mjs';
+import {sameSportsContract,overContractKey,freshOverObservation,freshOverState,overTiming,overCushion,sameOverReading,timedOverEntryValid,OVER_FRESH_MS,OVER_MAX_GAP_MS} from '../src/over_verification.mjs';
 const start=Date.parse('2026-11-01T12:00:00Z');
 const milestone={id:'game',type:'basketball_game',title:'Boston at New York',details:{league:'NBA'}};
 const market={ticker:'KXNBATOTAL-TEST-T139',event_ticker:'KXNBATOTAL-TEST',status:'active',floor_strike:139.5,title:'Over 139.5 total points',rules_primary:'Combined total points scored in the full game',strike_type:'greater',yes_ask_dollars:'.95',yes_ask_size_fp:'100'};
+test('fast and scan paths reject a changed contract while allowing a new ask',()=>{
+ assert.equal(sameSportsContract(market,{...market,yes_ask_dollars:'.96'}),true);
+ assert.equal(sameSportsContract(market,{...market,floor_strike:140.5}),false);
+ assert.equal(sameSportsContract(market,{...market,event_ticker:'OTHER'}),false);
+});
 const liveState=(m,raw)=>({...gameState(m,raw),verifiedLive:true});
 const state=(at,home=70,away=70)=>liveState(milestone,{milestone_id:'game',_observed_at:new Date(at).toISOString(),details:{status:'live',home_score:home,away_score:away,quarter:3,time_remaining:'5:00',last_updated_ts:at/1000}});
 const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');

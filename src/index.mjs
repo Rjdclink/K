@@ -1,10 +1,10 @@
 import {createComboPlanner} from './combo_planner.mjs';
-import { overContractKey, freshOverObservation, freshOverState, overTiming, sameOverReading, timedOverEntryValid, assertTimedOverEntry, OVER_FRESH_MS, OVER_MAX_GAP_MS } from './over_verification.mjs';
+import { sameSportsContract, overContractKey, freshOverObservation, freshOverState, overTiming, sameOverReading, timedOverEntryValid, assertTimedOverEntry, OVER_FRESH_MS, OVER_MAX_GAP_MS } from './over_verification.mjs';
 import { golfSignal, verifyGolf } from './golf.mjs';
 import { randomUUID } from 'node:crypto';
 import { apiPriority, withApiPriority, createPriorityGate } from './api_priority.mjs';
 import { createExecutionAudit } from './execution_audit.mjs';
-import { finalLeadFraction, directLeadFraction, lateCommandingLead, verifiedOverFraction } from './lead_allocation.mjs';
+import { finalLeadFraction, directLeadFraction, leadEntryFraction, lateCommandingLead, verifiedOverFraction } from './lead_allocation.mjs';
 import { createFillComboQueue } from './fill_combo_queue.mjs';
 import pg from 'pg';
 import { page } from './ui.mjs';
@@ -1003,10 +1003,7 @@ async function upgradeHeldOver(c,preflight,original,scoreboardCache){
   }
   const current=(await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market;
   const verifiedSignal=current?overSignal(state,current):null;
-  if(!current||current.ticker!==original.market_ticker||current.event_ticker!==original.event_ticker||
-    current.rules_primary!==c.market.rules_primary||current.floor_strike!==c.market.floor_strike||
-    current.cap_strike!==c.market.cap_strike||current.close_time!==c.market.close_time||
-    JSON.stringify(current.custom_strike||{})!==JSON.stringify(c.market.custom_strike||{})||
+  if(!sameSportsContract(current,c.market)||current.ticker!==original.market_ticker||current.event_ticker!==original.event_ticker||
     !verifiedSignal||![.15,.40].includes(verifiedSignal.fraction))return {verified:false,filled:false};
   await upgradeTables();
   if(/Kalshi-only/i.test(original.reason||''))await pool.query(`INSERT INTO fallback_verifications(market_ticker,original_id,verification_id,verified_at) VALUES($1,$2,$3,now())
@@ -1092,10 +1089,7 @@ async function verifyHeldLead(c,original,scoreboardCache){
   next._observed_at=new Date().toISOString();const second=gameState(c.milestone,next);
   if(!confirmedExternalLead(c.state,second,c.market))return false;
   const current=(await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market;
-  if(!current||current.ticker!==original.market_ticker||current.event_ticker!==original.event_ticker||
-    current.rules_primary!==c.market.rules_primary||current.floor_strike!==c.market.floor_strike||
-    current.cap_strike!==c.market.cap_strike||current.close_time!==c.market.close_time||
-    JSON.stringify(current.custom_strike||{})!==JSON.stringify(c.market.custom_strike||{})||
+  if(!sameSportsContract(current,c.market)||current.ticker!==original.market_ticker||current.event_ticker!==original.event_ticker||
     !(leadSignal(second,current)||additionalLeadSignal(second,current)||cricketLeadSignal(second,current)||drawSignal(second,current)||earlyLeadSignal(second,current)||tennisSignal(second,current)||tableTennisSignal(second,current)))return false;
   const tableTennis=Boolean(tableTennisSignal(second,current));
   if(tableTennis){
@@ -1765,9 +1759,7 @@ async function watchLeadWindows(until){
               decision.game=second;decision.stage='live_contract_and_orderbook';
               const current=await recoverSummaryAsk((await kalshi('/markets/'+encodeURIComponent(offered.ticker))).market,{fresh:true});
               const quote=current&&hasAsk(current)?await executableQuote(current):null;
-              if(!quote||quote.ticker!==offered.ticker||quote.event_ticker!==main||
-                quote.rules_primary!==offered.rules_primary||quote.close_time!==offered.close_time||
-                JSON.stringify(quote.custom_strike||{})!==JSON.stringify(offered.custom_strike||{}))continue;
+              if(!sameSportsContract(quote,offered)||quote.event_ticker!==main)continue;
               if(directKalshiLead&&Date.now()-second.observedAt>30000){
                 // Reuse the scan's score until it ages out; the live book is
                 // the seller check at entry.
@@ -1787,7 +1779,7 @@ async function watchLeadWindows(until){
               if(!confirmed)continue;
               const independentLead=await verifyCommandingLead(second,milestone,quote,scoreboardCache);
               if(independentLead===false)continue;
-              const verified={...signal,fraction:independentLead===true?finalLeadFraction(first,second,signal,true,quote):directKalshiLead?directLeadFraction(second,signal,quote):finalLeadFraction(first,second,signal,false,quote),externallyVerified:independentLead===true,
+              const verified={...signal,fraction:leadEntryFraction(first,second,signal,quote,independentLead,directKalshiLead),externallyVerified:independentLead===true,
                 reason:signal.reason+(independentLead===true?'; independent live scoreboard confirmed':directNba?'; Kalshi-only basketball single read; external and second score waived':
                   '; Kalshi-only live score and executable seller checked')};
               decision.signal=verified;decision.stage='cash_and_score_age';
@@ -1853,11 +1845,7 @@ async function watchReadyOverTickets(until){
           state=await confirmedIndependentOver(state,milestone,listed);
           if(!state)continue;
           stage='live_contract_and_orderbook';
-          if(!current||current.status!=='active'&&current.status!=='open'||
-            current.event_ticker!==eventTicker||current.rules_primary!==listed.rules_primary||
-            current.floor_strike!==listed.floor_strike||current.cap_strike!==listed.cap_strike||
-            current.close_time!==listed.close_time||
-            JSON.stringify(current.custom_strike||{})!==JSON.stringify(listed.custom_strike||{}))continue;
+          if(!sameSportsContract(current,listed)||!['active','open'].includes(current.status)||current.event_ticker!==eventTicker)continue;
           market=await recoverSummaryAsk(current,{fresh:true});
           market=hasAsk(market)?await executableQuote(market):null;
           if(!market)continue;
@@ -2249,18 +2237,14 @@ async function scan(cachedMilestones,discoveryCount){
         }
         stage='contract_unchanged';
         if(quote.ticker!==c.market.ticker||quote.event_ticker!==c.event.event_ticker||!hasAsk(quote))continue;
-        if(quote.rules_primary!==c.market.rules_primary||quote.floor_strike!==c.market.floor_strike||
-          quote.cap_strike!==c.market.cap_strike||quote.close_time!==c.market.close_time||
-          JSON.stringify(quote.custom_strike||{})!==JSON.stringify(c.market.custom_strike||{}))continue;
+        if(!sameSportsContract(quote,c.market))continue;
         if(directKalshiLead&&Date.now()-freshState.observedAt>30000){
           const raw=await liveMilestone(c.milestone.id);
           if(!raw)continue;
           raw._observed_at=new Date().toISOString();
           freshState=gameState(c.milestone,raw);
         }
-        if(kalshiOnly&&(Date.now()-freshState.observedAt>(directKalshiLead||directNba?30000:10000)||
-          quote.rules_primary!==c.market.rules_primary||quote.floor_strike!==c.market.floor_strike||
-          quote.cap_strike!==c.market.cap_strike||quote.close_time!==c.market.close_time))continue;
+        if(kalshiOnly&&Date.now()-freshState.observedAt>(directKalshiLead||directNba?30000:10000))continue;
         stage='entry_rule_recheck';
         const stillQualifies=c.signal.strategy==='over'?overSignal(freshState,quote):golfSignal(freshState,quote)||leadSignal(freshState,quote)||additionalLeadSignal(freshState,quote)||cricketLeadSignal(freshState,quote)||drawSignal(freshState,quote)||earlyLeadSignal(freshState,quote)||tennisSignal(freshState,quote)||tableTennisSignal(freshState,quote);
         if(!stillQualifies)continue;
@@ -2270,7 +2254,7 @@ async function scan(cachedMilestones,discoveryCount){
         if(independentLead===false)continue;
         if(c.signal.strategy==='lead'&&!soccerWinnerWindowOpen(freshState))continue;
         const verifiedSignal=stillQualifies;
-        const verifiedFraction=independentLead===true?finalLeadFraction(c.state,freshState,verifiedSignal,true,quote):directKalshiLead?directLeadFraction(freshState,verifiedSignal,quote):c.signal.strategy==='lead'?finalLeadFraction(c.state,freshState,verifiedSignal,!kalshiOnly,quote):
+        const verifiedFraction=c.signal.strategy==='lead'?leadEntryFraction(c.state,freshState,verifiedSignal,quote,independentLead,directKalshiLead):
           c.signal.strategy==='over'?verifiedOverFraction(verifiedSignal,freshState,quote):verifiedSignal.fraction;
         if(verifiedFraction===null)continue;
         c.signal={...verifiedSignal,fraction:verifiedFraction,externallyVerified:independentLead===true,
@@ -2332,10 +2316,7 @@ async function scan(cachedMilestones,discoveryCount){
                 c.signal.strategy==='lead'&&(checked.home!==state.home||checked.away!==state.away))continue;
               const newest=await recoverSummaryAsk((await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market,{fresh:true});
               const executable=newest&&hasAsk(newest)?await executableQuote(newest):null;
-              if(!executable||executable.event_ticker!==c.event.event_ticker||
-                executable.rules_primary!==c.market.rules_primary||executable.floor_strike!==c.market.floor_strike||
-                executable.cap_strike!==c.market.cap_strike||executable.close_time!==c.market.close_time||
-                JSON.stringify(executable.custom_strike||{})!==JSON.stringify(c.market.custom_strike||{}))continue;
+              if(!sameSportsContract(executable,c.market)||executable.event_ticker!==c.event.event_ticker)continue;
               const still=c.signal.strategy==='over'?overSignal(checked,executable):
                 golfSignal(checked,executable)||leadSignal(checked,executable)||additionalLeadSignal(checked,executable)||
                 cricketLeadSignal(checked,executable)||drawSignal(checked,executable)||earlyLeadSignal(checked,executable)||
@@ -2352,7 +2333,7 @@ async function scan(cachedMilestones,discoveryCount){
                 if(!checked)continue;
               }
               if(c.signal.strategy==='lead')c.signal={...still,externallyVerified:independentLead===true,
-                fraction:independentLead===true?finalLeadFraction(state,checked,still,true,executable):directKalshiLead?directLeadFraction(checked,still,executable):finalLeadFraction(state,checked,still,!kalshiOnly,executable),
+                fraction:leadEntryFraction(state,checked,still,executable,independentLead,directKalshiLead),
                 reason:still.reason+(independentLead===true?'; independent live scoreboard confirmed':directNba?'; Kalshi-only basketball single read; external and second score waived':'; Kalshi-only live score and executable seller checked')};
               if(c.signal.strategy==='over'){
                 const checkedSignal=overSignal(checked,executable);
