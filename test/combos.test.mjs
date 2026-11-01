@@ -10,11 +10,11 @@ test('held verified lead add-ons share the combo ceiling with automated orders',
  assert.equal(comboHeldFraction([leads[0],{strategy:'over',kalshiOnly:false}]),.15);
  assert.equal(comboHeldFraction([leads[0],{strategy:'lead',kalshiOnly:true}]),.15);
 });
-test('verified combos require at least twenty percent including existing exposure and fees',()=>{
- assert.equal(comboMinimumCents(.35,10000),2000);
+test('verified combos require at least ten percent including existing exposure and fees',()=>{
+ assert.equal(comboMinimumCents(.35,10000),1000);
  assert.equal(comboMinimumCents(.10,10000),0);
- assert.equal(comboMeetsMinimum(.35,10000,1999),false);
- assert.equal(comboMeetsMinimum(.35,10000,1000,1000),true);
+ assert.equal(comboMeetsMinimum(.35,10000,999),false);
+ assert.equal(comboMeetsMinimum(.35,10000,600,400),true);
 });
 
 test('an expired RFQ quote is reconciled from exact market buy fills before retiring its pending combo',()=>{

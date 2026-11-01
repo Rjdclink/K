@@ -10,7 +10,7 @@ export const COMBO_CASH_RESERVE_CENTS=700;
 export const singleSpendableCash=cash=>Math.max(0,Math.floor(Number(cash)||0)-COMBO_CASH_RESERVE_CENTS);
 export function comboAllocation(){return .35;}
 export function comboAllowedCents(fraction,bankrollCents){return Math.floor(fraction*bankrollCents);}
-export function comboMinimumCents(fraction,bankrollCents){return fraction===comboAllocation()?Math.ceil(.20*bankrollCents):0;}
+export function comboMinimumCents(fraction,bankrollCents){return fraction===comboAllocation()?Math.ceil(.10*bankrollCents):0;}
 export function comboMeetsMinimum(fraction,bankrollCents,newCostCents,heldCostCents=0){
   return heldCostCents+newCostCents>=comboMinimumCents(fraction,bankrollCents);
 }

@@ -19,6 +19,6 @@ test('combo add-on requires a held market, live YES offer, cash and exposure roo
   assert.ok(manualComboQuote(market,book,{...position,market_exposure_dollars:'19.00'},account,.15).count===undefined);
   const verified=manualComboQuote(market,{no_dollars:[['0.2000','100.00']]},position,{balance:5000,portfolio_value:5000},.35);
   assert.ok(verified.max_cost_cents>1349&&verified.max_cost_cents<=3349);
-  assert.match(manualComboQuote(market,book,position,account,.35).reason,/at least 20%/);
+  assert.match(manualComboQuote(market,{no_dollars:[['0.2000','5.00']]},position,account,.35).reason,/at least 10%/);
   assert.ok(manualComboQuote(market,{no_dollars:[['0.2000','100.00']]},position,{balance:5000,portfolio_value:5000},.35).max_cost_cents<=3349);
 });
