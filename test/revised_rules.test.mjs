@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {gameState,leadSignal,earlyLeadSignal,additionalLeadSignal,cricketLeadSignal,overSignal,confirmedSoccerTwoGoalClock,kalshiOnlyLead} from '../src/strategy.mjs';
+import {gameState,leadSignal,leadWatchReason,earlyLeadSignal,additionalLeadSignal,cricketLeadSignal,overSignal,confirmedSoccerWinnerClock,soccerWinnerWindowOpen,kalshiOnlyLead} from '../src/strategy.mjs';
 import {golfState,golfSignal} from '../src/golf.mjs';
 import {finalLeadFraction} from '../src/lead_allocation.mjs';
 import {comboLegAllocation,comboAllocation} from '../src/combos.mjs';
@@ -65,16 +65,27 @@ test('revised hockey and inning-based baseball winners reject superseded thresho
  }
 });
 
-test('soccer early three-goal and late two-goal routes require their own clocks',()=>{
+test('soccer winner requires three goals and strictly under ten minutes on the final-whistle clock',()=>{
  const soccer=(margin,minute,remaining)=>team('soccer_match','Soccer',margin,2,0,{half:'2nd',time:`${minute}'`,match_remaining_seconds:remaining,clock:''});
- let {state,market}=soccer(3,47,2580);
+ let {state,market}=soccer(3,80,599);
  assert.ok(leadSignal(state,market));
  assert.equal(earlyLeadSignal(state,market),null);
- assert.equal(leadSignal(soccer(3,51,2300).state,market),null);
- assert.equal(leadSignal(soccer(2,85,300).state,market),null);
- assert.ok(leadSignal(soccer(2,85,299).state,market));
+ assert.equal(leadSignal(soccer(3,47,2580).state,market),null);
+ assert.equal(leadSignal(soccer(3,47,599).state,market),null);
+ assert.equal(leadSignal(soccer(3,80,600).state,market),null);
+ assert.equal(leadSignal(soccer(2,85,299).state,market),null);
+ assert.ok(leadSignal(soccer(3,85,299).state,market));
+ assert.equal(leadSignal(soccer(3,85,NaN).state,market),null);
+ assert.equal(leadSignal(soccer(3,90,10).state,market),null);
  assert.equal(leadSignal(soccer(1,89,10).state,market),null);
- assert.equal(confirmedSoccerTwoGoalClock(soccer(2,85,299).state,soccer(2,85,298).state),true);
+ assert.equal(confirmedSoccerWinnerClock(soccer(3,80,599).state,soccer(3,80,598).state),true);
+ assert.equal(confirmedSoccerWinnerClock(soccer(3,80,599).state,soccer(3,80,599).state),false);
+ assert.equal(confirmedSoccerWinnerClock(soccer(3,80,600).state,soccer(3,80,599).state),false);
+ assert.match(leadWatchReason(soccer(3,75,900).state),/3-goal lead/);
+ assert.equal(leadWatchReason(soccer(2,85,299).state),null);
+ assert.equal(leadWatchReason(soccer(3,47,2580).state),null);
+ assert.equal(soccerWinnerWindowOpen({...state,observedAt:now},now),true);
+ assert.equal(soccerWinnerWindowOpen({...state,observedAt:now,matchRemainingSeconds:5},now),false);
 });
 
 test('rugby +15 is one tier; cricket +30 and golf +4 use the revised thresholds',()=>{

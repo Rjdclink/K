@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {gameState,overSignal,singleReadCushionedOver,confirmedOver,kalshiOnlyOver,kalshiOnlyLead,fallbackOverFraction,fallbackLeadFraction,confirmedExternalLead,leadSignal,earlyLeadSignal,leadWatchReason,confirmedSoccerTwoGoalClock,soccerTwoGoalWindowOpen,soccerOverStable,soccerOverWaitMs,externallyVerifiedEarlySoccerLead,tennisSignal,tableTennisSignal,orderSize,estimatedCostCents,overBudget,minimumProfitCents,netSettlementProfitCents,profitableCount,timedProfitExitAllowed,comeback,KALSHI_ONLY_FRACTION} from '../src/strategy.mjs';
+import {gameState,overSignal,singleReadCushionedOver,confirmedOver,kalshiOnlyOver,kalshiOnlyLead,fallbackOverFraction,fallbackLeadFraction,confirmedExternalLead,leadSignal,earlyLeadSignal,leadWatchReason,confirmedSoccerWinnerClock,soccerWinnerWindowOpen,soccerOverStable,soccerOverWaitMs,externallyVerifiedEarlySoccerLead,tennisSignal,tableTennisSignal,orderSize,estimatedCostCents,overBudget,minimumProfitCents,netSettlementProfitCents,profitableCount,timedProfitExitAllowed,comeback,KALSHI_ONLY_FRACTION} from '../src/strategy.mjs';
 
 test('each trade has its own percentage of the full bankroll',()=>{
   const bankroll=14600,alreadyHeld=4372;

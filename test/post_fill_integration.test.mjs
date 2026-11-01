@@ -14,7 +14,7 @@ function harness({filled=2,recovery=false,retry=false}={}){
       if(sql.startsWith('SELECT * FROM trade_attempts'))return {rows:[order]};
       if(sql.startsWith('UPDATE trade_attempts'))events.push(['ledger',values]);
       return {rows:[],rowCount:sql.includes("SET retries=1")?1:0};
-    }},profitableCount:n=>n,contractCount:()=>10,feeReserve:()=>2,soccerTwoGoalWindowOpen:()=>true,
+    }},profitableCount:n=>n,contractCount:()=>10,feeReserve:()=>2,soccerWinnerWindowOpen:()=>true,
     reserve:async()=>order.id,withEntryProfitFloor:async(_,send)=>send(),
     kalshi:async path=>path.startsWith('/portfolio/orders')?{orders:retry?[]:[{client_order_id:order.id,fill_count_fp:String(filled),order_id:'exchange'}]}:{fill_count_fp:String(filled),order_id:'exchange'},
     confirmedSingleFill:async(id,ticker)=>events.push(['notify',id,ticker]),reviewMiss:async()=>({retry:true,reason:'verified recovery'})});
