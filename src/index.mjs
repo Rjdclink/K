@@ -24,7 +24,7 @@ import { discoverCurrentMilestones, scanMilestones, eligibleForMarkets, prioriti
 import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOverDecision, verifyIndependentTableTennisLeadDecision, verifyIndependentTableTennisMatch } from './score_verification.mjs';
 import { verificationStatus } from './verification_status.mjs';
-import { COMBO_ATTEMPT_MS, VERIFY_DWELL_MS, COMBO_RFQ_PLANS, comboAllocation, comboLegAllocation, comboHeldFraction, comboAllowedCents, comboMinimumCents, comboMeetsMinimum, comboRfqTargetCents, remainingVerifiedComboCents, availableComboFills, comboPairDiagnostics, comboExclusionKey, exchangeComboExclusion, comboLegs, filledComboWindow, heldComboLeg, quoteForYes, collectionsForEvents, selectedComboMarkets, liveComboMarket, missingQuoteFill } from './combos.mjs';
+import { COMBO_ATTEMPT_MS, VERIFY_DWELL_MS, COMBO_RFQ_PLANS, comboAllocation, comboLegAllocation, comboHeldFraction, comboAllowedCents, comboMinimumCents, comboMeetsMinimum, comboRfqTargetCents, remainingVerifiedComboCents, availableComboFills, comboPairDiagnostics, comboExclusionKey, exchangeComboExclusion, comboLegs, filledComboWindow, heldComboLeg, quoteForYes, collectionsForEvents, selectedComboMarkets, liveComboMarket, missingQuoteFill, comboFillPages } from './combos.mjs';
 import { selectedTeamName, selectedTeamSide } from './selected_team.mjs';
 import { estimatedSaleProfitCents, halfPotentialProfitExitEligible, oneAndHalfExitEligible, profitTargetAllowed, overCorrectionAffects, correctionExitTargets } from './positions.mjs';
 import { remainingVerifiedOverCents, upgradeEligible } from './upgrades.mjs';
@@ -1121,8 +1121,8 @@ async function reconcileCombos(){
         const orderId=quote.rfq_creator_order_id;
         if(!orderId)continue;
         // Confirm actual account fills; quote acceptance by itself is not execution.
-        const fills=await kalshi('/portfolio/fills?'+new URLSearchParams({ticker:row.market_ticker,min_ts:String(Math.floor(new Date(row.created_at).getTime()/1000)-60),limit:'1000'}),{auth:true});
-        const mine=(fills.fills||[]).filter(f=>f.ticker===row.market_ticker && f.order_id===orderId && new Date(f.created_time||f.ts||0)>=new Date(row.created_at));
+        const fills=await comboFillPages(path=>kalshi(path,{auth:true}),row.market_ticker,row.created_at);
+        const mine=fills.filter(f=>f.ticker===row.market_ticker && f.order_id===orderId && new Date(f.created_time||f.ts||0)>=new Date(row.created_at));
         const count=mine.reduce((sum,f)=>sum+Number(f.count_fp??f.count??0),0);
         if(count>0){await pool.query(`UPDATE trade_attempts SET status='filled',fill_count=$2,order_id=$3,updated_at=now() WHERE id=$1`,[row.id,count,orderId||null]);await invalidateBalance()}
       }else if(['cancelled','expired','rejected','voided'].includes(quote.status) ||
@@ -1132,9 +1132,10 @@ async function reconcileCombos(){
     }catch(e){
       if(/^Kalshi 404 GET \/communications\/rfqs\//.test(String(e.message))&&Date.now()-new Date(row.created_at).getTime()>90000){
         try{
-          const fills=await kalshi('/portfolio/fills?'+new URLSearchParams({ticker:row.market_ticker,min_ts:String(Math.floor(new Date(row.created_at).getTime()/1000)-60),limit:'1000'}),{auth:true});
-          if(fills.cursor)throw Error('Combo fills need additional pagination');
-          const fill=missingQuoteFill(fills.fills,row.market_ticker,row.created_at);
+          const fills=await comboFillPages(path=>kalshi(path,{auth:true}),row.market_ticker,row.created_at);
+          const fill=missingQuoteFill(fills,row.market_ticker,row.created_at);
+          if(!fill&&fills.some(f=>f.ticker===row.market_ticker&&f.action==='buy'&&
+            Date.parse(f.created_time||f.ts||'')>=Date.parse(row.created_at)-1000))throw Error('Ambiguous combo buy fills; reconciliation deferred');
           if(fill){await pool.query(`UPDATE trade_attempts SET status='filled',fill_count=$2,order_id=$3,updated_at=now() WHERE id=$1 AND status='combo_pending'`,[row.id,fill.count,fill.orderId]);await invalidateBalance()}
           else await pool.query(`UPDATE trade_attempts SET status='unfilled',error='Expired maker quote; no matching Kalshi buy fill',updated_at=now() WHERE id=$1 AND status='combo_pending'`,[row.id]);
           continue;
@@ -1153,8 +1154,8 @@ async function reconcileComboUpgrades(){
     if(!quote)continue;
     if(quote.status==='executed'&&quote.executed_ts&&quote.rfq_creator_order_id){
       const orderId=quote.rfq_creator_order_id;
-      const fills=await kalshi('/portfolio/fills?'+new URLSearchParams({ticker:row.market_ticker,min_ts:String(Math.floor(new Date(row.created_at).getTime()/1000)-60),limit:'1000'}),{auth:true});
-      const count=(fills.fills||[]).filter(f=>f.ticker===row.market_ticker&&f.order_id===orderId&&
+      const fills=await comboFillPages(path=>kalshi(path,{auth:true}),row.market_ticker,row.created_at);
+      const count=fills.filter(f=>f.ticker===row.market_ticker&&f.order_id===orderId&&
         new Date(f.created_time||f.ts||0)>=new Date(row.created_at))
         .reduce((sum,f)=>sum+Number(f.count_fp??f.count??0),0);
       if(count>0){

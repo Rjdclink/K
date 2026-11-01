@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {VERIFY_DWELL_MS,COMBO_RFQ_PLANS,comboAllocation,comboLegAllocation,comboHeldFraction,comboAllowedCents,comboMinimumCents,comboMeetsMinimum,comboRfqTargetCents,remainingVerifiedComboCents,availableComboFills,comboCandidates,comboCollection,compatibleComboGroups,prioritizedComboGroups,plannedComboGroups,comboPairDiagnostics,quoteForYes,comboLegs,filledComboWindow,eligibleFillTrigger,heldComboLeg,collectionsForEvents,selectedComboMarkets,liveComboMarket,missingQuoteFill} from '../src/combos.mjs';
+import {VERIFY_DWELL_MS,COMBO_RFQ_PLANS,comboAllocation,comboLegAllocation,comboHeldFraction,comboAllowedCents,comboMinimumCents,comboMeetsMinimum,comboRfqTargetCents,remainingVerifiedComboCents,availableComboFills,comboCandidates,comboCollection,compatibleComboGroups,prioritizedComboGroups,plannedComboGroups,comboPairDiagnostics,quoteForYes,comboLegs,filledComboWindow,eligibleFillTrigger,heldComboLeg,collectionsForEvents,selectedComboMarkets,liveComboMarket,missingQuoteFill,comboFillPages} from '../src/combos.mjs';
 test('held verified lead add-ons share the combo ceiling with automated orders',()=>{
  const leads=[{strategy:'lead',kalshiOnly:false},{strategy:'lead',kalshiOnly:true,externallyVerified:true}];
  assert.equal(comboHeldFraction(leads),.35);
@@ -23,8 +23,15 @@ test('an expired RFQ quote is reconciled from exact market buy fills before reti
   assert.deepEqual(missingQuoteFill(fills,'COMBO','2026-10-31T16:58:24Z'),{orderId:'accepted',count:3.5});
   assert.equal(missingQuoteFill(fills.slice(0,1),'COMBO','2026-10-31T16:58:24Z'),null);
   assert.equal(missingQuoteFill([{...fills[1],created_time:'2026-10-31T16:58:00Z'}],'COMBO','2026-10-31T16:58:24Z'),null);
+  assert.equal(missingQuoteFill([...fills,{...fills[1],order_id:'unrelated'}],'COMBO','2026-10-31T16:58:24Z'),null);
 });
 
+test('combo fill reconciliation collects every page and rejects a looping cursor',async()=>{
+ const paths=[],get=async path=>{paths.push(path);return paths.length===1?{fills:[{count_fp:'2'}],cursor:'next'}:{fills:[{count_fp:'1.5'}],cursor:''}};
+ const rows=await comboFillPages(get,'COMBO','2026-10-31T16:58:24Z');
+ assert.deepEqual(rows.map(f=>f.count_fp),['2','1.5']);assert.equal(new URL(paths[1],'https://kalshi.test').searchParams.get('cursor'),'next');
+ await assert.rejects(comboFillPages(async()=>({fills:[],cursor:'stuck'}),'COMBO','2026-10-31T16:58:24Z'),/pagination safety limit/);
+});
 test('two held fills qualify for combo without a second live game verification',()=>{
   const rows=['A','B'].map(ticker=>({market_ticker:ticker,event_ticker:'E',game_id:'G',sport:'NFL',strategy:'over',fill_count:'2.00',combo_legs:null,updated_at:new Date().toISOString()}));
   const held=new Set(['A','B']);

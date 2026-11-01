@@ -61,9 +61,19 @@ export function missingQuoteFill(fills,ticker,createdAt){
     (f.outcome_side==='yes'||f.side==='yes')&&f.order_id&&
     Number.isFinite(Date.parse(f.created_time||f.ts||''))&&Date.parse(f.created_time||f.ts)>=start&&
     Number(f.count_fp??f.count)>0);
-  const orderId=buys[0]?.order_id;
-  if(!orderId)return null;
+  const orderIds=[...new Set(buys.map(f=>f.order_id))];
+  if(orderIds.length!==1)return null;
+  const orderId=orderIds[0];
   return {orderId,count:buys.filter(f=>f.order_id===orderId).reduce((sum,f)=>sum+Number(f.count_fp??f.count),0)};
+}
+export async function comboFillPages(get,ticker,createdAt){
+  const fills=[],seen=new Set();let cursor='';
+  for(let page=0;page<10;page++){
+    const query=new URLSearchParams({ticker,min_ts:String(Math.floor(new Date(createdAt).getTime()/1000)-60),limit:'1000'});if(cursor)query.set('cursor',cursor);
+    const data=await get('/portfolio/fills?'+query);fills.push(...data.fills||[]);cursor=data.cursor||'';
+    if(!cursor)return fills;if(seen.has(cursor))break;seen.add(cursor);
+  }
+  throw Error('Combo fills exceed pagination safety limit');
 }
 export async function collectionsForEvents(eventTickers,get){
   const tickers=[...new Set(eventTickers)].filter(Boolean);
