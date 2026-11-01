@@ -320,6 +320,28 @@ export function fallbackScoringUnits(game){
   if(/volleyball/.test(type)||/table_tennis|^tennis_/.test(type))return 1;
   return null;
 }
+// A conservative one-play/stat cushion determines candidate priority. A
+// separate freshness gate below is mandatory before placing an order.
+export function cushionedOverSignal(game,market){
+  const signal=overSignal(game,market),player=playerOverSpec(game,market);
+  if(!signal||!Number.isFinite(signal.scored)||!Number.isFinite(signal.strike))return null;
+  const units=player?['PASSYDS','RUSHYDS','RECYDS'].includes(player.metric)?null:
+    ['PTS','PRA'].includes(player.metric)?fallbackScoringUnits(game):
+    player.metric==='RBI'?4:1:fallbackScoringUnits(game);
+  if(!Number.isInteger(units)||signal.scored-units<=signal.strike)return null;
+  const series=String(market.event_ticker||'').split('-')[0];
+  const wholeGame=/TOTAL$/.test(series)&&!/TEAMTOTAL$|[1-9](?:Q|P|H|INNING)(?:TEAM)?TOTAL$/.test(series);
+  return {...signal,fraction:(player||wholeGame)? .40:signal.fraction,
+    reason:`${signal.reason}; still over after removing ${units} ${player?'player-stat':'score'} unit${units===1?'':'s'}`};
+}
+// Yardage props have no safe fixed one-play bound and retain the ordinary path.
+export function singleReadCushionedOver(game,market,now=Date.now()){
+  if(!game||game.feedId!==game.id||!game.periodConsistent||
+    !Number.isFinite(game.observedAt)||now<game.observedAt||now-game.observedAt>10000||
+    !Number.isFinite(game.updatedAt)||game.updatedAt>game.observedAt+5000||
+    game.observedAt-game.updatedAt>30000)return null;
+  return cushionedOverSignal(game,market);
+}
 export function fallbackOverFraction(game,market){
   const signal=overSignal(game,market),units=fallbackScoringUnits(game);
   if(!signal||playerOverSpec(game,market)||!Number.isInteger(units)||
@@ -619,6 +641,18 @@ export function leadFraction(game,margin,minimum){
   }
   if(/soccer/.test(game.type)&&margin>=3)return .20;
   return .15;
+}
+// The NBA +20 Q4 route is the only winner allowed on one Kalshi score.
+// This is an entry rule, not proof the lead is irreversible.
+export function nbaSingleReadLead(game,market,now=Date.now()){
+  return game?.sport==='NBA'&&/basketball/.test(String(game.type||''))&&
+    game.period===4&&game.feedId===game.id&&game.scoreConsistent&&game.periodConsistent&&
+    Number.isFinite(game.observedAt)&&now>=game.observedAt&&now-game.observedAt<=10000&&
+    Number.isFinite(game.updatedAt)&&game.updatedAt<=game.observedAt+5000&&
+    game.observedAt-game.updatedAt<=30000&&
+    Number.isFinite(game.remainingSeconds)&&game.remainingSeconds>0&&game.remainingSeconds<390&&
+    Number.isFinite(game.homeUnits)&&Number.isFinite(game.awayUnits)&&
+    Math.abs(game.homeUnits-game.awayUnits)>=20&&Boolean(leadSignal(game,market));
 }
 export function externallyVerifiedEarlySoccerLead(first,second,signal,firstConfirmed,secondConfirmed){
   if(!firstConfirmed||!secondConfirmed||signal?.fraction!==.02||
