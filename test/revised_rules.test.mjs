@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {gameState,leadSignal,leadWatchReason,earlyLeadSignal,additionalLeadSignal,cricketLeadSignal,overSignal,confirmedSoccerWinnerClock,soccerWinnerWindowOpen,kalshiOnlyLead} from '../src/strategy.mjs';
+import {gameState,leadSignal,leadWatchReason,earlyLeadSignal,additionalLeadSignal,cricketLeadSignal,overSignal,confirmedSoccerWinnerClock,soccerWinnerWindowOpen,kalshiOnlyLead,soccerSingleReadLead} from '../src/strategy.mjs';
 import {golfState,golfSignal} from '../src/golf.mjs';
 import {finalLeadFraction} from '../src/lead_allocation.mjs';
 import {comboLegAllocation,comboAllocation} from '../src/combos.mjs';
@@ -104,6 +104,23 @@ test('soccer winner allows +3 throughout the second half and +2 strictly under 7
  assert.equal(soccerWinnerWindowOpen({...soccer(2,83,5).state,observedAt:now},now),false);
  assert.equal(soccerWinnerWindowOpen({...soccer(2,84,0).state,observedAt:now},now),false);
  assert.equal(soccerWinnerWindowOpen({...state,observedAt:now,matchRemainingSeconds:NaN},now),true);
+});
+test('soccer entry reuses one Kalshi score for 30 seconds on the correct contract',()=>{
+  const soccer=(margin,minute,remaining)=>team('soccer_match','Soccer',margin,2,0,
+    {half:'2nd',time:`${minute}'`,match_remaining_seconds:remaining,clock:''});
+  const {state,market}=soccer(2,84,NaN);
+  assert.equal(soccerSingleReadLead(state,market,state.observedAt+29999),true);
+  assert.equal(soccerSingleReadLead(state,market,state.observedAt+30001),false);
+  assert.equal(soccerSingleReadLead(soccer(2,77,NaN).state,market,now),false);
+  assert.equal(soccerSingleReadLead(soccer(3,77,NaN).state,market,now),true);
+  assert.equal(soccerSingleReadLead(state,{...market,custom_strike:{soccer_team:'away'}},now),false);
+  assert.equal(soccerSingleReadLead({...state,clockRunning:false},market,now),false);
+  assert.equal(soccerSingleReadLead({...state,scoreConsistent:false},market,now),false);
+  assert.equal(soccerSingleReadLead({...state,feedId:'another-game'},market,now),false);
+  const tie={...soccer(0,89,49).state,matchRemainingSeconds:49};
+  const tieMarket={...market,title:'Tie',yes_sub_title:'Tie',rules_primary:'Tie settles Yes after 90 minutes plus stoppage time.'};
+  assert.equal(soccerSingleReadLead(tie,tieMarket,now),true);
+  assert.equal(soccerSingleReadLead({...tie,matchRemainingSeconds:50},tieMarket,now),false);
 });
 
 test('rugby +15 is one tier; cricket +30 and golf +4 use the revised thresholds',()=>{

@@ -53,9 +53,9 @@ test('CFB and soccer follow the same verification-based allocation',()=>{
 });
 test('both live entry paths use the final verified allocation and funding rechecks recalculate it',()=>{
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
-  assert.match(source,/fraction:finalLeadFraction\(first,second,signal,independent===true,quote\)/);
+  assert.match(source,/directSoccer\?Math.min\(\.10,signal.fraction\):finalLeadFraction\(first,second,signal,independent===true,quote\)/);
   assert.match(source,/finalLeadFraction\(c.state,freshState,verifiedSignal,!kalshiOnly,quote\)/);
-  assert.match(source,/fraction:finalLeadFraction\(state,checked,still,!kalshiOnly,executable\)/);
+  assert.match(source,/directSoccer\?Math.min\(\.10,still.fraction\):finalLeadFraction\(state,checked,still,!kalshiOnly,executable\)/);
 });
 test('strong Kalshi-only leads use 20% only after two stable reads and a score cushion',()=>{
   const now=Date.now(),observed=(age)=>({observedAt:now-age,updatedAt:now-age-1000,
@@ -111,9 +111,9 @@ test('NBA +25 under 7:30 and +20 under 6:30 use single-read sizing',()=>{
   assert.equal(nbaSingleReadLead(fresh,{...market,custom_strike:{basketball_team:'away'}},now),false);
   assert.equal(nbaSingleReadLead(fresh,market,now+10001),false);
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
-  assert.match(source,/if\(!directNba\)\{\s*decision.stage='independent_score'/);
-  assert.match(source,/if\(c.signal.strategy==='lead'&&!freshState.golf&&!directNba\)/);
-  assert.match(source,/if\(c.signal.strategy==='lead'&&!directNba\)/);
+  assert.match(source,/if\(!directNba&&!directSoccer\)\{\s*decision.stage='independent_score'/);
+  assert.match(source,/if\(c.signal.strategy==='lead'&&!freshState.golf&&!directNba&&!directSoccer\)/);
+  assert.match(source,/if\(c.signal.strategy==='lead'&&!directNba&&!directSoccer\)/);
   assert.match(source,/if\(directNba&&!await auditSingleReadNbaLead\(freshState,quote,c.milestone\)\)continue/);
   assert.match(source,/singleRead\?'Eligible for one fresh Kalshi score; checking live ask'/);
   assert.match(source,/leadWatch&&!candidates.some\(c=>c.signal.strategy==='lead'\)/);
