@@ -696,6 +696,19 @@ export function nbaSingleReadLead(game,market,now=Date.now()){
     (game.remainingSeconds<390&&Math.abs(game.homeUnits-game.awayUnits)>=20||
       Math.abs(game.homeUnits-game.awayUnits)>=25)&&Boolean(leadSignal(game,market));
 }
+// A soccer entry needs one current Kalshi scoreboard observation and a live
+// seller on the exact qualifying outcome. The orderbook is checked by the
+// caller; this predicate keeps the scoreboard and contract gates together.
+export function soccerSingleReadLead(game,market,now=Date.now()){
+  if(!/soccer/.test(String(game?.type||''))||game.feedId!==game.id||
+    !game.verifiedLive||!game.scoreKnown||!game.scoreConsistent||!game.periodConsistent||
+    game.soccerExtraTime||!game.clockRunning||
+    !Number.isFinite(game.observedAt)||now<game.observedAt||now-game.observedAt>30000||
+    Number.isFinite(game.updatedAt)&&(game.updatedAt>game.observedAt+5000||game.observedAt-game.updatedAt>30000)||
+    !Number.isInteger(game.homeUnits)||!Number.isInteger(game.awayUnits)||
+    !soccerWinnerWindowOpen(game,now))return false;
+  return Boolean(leadSignal(game,market)||drawSignal(game,market));
+}
 export function externallyVerifiedEarlySoccerLead(first,second,signal,firstConfirmed,secondConfirmed){
   if(!firstConfirmed||!secondConfirmed||signal?.fraction!==.02||
     !/^Restricted 2% lead:/.test(signal.reason)||
@@ -728,7 +741,7 @@ export function soccerWinnerWindowOpen(game,now=Date.now()){
   if(Number.isFinite(game.matchRemainingSeconds)&&game.matchRemainingSeconds<=0)return false;
   if(Number.isFinite(game.soccerMinute)&&game.soccerMinute>=90&&
     !Number.isFinite(game.matchRemainingSeconds))
-    return game.clockRunning&&Number.isFinite(game.observedAt)&&now>=game.observedAt&&now-game.observedAt<=10000;
+    return game.clockRunning&&Number.isFinite(game.observedAt)&&now>=game.observedAt&&now-game.observedAt<=30000;
   const remaining=Number.isFinite(game.matchRemainingSeconds)&&game.matchRemainingSeconds>0?
     Math.min(regulation,game.matchRemainingSeconds):regulation;
   return Number.isFinite(game.observedAt)&&Number.isFinite(remaining)&&
