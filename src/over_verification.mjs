@@ -1,4 +1,4 @@
-import { overSignal, playerOverSpec, fallbackScoringUnits, periodValue } from './strategy.mjs';
+import { overSignal, overCushionUnits, periodValue } from './strategy.mjs';
 export function sameSportsContract(a,b){
   return Boolean(a&&b&&['ticker','event_ticker','rules_primary','floor_strike','cap_strike','close_time']
     .every(key=>a[key]===b[key])&&JSON.stringify(a.custom_strike||{})===JSON.stringify(b.custom_strike||{}));
@@ -23,11 +23,10 @@ export function freshOverObservation(game,now=Date.now()){
 export function freshOverState(game,market,now=Date.now()){
   return freshOverObservation(game,now)&&Boolean(overSignal(game,market));
 }
-// Player statistics use one credited unit. Yardage has no fixed safe play
-// bound. Team/game/period totals remove the sport's conservative full-play bound.
+// Share the full-play cushion with candidate ranking and allocation. Yardage
+// has no fixed safe play bound.
 export function overCushion(game,market){
-  const signal=overSignal(game,market),player=playerOverSpec(game,market);
-  const units=player?['PASSYDS','RUSHYDS','RECYDS'].includes(player.metric)?null:1:fallbackScoringUnits(game);
+  const signal=overSignal(game,market),units=overCushionUnits(game,market);
   return signal&&Number.isInteger(units)&&signal.scored-units>signal.strike?units:null;
 }
 export function overTiming(window,game,market,now=Date.now()){

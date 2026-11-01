@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {gameState,overSignal,playerOverSpec,playerPropEarlyWindow} from '../src/strategy.mjs';
+import {gameState,overSignal,playerOverSpec,playerPropEarlyWindow,cushionedOverSignal} from '../src/strategy.mjs';
+import {overCushion} from '../src/over_verification.mjs';
 import {playerStatAgreement} from '../src/score_verification.mjs';
 test('player props stop with fewer than ten minutes of regulation remaining',()=>{
   const m={id:'g',type:'basketball_game',details:{league:'NBA'}},market={event_ticker:'KXNBAPTS-TEST',status:'active',floor_strike:1.5,custom_strike:{basketball_player:'p'},yes_sub_title:'Pat: 2+',title:'Pat: 2+ points',yes_ask_dollars:'.95'};
@@ -13,7 +14,19 @@ test('player props stop with fewer than ten minutes of regulation remaining',()=
   assert.equal(playerPropEarlyWindow({type:'baseball_game',period:8}),false);
   assert.equal(playerPropEarlyWindow({type:'tennis_match'}),false);
 });
+test('scoreless hockey can still have an early crossed shots prop',()=>{
+  const game=gameState({id:'g',type:'hockey_game'}, {details:{status:'live',home_score:0,away_score:0,period:1,clock:'12:00',player_stats:{p:{shots_on_goal:3}}}});
+  const market={event_ticker:'KXNHLSOG-TEST',status:'active',floor_strike:1.5,custom_strike:{hockey_player:'p'},yes_sub_title:'Pat: 2+',title:'Pat: 2+ shots on goal',yes_ask_dollars:'.95'};
+  assert.equal(overSignal(game,market)?.strategy,'over');
+});
 
+test('points prop needs a full-play cushion before the seller-only 40% route',()=>{
+  const game=gameState({id:'g',type:'basketball_game',details:{league:'NBA'}},{details:{status:'live',home_score:3,away_score:0,period:1,clock:'08:00',player_stats:{p:{points:3}}}});
+  const market={event_ticker:'KXNBAPTS-TEST',status:'active',floor_strike:1.5,custom_strike:{basketball_player:'p'},yes_sub_title:'Pat: 2+',title:'Pat: 2+ points',yes_ask_dollars:'.95'};
+  assert.equal(overSignal(game,market)?.fraction,.15);assert.equal(overCushion(game,market),null);assert.equal(cushionedOverSignal(game,market),null);
+  const comfortable={...game,playerStats:{p:{points:6}}};
+  assert.equal(overSignal(comfortable,market)?.fraction,.40);assert.equal(overCushion(comfortable,market),4);
+});
 test('non-basketball player overs use an exact linked player statistic and external box score',()=>{
   const game=gameState({id:'fixture',type:'soccer_match',title:'Away at Home'},
     {details:{status:'live',home_score:3,away_score:1,time:"70'",player_stats:{p1:{goals:3}}}});

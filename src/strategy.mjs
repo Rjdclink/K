@@ -317,10 +317,15 @@ export function playerPropEarlyWindow(game){
   return Boolean(timing&&Number.isInteger(period)&&period>=1&&period<=timing[0]&&
     Number.isFinite(seconds)&&seconds>=0&&seconds<=timing[1]&&(timing[0]-period)*timing[1]+seconds>=600);
 }
-export function overSignal(game, market) {
-  if (!game.verifiedLive || !game.scoreKnown || !game.scoreConsistent || Math.min(game.home,game.away)<0 || game.home+game.away<=0 || market.status!=='active' && market.status!=='open') return null;
-  if(game.type==='cricket_match')return cricketOverSignal(game,market);
+export function overCushionUnits(game,market){
   const player=playerOverSpec(game,market);
+  return player?['PASSYDS','RUSHYDS','RECYDS'].includes(player.metric)?null:
+    ['PTS','PRA'].includes(player.metric)?fallbackScoringUnits(game):player.metric==='RBI'?4:1:fallbackScoringUnits(game);
+}
+export function overSignal(game, market) {
+  const player=playerOverSpec(game,market);
+  if (!game.verifiedLive || !game.scoreKnown || !game.scoreConsistent || Math.min(game.home,game.away)<0 || !player&&game.home+game.away<=0 || market.status!=='active' && market.status!=='open') return null;
+  if(game.type==='cricket_match')return cricketOverSignal(game,market);
   if(player&&!playerPropEarlyWindow(game))return null;
   // Scores from these feeds are not comparable to a whole-game contract line.
   const esportsScore=game.type==='esports_match'&&
@@ -373,8 +378,9 @@ export function overSignal(game, market) {
   // team score precisely enough for the 40% tier. Do not guess its size.
   const lastPlay=game.lastScoringPlay;
   const robust=gameTotal&&!teamTotal&&!player&&!segment&&Number.isInteger(lastPlay)&&lastPlay>0&&scored-lastPlay>strike;
-  const cushionedPlayer=player&&scored-1>strike;
-  return {strategy:'over', reason:`${scored} ${player?.metric||'scored'}${team?` by ${team}`:''}; line ${strike} already passed${segment?`; segment ${segment[1]}`:''}${cushionedPlayer?'; still crossed if one player statistic is removed':''}${robust?`; still crossed if the latest ${lastPlay}-unit scoring play is removed`:''}`, fraction:(robust||cushionedPlayer)?.40:.15,scored,strike};
+  const cushionUnits=player?overCushionUnits(game,market):null;
+  const cushionedPlayer=Number.isInteger(cushionUnits)&&scored-cushionUnits>strike;
+  return {strategy:'over', reason:`${scored} ${player?.metric||'scored'}${team?` by ${team}`:''}; line ${strike} already passed${segment?`; segment ${segment[1]}`:''}${cushionedPlayer?`; still crossed after removing ${cushionUnits} player-stat unit${cushionUnits===1?'':'s'}`:''}${robust?`; still crossed if the latest ${lastPlay}-unit scoring play is removed`:''}`, fraction:(robust||cushionedPlayer)?.40:.15,scored,strike};
 }
 // A Kalshi-only check cannot establish which scoring event was last. Remove
 // the largest ordinary single scoring play for that sport from the displayed
@@ -397,9 +403,7 @@ export function fallbackScoringUnits(game){
 export function cushionedOverSignal(game,market){
   const signal=overSignal(game,market),player=playerOverSpec(game,market);
   if(!signal||!Number.isFinite(signal.scored)||!Number.isFinite(signal.strike))return null;
-  const units=player?['PASSYDS','RUSHYDS','RECYDS'].includes(player.metric)?null:
-    ['PTS','PRA'].includes(player.metric)?fallbackScoringUnits(game):
-    player.metric==='RBI'?4:1:fallbackScoringUnits(game);
+  const units=overCushionUnits(game,market);
   if(!Number.isInteger(units)||signal.scored-units<=signal.strike)return null;
   const series=String(market.event_ticker||'').split('-')[0];
   const wholeGame=/TOTAL$/.test(series)&&!/TEAMTOTAL$|[1-9](?:Q|P|H|INNING)(?:TEAM)?TOTAL$/.test(series);
