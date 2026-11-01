@@ -576,13 +576,20 @@ function signalExecution(c,filled,account,balance,bankroll){
     return 'Below minimum net profit after fees';
   }
   const local=shardCash(account,marketShard(c.event,c.market));
+  const singleRead=c.signal.strategy==='lead'&&c.state.sport==='NBA'&&
+    (c.state.remainingSeconds<450&&Math.abs(c.state.home-c.state.away)>=25||
+      c.state.remainingSeconds<390&&Math.abs(c.state.home-c.state.away)>=20)||
+    c.signal.strategy==='over'&&Boolean(cushionedOverSignal(c.state,c.market));
   if(local===null)return 'Shard balance unavailable';
   if(local<estimatedCostCents(raw,price,fees)){
-    if(transferPlan(account,marketShard(c.event,c.market),estimatedCostCents(raw,price,fees)))return 'Verification pending; shard transfer needed if confirmed';
+    if(transferPlan(account,marketShard(c.event,c.market),estimatedCostCents(raw,price,fees)))return singleRead?
+      'Shard transfer needed; one fresh Kalshi score required':
+      'Verification pending; shard transfer needed if confirmed';
     const localCount=contractCount(Math.min(spendable,local),c.market,c.signal.fraction,bankroll,Infinity,fees);
     if(!profitableCount(localCount,price,fees,c.signal.strategy,bankroll,c.state.type,c.state.remainingSeconds))return 'Insufficient shard cash';
   }
-  return c.signal.strategy==='over'?'Awaiting score verification':'Eligible for final verification';
+  return singleRead?'Eligible for one fresh Kalshi score; checking live ask':
+    c.signal.strategy==='over'?'Awaiting score verification':'Eligible for final verification';
 }
 async function ensureShardFunding(signal,event,market,account,desiredCents,sourceFloorCents=0){
   const destination=marketShard(event,market);
@@ -1789,7 +1796,8 @@ async function scan(cachedMilestones,discoveryCount){
           .map(row=>({strategy:'watch',ticker:row.ticker,title:row.title,
             reason:`${row.value} recorded; line crossed; waiting for the extra-stat cushion or 7-minute window`,
             execution:`Waiting for prop window (${Math.max(0,Math.ceil((PLAYER_PROP_WINDOW_MS-(Date.now()-new Date(propWindows.get(row.ticker)?.at).getTime()))/60000))} min)`})),
-        ...(snapshotRows.get(id).leadWatch?[{strategy:'watch',title:'Commanding lead watch',execution:snapshotRows.get(id).leadWatch}]:[])
+        ...(snapshotRows.get(id).leadWatch&&!candidates.some(c=>c.signal.strategy==='lead')?
+          [{strategy:'watch',title:'Commanding lead watch',execution:snapshotRows.get(id).leadWatch}]:[])
       ]);
     }
     // Expire only the current ten-minute attempt. Removing the row allows a
@@ -2216,7 +2224,9 @@ async function state(){
     // updating. A newer global scan is not evidence this game's market failed.
     game.stale=Date.now()-new Date(game.scanned_at).getTime()>30000;
     game.scoreStale=Date.now()-new Date(game.score_observed_at||game.scanned_at).getTime()>60000;
-    if(game.stale)for(const signal of game.signals||[])signal.execution='Last market result: '+signal.execution;
+    if(game.stale)for(const signal of game.signals||[])signal.execution=signal.strategy==='watch'&&
+      signal.title==='Commanding lead watch'?'Waiting for a fresh market scan; live score may have changed':
+      'Last market result: '+signal.execution;
   }
   let balance=null,positions=null,accountError=null,positionsError=null,balanceStale=false,balanceAsOf=null;
   if(configured()){

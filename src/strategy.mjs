@@ -200,7 +200,7 @@ export function periodValue(game,market){
 }
 export function endWindow(game){
   if(!game.verifiedLive||!game.scoreKnown||!game.periodConsistent)return false;
-  if(/basketball/.test(game.type))return game.period===(['NCAAB','NCAAW'].includes(game.sport)?2:4) && game.remainingSeconds>0 && game.remainingSeconds<(game.sport==='NBA'?390:game.sport==='WNBA'?300:90);
+  if(/basketball/.test(game.type))return game.period===(['NCAAB','NCAAW'].includes(game.sport)?2:4) && game.remainingSeconds>0 && game.remainingSeconds<(game.sport==='NBA'?450:game.sport==='WNBA'?300:90);
   if(/football/.test(game.type))return game.period===4 && game.remainingSeconds>0 && game.remainingSeconds<(game.sport==='CFB'?CFB_LEAD_WINDOW_SECONDS:360);
   if(/hockey/.test(game.type))return game.period===3 && game.remainingSeconds>0 && game.remainingSeconds<420;
   if(/baseball/.test(game.type))return game.period===9;
@@ -224,8 +224,8 @@ export function leadWatchReason(game){
     const college=['NCAAB','NCAAW'].includes(game.sport),final=college?2:4;
     const near=college?180:game.sport==='NBA'?540:game.sport==='WNBA'?420:180;
     if(game.period===final&&Number.isFinite(seconds)&&seconds>0&&seconds<=near&&margin>=8)
-      return game.sport==='NBA'&&seconds<390&&margin>=20||game.sport==='NBA'&&seconds<90&&margin>=8?
-        `Tracking ${margin}-point lead; NBA score and clock rule reached; checking market and verification`:
+      return game.sport==='NBA'&&(seconds<450&&margin>=25||seconds<390&&margin>=20||seconds<90&&margin>=8)?
+        `Tracking ${margin}-point lead; NBA score and clock rule reached; checking market and ask`:
         `Tracking ${margin}-point lead; waiting for the final-period winner window`;
   }
   if(/hockey/.test(type)){
@@ -605,13 +605,13 @@ export function leadSignal(game, market) {
   const baseballNinth=baseball&&game.period===9&&[1,2].includes(game.inningHalf)&&game.outs>=1&&game.outs<=2;
   const finalTime=baseball?baseballEighth||baseballNinth:soccer?soccerEarly||soccerLate:
     game.period===segments&&game.periodConsistent&&Number.isFinite(seconds)&&seconds>0&&
-    (basketball?game.sport==='NBA'?seconds<390:game.sport==='WNBA'?seconds<=300:seconds<90:
+    (basketball?game.sport==='NBA'?seconds<450:game.sport==='WNBA'?seconds<=300:seconds<90:
       hockey?seconds<120:seconds<(game.sport==='CFB'?CFB_LEAD_WINDOW_SECONDS:360));
   if (!game.verifiedLive || !game.scoreKnown || soccer&&!game.scoreConsistent || !finalTime || market.status!=='active' && market.status!=='open') return null;
   const h=game.homeUnits,a=game.awayUnits;
   if (!Number.isFinite(h)||!Number.isFinite(a)) return null;
   const minimum=basketball?['NCAAB','NCAAW'].includes(game.sport)?8:
-      game.sport==='WNBA'?(seconds<90?8:11):game.sport==='NBA'?(seconds<90?8:20):8:
+      game.sport==='WNBA'?(seconds<90?8:11):game.sport==='NBA'?(seconds<90?8:seconds<390?20:25):8:
     football?game.sport==='CFB'?CFB_LEAD_MINIMUM:seconds<120?10:11:
     hockey?4:baseball?baseballEighth?5:4:soccer?soccerEarly?3:2:null;
   if(minimum===null||margin<minimum)return null;
@@ -642,7 +642,7 @@ export function leadFraction(game,margin,minimum){
   if(/soccer/.test(game.type)&&margin>=3)return .20;
   return .15;
 }
-// The NBA +20 Q4 route is the only winner allowed on one Kalshi score.
+// The NBA +25 under 7:30 and +20 under 6:30 Q4 routes use one Kalshi score.
 // This is an entry rule, not proof the lead is irreversible.
 export function nbaSingleReadLead(game,market,now=Date.now()){
   return game?.sport==='NBA'&&/basketball/.test(String(game.type||''))&&
@@ -650,9 +650,10 @@ export function nbaSingleReadLead(game,market,now=Date.now()){
     Number.isFinite(game.observedAt)&&now>=game.observedAt&&now-game.observedAt<=10000&&
     Number.isFinite(game.updatedAt)&&game.updatedAt<=game.observedAt+5000&&
     game.observedAt-game.updatedAt<=30000&&
-    Number.isFinite(game.remainingSeconds)&&game.remainingSeconds>0&&game.remainingSeconds<390&&
+    Number.isFinite(game.remainingSeconds)&&game.remainingSeconds>0&&game.remainingSeconds<450&&
     Number.isFinite(game.homeUnits)&&Number.isFinite(game.awayUnits)&&
-    Math.abs(game.homeUnits-game.awayUnits)>=20&&Boolean(leadSignal(game,market));
+    (game.remainingSeconds<390&&Math.abs(game.homeUnits-game.awayUnits)>=20||
+      Math.abs(game.homeUnits-game.awayUnits)>=25)&&Boolean(leadSignal(game,market));
 }
 export function externallyVerifiedEarlySoccerLead(first,second,signal,firstConfirmed,secondConfirmed){
   if(!firstConfirmed||!secondConfirmed||signal?.fraction!==.02||
