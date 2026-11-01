@@ -2305,7 +2305,7 @@ async function state(){
     game.stale=Date.now()-new Date(game.scanned_at).getTime()>30000;
     game.scoreStale=Date.now()-new Date(game.score_observed_at||game.scanned_at).getTime()>60000;
     if(game.stale)for(const signal of game.signals||[])signal.execution=signal.strategy==='watch'&&
-      signal.title==='Commanding lead watch'?'Lead tracked for fast score and quote checks; last catalog result is older':
+      signal.title==='Commanding lead watch'?signal.execution+'; last catalog result is older':
       'Last market result: '+signal.execution;
   }
   let balance=null,positions=null,accountError=null,positionsError=null,balanceStale=false,balanceAsOf=null;

@@ -117,7 +117,7 @@ test('NBA +25 under 7:30 and +20 under 6:30 use single-read sizing',()=>{
   assert.match(source,/if\(directNba&&!await auditSingleReadNbaLead\(freshState,quote,c.milestone\)\)continue/);
   assert.match(source,/singleRead\?'Eligible for one fresh Kalshi score; checking live ask'/);
   assert.match(source,/leadWatch&&!candidates.some\(c=>c.signal.strategy==='lead'\)/);
-  assert.match(source,/Lead tracked for fast score and quote checks; last catalog result is older/);
+  assert.match(source,/signal\.execution\+'; last catalog result is older'/);
 });
 test('tennis two-match-point fallback permits 20% with an unchanged deciding set',()=>{
   const m={id:'tennis-fallback',type:'tennis_tournament_singles',title:'Hurkacz vs Bergs',

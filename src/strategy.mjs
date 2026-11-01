@@ -270,8 +270,8 @@ export function leadWatchReason(game){
   }
   if(/soccer/.test(type)&&game.period===2&&!game.soccerExtraTime&&
     Number.isFinite(game.soccerMinute)&&game.soccerMinute>=45&&
-    (game.soccerMinute<50&&margin>=3||game.soccerMinute>=75&&margin>=2))
-    return `Tracking ${margin}-goal lead; ${game.soccerMinute<50&&margin>=3||game.soccerMinute>82.5&&margin>=2?
+    (margin>=3||game.soccerMinute>=75&&margin>=2))
+    return `Tracking ${margin}-goal lead; ${margin>=3||game.soccerMinute>82.5&&margin>=2?
       'late winner rule reached; checking winner market and ask':'waiting for the late winner window'}`;
   return null;
 }
@@ -632,8 +632,8 @@ export function leadSignal(game, market) {
   const segments=/baseball/.test(game.type)?9:/hockey/.test(game.type)?3:/soccer/.test(game.type)?2:basketball&&['NCAAB','NCAAW'].includes(game.sport)?2:/basketball|football/.test(game.type)?4:Infinity;
   const baseball=/baseball/.test(game.type);
   const seconds=game.remainingSeconds,margin=Math.abs(game.homeUnits-game.awayUnits);
-  const soccerEarly=soccer&&game.period===2&&game.periodConsistent&&
-    Number.isFinite(game.soccerMinute)&&game.soccerMinute>=45&&game.soccerMinute<50;
+  const soccerSecondHalf=soccer&&game.period===2&&game.periodConsistent&&
+    Number.isFinite(game.soccerMinute)&&game.soccerMinute>=45;
   // The displayed elapsed minute is enough to establish the regulation-time
   // window when this live feed omits its final-whistle countdown.
   const soccerLate=soccer&&game.period===2&&game.periodConsistent&&
@@ -643,7 +643,7 @@ export function leadSignal(game, market) {
       game.matchRemainingSeconds>0&&game.matchRemainingSeconds<450&&game.soccerMinute>=82);
   const baseballEighth=baseball&&game.period===8&&game.inningHalf===2&&game.outs===2;
   const baseballNinth=baseball&&game.period===9&&[1,2].includes(game.inningHalf)&&game.outs>=1&&game.outs<=2;
-  const finalTime=baseball?baseballEighth||baseballNinth:soccer?soccerEarly||soccerLate:
+  const finalTime=baseball?baseballEighth||baseballNinth:soccer?soccerSecondHalf:
     game.period===segments&&game.periodConsistent&&Number.isFinite(seconds)&&seconds>0&&
     (basketball?game.sport==='NBA'?seconds<450:game.sport==='WNBA'?seconds<=300:seconds<90:
       hockey?seconds<120:game.sport==='CFB'?cfbLeadWindow(game):seconds<360);
@@ -654,7 +654,7 @@ export function leadSignal(game, market) {
       game.sport==='WNBA'?(seconds<90?8:11):game.sport==='NBA'?(seconds<90?8:seconds<390?20:25):8:
     football?game.sport==='CFB'?(seconds>=CFB_MIDDLE_WINDOW_SECONDS?CFB_EARLY_MINIMUM:
       seconds>=CFB_LEAD_WINDOW_SECONDS?CFB_MIDDLE_MINIMUM:CFB_LEAD_MINIMUM):seconds<120?10:11:
-    hockey?4:baseball?baseballEighth?5:4:soccer?soccerEarly?3:2:null;
+    hockey?4:baseball?baseballEighth?5:4:soccer?soccerLate?2:3:null;
   if(minimum===null||margin<minimum)return null;
   const leader = h>a ? game.homeName : game.awayName;
   const trailer = h>a ? game.awayName : game.homeName;
