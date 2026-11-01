@@ -10,13 +10,18 @@ const market=(id,ask)=>({ticker:'KXSOCCERGAME-1-'+id,event_ticker:event.event_ti
   status:'active',title:id==='H'?'Home FC':'Away FC',custom_strike:{soccer_team:id},
   yes_ask_dollars:String(ask),yes_ask_size_fp:'42'});
 
-test('five-minute window and both value research sides',()=>{
+test('five-minute window only lists winning teams at favorite or underdog prices',()=>{
   assert.equal(lateWindow(game)?.kind,'clock');
   assert.equal(valueCandidate(game,market('H',.85),event)?.role,'favorite');
   assert.equal(valueCandidate(game,market('H',.85),event)?.kalshiQuoteImpliedChance,.85);
-  assert.equal(valueCandidate(game,market('A',.19),event)?.role,'underdog');
+  assert.equal(valueCandidate(game,market('H',.19),event)?.role,'leading underdog');
+  assert.equal(valueCandidate(game,market('A',.01),event),null);
+  const awayLeads={...game,home:1,away:2};
+  assert.equal(valueCandidate(awayLeads,market('A',.19),event)?.role,'leading underdog');
+  assert.equal(valueCandidate(awayLeads,market('H',.01),event),null);
   assert.equal(valueCandidate(game,market('H',.84),event),null);
   assert.equal(valueCandidate(game,market('A',.51),event),null);
+  assert.equal(valueCandidate(game,market('H',.51),event),null);
 });
 
 test('unknown or stale endgame state cannot qualify',()=>{
