@@ -37,12 +37,13 @@ export const BASKETBALL_LEAD_RULES=Object.freeze({
   NBA:{period:4,possession:true,tiers:[[18,450],[12,390],[8,90]]},
   WNBA:{period:4,possession:true,tiers:[[11,360],[7,90]]},
   college:{period:2,possession:false,tiers:[[16,300],[10,270],[8,150]]},
+  collegeWomen:{period:4,possession:false,tiers:[[16,300],[10,270],[8,150]]},
   international:{period:4,possession:false,tiers:[[16,300],[10,270],[8,150]]}
 });
 export function basketballLeadProfile(game){
   if(!/basketball/.test(String(game?.type||''))||/esports/.test(String(game?.type||'')))return null;
   return BASKETBALL_LEAD_RULES[['NBA','WNBA'].includes(game.sport)?game.sport:
-    ['NCAAB','NCAAW'].includes(game.sport)?'college':'international'];
+    game.sport==='NCAAB'?'college':game.sport==='NCAAW'?'collegeWomen':'international'];
 }
 export function basketballEntryTier(game){
   const profile=basketballLeadProfile(game),seconds=game?.remainingSeconds;
@@ -190,11 +191,11 @@ export function gameState(m, live) {
   // 90+ minutes are stoppage time in regulation; only an explicit extra-time
   // phase excludes those goals from the 90-minutes-plus-stoppage markets.
   const soccerExtraTime=soccerOvertime;
-  const segmentSeconds=/hockey/.test(family)||['NCAAB','NCAAW'].includes(sport)?1200:/basketball/.test(family)?sport==='WNBA'?600:720:900;
+  const segmentSeconds=/hockey/.test(family)||sport==='NCAAB'?1200:/basketball/.test(family)?sport==='NBA'?720:600:900;
   const clockFraction = parts ? Math.min(1, remainingSeconds / segmentSeconds) : NaN;
   let progress = NaN;
-  if ((['NFL','CFB','NBA','WNBA'].includes(sport)||/football_game|basketball_game/.test(family)) && Number.isFinite(period) && period>=1) progress = Math.min(0.99,(period-1 + (Number.isFinite(clockFraction)?1-clockFraction:0))/4);
-  if (['NCAAB','NCAAW'].includes(sport) && Number.isFinite(period) && period>=1) progress = Math.min(0.99,(period-1 + (Number.isFinite(clockFraction)?1-clockFraction:0))/2);
+  if ((['NFL','CFB','NBA','WNBA','NCAAW'].includes(sport)||/football_game|basketball_game/.test(family)) && Number.isFinite(period) && period>=1) progress = Math.min(0.99,(period-1 + (Number.isFinite(clockFraction)?1-clockFraction:0))/4);
+  if (sport==='NCAAB' && Number.isFinite(period) && period>=1) progress = Math.min(0.99,(period-1 + (Number.isFinite(clockFraction)?1-clockFraction:0))/2);
   if ((sport==='NHL'||/hockey_match/.test(family)) && Number.isFinite(period) && period>=1) progress = Math.min(0.99,(period-1 + (Number.isFinite(clockFraction)?1-clockFraction:0))/3);
   if ((sport==='MLB'||/baseball_game/.test(family)) && Number.isFinite(period) && period>=1) progress = Math.min(0.99,(period-1 + (/bottom/.test(periodText)?0.5:0))/9);
   if (sport==='Soccer' && Number.isFinite(period) && period>=1) progress = Math.min(0.99,(period-1)/2);
@@ -232,7 +233,7 @@ export function periodValue(game,market){
   const match=String(market?.event_ticker||'').split('-')[0].match(/([1-9])(Q|P|H|INNING)(?:TEAM)?TOTAL$/);
   if(!match)return null;
   const n=Number(match[1]),unit=match[2];
-  const numbers=unit==='H'&&/basketball/.test(game.type)&&!['NCAAB','NCAAW'].includes(game.sport)?(n===1?[1,2]:n===2?[3,4]:[]):[n];
+  const numbers=unit==='H'&&/basketball/.test(game.type)&&game.sport!=='NCAAB'?(n===1?[1,2]:n===2?[3,4]:[]):[n];
   const parts=numbers.map(number=>game.periodScores?.find(p=>p.number===number));
   if(!parts.length||parts.some(p=>!p))return null;
   return {home:parts.reduce((s,p)=>s+p.home,0),away:parts.reduce((s,p)=>s+p.away,0),number:n,unit};
@@ -670,7 +671,7 @@ export function leadSignal(game, market) {
   const hockey=/hockey/.test(game.type);
   const soccer=/soccer/.test(game.type);
   if(soccer&&/^(?:1st|first)$/.test(game.soccerHalf))return null;
-  const segments=/baseball/.test(game.type)?9:/hockey/.test(game.type)?3:/soccer/.test(game.type)?2:basketball&&['NCAAB','NCAAW'].includes(game.sport)?2:/basketball|football/.test(game.type)?4:Infinity;
+  const segments=/baseball/.test(game.type)?9:/hockey/.test(game.type)?3:/soccer/.test(game.type)?2:basketball&&game.sport==='NCAAB'?2:/basketball|football/.test(game.type)?4:Infinity;
   const baseball=/baseball/.test(game.type);
   const seconds=game.remainingSeconds,margin=Math.abs(game.homeUnits-game.awayUnits);
   const soccerSecondHalf=soccer&&game.period===2&&game.periodConsistent&&
@@ -872,7 +873,7 @@ export function earlyLeadSignal(game,market){
 export function drawSignal(game,market){
   const type=String(game?.type||''),soccer=/soccer/.test(type),hockey=/hockey/.test(type);
   const basketball=/basketball/.test(type),football=/football/.test(type);
-  const final=soccer?2:hockey?3:basketball?['NCAAB','NCAAW'].includes(game.sport)?2:4:
+  const final=soccer?2:hockey?3:basketball?game.sport==='NCAAB'?2:4:
     football?4:/rugby|handball/.test(type)?2:/lacrosse/.test(type)?4:NaN;
   const seconds=soccer?game?.matchRemainingSeconds:game?.remainingSeconds;
   const rules=String(market?.rules_primary||'');
@@ -964,7 +965,7 @@ export function comeback(game,market,strategy){
   const type=String(game.type||'');
   if(!/basketball|football|hockey|soccer/.test(type))return position===-1;
   const soccer=/soccer/.test(type),basketball=/basketball/.test(type),hockey=/hockey/.test(type);
-  const finalPeriod=soccer?2:hockey?3:basketball?['NCAAB','NCAAW'].includes(game.sport)?2:4:4;
+  const finalPeriod=soccer?2:hockey?3:basketball?game.sport==='NCAAB'?2:4:4;
   const seconds=soccer?game.matchRemainingSeconds:game.remainingSeconds;
   return game.period===finalPeriod&&(!soccer||!game.soccerExtraTime)&&Number.isFinite(seconds)&&seconds>=0&&
     seconds<(position===0?30:120);
