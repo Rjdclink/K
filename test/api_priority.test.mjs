@@ -36,3 +36,14 @@ test('interactive dashboard work overtakes live scanners while preserving the co
  const interactive=gate('interactive');blocked=false;release();await Promise.all([interactive,live,normal]);
  assert.deepEqual(admitted,['interactive','live','normal']);
 });
+
+test('continuous urgent traffic cannot starve catalog and reconciliation requests',async()=>{
+ let release,blocked=true;const admitted=[];
+ const gate=createPriorityGate(async priority=>{if(blocked)return 250;admitted.push(priority);return 0},
+  {wait:()=>new Promise(resolve=>{release=resolve})});
+ const jobs=[gate('background'),gate('normal'),...Array.from({length:10},()=>gate('live'))];
+ await new Promise(r=>setImmediate(r));blocked=false;release();await Promise.all(jobs);
+ assert.equal(admitted.indexOf('background'),4);
+ assert.equal(admitted.indexOf('normal'),9);
+ assert.equal(admitted.length,12);
+});

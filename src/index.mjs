@@ -67,14 +67,21 @@ const reserveKalshiSlot=async(method,priority)=>{
     await client.query(`INSERT INTO kalshi_rate_limits(kind,next_at) VALUES($1,clock_timestamp()) ON CONFLICT DO NOTHING`,[kind]);
     const {rows:[slot]}=await client.query(`SELECT GREATEST(0,
       EXTRACT(EPOCH FROM (next_at-clock_timestamp()))*1000,
-      CASE WHEN $1='read' AND $2 NOT IN ('interactive','live') THEN COALESCE((SELECT EXTRACT(EPOCH FROM (next_at-clock_timestamp()))*1000
-        FROM kalshi_rate_limits WHERE kind='read_live'),0) ELSE 0 END) AS wait_ms
+      CASE WHEN $1='read' AND $2 NOT IN ('interactive','live') THEN LEAST(COALESCE((SELECT EXTRACT(EPOCH FROM (next_at-clock_timestamp()))*1000
+        FROM kalshi_rate_limits WHERE kind='read_live'),0),
+        COALESCE((SELECT EXTRACT(EPOCH FROM (next_at-clock_timestamp()))*1000
+        FROM kalshi_rate_limits WHERE kind='read_deferred'),0)) ELSE 0 END) AS wait_ms
       FROM kalshi_rate_limits WHERE kind=$1`,[kind,priority]);
     const delay=Number(slot.wait_ms);
     if(!Number.isFinite(delay)||delay<0)throw Error('Invalid shared API slot');
     // Do not reserve future slots: pending live requests can take the next
     // slot even while another instance is paging through the catalog.
-    if(delay<=0)await client.query(`UPDATE kalshi_rate_limits SET next_at=clock_timestamp()+($2 * interval '1 millisecond') WHERE kind=$1`,[kind,spacing]);
+    if(delay<=0){
+      await client.query(`UPDATE kalshi_rate_limits SET next_at=clock_timestamp()+($2 * interval '1 millisecond') WHERE kind=$1`,[kind,spacing]);
+      if(method==='GET'&&!['interactive','live'].includes(priority))await client.query(`INSERT INTO kalshi_rate_limits(kind,next_at)
+        VALUES('read_deferred',clock_timestamp()+interval '1 second')
+        ON CONFLICT(kind) DO UPDATE SET next_at=EXCLUDED.next_at`);
+    }
     await client.query('COMMIT');
     return delay;
   }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}

@@ -227,3 +227,16 @@ test('college women use the fourth quarter rather than a second-half period numb
  assert.equal(signal('basketball_game','NCAAW',10,4,270),null);
  assert.ok(signal('basketball_game','NCAAW',10,4,269));
 });
+
+test('hockey adds the inclusive three-goal 5:30 window and retains two goals at 3:30 across leagues',()=>{
+ for(const league of ['NHL','Germany DEL']){
+  for(const [margin,seconds,allowed] of [[3,330,true],[3,331,false],[2,330,false],[2,211,false],[2,210,true],[1,210,false],[4,329,true],[3,0,false]]){
+   const {state,market}=team('hockey_match',league,margin,3,seconds);
+   assert.equal(Boolean(leadSignal(state,market)),allowed,`${league}: ${margin} at ${seconds}`);
+   assert.equal(kalshiSingleReadLead(state,market,now),allowed);
+  }
+  assert.equal(signal('hockey_match',league,4,2,330),null,'second period never qualifies');
+  assert.match(leadWatchReason(team('hockey_match',league,3,3,330).state),/score and clock qualify/);
+  assert.match(leadWatchReason(team('hockey_match',league,2,3,330).state),/waiting for clock threshold/);
+ }
+});
