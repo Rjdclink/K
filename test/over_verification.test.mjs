@@ -20,7 +20,7 @@ function harness({home=70,away=70,seller=true,decisions=[]}={}){
  let time=start,window=null,ids=0,externalCount=0,kalshiCount=0;const events=[],proofs=[];
  class Clock extends Date{constructor(...args){super(...(args.length?args:[time]))}static now(){return time}}
  const context=vm.createContext({Date:Clock,Number,JSON,Math,Promise,console,
-  overContractKey,freshOverObservation:g=>freshOverObservation(g,time),freshOverState:(g,m)=>freshOverState(g,m,time),overTiming:(w,g,m,at=time)=>overTiming(w,g,m,at),sameOverReading,timedOverEntryValid:(g,m)=>timedOverEntryValid(g,m,time),OVER_FRESH_MS,OVER_MAX_GAP_MS,
+  overContractKey,overCushion,freshOverObservation:g=>freshOverObservation(g,time),freshOverState:(g,m)=>freshOverState(g,m,time),overTiming:(w,g,m,at=time)=>overTiming(w,g,m,at),sameOverReading,timedOverEntryValid:(g,m)=>timedOverEntryValid(g,m,time),OVER_FRESH_MS,OVER_MAX_GAP_MS,
   gameState:liveState,confirmedOver,overSignal,randomUUID:()=>`id-${++ids}`,auditTable:async()=>{},
   pool:{query:async(sql,args=[])=>{
    if(sql.startsWith('CREATE'))return {rows:[],rowCount:0};
@@ -42,31 +42,34 @@ function harness({home=70,away=70,seller=true,decisions=[]}={}){
  });vm.runInContext(runtime,context);
  return {events,proofs,context,get window(){return window},get externalCount(){return externalCount},get kalshiCount(){return kalshiCount},run:async(ms)=>{if(ms!==undefined)time=start+ms;return context.confirmedIndependentOver(state(time-1,home,away),milestone,market)},setScore:(h,a)=>{home=h;away=a},setSeller:v=>{seller=v}};
 }
-test('uncushioned over waits 20 seconds for external check one and 3:30 for the simultaneous final pair',async()=>{
+test('uncushioned over waits 20 seconds for external check one and 3:00 for the simultaneous final pair',async()=>{
  const h=harness();assert.equal(await h.run(0),null);assert.equal(h.externalCount,0);assert.equal(h.window.initial_at,start);
  assert.equal(await h.run(19999),null);assert.equal(h.externalCount,0);
  assert.equal(await h.run(20000),null);assert.equal(h.externalCount,1);assert.equal(h.kalshiCount,0);
- for(const ms of [80000,140000,209999])assert.equal(await h.run(ms),null);
- assert.equal(h.externalCount,1);const verified=await h.run(210000);assert.ok(verified);assert.equal(h.externalCount,2);assert.equal(h.kalshiCount,1);
- assert.equal(verified.overVerification.route,'elapsed');assert.equal(verified.overVerification.initialAt,start);assert.equal(verified.overVerification.pairedAt,start+210000);
- assert.deepEqual(h.events.filter(e=>['kalshi-dispatch','external'].includes(e[0])).slice(-2),[['kalshi-dispatch',start+210000],['external',start+210000]]);
- assert.equal(h.proofs.at(-1).mode,'independent_timed_over');assert.equal(timedOverEntryValid(verified,market,start+210003),true);assert.equal(timedOverEntryValid(verified,market,start+220001),false);
+ for(const ms of [80000,140000,179999])assert.equal(await h.run(ms),null);
+ assert.equal(h.externalCount,1);const verified=await h.run(180000);assert.ok(verified);assert.equal(h.externalCount,2);assert.equal(h.kalshiCount,1);
+ assert.equal(verified.overVerification.route,'elapsed');assert.equal(verified.overVerification.initialAt,start);assert.equal(verified.overVerification.pairedAt,start+180000);
+ assert.deepEqual(h.events.filter(e=>['kalshi-dispatch','external'].includes(e[0])).slice(-2),[['kalshi-dispatch',start+180000],['external',start+180000]]);
+ assert.equal(h.proofs.at(-1).mode,'independent_timed_over');assert.equal(timedOverEntryValid(verified,market,start+180003),true);assert.equal(timedOverEntryValid(verified,market,start+190001),false);
 });
-test('cushion waives only the 3:30 wait, never 20 seconds or either external check',async()=>{
- const h=harness({home:75});assert.equal(await h.run(0),null);assert.equal(await h.run(19999),null);assert.equal(h.externalCount,0);
- const verified=await h.run(20000);assert.ok(verified);assert.equal(h.externalCount,2);assert.equal(h.kalshiCount,1);assert.equal(verified.overVerification.route,'cushion');assert.equal(verified.overVerification.cushionUnits,4);
- assert.equal(timedOverEntryValid(verified,market,start+20003),true);assert.equal(timedOverEntryValid({...verified,home:70},market,start+20003),false);
+test('a cushioned over enters immediately with a seller and no external check',async()=>{
+ const h=harness({home:75});const verified=await h.run(0);assert.ok(verified);assert.equal(h.externalCount,0);assert.equal(h.kalshiCount,0);assert.equal(h.window,null);
+ assert.equal(verified.overVerification.route,'seller_cushion');assert.equal(verified.overVerification.cushionUnits,4);
+ assert.equal(timedOverEntryValid(verified,market,start+3),true);assert.equal(timedOverEntryValid({...verified,home:70},market,start+3),false);
+ assert.equal(timedOverEntryValid(verified,market,start+10001),false);
+ assert.equal(timedOverEntryValid(verified,{...market,floor_strike:138.5},start+3),false);
 });
 test('seller is required to start; a gap or changed contract starts a new clock',async()=>{
+ const noSeller=harness({home:75,seller:false});assert.equal(await noSeller.run(0),null);assert.equal(noSeller.externalCount,0);
  const h=harness({seller:false});await h.run(0);assert.equal(h.window,null);assert.equal(h.externalCount,0);
  h.setSeller(true);await h.run(10000);assert.equal(h.window.initial_at,start+10000);
  await h.run(100001);assert.equal(h.window.initial_at,start+100001);assert.equal(h.externalCount,0);
  h.window.contract_key='changed';await h.run(100002);assert.equal(h.window.initial_at,start+100002);
 });
-test('missing and contradictory external readings block even cushioned entries',async()=>{
+test('missing and contradictory external readings block uncushioned entries',async()=>{
  for(const decision of [null,false]){
-  const h=harness({home:75,decisions:[decision]});await h.run(0);assert.equal(await h.run(20000),null);assert.equal(h.externalCount,1);assert.equal(h.proofs.length,0);if(decision===false)assert.equal(h.window,null);
-  const final=harness({home:75,decisions:[true,decision]});await final.run(0);assert.equal(await final.run(20000),null);assert.equal(final.externalCount,2);assert.equal(final.proofs.length,0);if(decision===false)assert.equal(final.window,null);
+  const h=harness({decisions:[decision]});await h.run(0);assert.equal(await h.run(20000),null);assert.equal(h.externalCount,1);assert.equal(h.proofs.length,0);if(decision===false)assert.equal(h.window,null);
+  const final=harness({decisions:[true,decision]});await final.run(0);await final.run(20000);await final.run(80000);await final.run(140000);assert.equal(await final.run(180000),null);assert.equal(final.externalCount,2);assert.equal(final.proofs.length,0);if(decision===false)assert.equal(final.window,null);
  }
 });
 test('lost crossing clears the durable clock; increasing scores preserve it',async()=>{

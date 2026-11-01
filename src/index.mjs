@@ -1,5 +1,5 @@
 import {createComboPlanner} from './combo_planner.mjs';
-import { sameSportsContract, overContractKey, freshOverObservation, freshOverState, overTiming, sameOverReading, timedOverEntryValid, assertTimedOverEntry, OVER_FRESH_MS, OVER_MAX_GAP_MS } from './over_verification.mjs';
+import { sameSportsContract, overContractKey, freshOverObservation, freshOverState, overCushion, overTiming, sameOverReading, timedOverEntryValid, assertTimedOverEntry, OVER_FRESH_MS, OVER_MAX_GAP_MS } from './over_verification.mjs';
 import { golfSignal, verifyGolf } from './golf.mjs';
 import { randomUUID } from 'node:crypto';
 import { apiPriority, withApiPriority, createPriorityGate } from './api_priority.mjs';
@@ -11,7 +11,7 @@ import { page } from './ui.mjs';
 import { historyPage } from './history_ui.mjs';
 import { completedTrade, manualSaleFill, reconcileManualSaleFills, settlementLookupCandidates } from './history.mjs';
 import { ensureExitLedger, recordExitFill } from './exit_ledger.mjs';
-import { gameState, overSignal, playerOverSpec, confirmedOver, fallbackScoringUnits, confirmedExternalLead, leadSignal, proBasketballLeadRules, nbaSingleReadLead, kalshiSingleReadLead, confirmedSoccerWinnerClock, confirmedDrawClock, soccerWinnerWindowOpen, leadWatchReason, additionalLeadSignal, cricketLeadSignal, drawSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback } from './strategy.mjs';
+import { gameState, overSignal, playerOverSpec, playerPropEarlyWindow, confirmedOver, fallbackScoringUnits, confirmedExternalLead, leadSignal, proBasketballLeadRules, nbaSingleReadLead, kalshiSingleReadLead, confirmedSoccerWinnerClock, confirmedDrawClock, soccerWinnerWindowOpen, leadWatchReason, additionalLeadSignal, cricketLeadSignal, drawSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback } from './strategy.mjs';
 import { reviewMiss } from './ai.mjs';
 import { kalshiSignature } from './auth.mjs';
 import { marketShard, shardCash, transferPlan, comboShardBudget, awaitShardCash } from './funding.mjs';
@@ -239,7 +239,7 @@ function ensureOverWindows(){return overWindowsReady??=pool.query(`CREATE TABLE 
 async function overProgress(game,market,timing){
   const seconds=Math.ceil(timing.remainingMs/1000);
   const message=timing.stage==='first_wait'?`Waiting for first external check (${seconds}s; minimum 20s)`:
-    timing.stage==='final_wait'?`First external check passed; waiting for paired checks (${seconds}s; 3m 30s or cushion)`:
+    timing.stage==='final_wait'?`First external check passed; waiting for paired checks (${seconds}s; 3m or cushion)`:
     'Awaiting score verification';
   await reportVerifiedGate(game,market.ticker,message);
 }
@@ -269,7 +269,7 @@ async function confirmedIndependentOver(first,milestone,market,{decorate=state=>
   if(prior&&prior.contract_key===overContractKey(first,market)&&
     Date.now()-Number(prior.last_seen)<=OVER_MAX_GAP_MS&&freshOverState(first,market)){
     const pending=overTiming(prior,first,market);
-    if(['first_wait','final_wait'].includes(pending.stage)){
+    if(['first_wait','final_wait'].includes(pending.stage)&&overCushion(first,market)===null){
       await pool.query('UPDATE over_verification_windows SET last_seen=GREATEST(last_seen,$3) WHERE market_ticker=$1 AND generation=$2',
         [market.ticker,prior.generation,Date.now()]);
       await overProgress(first,market,pending);return null;
@@ -291,6 +291,12 @@ async function confirmedIndependentOver(first,milestone,market,{decorate=state=>
     return null;
   }
   const now=Date.now(),key=overContractKey(first,seller);
+  if(overCushion(first,seller)!==null){
+    const id=randomUUID(),proof={route:'seller_cushion',contractKey:key,sellerAt:now,cushionUnits:overCushion(first,seller)};
+    await auditTable();await pool.query('INSERT INTO verification_records(id,market_ticker,passed,evidence) VALUES($1,$2,true,$3)',
+      [id,seller.ticker,JSON.stringify({mode:'seller_backed_cushioned_over',game:first,timing:proof})]);
+    first.verificationId=id;first.overVerification=proof;return first;
+  }
   const {rows:[window]}=await pool.query(`INSERT INTO over_verification_windows
     (market_ticker,game_id,contract_key,generation,initial_at,last_seen,contract,initial_state)
     VALUES($1,$2,$3,$4,$5,$5,$6,$7)
@@ -803,6 +809,7 @@ function signalExecution(c,filled,account,balance,bankroll){
   const spendable=balance;
   const raw=contractCount(spendable,c.market,c.signal.fraction,bankroll,Infinity,fees);
   if(!raw)return 'Insufficient available cash for this trade';
+  if(estimatedCostCents(raw,price,fees)<minimumThreeGoalSpend(c.state,c.signal,c.market,bankroll))return 'Below 15% minimum purchase amount';
   if(!profitableCount(raw,price,fees,c.signal.strategy,bankroll,c.state.type,c.state.remainingSeconds)){
     // Fractional contracts and fee rounding can still leave zero net cents.
     if(['over','lead'].includes(c.signal.strategy)&&netSettlementProfitCents(raw,price,fees)<1)
@@ -1832,7 +1839,7 @@ async function watchReadyOverTickets(until){
           const listed=(event.markets||[]).find(m=>m.ticker===ticket.ticker&&m.event_ticker===eventTicker);
           if(!listed)continue;
           if(!overSignal(state,listed)){await resetLostOverWindow(state,listed);continue;}
-          stage='independent_score_verification';
+          stage='score_verification';
           state=await confirmedIndependentOver(state,milestone,listed);
           if(!state)continue;
           stage='live_contract_and_orderbook';
@@ -2009,7 +2016,7 @@ async function scan(cachedMilestones,discoveryCount){
         const player=playerOverSpec(state,market);
         if(player&&player.value>Number(market.floor_strike))
           crossingRows.push({ticker:market.ticker,game_id:state.id,value:player.value,
-            title:market.title||market.yes_sub_title||market.ticker});
+            title:market.title||market.yes_sub_title||market.ticker,entryWindowOpen:playerPropEarlyWindow(state)});
       }
     }
     const propWindows=new Map();
@@ -2103,8 +2110,8 @@ async function scan(cachedMilestones,discoveryCount){
         ...candidates.map(c=>({strategy:c.signal.strategy,reason:c.signal.reason,ticker:c.market.ticker,title:c.market.title||c.market.yes_sub_title||'',ask:c.market.yes_ask_dollars,ask_size:c.market.yes_ask_size_fp,execution:signalExecution(c,filled,account,balance,bankroll)})),
         ...crossingRows.filter(row=>row.game_id===id&&!candidates.some(c=>c.market.ticker===row.ticker))
           .map(row=>({strategy:'watch',ticker:row.ticker,title:row.title,
-            reason:`${row.value} recorded; line crossed; awaiting timed independent verification`,
-            execution:`Awaiting score verification`})),
+            reason:row.entryWindowOpen?`${row.value} recorded; line crossed; verification pending`:`${row.value} recorded; player-prop entry requires at least 10 minutes of regulation remaining`,
+            execution:row.entryWindowOpen?'Awaiting score verification':'Player-prop entry window closed'})),
         ...(snapshotRows.get(id).leadWatch&&!candidates.some(c=>c.signal.strategy==='lead')?
           [{strategy:'watch',title:'Commanding lead watch',execution:snapshotRows.get(id).leadWatch}]:[])
       ]);
@@ -2132,13 +2139,15 @@ async function scan(cachedMilestones,discoveryCount){
       const executable=c=>hasAsk(c.market)&&!filled.has(signalKey(c))&&profitableCount(executableCount(c,balance,bankroll),Number(c.market.yes_ask_dollars),feeReserve(c.event,c.market),c.signal.strategy,bankroll,c.state.type,c.state.remainingSeconds)>0;
       if(executable(a)!==executable(b))return executable(a)?-1:1;
       if(a.signal.strategy!==b.signal.strategy)return a.signal.strategy==='over'?-1:1;
+      const earlyProp=c=>playerOverSpec(c.state,c.market)&&playerPropEarlyWindow(c.state)?1-(Number.isFinite(c.state.progress)?c.state.progress:.5):0;
+      if(earlyProp(a)!==earlyProp(b))return earlyProp(b)-earlyProp(a);
       const profit=c=>netSettlementProfitCents(executableCount(c,balance,bankroll),Number(c.market.yes_ask_dollars),feeReserve(c.event,c.market));
       return profit(b)-profit(a) || (a.signal.strategy==='lead'?Number(tieRefundPreference(b.market))-Number(tieRefundPreference(a.market)):0);
     });
     // Each order has its own fraction of the full bankroll. Cash availability
     // and the current quote remain separate execution gates.
-    // Verify independent over scoreboards in parallel. A dozen sequential 12s
-    // dwells used to freeze the dashboard for minutes and miss later games.
+    // Verify crossed overs in parallel. Cushions use the current seller;
+    // other entries wait for the independent checks on the same contract.
     const overPreflights=new Map(),overReady=new Map(),overs=live()?
       [...opportunities.filter(c=>hasAsk(c.market)),...upgradeCandidates].filter(c=>c.signal.strategy==='over'):[];
     for(const c of overs)overReady.set(signalKey(c),new Promise(resolve=>{c.preflightDone=resolve}));

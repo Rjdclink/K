@@ -5,7 +5,7 @@ export function sameSportsContract(a,b){
 }
 
 export const OVER_EXTERNAL_DELAY_MS=20000;
-export const OVER_CONFIRM_DELAY_MS=210000;
+export const OVER_CONFIRM_DELAY_MS=180000;
 export const OVER_FRESH_MS=10000;
 export const OVER_MAX_GAP_MS=90000;
 const sorted=value=>Array.isArray(value)?value.map(sorted):value&&typeof value==='object'?
@@ -50,6 +50,9 @@ export function sameOverReading(first,second,market){
 }
 export function timedOverEntryValid(game,market,now=Date.now()){
   const proof=game?.overVerification;
+  if(proof?.route==='seller_cushion')return Boolean(game.verificationId&&proof.contractKey===overContractKey(game,market)&&
+    Number.isFinite(proof.sellerAt)&&now>=proof.sellerAt&&now-proof.sellerAt<=OVER_FRESH_MS&&
+    freshOverState(game,market,now)&&overCushion(game,market)!==null);
   if(!proof||!game.verificationId||proof.contractKey!==overContractKey(game,market)||
     !freshOverState(game,market,now)||!Number.isFinite(proof.pairedAt)||proof.pairedAt>now||
     now-proof.pairedAt>OVER_FRESH_MS||!proof.pairedExternalId||proof.pairedExternalId===proof.firstExternalId)return false;

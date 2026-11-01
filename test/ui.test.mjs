@@ -60,12 +60,13 @@ test('recent live scores remain counted while the market check is delayed',async
   const elements=new Map();
   const element=()=>({children:[],style:{},classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){},append(...x){this.children.push(...x)},replaceChildren(...x){this.children=x}});
   const document={getElementById:id=>{if(!elements.has(id))elements.set(id,element());return elements.get(id)},querySelectorAll:()=>[],createElement:element};
-  const game={title:'Live football',sport:'CFB',home:49,away:9,signals:[],stale:true,scoreStale:false,scanned_at:new Date(Date.now()-180000).toISOString()};
+  const game={title:'Live football',sport:'CFB',home:49,away:9,signals:[{ticker:'OVER',strategy:'over',ask:'.95',ask_size:'10',execution:'Last market result: Awaiting score verification'}],stale:true,scoreStale:false,scanned_at:new Date(Date.now()-180000).toISOString()};
   const context=vm.createContext({document,window:{addEventListener(){}},navigator:{},localStorage:{getItem(){return null},setItem(){}},
     fetch:async()=>({ok:true,status:200,json:async()=>({games:[game],orders:[],alerts:[],scan:{}})}),AbortSignal,URLSearchParams,setInterval(){}});
   vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],context);
   await new Promise(resolve=>setImmediate(resolve));
   assert.equal(elements.get('gamesCount').textContent,1);
+  assert.equal(elements.get('readyCount').textContent,'0 live · 1 recent');
   assert.equal(elements.get('games').children[0].children[2].textContent.startsWith('Market last checked'),true);
 });
 
@@ -118,9 +119,10 @@ test('game list prioritizes preflights then available asks in descending counts'
     {title:'One ask',signals:[ask(.75),noAsk]},
     {title:'Two asks',signals:[ask(.75),ask(.80)]},
     {title:'One preflight',signals:[ask(.85,'Awaiting score verification')]},
-    {title:'Two preflights',signals:[ask(.85,'Awaiting score verification'),ask(.88,'Eligible for final verification')]}
+    {title:'Two preflights',signals:[ask(.85,'Awaiting score verification'),ask(.88,'Eligible for final verification')]},
+    {title:'Recent preflight',stale:true,signals:[ask(.85,'Last market result: Awaiting score verification')]}
   ];
-  assert.deepEqual(games.sort(compare).map(g=>g.title),['Two preflights','One preflight','Two asks','One ask','No asks']);
+  assert.deepEqual(games.sort(compare).map(g=>g.title),['Two preflights','One preflight','Recent preflight','Two asks','One ask','No asks']);
   const mixed={title:'Mixed',sport:'Soccer',away:1,home:2,time_left:'4 minutes',signals:[noAsk,ask(.60),ask(.80,'Awaiting score verification'),ask(.90)]};
   const shown=render(mixed).children.slice(2).map(c=>c.textContent);
   assert.match(shown[0],/80¢ ask/);

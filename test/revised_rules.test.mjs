@@ -85,12 +85,12 @@ test('three-goal soccer winner has the same floor; two-goal and draw do not',()=
  assert.equal(directLeadFraction(state,winner,market),.20);
  assert.equal(minimumThreeGoalSpend({...state,homeUnits:state.awayUnits+2},{...winner},market,10000),0);
 });
-test('the initial order and a missing-order retry both enforce the goal-lead spend floor',()=>{
+test('preview, initial order, and missing-order retry share the goal-lead spend floor',()=>{
  const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
- assert.equal((source.match(/estimatedCostCents\([^\n]+<minimumThreeGoalSpend\(/g)||[]).length,2);
+ assert.equal((source.match(/estimatedCostCents\([^\n]+<minimumThreeGoalSpend\(/g)||[]).length,3);
 });
 
-test('soccer winner allows +3 strictly under 20:00 and +2 strictly under 5:00',()=>{
+test('soccer winner allows +3 strictly under 20:00 and +2 strictly under 3:30',()=>{
  const soccer=(margin,minute,remaining)=>team('soccer_match','Soccer',margin,2,0,{half:'2nd',time:`${minute}'`,match_remaining_seconds:remaining,clock:''});
  let {state,market}=soccer(3,47,2580);
  assert.equal(leadSignal(state,market),null);
@@ -105,9 +105,11 @@ test('soccer winner allows +3 strictly under 20:00 and +2 strictly under 5:00',(
  assert.ok(leadSignal(soccer(3,77,NaN).state,market));
  assert.ok(leadSignal(soccer(3,80,599).state,market));
  assert.equal(leadSignal(soccer(2,77,NaN).state,market),null);
- assert.equal(leadSignal(soccer(2,85,300).state,market),null);
- assert.ok(leadSignal(soccer(2,85,299).state,market));
- assert.ok(leadSignal(soccer(2,86,NaN).state,market));
+ assert.equal(leadSignal(soccer(2,86,210).state,market),null);
+ assert.equal(leadSignal(soccer(2,'86:30',210).state,market),null);
+ assert.ok(leadSignal(soccer(2,'86:30',209).state,market));
+ assert.ok(leadSignal(soccer(2,87,209).state,market));
+ assert.ok(leadSignal(soccer(2,87,NaN).state,market));
  assert.equal(leadSignal(soccer(2,84,299).state,market),null,'a contradictory elapsed clock blocks entry');
  assert.equal(leadSignal(soccer(2,93,NaN).state,market),null,'stoppage time requires a known remaining clock');
  assert.ok(leadSignal(soccer(2,93,200).state,market));
@@ -121,10 +123,11 @@ test('soccer winner allows +3 strictly under 20:00 and +2 strictly under 5:00',(
  assert.equal(leadSignal(team('soccer_match','Soccer',3,2,0,
    {half:'2nd',time:"93'",match_status:'aet',clock:''}).state,market),null);
  assert.equal(leadSignal(soccer(1,89,10).state,market),null);
- assert.equal(confirmedSoccerWinnerClock(soccer(2,85,299).state,soccer(2,85,298).state),true);
- assert.equal(confirmedSoccerWinnerClock(soccer(2,85,299).state,soccer(2,85,299).state),false);
- assert.equal(confirmedSoccerWinnerClock(soccer(2,85,300).state,soccer(2,85,299).state),false);
- assert.equal(confirmedSoccerWinnerClock(soccer(2,86,NaN).state,soccer(2,86,NaN).state),true);
+ assert.equal(confirmedSoccerWinnerClock(soccer(2,87,209).state,soccer(2,87,208).state),true);
+ assert.equal(confirmedSoccerWinnerClock(soccer(2,87,209).state,soccer(2,87,209).state),false);
+ assert.equal(confirmedSoccerWinnerClock(soccer(2,87,210).state,soccer(2,87,209).state),false);
+ assert.equal(confirmedSoccerWinnerClock(soccer(2,87,NaN).state,soccer(2,87,NaN).state),false);
+ assert.equal(confirmedSoccerWinnerClock(soccer(2,87,NaN).state,soccer(2,88,NaN).state),true);
  assert.equal(confirmedSoccerWinnerClock(soccer(3,47,2580).state,soccer(3,47,2579).state),true);
  assert.match(leadWatchReason(soccer(3,65,1500).state),/3-goal lead/);
  assert.match(leadWatchReason(soccer(3,65,1500).state),/strictly under 20:00/);
@@ -133,7 +136,7 @@ test('soccer winner allows +3 strictly under 20:00 and +2 strictly under 5:00',(
  assert.match(leadWatchReason(soccer(4,84,NaN).state),/late winner rule reached/);
  assert.match(leadWatchReason(soccer(4,93,200).state),/late winner rule reached/);
  assert.equal(leadWatchReason(soccer(2,47,2580).state),null);
- assert.equal(soccerWinnerWindowOpen({...soccer(2,86,NaN).state,observedAt:now},now),true);
+ assert.equal(soccerWinnerWindowOpen({...soccer(2,87,NaN).state,observedAt:now},now),true);
  assert.equal(soccerWinnerWindowOpen({...soccer(2,93,NaN).state,observedAt:now},now),false);
  assert.equal(soccerWinnerWindowOpen({...soccer(2,83,5).state,observedAt:now},now),false);
  assert.equal(soccerWinnerWindowOpen({...soccer(2,86,0).state,observedAt:now},now),false);
@@ -142,7 +145,7 @@ test('soccer winner allows +3 strictly under 20:00 and +2 strictly under 5:00',(
 test('soccer entry reuses one Kalshi score for 30 seconds on the correct contract',()=>{
   const soccer=(margin,minute,remaining)=>team('soccer_match','Soccer',margin,2,0,
     {half:'2nd',time:`${minute}'`,match_remaining_seconds:remaining,clock:''});
-  const {state,market}=soccer(2,86,NaN);
+  const {state,market}=soccer(2,87,NaN);
   assert.equal(soccerSingleReadLead(state,market,state.observedAt+29999),true);
   assert.equal(soccerSingleReadLead(state,market,state.observedAt+30001),false);
   assert.equal(soccerSingleReadLead(soccer(2,77,NaN).state,market,now),false);
@@ -179,9 +182,9 @@ test('rugby +15 is one tier; cricket +15 and golf +4 use the revised thresholds'
  assert.equal(golfSignal(golf([{...b[0],total_score:-9},b[1]]),gmarket),null);
 });
 
-test('crossed player props are candidates while the shared timer controls entry',()=>{
+test('crossed player props are candidates through the ten-minute boundary',()=>{
  const market={ticker:'KXNBASTL-TEST-P',event_ticker:'KXNBASTL-TEST',status:'active',floor_strike:1.5,yes_sub_title:'Pat Player: 2+',title:'Pat Player: 2+ steals',custom_strike:{basketball_player:'p'},yes_ask_dollars:'.90'};
- const game=steals=>({...team('basketball_game','NBA',15,4,60).state,playerStats:{p:{steals}},playerPropFirstCrossedAt:{}});
+ const game=steals=>({...team('basketball_game','NBA',15,4,600).state,playerStats:{p:{steals}},playerPropFirstCrossedAt:{}});
  assert.equal(overSignal(game(2),market)?.fraction,.15);
  assert.equal(overSignal(game(3),market)?.fraction,.40);
  const early=game(2);early.playerPropFirstCrossedAt[market.ticker]=new Date(now-419000).toISOString();
@@ -189,6 +192,7 @@ test('crossed player props are candidates while the shared timer controls entry'
  const aged=game(2);aged.playerPropFirstCrossedAt[market.ticker]=new Date(now-421000).toISOString();
  assert.equal(overSignal(aged,market)?.fraction,.15);
  assert.equal(overSignal(game(1),market),null);
+ assert.equal(overSignal({...game(3),remainingSeconds:599},market),null);
 });
 
 test('winner allocation remains 20%; verified combos use 35%, fallback combos 15%',()=>{
@@ -244,7 +248,7 @@ test('non-player overs do not require an extra scoring cushion; player overs sti
  const total={event_ticker:'KXNBATOTAL-TEST',status:'active',title:'Over 42.5 total points',rules_primary:'Combined total points scored',floor_strike:42.5,strike_type:'greater',yes_ask_dollars:'.99'};
  assert.equal(singleReadOverSignal(state,total,now)?.fraction,.15);
  const player={event_ticker:'KXNBASTL-TEST',status:'active',title:'Pat Player: 2+ steals',floor_strike:1.5,custom_strike:{basketball_player:'pat'},yes_ask_dollars:'.95'};
- const credited={...state,playerStats:{pat:{steals:4}}};
+ const credited={...state,remainingSeconds:600,playerStats:{pat:{steals:4}}};
  assert.ok(overSignal(credited,player));
  assert.equal(singleReadOverSignal(credited,player,now),null);
 });

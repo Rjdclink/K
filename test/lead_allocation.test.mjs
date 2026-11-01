@@ -1,12 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
+import vm from 'node:vm';
 import {finalLeadFraction,leaderHasControl,directLeadFraction,leadEntryFraction,threeGoalWinner,verifiedOverFraction} from '../src/lead_allocation.mjs';
 import {gameState,earlyLeadSignal,kalshiOnlyLead,nbaSingleReadLead} from '../src/strategy.mjs';
 import {overContractKey} from '../src/over_verification.mjs';
 
 const lead={strategy:'lead',fraction:.15};
 const game=(type,possessionSide='home')=>({type,sport:'Other',home:30,away:10,homeUnits:30,awayUnits:10,possessionSide});
+test('three-goal preflight checks the purchase floor before claiming eligibility',()=>{
+ const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8'),context=vm.createContext({hasAsk:()=>true,feeReserve:()=>0,contractCount:()=>10,profitableCount:n=>n,estimatedCostCents:n=>95*n,minimumThreeGoalSpend:()=>1500,shardCash:()=>2000,marketShard:()=>0,proBasketballLeadRules:()=>false,process:{env:{}}});
+ vm.runInContext(source.slice(source.indexOf('const signalKey='),source.indexOf('async function ensureShardFunding(')),context);
+ const c={signal:{strategy:'lead',fraction:.20},market:{ticker:'H',yes_ask_dollars:'.95'},state:{type:'hockey_match'},event:{}};
+ assert.equal(vm.runInContext('signalExecution',context)(c,new Set(),{balance:2000},2000,10000),'Below 15% minimum purchase amount');
+ context.contractCount=()=>20;
+ assert.equal(vm.runInContext('signalExecution',context)(c,new Set(),{balance:2000},2000,10000),'Eligible for final verification');
+});
 test('one allocation authority selects independent, direct, and ordinary lead caps',()=>{
  const g=game('hockey_match');
  assert.equal(leadEntryFraction(g,g,lead,{},true,false),.20);
@@ -100,8 +109,8 @@ test('strong Kalshi-only leads use 20% only after two stable reads and a score c
   const market={event_ticker:'KXGAME-TEST',status:'active',title:'Home wins',yes_sub_title:'Home',
     custom_strike:{soccer_team:'home',hockey_team:'home'},rules_primary:'Home wins after 90 minutes plus stoppage time.',yes_ask_dollars:'0.95'};
   const team={homeName:'Home',awayName:'Away',homeTeamId:'home',awayTeamId:'away',possessionSide:null,
-    period:2,home:4,away:1,homeUnits:4,awayUnits:1,unit:'goals',soccerMinute:86,
-    matchRemainingSeconds:240,remainingSeconds:240,clockRunning:true};
+    period:2,home:4,away:1,homeUnits:4,awayUnits:1,unit:'goals',soccerMinute:87,
+    matchRemainingSeconds:180,remainingSeconds:180,clockRunning:true};
   check({...team,type:'soccer_match'},market,.20);
   check({...team,type:'soccer_match',matchRemainingSeconds:NaN},market,.20);
   check({...team,type:'soccer_match',soccerMinute:83,matchRemainingSeconds:449,home:3,homeUnits:3},market,.15,false);
@@ -164,6 +173,8 @@ test('timed independent checks unlock 20% for uncushioned overs and preserve 40%
   assert.equal(verifiedOverFraction({strategy:'over',fraction:.10},{...state,overVerification:proof},market),.20);
   assert.equal(verifiedOverFraction({strategy:'over',fraction:.40},{...state,overVerification:proof},market),.40);
   assert.equal(verifiedOverFraction({strategy:'over',fraction:.40},state,market),.15);
+  const cushioned={...state,home:75,overVerification:{route:'seller_cushion',contractKey:overContractKey(state,market),sellerAt:now}};
+  assert.equal(verifiedOverFraction({strategy:'over',fraction:.15},cushioned,market),.40);
   assert.equal(verifiedOverFraction({strategy:'over',fraction:.10},{...state,overVerification:{...proof,pairedAt:now-11000}},market),.10);
 });
 test('tennis two-match-point fallback permits 20% with an unchanged deciding set',()=>{
