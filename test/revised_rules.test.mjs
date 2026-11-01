@@ -81,7 +81,10 @@ test('soccer winner allows early +3 and late +2 strictly under 7:30 on a live el
    'the score rule remains visible even when the orderbook has no executable ask');
  assert.equal(leadSignal(soccer(2,84,0).state,market),null);
  assert.ok(leadSignal(soccer(3,85,299).state,market));
- assert.equal(leadSignal(soccer(3,90,10).state,market),null);
+ assert.ok(leadSignal(soccer(3,93,NaN).state,market),
+   'stoppage time belongs to the 90-minutes-plus-stoppage winner contract');
+ assert.equal(leadSignal(team('soccer_match','Soccer',3,2,0,
+   {half:'2nd',time:"93'",match_status:'aet',clock:''}).state,market),null);
  assert.equal(leadSignal(soccer(1,89,10).state,market),null);
  assert.equal(confirmedSoccerWinnerClock(soccer(2,82,449).state,soccer(2,82,448).state),true);
  assert.equal(confirmedSoccerWinnerClock(soccer(2,82,449).state,soccer(2,82,449).state),false);
@@ -90,9 +93,11 @@ test('soccer winner allows early +3 and late +2 strictly under 7:30 on a live el
  assert.equal(confirmedSoccerWinnerClock(soccer(3,47,2580).state,soccer(3,47,2579).state),true);
  assert.match(leadWatchReason(soccer(3,47,2580).state),/3-goal lead/);
  assert.match(leadWatchReason(soccer(2,75,900).state),/2-goal lead/);
- assert.match(leadWatchReason(soccer(4,84,NaN).state),/score and regulation clock qualify/);
+ assert.match(leadWatchReason(soccer(4,84,NaN).state),/late winner rule reached/);
+ assert.match(leadWatchReason(soccer(4,93,NaN).state),/late winner rule reached/);
  assert.equal(leadWatchReason(soccer(2,47,2580).state),null);
  assert.equal(soccerWinnerWindowOpen({...soccer(2,84,NaN).state,observedAt:now},now),true);
+ assert.equal(soccerWinnerWindowOpen({...soccer(2,93,NaN).state,observedAt:now},now),true);
  assert.equal(soccerWinnerWindowOpen({...soccer(2,83,5).state,observedAt:now},now),false);
  assert.equal(soccerWinnerWindowOpen({...soccer(2,84,0).state,observedAt:now},now),false);
  assert.equal(soccerWinnerWindowOpen({...state,observedAt:now,matchRemainingSeconds:NaN},now),true);

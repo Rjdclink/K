@@ -365,6 +365,9 @@ test('regulation soccer totals reject extra-time goals even when live feed says 
   assert.equal(overSignal(game("88'",'live'),{...market,yes_ask_dollars:'0.98'}),null,'conflicting regulation score');
   const consistent=gameState(m,{details:{status:'inprogress',time:"88'",half:'2nd',home_same_game_score:1,away_same_game_score:2,home_regulation_score:1,away_regulation_score:2}});
   assert.equal(overSignal(consistent,{...market,yes_ask_dollars:'0.98'})?.fraction,.10);
+  const stoppage=gameState(m,{details:{status:'inprogress',time:"90+4'",half:'2nd',home_same_game_score:1,away_same_game_score:2,home_regulation_score:1,away_regulation_score:2}});
+  assert.equal(stoppage.soccerExtraTime,false);
+  assert.equal(overSignal(stoppage,{...market,yes_ask_dollars:'0.98'})?.fraction,.10);
   assert.equal(overSignal(game("88'",'live'),{...market,yes_ask_dollars:'0.98',result:'no'}),null);
 });
 test('tennis match winner requires a deciding-set service game that can clinch the match',()=>{

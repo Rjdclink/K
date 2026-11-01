@@ -167,11 +167,11 @@ export function gameState(m, live) {
   // Soccer feeds include extra-time goals in same-game scores, while the
   // matching Kalshi totals and winner markets settle on regulation only.
   const soccerOvertime=/soccer/.test(family) &&
-    (/^(?:aet|et|extra.?time|overtime|penalties)$/i.test(String(d.match_status||'')) ||
+    (period>2||[d.match_status,d.half].some(value=>/^(?:aet|et|extra.?time|overtime|penalties)$/i.test(String(value||''))) ||
       (Array.isArray(d.period_scores)?d.period_scores:[]).some(p=>/overtime|extra/i.test(String(p.type||''))));
-  const soccerExtraTime=/soccer/.test(family) &&
-    (soccerOvertime ||
-      Number.isFinite(soccerMinute) && soccerMinute>=90);
+  // 90+ minutes are stoppage time in regulation; only an explicit extra-time
+  // phase excludes those goals from the 90-minutes-plus-stoppage markets.
+  const soccerExtraTime=soccerOvertime;
   const segmentSeconds=/hockey/.test(family)||['NCAAB','NCAAW'].includes(sport)?1200:/basketball/.test(family)?sport==='WNBA'?600:720:900;
   const clockFraction = parts ? Math.min(1, remainingSeconds / segmentSeconds) : NaN;
   let progress = NaN;
@@ -225,7 +225,7 @@ export function endWindow(game){
   if(/football/.test(game.type))return game.sport==='CFB'?cfbLeadWindow(game):game.period===4 && game.remainingSeconds>0 && game.remainingSeconds<360;
   if(/hockey/.test(game.type))return game.period===3 && game.remainingSeconds>0 && game.remainingSeconds<420;
   if(/baseball/.test(game.type))return game.period===9;
-  if(/soccer/.test(game.type))return game.period===2 && Number.isFinite(game.soccerMinute) && game.soccerMinute>=83 && game.soccerMinute<90 && !game.soccerExtraTime;
+  if(/soccer/.test(game.type))return game.period===2 && Number.isFinite(game.soccerMinute) && game.soccerMinute>=83 && !game.soccerExtraTime;
   return false;
 }
 // Keep a small, fast-polled set of games near a winner-entry window. This is
@@ -234,7 +234,11 @@ export function endWindow(game){
 export function leadWatchReason(game){
   if(!game?.verifiedLive||!game.scoreKnown||!game.scoreConsistent||!game.periodConsistent)return null;
   const type=String(game.type||''),margin=Math.abs(game.home-game.away),seconds=game.remainingSeconds;
-  if(!Number.isFinite(margin)||margin<=0)return null;
+  if(!Number.isFinite(margin))return null;
+  if(/soccer/.test(type)&&margin===0&&game.period===2&&!game.soccerOvertime&&game.clockRunning&&
+    Number.isFinite(game.matchRemainingSeconds)&&game.matchRemainingSeconds>0&&game.matchRemainingSeconds<=120)
+    return `Tracking tied soccer score; checking the regulation tie contract and live clock`;
+  if(margin<=0)return null;
   if(/football/.test(type)){
     if(game.sport==='CFB')return cfbLeadApproaching(game)?
       (cfbLeadWindow(game)?
@@ -265,10 +269,10 @@ export function leadWatchReason(game){
       return `Tracking ${margin}-point lead; waiting for final winner window`;
   }
   if(/soccer/.test(type)&&game.period===2&&!game.soccerExtraTime&&
-    Number.isFinite(game.soccerMinute)&&game.soccerMinute>=45&&game.soccerMinute<90&&
+    Number.isFinite(game.soccerMinute)&&game.soccerMinute>=45&&
     (game.soccerMinute<50&&margin>=3||game.soccerMinute>=75&&margin>=2))
     return `Tracking ${margin}-goal lead; ${game.soccerMinute<50&&margin>=3||game.soccerMinute>82.5&&margin>=2?
-      'score and regulation clock qualify; checking winner market and ask':'waiting for the late winner window'}`;
+      'late winner rule reached; checking winner market and ask':'waiting for the late winner window'}`;
   return null;
 }
 export function overSignal(game, market) {
@@ -566,7 +570,7 @@ export function strongKalshiOnlyLead(first,second,market){
       Number.isFinite(second.matchRemainingSeconds)&&second.matchRemainingSeconds>0&&
       second.matchRemainingSeconds<300||
       Number.isFinite(first.soccerMinute)&&first.soccerMinute>85&&
-      Number.isFinite(second.soccerMinute)&&second.soccerMinute>=first.soccerMinute&&second.soccerMinute<90)&&
+      Number.isFinite(second.soccerMinute)&&second.soccerMinute>=first.soccerMinute)&&
     margin>=3;
   if(/hockey/.test(type))return first.period===3&&second.period===3&&
     Number.isFinite(first.remainingSeconds)&&first.remainingSeconds>0&&
@@ -633,7 +637,7 @@ export function leadSignal(game, market) {
   // The displayed elapsed minute is enough to establish the regulation-time
   // window when this live feed omits its final-whistle countdown.
   const soccerLate=soccer&&game.period===2&&game.periodConsistent&&
-    Number.isFinite(game.soccerMinute)&&game.soccerMinute<90&&
+    Number.isFinite(game.soccerMinute)&&
     (!Number.isFinite(game.matchRemainingSeconds)||game.matchRemainingSeconds>0)&&
     (game.soccerMinute>82.5||Number.isFinite(game.matchRemainingSeconds)&&
       game.matchRemainingSeconds>0&&game.matchRemainingSeconds<450&&game.soccerMinute>=82);
@@ -708,7 +712,7 @@ export function confirmedSoccerWinnerClock(first,second){
       Number.isFinite(second.matchRemainingSeconds)&&second.matchRemainingSeconds>0&&second.matchRemainingSeconds<450&&
       second.matchRemainingSeconds<first.matchRemainingSeconds||
       Number.isFinite(first.soccerMinute)&&first.soccerMinute>82.5&&
-      Number.isFinite(second.soccerMinute)&&second.soccerMinute>=first.soccerMinute&&second.soccerMinute<90);
+      Number.isFinite(second.soccerMinute)&&second.soccerMinute>=first.soccerMinute);
 }
 export function confirmedDrawClock(first,second,market){
   if(!drawSignal(first,market))return true;
@@ -722,6 +726,9 @@ export function soccerWinnerWindowOpen(game,now=Date.now()){
   if(!/soccer/.test(game.type)||Math.abs(game.home-game.away)!==2)return true;
   const regulation=Number.isFinite(game.soccerMinute)?(90-game.soccerMinute)*60:NaN;
   if(Number.isFinite(game.matchRemainingSeconds)&&game.matchRemainingSeconds<=0)return false;
+  if(Number.isFinite(game.soccerMinute)&&game.soccerMinute>=90&&
+    !Number.isFinite(game.matchRemainingSeconds))
+    return game.clockRunning&&Number.isFinite(game.observedAt)&&now>=game.observedAt&&now-game.observedAt<=10000;
   const remaining=Number.isFinite(game.matchRemainingSeconds)&&game.matchRemainingSeconds>0?
     Math.min(regulation,game.matchRemainingSeconds):regulation;
   return Number.isFinite(game.observedAt)&&Number.isFinite(remaining)&&
@@ -808,10 +815,12 @@ export function drawSignal(game,market){
   const seconds=soccer?game?.matchRemainingSeconds:game?.remainingSeconds;
   const rules=String(market?.rules_primary||'');
   if(!game?.verifiedLive||!game.scoreKnown||!game.scoreConsistent||game.home!==game.away||
-    game.period!==final||!Number.isFinite(seconds)||seconds<=0||seconds>=45||
-    soccer&&game.soccerOvertime||!['active','open'].includes(market?.status)||
+    game.period!==final||!Number.isFinite(seconds)||seconds<=0||seconds>=(soccer?50:45)||
+    soccer&&(game.soccerOvertime||!game.periodConsistent||!game.clockRunning)||
+    !['active','open'].includes(market?.status)||
     market.event_ticker!==game.mainEvent||!/^(?:draw|tie)(?:\b|\/)/i.test(String(market.title||market.yes_sub_title||''))||
     !/\b(?:draw|tie)\b/i.test(rules)||!/\b(?:yes|settles|resolves)\b/i.test(rules)||
+    soccer&&!/after 90 minutes plus stoppage time/i.test(rules)||
     (hockey||basketball||football)&&!/regulation/i.test(rules))return null;
   return {strategy:'lead',fraction:.05,comboEligible:false,reason:`Restricted 5% draw at ${game.home}–${game.away}; final segment, ${seconds.toFixed(1)} seconds remaining`};
 }

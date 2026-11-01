@@ -15,6 +15,7 @@ export function leaderHasControl(game){
 // Entry rules stay in sport-specific signal functions; this cannot create one.
 export function finalLeadFraction(first,second,signal,externallyVerified,market){
   if(signal?.strategy!=='lead')return signal?.fraction;
+  if(/^Restricted 5% draw\b/.test(signal.reason||''))return .05;
   if(second?.sport==='NBA'&&/basketball/.test(second.type)){
     const margin=Math.abs(second.homeUnits-second.awayUnits),seconds=second.remainingSeconds;
     if(!Number.isFinite(margin)||!Number.isFinite(seconds))return KALSHI_ONLY_FRACTION;
