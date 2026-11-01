@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {gameState,overSignal,confirmedOver,kalshiOnlyOver,kalshiOnlyLead,fallbackOverFraction,fallbackLeadFraction,confirmedExternalLead,leadSignal,earlyLeadSignal,leadWatchReason,confirmedSoccerTwoGoalClock,soccerTwoGoalWindowOpen,soccerOverStable,soccerOverWaitMs,externallyVerifiedEarlySoccerLead,tennisSignal,tableTennisSignal,orderSize,estimatedCostCents,overBudget,minimumProfitCents,netSettlementProfitCents,profitableCount,comeback,timedProfitExitAllowed,KALSHI_ONLY_FRACTION} from '../src/strategy.mjs';
+import {gameState,overSignal,singleReadCushionedOver,confirmedOver,kalshiOnlyOver,kalshiOnlyLead,fallbackOverFraction,fallbackLeadFraction,confirmedExternalLead,leadSignal,earlyLeadSignal,leadWatchReason,confirmedSoccerTwoGoalClock,soccerTwoGoalWindowOpen,soccerOverStable,soccerOverWaitMs,externallyVerifiedEarlySoccerLead,tennisSignal,tableTennisSignal,orderSize,estimatedCostCents,overBudget,minimumProfitCents,netSettlementProfitCents,profitableCount,timedProfitExitAllowed,comeback,KALSHI_ONLY_FRACTION} from '../src/strategy.mjs';
 
 test('each trade has its own percentage of the full bankroll',()=>{
   const bankroll=14600,alreadyHeld=4372;
@@ -71,6 +71,40 @@ test('a whole-game over gets 40% only when removing the independently recorded l
   assert.equal(overSignal(gameState({...milestone,details:{...milestone.details,home_team_id:'ny',away_team_id:'bos'}},{details:{...live(81,88).details,player_stats:{p:{points:30}}}}),player)?.fraction,.40);
   assert.equal(overSignal({...gameState({...milestone,details:{...milestone.details,home_team_id:'ny',away_team_id:'bos'}},{details:{...live(81,88).details,player_stats:{p:{points:30}}}}),lastScoringPlay:3},player)?.fraction,.40,
     'the extra player statistic, not the whole-game scoring play, sets this cap');
+});
+test('one fresh Kalshi score admits only a crossed over with a conservative cushion',()=>{
+  const now=Date.now();
+  const market={status:'active',event_ticker:'KXNBATOTAL-TEST',title:'Over 139.5 total points',
+    rules_primary:'Combined total points scored in the full game',floor_strike:139.5,
+    strike_type:'greater',yes_ask_dollars:'0.98'};
+  const state=(home,away)=>gameState(milestone,{milestone_id:milestone.id,_observed_at:new Date(now).toISOString(),
+    details:{...live(home,away).details,last_updated_ts:Math.floor((now-1000)/1000)}});
+  assert.equal(singleReadCushionedOver(state(74,69),market,now),null,'one four-point play could undo this over');
+  assert.equal(singleReadCushionedOver(state(74,70),market,now)?.fraction,.40);
+  assert.equal(singleReadCushionedOver(state(74,70),market,now+10001),null);
+  assert.equal(singleReadCushionedOver({...state(74,70),feedId:'wrong'},market,now),null);
+  assert.equal(singleReadCushionedOver({...state(74,70),updatedAt:now-32000},market,now),null);
+  const player={ticker:'KXNBASTL-TEST',status:'active',event_ticker:'KXNBASTL-TEST',
+    title:'Pat Player: 2+ steals',yes_sub_title:'Pat Player: 2+',floor_strike:1.5,
+    custom_strike:{basketball_player:'pat'},yes_ask_dollars:'.95'};
+  const prop=steals=>({...state(74,71),playerStats:{pat:{steals}},playerPropFirstCrossedAt:{}});
+  assert.equal(singleReadCushionedOver(prop(3),player,now)?.fraction,.40);
+  assert.equal(singleReadCushionedOver(prop(2),player,now),null);
+  const points={...player,event_ticker:'KXNBAPTS-TEST',title:'Pat Player: 20+ points',
+    yes_sub_title:'Pat Player: 20+',floor_strike:19.5};
+  const pointProp=value=>({...prop(3),playerStats:{pat:{points:value}}});
+  assert.equal(singleReadCushionedOver(pointProp(23),points,now),null);
+  assert.equal(singleReadCushionedOver(pointProp(24),points,now)?.fraction,.40,
+    'basketball points use a four-point correction');
+  const yardage={...player,event_ticker:'KXNFLPASSYDS-TEST',title:'Pat Player: 200+ passing yards',
+    yes_sub_title:'Pat Player: 200+',floor_strike:199.5,
+    custom_strike:{football_player:'pat'}};
+  const football={...prop(3),type:'football_game',playerStats:{pat:{passing_yards:240}}};
+  assert.equal(singleReadCushionedOver(football,yardage,now),null,'a single play can change many yards');
+  const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
+  assert.match(source,/if\(!c.upgradeFill&&cushionedOverSignal\(c.state,c.market\)\)/);
+  assert.match(source,/if\(singleReadOver&&!directOverSignal\)continue/);
+  assert.match(source,/if\(!kalshiOnly&&!singleReadOver&&await auditedOver/);
 });
 test('over preflight requires stable scores from a newer, fresh milestone update',()=>{
   const m={id:'soccer-1',title:'Dolomiti Bellunesi vs Desenzano',type:'soccer_match'};

@@ -16,10 +16,9 @@ export function leaderHasControl(game){
 export function finalLeadFraction(first,second,signal,externallyVerified,market){
   if(signal?.strategy!=='lead')return signal?.fraction;
   if(second?.sport==='NBA'&&/basketball/.test(second.type)){
-    if(!externallyVerified)return KALSHI_ONLY_FRACTION;
     const margin=Math.abs(second.homeUnits-second.awayUnits),seconds=second.remainingSeconds;
     if(!Number.isFinite(margin)||!Number.isFinite(seconds))return KALSHI_ONLY_FRACTION;
-    if(margin<20)return .10; // Retained +8 route in the final 90 seconds.
+    if(margin<20)return .10; // Retained +8 route.
     return Math.min(.15,.05+(seconds<240||margin>=25?.05:0)+
       (seconds<120||margin>=30?.05:0));
   }
