@@ -2,6 +2,7 @@ import { golfState } from './golf.mjs';
 import { VERIFY_DWELL_MS } from './combos.mjs';
 export const KALSHI_ONLY_FRACTION=.10;
 export const SOCCER_OVER_STABILITY_MS=10000;
+export const PLAYER_PROP_WINDOW_MS=7*60*1000;
 export const CFB_LEAD_WINDOW_SECONDS=270;
 export const CFB_LEAD_MINIMUM=12;
 export const reducedAllocation=fraction=>fraction>.10?Math.round((fraction-.05)*100)/100:fraction;
@@ -289,17 +290,17 @@ export function overSignal(game, market) {
     if(!team||!norm(market.title).includes(norm(team)))return null;
   }
   if (!Number.isFinite(strike) || strike<0 || !Number.isFinite(scored) || scored<=strike) return null;
-  // The extra credited unit permits immediate review. After ten continuous
+  // The extra credited unit permits immediate review. After seven continuous
   // minutes crossed, the exact line can be reviewed without that cushion.
   const crossedAt=Date.parse(game.playerPropFirstCrossedAt?.[market.ticker]||'');
   if(player&&scored-1<=strike&&(!Number.isFinite(crossedAt)||
-    crossedAt>Date.now()-10*60*1000))return null;
+    crossedAt>Date.now()-PLAYER_PROP_WINDOW_MS))return null;
   // Only an independently verified, complete play list identifies the last
   // team score precisely enough for the 40% tier. Do not guess its size.
   const lastPlay=game.lastScoringPlay;
   const robust=gameTotal&&!teamTotal&&!player&&!segment&&Number.isInteger(lastPlay)&&lastPlay>0&&scored-lastPlay>strike;
   const cushionedPlayer=player&&scored-1>strike;
-  return {strategy:'over', reason:`${scored} ${player?.metric||'scored'}${team?` by ${team}`:''}; line ${strike} already passed${segment?`; segment ${segment[1]}`:''}${player&&scored-1<=strike?'; crossed for at least 10 minutes with independent stat check':''}${cushionedPlayer?'; still crossed if one player statistic is removed':''}${robust?`; still crossed if the latest ${lastPlay}-unit scoring play is removed`:''}`, fraction:(robust||cushionedPlayer)?.40:.10,scored,strike};
+  return {strategy:'over', reason:`${scored} ${player?.metric||'scored'}${team?` by ${team}`:''}; line ${strike} already passed${segment?`; segment ${segment[1]}`:''}${player&&scored-1<=strike?'; crossed for at least 7 minutes with independent stat check':''}${cushionedPlayer?'; still crossed if one player statistic is removed':''}${robust?`; still crossed if the latest ${lastPlay}-unit scoring play is removed`:''}`, fraction:(robust||cushionedPlayer)?.40:.10,scored,strike};
 }
 // A Kalshi-only check cannot establish which scoring event was last. Remove
 // the largest ordinary single scoring play for that sport from the displayed
