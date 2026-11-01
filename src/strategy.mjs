@@ -706,6 +706,7 @@ export function soccerSingleReadLead(game,market,now=Date.now()){
     !Number.isFinite(game.observedAt)||now<game.observedAt||now-game.observedAt>30000||
     Number.isFinite(game.updatedAt)&&(game.updatedAt>game.observedAt+5000||game.observedAt-game.updatedAt>30000)||
     !Number.isInteger(game.homeUnits)||!Number.isInteger(game.awayUnits)||
+    game.homeUnits===game.awayUnits&&game.matchRemainingSeconds*1000<=now-game.observedAt||
     !soccerWinnerWindowOpen(game,now))return false;
   return Boolean(leadSignal(game,market)||drawSignal(game,market));
 }
