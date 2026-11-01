@@ -56,7 +56,7 @@ test('basketball tiers include the stated lead and exclude the exact time bounda
 test('revised hockey and inning-based baseball winners reject superseded thresholds',()=>{
  assert.ok(signal('hockey_match','NHL',4,3,119));
  assert.equal(signal('hockey_match','NHL',1,3,119),null);
- assert.equal(signal('hockey_match','NHL',2,3,211),null);
+ assert.equal(signal('hockey_match','NHL',2,3,226),null);
  assert.ok(signal('hockey_match','NHL',2,3,210));
  const baseball=(margin,inning,half,outs)=>team('baseball_game','MLB',margin,inning,0,{inning,inning_half:half,outs,clock:''});
  for(const [margin,inning,half,outs,allowed] of [[5,8,'bottom',2,true],[4,8,'bottom',2,false],[5,8,'top',2,false],[4,9,'top',1,false],[20,9,'bottom',2,false],[3,9,'top',1,false],[4,9,'top',0,false]]){
@@ -228,15 +228,15 @@ test('college women use the fourth quarter rather than a second-half period numb
  assert.ok(signal('basketball_game','NCAAW',10,4,269));
 });
 
-test('hockey adds the inclusive three-goal 5:30 window and retains two goals at 3:30 across leagues',()=>{
+test('hockey uses inclusive three-goal 6:45 and two-goal 3:45 windows across leagues',()=>{
  for(const league of ['NHL','Germany DEL']){
-  for(const [margin,seconds,allowed] of [[3,330,true],[3,331,false],[2,330,false],[2,211,false],[2,210,true],[1,210,false],[4,329,true],[3,0,false]]){
+  for(const [margin,seconds,allowed] of [[3,405,true],[3,406,false],[2,405,false],[2,226,false],[2,225,true],[1,225,false],[4,404,true],[3,0,false]]){
    const {state,market}=team('hockey_match',league,margin,3,seconds);
    assert.equal(Boolean(leadSignal(state,market)),allowed,`${league}: ${margin} at ${seconds}`);
    assert.equal(kalshiSingleReadLead(state,market,now),allowed);
   }
-  assert.equal(signal('hockey_match',league,4,2,330),null,'second period never qualifies');
-  assert.match(leadWatchReason(team('hockey_match',league,3,3,330).state),/score and clock qualify/);
-  assert.match(leadWatchReason(team('hockey_match',league,2,3,330).state),/waiting for clock threshold/);
+  assert.equal(signal('hockey_match',league,4,2,405),null,'second period never qualifies');
+  assert.match(leadWatchReason(team('hockey_match',league,3,3,405).state),/score and clock qualify/);
+  assert.match(leadWatchReason(team('hockey_match',league,2,3,405).state),/waiting for clock threshold/);
  }
 });

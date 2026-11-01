@@ -248,7 +248,7 @@ export function endWindow(game){
   if(!game.verifiedLive||!game.scoreKnown||!game.periodConsistent)return false;
   if(/basketball/.test(game.type))return Boolean(basketballEntryTier(game));
   if(/football/.test(game.type))return game.sport==='CFB'?cfbLeadWindow(game):game.period===4 && game.remainingSeconds>0 && game.remainingSeconds<=450;
-  if(/hockey/.test(game.type))return game.period===3 && game.remainingSeconds>0 && game.remainingSeconds<=330;
+  if(/hockey/.test(game.type))return game.period===3 && game.remainingSeconds>0 && game.remainingSeconds<=405;
   if(/baseball/.test(game.type))return game.period===8&&game.inningHalf===2&&game.outs===2;
   if(/soccer/.test(game.type))return game.period===2 && Number.isFinite(game.soccerMinute) && game.soccerMinute>=83 && !game.soccerExtraTime;
   return false;
@@ -284,8 +284,8 @@ export function leadWatchReason(game){
     }
   }
   if(/hockey/.test(type)){
-    if(game.period===3&&Number.isFinite(seconds)&&seconds>0&&seconds<=390&&margin>=2)
-      return `Tracking ${margin}-goal lead; entry requires 3+ at 5:30 or less, or 2+ at 3:30 or less in period 3; ${seconds<=210||margin>=3&&seconds<=330?'score and clock qualify; checking seller':'waiting for clock threshold'}`;
+    if(game.period===3&&Number.isFinite(seconds)&&seconds>0&&seconds<=465&&margin>=2)
+      return `Tracking ${margin}-goal lead; entry requires 3+ at 6:45 or less, or 2+ at 3:45 or less in period 3; ${seconds<=225||margin>=3&&seconds<=405?'score and clock qualify; checking seller':'waiting for clock threshold'}`;
   }
   if(/baseball/.test(type)&&
     game.period===8&&game.inningHalf===2&&game.outs>=1&&margin>=5)
@@ -689,14 +689,14 @@ export function leadSignal(game, market) {
   const finalTime=baseball?baseballEighth:soccer?soccerSecondHalf:
     game.period===segments&&game.periodConsistent&&Number.isFinite(seconds)&&seconds>0&&
     (basketball?Boolean(basketballEntryTier(game)):
-      hockey?seconds<=330:game.sport==='CFB'?cfbLeadWindow(game):seconds<=450);
+      hockey?seconds<=405:game.sport==='CFB'?cfbLeadWindow(game):seconds<=450);
   if (!game.verifiedLive || !game.scoreKnown || soccer&&!game.scoreConsistent || !finalTime || market.status!=='active' && market.status!=='open') return null;
   const h=game.homeUnits,a=game.awayUnits;
   if (!Number.isFinite(h)||!Number.isFinite(a)) return null;
   const minimum=basketball?basketballEntryTier(game)?.[0]??null:
     football?game.sport==='CFB'?(seconds<=CFB_LEAD_WINDOW_SECONDS?CFB_LEAD_MINIMUM:
       seconds<=CFB_MIDDLE_WINDOW_SECONDS?CFB_MIDDLE_MINIMUM:CFB_EARLY_MINIMUM):seconds<=120?8:11:
-    hockey?(seconds<=210?2:3):baseball?5:soccer?soccerLate?2:3:null;
+    hockey?(seconds<=225?2:3):baseball?5:soccer?soccerLate?2:3:null;
   if(minimum===null||margin<minimum)return null;
   const leader = h>a ? game.homeName : game.awayName;
   const trailer = h>a ? game.awayName : game.homeName;
