@@ -22,6 +22,10 @@ test('one allocation authority selects independent, direct, and ordinary lead ca
  assert.equal(leadEntryFraction(g,g,lead,{},null,true),.15);
  assert.equal(leadEntryFraction(g,g,lead,{},null,false),.15);
 });
+test('restricted early leads keep their two percent preview and execution cap',()=>{
+ const g=game('handball_match'),restricted={strategy:'lead',fraction:.02,reason:'Restricted 2% lead: Alpha leads'};
+ assert.equal(finalLeadFraction(g,g,restricted,false,{}),.02);assert.equal(leadEntryFraction(g,g,restricted,{},null,true),.02);
+});
 test('winner allocations are uniform after independent verification',()=>{
   for(const type of ['hockey_match','football_game','baseball_game','rugby_match','handball_match','lacrosse_game','table_tennis_match']){
     const g=game(type);

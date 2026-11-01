@@ -47,6 +47,9 @@ test('sale P&L uses executable shares, proportional cost basis and both fees',()
   assert.equal(estimatedSaleProfitCents(held,{count:10,price:.92},.75),149);
   assert.equal(estimatedSaleProfitCents(held,{count:10,price:.70},.75),-90);
   assert.equal(estimatedSaleProfitCents(held,{count:21,price:.92},.75),null);
+  assert.equal(estimatedSaleProfitCents({...held,market_exposure_dollars:null},{count:10,price:.92},.75),149,'missing exchange basis uses the known purchase price');
+  assert.equal(estimatedSaleProfitCents({...held,market_exposure_dollars:null},{count:10,price:.92}),null,'missing basis cannot be treated as zero');
+  assert.equal(estimatedSaleProfitCents({...held,fees_paid_dollars:null},{count:10,price:.92},.75),null,'unknown paid fees cannot be treated as zero');
 });
 
 test('lead cash-out needs half the possible net settlement profit after both fees and full bid depth',()=>{

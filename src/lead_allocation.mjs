@@ -6,7 +6,7 @@ export function threeGoalWinner(game,signal,market){
 }
 export const minimumThreeGoalSpend=(game,signal,market,bankroll)=>
   signal?.strategy==='lead'&&/hockey|soccer/.test(game?.type||'')&&Math.abs(game.homeUnits-game.awayUnits)>=3?
-    threeGoalWinner(game,signal,market)?Math.floor(bankroll*.15):Infinity:0;
+    threeGoalWinner(game,signal,market)?Math.ceil(bankroll*.15):Infinity:0;
 
 export function verifiedOverFraction(signal,game,market){
   if(signal?.strategy!=='over')return signal?.fraction;
@@ -59,6 +59,7 @@ export function leaderHasControl(game){
 export function finalLeadFraction(first,second,signal,externallyVerified,market){
   if(signal?.strategy!=='lead')return signal?.fraction;
   if(/^Restricted 5% draw\b/.test(signal.reason||''))return .05;
+  if(/^Restricted 2% lead\b/.test(signal.reason||''))return .02;
   if(externallyVerified&&lateCommandingLead(second,market))return independentlyVerifiedLeadFraction(second,market);
   if(proBasketballLeadRules(second)){
     const margin=Math.abs(second.homeUnits-second.awayUnits),seconds=second.remainingSeconds;

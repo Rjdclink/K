@@ -75,6 +75,7 @@ test('revised hockey and inning-based baseball winners reject superseded thresho
 test('three-goal hockey winners target at least fifteen percent of bankroll',()=>{
  const {state,market}=team('hockey_match','NHL',3,3,405),winner=leadSignal(state,market);
  assert.equal(minimumThreeGoalSpend(state,winner,market,10000),1500);
+ assert.equal(minimumThreeGoalSpend(state,winner,market,10001),1501,'the minimum rounds upward to a whole cent');
  assert.equal(directLeadFraction(state,winner,market),.20);
  assert.equal(finalLeadFraction(state,state,winner,false,market),.20);
  assert.equal(minimumThreeGoalSpend(state,winner,{...market,yes_ask_dollars:'.50'},10000),Infinity);
