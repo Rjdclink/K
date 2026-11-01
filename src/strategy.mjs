@@ -921,21 +921,28 @@ export function tennisSignal(game,market){
   const leaderGames=first?t.firstGames:t.secondGames,opponentGames=first?t.secondGames:t.firstGames;
   return {strategy:'lead',reason:`Tennis match-clinching set ${leaderGames}–${opponentGames}; leader serves, points ${leaderPoints}–${opponentPoints}${t.advantage===leaderId?' advantage':''}`,fraction:.15};
 }
-export function minimumProfitCents(strategy,availableCents,sportType='',remainingSeconds=NaN,filledOrders=0){
+export function minimumProfitCents(strategy,availableCents,sportType='',remainingSeconds=NaN,filledOrders=0,{game}={}){
   const tier=filledOrders>=20?50:filledOrders>=15?35:filledOrders>=10?15:0;
   const existing=strategy==='weather'?30:
     strategy==='over'||strategy==='lead'?1:
     Number(availableCents)>=20000?200:Number(availableCents)>=10000?50:25;
-  return Math.max(existing,tier);
+  // Periods in hockey and halves in men's college basketball are not quarters.
+  const esports=game?.sport==='eBasketball'&&game?.type==='esports_match';
+  const quarters=esports||/football|lacrosse/.test(String(game?.type||''))||basketballLeadProfile(game)?.period===4;
+  const quarter=esports?Number(String(game.phase||'').match(/^Quarter ([1-4])$/)?.[1]):game?.period;
+  // An unknown quarter cannot justify a lower early-entry floor.
+  const overFloor=strategy==='over'&&quarters?
+    !Number.isInteger(quarter)||quarter<1||quarter===1?15:quarter===2?10:0:0;
+  return Math.max(existing,tier,overFloor);
 }
 export function netSettlementProfitCents(count,price,feeMultiplier=2){
   if(!Number.isFinite(count)||count<=0||!Number.isFinite(price)||price<=0||price>=1)return 0;
   return Math.floor(count*(1-price)*100+1e-8)-Math.ceil(7*count*price*(1-price)*feeMultiplier-1e-8);
 }
-export function profitableCount(count,price,feeMultiplier,strategy,availableCents,sportType='',remainingSeconds=NaN){
+export function profitableCount(count,price,feeMultiplier,strategy,availableCents,sportType='',remainingSeconds=NaN,entry={}){
   const profit=netSettlementProfitCents(count,price,feeMultiplier);
   const cost=estimatedCostCents(count,price,feeMultiplier);
-  return cost>0&&profit>=minimumProfitCents(strategy,availableCents,sportType,remainingSeconds)?count:0;
+  return cost>0&&profit>=minimumProfitCents(strategy,availableCents,sportType,remainingSeconds,0,entry)?count:0;
 }
 export function comeback(game,market,strategy){
   if(!game?.verifiedLive||!game.scoreKnown)return false;
