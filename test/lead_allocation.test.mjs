@@ -70,6 +70,7 @@ test('CFB and soccer follow the same verification-based allocation',()=>{
 });
 test('both live entry paths use the final verified allocation and funding rechecks recalculate it',()=>{
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
+  assert.match(source,/fraction:finalLeadFraction\(state,state,signal,false\)/,'preview must not claim external verification');
   assert.match(source,/leadEntryFraction\(first,second,signal,quote,independentLead,directKalshiLead\)/);
   assert.match(source,/leadEntryFraction\(c.state,freshState,verifiedSignal,quote,independentLead,directKalshiLead\)/);
   assert.match(source,/leadEntryFraction\(state,checked,still,executable,independentLead,directKalshiLead\)/);
