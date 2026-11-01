@@ -51,8 +51,8 @@ test('weather card reports a paused scan without stale candidate counts',async()
   assert.equal(elements.get('weatherEligible').textContent,'—');
 });
 
-test('delayed football cards retain their last check time without claiming a current market scan',()=>{
-  assert.match(page,/Market scan delayed · last checked/);
+test('deferred football cards retain their last check time without claiming a current market scan',()=>{
+  assert.match(page,/Market last checked/);
   assert.doesNotMatch(page,/Last seen .* · rechecking/);
 });
 
@@ -66,7 +66,7 @@ test('recent live scores remain counted while the market check is delayed',async
   vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],context);
   await new Promise(resolve=>setImmediate(resolve));
   assert.equal(elements.get('gamesCount').textContent,1);
-  assert.equal(elements.get('games').children[0].children[2].textContent.startsWith('Market scan delayed'),true);
+  assert.equal(elements.get('games').children[0].children[2].textContent.startsWith('Market last checked'),true);
 });
 
 test('combo controls show live buy and sell liquidity separately',()=>{

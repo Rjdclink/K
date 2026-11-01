@@ -90,14 +90,14 @@ test('rugby +15 is one tier; cricket +30 and golf +4 use the revised thresholds'
  assert.equal(golfSignal(golf([{...b[0],total_score:-9},b[1]]),gmarket),null);
 });
 
-test('player props use the extra-stat cushion immediately and relax only after ten continuous minutes',()=>{
+test('player props use the extra-stat cushion immediately and relax only after seven continuous minutes',()=>{
  const market={ticker:'KXNBASTL-TEST-P',event_ticker:'KXNBASTL-TEST',status:'active',floor_strike:1.5,yes_sub_title:'Pat Player: 2+',title:'Pat Player: 2+ steals',custom_strike:{basketball_player:'p'},yes_ask_dollars:'.90'};
  const game=steals=>({...team('basketball_game','NBA',15,4,60).state,playerStats:{p:{steals}},playerPropFirstCrossedAt:{}});
  assert.equal(overSignal(game(2),market),null);
  assert.equal(overSignal(game(3),market)?.fraction,.40);
- const early=game(2);early.playerPropFirstCrossedAt[market.ticker]=new Date(now-599000).toISOString();
+ const early=game(2);early.playerPropFirstCrossedAt[market.ticker]=new Date(now-419000).toISOString();
  assert.equal(overSignal(early,market),null);
- const aged=game(2);aged.playerPropFirstCrossedAt[market.ticker]=new Date(now-601000).toISOString();
+ const aged=game(2);aged.playerPropFirstCrossedAt[market.ticker]=new Date(now-421000).toISOString();
  assert.equal(overSignal(aged,market)?.fraction,.10);
  assert.equal(overSignal(game(1),market),null);
 });

@@ -36,7 +36,6 @@ test('dashboard includes alerts in its existing refresh while the alert endpoint
   pg.Pool.prototype.query=async function(sql,params){
     seen.push({sql,params});
     if(sql.includes('ALTER TABLE game_snapshots ADD COLUMN'))return {rows:[]};
-    if(sql.includes('CREATE TABLE IF NOT EXISTS value_scan_observations'))return {rows:[]};
     if(sql.includes('SET clock_refresh_at='))return {rows:[]};
     if(sql.includes('CREATE TABLE IF NOT EXISTS combo_diagnostics'))return {rows:[]};
     if(sql.includes('FROM combo_diagnostics'))return {rows:[]};
@@ -56,7 +55,7 @@ test('dashboard includes alerts in its existing refresh while the alert endpoint
     assert.equal(body.games.length,1);
     assert.equal(body.games[0].stale,true);
     assert.equal(body.games[0].scoreStale,false);
-    assert.equal(body.games[0].signals[0].execution,'Market check delayed; last result: No ask liquidity');
+    assert.equal(body.games[0].signals[0].execution,'Last market result: No ask liquidity');
     assert.ok(seen.some(item=>item.sql.includes("GREATEST(score_observed_at,scanned_at)>now()-interval '15 minutes'")));
     assert.equal(body.scan.scanned,0);
     assert.deepEqual(body.weather,{disabled:true,series:0,eligible:0});
