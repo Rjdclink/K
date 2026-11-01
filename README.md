@@ -18,6 +18,7 @@ On later scans, a held Kalshi-only over must pass the same timed independent-ver
 ## Lead entry and allocation
 
 The revised winner windows are listed above. Qualification uses the score, period, clock and exact selected outcome. Entry verification checks current executable sell depth; no external scoreboard is required for commanding leads. The recorded Kalshi score can be reused for 30 seconds. All overs require the timed independent-verification sequence. Independent verification may support optional allocation upgrades, but it is not a prerequisite for a new non-player entry.
+Three-goal or larger hockey and soccer winners need an executable buy costing at least 15% of current bankroll, including reserved fees. Their ordinary sizing ceiling is 20%; independently verified late leads retain the higher 25% and 30% tiers. Insufficient cash or YES depth defers the order.
 
 Overs keep their separate allocation rules. Their initial seller-backed Kalshi verification and first external check are persisted separately from the general ten-minute candidate window. Live games with an active crossed prop receive market-scan priority until the crossing disappears or the game ends. An exact independent player-stat match remains mandatory; the over verification wait is 3:30, with the cushion exception described above.
 
