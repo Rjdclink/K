@@ -397,6 +397,19 @@ export function singleReadCushionedOver(game,market,now=Date.now()){
     game.observedAt-game.updatedAt>30000)return null;
   return cushionedOverSignal(game,market);
 }
+export function soccerSingleReadOver(game,market,now=Date.now()){
+  if(!/soccer/.test(String(game?.type||''))||game.feedId!==game.id||
+    !game.verifiedLive||!game.scoreConsistent||!game.periodConsistent||game.soccerExtraTime||
+    !Number.isFinite(game.observedAt)||now<game.observedAt||now-game.observedAt>30000||
+    Number.isFinite(game.updatedAt)&&(game.updatedAt>game.observedAt+5000||game.observedAt-game.updatedAt>30000))return null;
+  const signal=overSignal(game,market);
+  if(!signal)return null;
+  return cushionedOverSignal(game,market)||signal;
+}
+export function singleReadOverSignal(game,market,now=Date.now()){
+  return /soccer/.test(String(game?.type||''))?soccerSingleReadOver(game,market,now):
+    singleReadCushionedOver(game,market,now);
+}
 export function fallbackOverFraction(game,market){
   const signal=overSignal(game,market),units=fallbackScoringUnits(game);
   if(!signal||playerOverSpec(game,market)||!Number.isInteger(units)||

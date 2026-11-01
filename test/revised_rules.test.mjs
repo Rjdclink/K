@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {gameState,leadSignal,leadWatchReason,earlyLeadSignal,additionalLeadSignal,cricketLeadSignal,overSignal,confirmedSoccerWinnerClock,soccerWinnerWindowOpen,kalshiOnlyLead,soccerSingleReadLead,nbaSingleReadLead} from '../src/strategy.mjs';
+import {gameState,leadSignal,leadWatchReason,earlyLeadSignal,additionalLeadSignal,cricketLeadSignal,overSignal,confirmedSoccerWinnerClock,soccerWinnerWindowOpen,kalshiOnlyLead,soccerSingleReadLead,soccerSingleReadOver,nbaSingleReadLead} from '../src/strategy.mjs';
 import {golfState,golfSignal} from '../src/golf.mjs';
 import {finalLeadFraction} from '../src/lead_allocation.mjs';
 import {comboLegAllocation,comboAllocation} from '../src/combos.mjs';
@@ -177,4 +177,20 @@ test('active crossed-prop games join the urgent scan instead of the rotating ear
  const games=['prop','early'].map(id=>({milestone:{id},state:{verifiedLive:true,type:'basketball_game',sport:'NBA',period:1,remainingSeconds:600},watchable:false}));
  const selected=prioritizeMarketGames(games,{signaledIds:new Set(['prop']),lowBudget:0});
  assert.deepEqual(selected.map(g=>g.milestone.id),['prop']);
+});
+
+
+test('a soccer over uses one recorded Kalshi score without an extra-goal cushion',()=>{
+ const m={id:'mumbai',type:'soccer_match',title:'Mumbai vs SC Delhi'};
+ const raw={milestone_id:m.id,_observed_at:new Date(now).toISOString(),details:{status:'live',home_score:2,away_score:3,period:2,half:'2nd',time:"96'"}};
+ const state=gameState(m,raw);
+ const market={ticker:'KXSOCCERTOTAL-MUMDEL-5',event_ticker:'KXSOCCERTOTAL-MUMDEL',status:'active',title:'Will over 4.5 goals be scored?',rules_primary:'Combined total goals scored after 90 minutes plus stoppage time.',floor_strike:4.5,strike_type:'greater',yes_ask_dollars:'.99'};
+ assert.equal(soccerSingleReadOver(state,market,state.observedAt+29999)?.fraction,.10);
+ assert.equal(soccerSingleReadOver(state,market,state.observedAt+30001),null);
+ assert.equal(soccerSingleReadOver({...state,home:1,homeUnits:1},market,now),null);
+ assert.equal(soccerSingleReadOver({...state,feedId:'other'},market,now),null);
+ assert.equal(soccerSingleReadOver({...state,scoreConsistent:false},market,now),null);
+ assert.equal(soccerSingleReadOver({...state,soccerExtraTime:true},market,now),null);
+ assert.equal(soccerSingleReadOver(state,{...market,status:'closed'},now),null);
+ assert.equal(soccerSingleReadOver(state,{...market,title:'Will over 5.5 goals be scored?',floor_strike:5.5},now),null);
 });
