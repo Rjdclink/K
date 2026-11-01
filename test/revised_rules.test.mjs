@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {gameState,leadSignal,leadWatchReason,earlyLeadSignal,additionalLeadSignal,cricketLeadSignal,overSignal,confirmedSoccerWinnerClock,soccerWinnerWindowOpen,kalshiOnlyLead,soccerSingleReadLead,soccerSingleReadOver,nbaSingleReadLead} from '../src/strategy.mjs';
+import {gameState,leadSignal,leadWatchReason,earlyLeadSignal,additionalLeadSignal,cricketLeadSignal,overSignal,confirmedSoccerWinnerClock,soccerWinnerWindowOpen,kalshiOnlyLead,soccerSingleReadLead,soccerSingleReadOver,singleReadOverSignal,kalshiSingleReadLead,nbaSingleReadLead} from '../src/strategy.mjs';
 import {golfState,golfSignal} from '../src/golf.mjs';
 import {finalLeadFraction} from '../src/lead_allocation.mjs';
 import {comboLegAllocation,comboAllocation} from '../src/combos.mjs';
@@ -193,4 +193,28 @@ test('a soccer over uses one recorded Kalshi score without an extra-goal cushion
  assert.equal(soccerSingleReadOver({...state,soccerExtraTime:true},market,now),null);
  assert.equal(soccerSingleReadOver(state,{...market,status:'closed'},now),null);
  assert.equal(soccerSingleReadOver(state,{...market,title:'Will over 5.5 goals be scored?',floor_strike:5.5},now),null);
+});
+
+
+test('commanding leads qualify on one recent Kalshi observation without an external scoreboard',()=>{
+ const cases=[['basketball_game','NBA',18,4,449,{}],['basketball_game','WNBA',7,4,89,{}],
+ ['basketball_game','NCAAB',16,2,299,{}],['basketball_game','China CBA',16,4,299,{}],
+ ['football_game','CFB',24,4,449,{}],['football_game','NFL',11,4,359,{}],
+ ['hockey_match','NHL',4,3,119,{}],['baseball_game','MLB',5,8,0,{inning:8,inning_half:'bottom',outs:2,clock:''}]];
+ for(const args of cases){
+  const {state,market}=team(...args);
+  assert.equal(kalshiSingleReadLead(state,market,state.observedAt+29999),true,args[1]);
+  assert.equal(kalshiSingleReadLead(state,market,state.observedAt+30001),false);
+  assert.equal(kalshiSingleReadLead({...state,scoreConsistent:false},market,now),false);
+ }
+});
+
+test('non-player overs do not require an extra scoring cushion; player overs still require independent verification',()=>{
+ const {state}=team('basketball_game','NBA',3,4,60);
+ const total={event_ticker:'KXNBATOTAL-TEST',status:'active',title:'Over 42.5 total points',rules_primary:'Combined total points scored',floor_strike:42.5,strike_type:'greater',yes_ask_dollars:'.99'};
+ assert.equal(singleReadOverSignal(state,total,now)?.fraction,.10);
+ const player={event_ticker:'KXNBASTL-TEST',status:'active',title:'Pat Player: 2+ steals',floor_strike:1.5,custom_strike:{basketball_player:'pat'},yes_ask_dollars:'.95'};
+ const credited={...state,playerStats:{pat:{steals:4}}};
+ assert.ok(overSignal(credited,player));
+ assert.equal(singleReadOverSignal(credited,player,now),null);
 });
