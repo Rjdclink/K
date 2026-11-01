@@ -49,6 +49,23 @@ test('standalone install controls and opt-in push are wired without caching acco
   assert.match(page,/beforeinstallprompt/);assert.match(page,/requestPermission\(\)/);assert.match(page,/pushManager\.subscribe/);
 });
 
+test('install button shows on-screen Android instructions when the browser has no prompt',async()=>{
+  const listeners=new Map(),help={showModal(){this.open=true}},url={value:''};
+  const button={classList:{add(){},remove(){}},addEventListener:(name,fn)=>listeners.set(name,fn)};
+  const other={classList:{toggle(){},add(){},remove(){}},addEventListener(){},setAttribute(){},style:{}};
+  const document={getElementById:id=>id==='install'?button:id==='installHelp'?help:id==='installUrl'?url:other,querySelectorAll:()=>[]};
+  const events=new Map(),window={matchMedia:()=>({matches:false}),addEventListener:(name,fn)=>events.set(name,fn)};
+  const context=vm.createContext({document,window,location:{origin:'https://example.test'},navigator:{},localStorage:{getItem(){return null},setItem(){}},fetch:()=>new Promise(()=>{}),AbortSignal,setInterval(){}});
+  vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],context);
+  await listeners.get('click')();
+  assert.equal(help.open,true);
+  assert.equal(url.value,'https://example.test/');
+  let prompted=false;help.open=false;
+  events.get('beforeinstallprompt')({preventDefault(){},prompt:async()=>{prompted=true}});
+  await listeners.get('click')();
+  assert.equal(prompted,true);assert.equal(help.open,false);
+});
+
 test('a previously granted browser push subscription is restored to the server on opening the dashboard',async()=>{
   const requests=[];
   const element={style:{},classList:{toggle(){},add(){},remove(){}},addEventListener(){},setAttribute(){}};
