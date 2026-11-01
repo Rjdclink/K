@@ -63,14 +63,16 @@ export function missingQuoteFill(fills,ticker,createdAt){
 export async function collectionsForEvents(eventTickers,get){
   const tickers=[...new Set(eventTickers)].filter(Boolean);
   const responses=await Promise.all(tickers.map(async ticker=>{
-    const rows=[];let cursor='';
-    for(let page=0;page<5;page++){
+    const rows=[],seen=new Set();let cursor='';
+    for(;;){
       const query=new URLSearchParams({status:'open',associated_event_ticker:ticker,limit:'200'});
       if(cursor)query.set('cursor',cursor);
       const response=await get('/multivariate_event_collections?'+query);
       rows.push(...response.multivariate_contracts||[]);
       cursor=response.cursor||'';
       if(!cursor)break;
+      if(seen.has(cursor))throw Error('Combo collection pagination did not advance');
+      seen.add(cursor);
     }
     return rows;
   }));
@@ -140,68 +142,87 @@ export function compatibleComboGroups(collections,candidates,maxGroups=6){
   for(let size=count;size>=2&&groups.length<maxGroups;size--)visit(0,[],size);
   return groups;
 }
-function combinationCount(n,k){
-  let result=1n;for(let i=1;i<=k;i++)result=result*BigInt(n-i+1)/BigInt(i);return result;
+function collectionIdentity(c){
+  return {ticker:c.collection_ticker,allYes:c.is_all_yes,description:c.functional_description,
+    onePerEvent:c.is_single_market_per_event,min:c.size_min,max:c.size_max,
+    events:[...new Set([...(c.associated_events||[]).map(e=>e.ticker),...(c.associated_event_tickers||[])])].sort()};
 }
-function combinationAt(items,k,index){
-  const chosen=[];let start=0;
-  for(let remaining=k;remaining>0;remaining--){
-    for(let i=start;i<=items.length-remaining;i++){
-      const count=combinationCount(items.length-i-1,remaining-1);
-      if(index>=count){index-=count;continue}
-      chosen.push(items[i]);start=i+1;break;
-    }
-  }
-  return chosen;
-}
-export function plannedComboGroups(collections,candidates,maxPlans=COMBO_RFQ_PLANS,rotation=0,excluded=new Set(),requiredTicker=null){
-  const compatible=(collections||[]).filter(c=>c.is_all_yes===true ||
-    c.is_all_yes===false&&/every associated market resolves to YES/i.test(String(c.functional_description||'')));
-  const eligible=compatible.map(collection=>{
-    const events=new Set([...(collection.associated_events||[]).map(e=>e.ticker),...(collection.associated_event_tickers||[])]);
-    const items=candidates.filter(candidate=>events.has(candidate.event.event_ticker));
-    if(requiredTicker)items.sort((a,b)=>Number(b.market.ticker===requiredTicker)-Number(a.market.ticker===requiredTicker));
+// Count every contract choice, not merely every event choice. Weighted suffix
+// counts let us unrank a subset without enumerating its exponential siblings.
+function comboSpaces(collections,candidates,requiredTicker){
+  const unique=[...new Map(candidates.map(c=>[c.market.ticker,c])).values()]
+    .sort((a,b)=>a.market.ticker.localeCompare(b.market.ticker));
+  const spaces=[];
+  for(const collection of [...collections].sort((a,b)=>a.collection_ticker.localeCompare(b.collection_ticker))){
+    if(!(collection.is_all_yes===true||collection.is_all_yes===false&&/every associated market resolves to YES/i.test(String(collection.functional_description||''))))continue;
+    const events=new Set(collectionIdentity(collection).events);
+    const items=unique.filter(c=>events.has(c.event.event_ticker));
+    const anchor=requiredTicker?items.find(c=>c.market.ticker===requiredTicker):null;
+    if(requiredTicker&&!anchor)continue;
+    const remaining=items.filter(c=>c!==anchor&&(!anchor||collection.is_single_market_per_event!==true||c.event.event_ticker!==anchor.event.event_ticker));
     const pools=collection.is_single_market_per_event===true?
-      [...Map.groupBy(items,item=>item.event.event_ticker).values()]:items.map(item=>[item]);
-    return {collection,pools};
-  }).filter(({pools})=>pools.length>=2&&(!requiredTicker||pools.some(pool=>pool.some(c=>c.market.ticker===requiredTicker))));
-  const maxSize=Math.max(0,...eligible.map(({collection,pools})=>Math.min(pools.length,Number(collection.size_max)||pools.length)));
-  const sizes=[];for(let size=maxSize;size>=2;size--)if(eligible.some(({collection,pools})=>
-    Number(collection.size_min)<=size&&pools.length>=size&&(!Number(collection.size_max)||Number(collection.size_max)>=size)))sizes.push(size);
-  const selected=[],seen=new Set(),offset=requiredTicker?0:Math.max(0,Math.trunc(rotation));
-  // Reserve a pair slot if a collection offers pairs, even when many larger
-  // sizes exist. A market can receive a maker quote at one size but not another.
-  const middle=sizes.slice(1,-1);
-  const middleSlots=Math.max(0,maxPlans-2);
-  const orderedSizes=sizes.length>maxPlans&&sizes.at(-1)===2&&middle.length?
-    [sizes[0],...Array.from({length:middleSlots},(_,i)=>middle[(offset*middleSlots+i)%middle.length]).sort((a,b)=>b-a),2]:sizes;
-  for(let index=0;index<orderedSizes.length;index++){
-    const size=orderedSizes[index],remainingSizes=orderedSizes.length-index-1;
-    // Give every available ticket size at least one plan, preferably two.
-    // Use the rest of the RFQ budget instead of silently stopping at two.
-    const reserve=Math.min(Math.max(0,maxPlans-selected.length-1),remainingSizes*2);
-    const quota=Math.max(0,maxPlans-selected.length-reserve);
-    if(quota<=0)continue;
-    const start=eligible.length?offset%eligible.length:0;
-    let added=0;
-    // Interleave collections so one broad collection cannot consume every
-    // slot before another valid set of held legs is tried.
-    for(let step=0;step<64&&added<quota;step++)for(let c=0;c<eligible.length&&added<quota;c++){
-      const {collection,pools}=eligible[(start+c)%eligible.length];
-      if(pools.length<size||Number(collection.size_min)>size||Number(collection.size_max)&&Number(collection.size_max)<size)continue;
-      const total=combinationCount(pools.length,size);
-      if(BigInt(step)>=total)continue;
-        const rank=(BigInt(offset)*2n+BigInt(step))%total;
-        const legs=combinationAt(pools,size,rank).map((pool,i)=>pool[(offset+step+i)%pool.length]);
-        if(requiredTicker&&!legs.some(leg=>leg.market.ticker===requiredTicker))continue;
-        if(!comboCollection([collection],legs)||excluded.has(comboExclusionKey(legs)))continue;
-        if(legs.some((a,i)=>legs.slice(i+1).some(b=>excluded.has(comboExclusionKey([a,b])))))continue;
-        const key=legs.map(l=>l.market.ticker).sort().join('|');
-        if(seen.has(key))continue;
-        seen.add(key);selected.push({legs,collection});added++;
+      [...Map.groupBy(remaining,c=>c.event.event_ticker).entries()].sort(([a],[b])=>a.localeCompare(b)).map(([,p])=>p):remaining.map(c=>[c]);
+    const min=Math.max(2,Number(collection.size_min)||2),max=Math.min(pools.length+(anchor?1:0),Number(collection.size_max)||Infinity);
+    if(max<min)continue;
+    const dp=Array.from({length:pools.length+1},()=>Array(max+1).fill(0n));
+    dp[pools.length][0]=1n;
+    for(let i=pools.length-1;i>=0;i--){dp[i][0]=1n;
+      for(let k=1;k<=max;k++)dp[i][k]=dp[i+1][k]+BigInt(pools[i].length)*dp[i+1][k-1];
+    }
+    for(let size=max;size>=min;size--){
+      const k=size-(anchor?1:0),total=dp[0][k];if(!total)continue;
+      const key=createHash('sha256').update(JSON.stringify({collection:collectionIdentity(collection),size,requiredTicker})).digest('hex');
+      const at=rank=>{
+        const legs=anchor?[anchor]:[];let left=k;
+        for(let i=0;left>0&&i<pools.length;i++){
+          const suffix=dp[i+1][left-1],block=BigInt(pools[i].length)*suffix;
+          if(rank>=block){rank-=block;continue}
+          const choice=Number(rank/suffix);rank%=suffix;legs.push(pools[i][choice]);left--;
+        }
+        return legs.sort((a,b)=>a.market.ticker.localeCompare(b.market.ticker));
+      };
+      spaces.push({key,size,total,at,collection});
     }
   }
-  return selected;
+  return spaces.sort((a,b)=>b.size-a.size||a.key.localeCompare(b.key));
+}
+export function comboPlannerScope(collections,candidates,requiredTicker=null){
+  return createHash('sha256').update(JSON.stringify({version:2,requiredTicker,
+    collections:collections.map(collectionIdentity).sort((a,b)=>a.ticker.localeCompare(b.ticker)),
+    contracts:candidates.map(c=>contractTerms(c.market)).sort((a,b)=>a.ticker.localeCompare(b.ticker))})).digest('hex');
+}
+export function nextComboBatch(collections,candidates,{cursor={},maxPlans=COMBO_RFQ_PLANS,maxExamined=2048,
+  excluded=new Set(),known=new Set(),requiredTicker=null}={}){
+  const spaces=comboSpaces(collections,candidates,requiredTicker),ranks={...cursor.ranks},selected=[],seen=new Set();
+  let next=Math.max(0,Number(cursor.next)||0),examined=0,idle=0;
+  while(spaces.length&&selected.length<maxPlans&&examined<maxExamined&&idle<spaces.length){
+    const space=spaces[next%spaces.length];next=(next+1)%spaces.length;
+    const rank=BigInt(ranks[space.key]||0);
+    if(rank>=space.total){idle++;continue}
+    idle=0;ranks[space.key]=String(rank+1n);examined++;
+    const legs=space.at(rank),key=comboExclusionKey(legs);
+    if(known.has(key)||seen.has(key)||excluded.has(key)||comboGroupRejection(legs)||!comboCollection([space.collection],legs))continue;
+    if(legs.some((a,i)=>excluded.has(comboExclusionKey([a]))||legs.slice(i+1).some(b=>excluded.has(comboExclusionKey([a,b])))))continue;
+    seen.add(key);selected.push({legs,collection:space.collection,groupKey:key});
+  }
+  return {plans:selected,cursor:{ranks,next},examined,
+    exhausted:spaces.every(s=>BigInt(ranks[s.key]||0)>=s.total),
+    coverage:spaces.map(s=>({collection:s.collection.collection_ticker,size:s.size,total:String(s.total),visited:ranks[s.key]||'0'}))};
+}
+// Compatibility selector for callers without a persisted cursor. The live
+// engine uses nextComboBatch and commits its cursor together with queued work.
+export function plannedComboGroups(collections,candidates,maxPlans=COMBO_RFQ_PLANS,rotation=0,excluded=new Set(),requiredTicker=null){
+  let spaces=comboSpaces(collections,candidates,requiredTicker);
+  const sizes=[...new Set(spaces.map(s=>s.size))],offset=Math.max(0,Math.trunc(rotation));
+  if(sizes.length>maxPlans){
+    const middle=sizes.slice(1,-1),slots=Math.max(0,maxPlans-2);
+    const chosen=new Set([sizes[0],sizes.at(-1),...Array.from({length:slots},(_,i)=>middle[(offset*slots+i)%middle.length])]);
+    spaces=spaces.filter(s=>chosen.has(s.size));
+  }
+  const ranks=Object.fromEntries(spaces.map(s=>[s.key,String(BigInt(offset)*2n%s.total)]));
+  // Hide unselected sizes by marking them complete for this compatibility pass.
+  for(const s of comboSpaces(collections,candidates,requiredTicker))if(!(s.key in ranks))ranks[s.key]=String(s.total);
+  return nextComboBatch(collections,candidates,{cursor:{ranks,next:0},maxPlans,excluded,requiredTicker}).plans;
 }
 export function prioritizedComboGroups(groups,maxPlans=12,rotation=0){
   const bySize=new Map();

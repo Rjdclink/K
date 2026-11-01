@@ -35,11 +35,11 @@ export function soccerOverWaitMs(firstSeen,now=Date.now()){
 export function soccerOverStable(firstSeen,now=Date.now()){return soccerOverWaitMs(firstSeen,now)===0;}
 const N = v => v === null || v === undefined || v === '' ? NaN : Number(v);
 export const BASKETBALL_LEAD_RULES=Object.freeze({
-  NBA:{period:4,possession:true,tiers:[[18,450],[12,390],[8,90]]},
-  WNBA:{period:4,possession:true,tiers:[[11,360],[7,90]]},
-  college:{period:2,possession:false,tiers:[[16,300],[10,270],[8,150]]},
-  collegeWomen:{period:4,possession:false,tiers:[[16,300],[10,270],[8,150]]},
-  international:{period:4,possession:false,tiers:[[16,300],[10,270],[8,150]]}
+  NBA:{period:4,possession:true,tiers:[[18,450],[12,390],[9,105]]},
+  WNBA:{period:4,possession:true,tiers:[[11,360],[10,105]]},
+  college:{period:2,possession:false,tiers:[[16,300],[10,270]]},
+  collegeWomen:{period:4,possession:false,tiers:[[16,300],[10,270]]},
+  international:{period:4,possession:false,tiers:[[16,300],[10,270]]}
 });
 export function basketballLeadProfile(game){
   if(!/basketball/.test(String(game?.type||''))||/esports/.test(String(game?.type||'')))return null;

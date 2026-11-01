@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {finalLeadFraction,leaderHasControl} from '../src/lead_allocation.mjs';
+import {finalLeadFraction,leaderHasControl,directLeadFraction,verifiedOverFraction} from '../src/lead_allocation.mjs';
 import {gameState,earlyLeadSignal,kalshiOnlyLead,nbaSingleReadLead} from '../src/strategy.mjs';
+import {overContractKey} from '../src/over_verification.mjs';
 
 const lead={strategy:'lead',fraction:.15};
 const game=(type,possessionSide='home')=>({type,sport:'Other',home:30,away:10,homeUnits:30,awayUnits:10,possessionSide});
@@ -53,9 +54,9 @@ test('CFB and soccer follow the same verification-based allocation',()=>{
 });
 test('both live entry paths use the final verified allocation and funding rechecks recalculate it',()=>{
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
-  assert.match(source,/directKalshiLead\?Math.min\(\.10,signal.fraction\):finalLeadFraction\(first,second,signal,false,quote\)/);
+  assert.match(source,/directKalshiLead\?directLeadFraction\(second,signal,quote\):finalLeadFraction\(first,second,signal,false,quote\)/);
   assert.match(source,/finalLeadFraction\(c.state,freshState,verifiedSignal,!kalshiOnly,quote\)/);
-  assert.match(source,/directKalshiLead\?Math.min\(\.10,still.fraction\):finalLeadFraction\(state,checked,still,!kalshiOnly,executable\)/);
+  assert.match(source,/directKalshiLead\?directLeadFraction\(checked,still,executable\):finalLeadFraction\(state,checked,still,!kalshiOnly,executable\)/);
 });
 test('strong Kalshi-only leads use 20% only after two stable reads and a score cushion',()=>{
   const now=Date.now(),observed=(age)=>({observedAt:now-age,updatedAt:now-age-1000,
@@ -117,6 +118,31 @@ test('NBA +18 under 7:30 and +12 under 6:30 use single-read sizing',()=>{
   assert.match(source,/singleRead\?'Eligible for one fresh Kalshi score; checking live ask'/);
   assert.match(source,/leadWatch&&!candidates.some\(c=>c.signal.strategy==='lead'\)/);
   assert.match(source,/signal\.execution\+'; last catalog result is older'/);
+});
+test('very late commanding leads may use 20%, while ordinary late entries retain lower allocation',()=>{
+  const base={...game('basketball_game'),sport:'NBA',period:4,remainingSeconds:104,
+    verifiedLive:true,scoreKnown:true,scoreConsistent:true,periodConsistent:true};
+  assert.equal(finalLeadFraction({...base,homeUnits:30,awayUnits:10},{...base,homeUnits:30,awayUnits:10},lead,false),.20);
+  assert.equal(finalLeadFraction({...base,homeUnits:19,awayUnits:10},{...base,homeUnits:19,awayUnits:10},lead,false),.10);
+  assert.equal(finalLeadFraction(base,{...base,remainingSeconds:105},lead,false),.15);
+  const college={...base,sport:'NCAAB',period:2,homeUnits:26,awayUnits:10};
+  assert.equal(directLeadFraction(college,lead),.20);
+  assert.equal(directLeadFraction({...college,homeUnits:20},lead),.10);
+  assert.equal(directLeadFraction({...college,remainingSeconds:105},lead),.10);
+});
+test('timed independent checks unlock 20% for uncushioned overs and preserve 40% cushions',()=>{
+  const now=Date.now(),market={ticker:'OVER',event_ticker:'KXNBATOTAL-TEST',status:'active',
+    title:'Over 139.5 total points',rules_primary:'Combined total points scored in the full game',
+    floor_strike:139.5,strike_type:'greater'};
+  const state={id:'game',feedId:'game',verifiedLive:true,scoreKnown:true,scoreConsistent:true,
+    periodConsistent:true,type:'basketball_game',sport:'NBA',home:71,away:70,observedAt:now,
+    updatedAt:now-1000,verificationId:'verified'};
+  const proof={contractKey:overContractKey(state,market),initialAt:now-220000,
+    firstExternalAt:now-200000,firstExternalId:'one',pairedAt:now,pairedExternalId:'two',route:'elapsed'};
+  assert.equal(verifiedOverFraction({strategy:'over',fraction:.10},{...state,overVerification:proof},market),.20);
+  assert.equal(verifiedOverFraction({strategy:'over',fraction:.40},{...state,overVerification:proof},market),.40);
+  assert.equal(verifiedOverFraction({strategy:'over',fraction:.40},state,market),.10);
+  assert.equal(verifiedOverFraction({strategy:'over',fraction:.10},{...state,overVerification:{...proof,pairedAt:now-11000}},market),.10);
 });
 test('tennis two-match-point fallback permits 20% with an unchanged deciding set',()=>{
   const m={id:'tennis-fallback',type:'tennis_tournament_singles',title:'Hurkacz vs Bergs',

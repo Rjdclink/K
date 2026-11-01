@@ -11,10 +11,13 @@ export function overContractKey(game,market){
     rules:market.rules_primary,secondary:market.rules_secondary,strike:market.floor_strike,
     cap:market.cap_strike,strikeType:market.strike_type,close:market.close_time,custom:market.custom_strike||{}}));
 }
-export function freshOverState(game,market,now=Date.now()){
-  return Boolean(game&&overSignal(game,market)&&game.feedId===game.id&&game.periodConsistent&&
+export function freshOverObservation(game,now=Date.now()){
+  return Boolean(game&&game.verifiedLive&&game.scoreKnown&&game.scoreConsistent&&game.feedId===game.id&&game.periodConsistent&&
     Number.isFinite(game.observedAt)&&game.observedAt<=now&&now-game.observedAt<=OVER_FRESH_MS&&
     (!Number.isFinite(game.updatedAt)||game.updatedAt<=game.observedAt+5000&&game.observedAt-game.updatedAt<=30000));
+}
+export function freshOverState(game,market,now=Date.now()){
+  return freshOverObservation(game,now)&&Boolean(overSignal(game,market));
 }
 // Player statistics use one credited unit. Yardage has no fixed safe play
 // bound. Team/game/period totals remove the sport's conservative full-play bound.
@@ -49,4 +52,8 @@ export function timedOverEntryValid(game,market,now=Date.now()){
   const timing=overTiming({initial_at:proof.initialAt,first_external_at:proof.firstExternalAt,
     first_external_id:proof.firstExternalId},game,market,proof.pairedAt);
   return timing.stage==='paired'&&(proof.route!=='cushion'||overCushion(game,market)!==null);
+}
+
+export function assertTimedOverEntry(game,market,now=Date.now()){
+  if(!timedOverEntryValid(game,market,now))throw Object.assign(Error('Timed over verification expired before dispatch'),{code:'LOCAL_OVER_PROOF_EXPIRED'});
 }

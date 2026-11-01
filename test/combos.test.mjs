@@ -289,3 +289,11 @@ test('a newly created combo market 404 is retried while unrelated API errors sti
   await assert.rejects(liveComboMarket(async()=>{throw Error('Kalshi 403 GET /markets/COMBO: denied')},ticker),/403/);
 });
 
+
+test('collection lookup follows every page rather than silently stopping at five',async()=>{
+ const collections=await collectionsForEvents(['E'],async path=>{
+  const page=Number(new URL(path,'https://k.test').searchParams.get('cursor')||0);
+  return {multivariate_contracts:[{collection_ticker:'C'+page}],cursor:page<6?String(page+1):''};
+ });assert.equal(collections.length,7);
+ await assert.rejects(collectionsForEvents(['E'],async()=>({multivariate_contracts:[],cursor:'stuck'})),/did not advance/);
+});

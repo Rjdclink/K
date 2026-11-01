@@ -1,9 +1,10 @@
-import { overContractKey, freshOverState, overTiming, sameOverReading, timedOverEntryValid, OVER_FRESH_MS, OVER_MAX_GAP_MS } from './over_verification.mjs';
+import {createComboPlanner} from './combo_planner.mjs';
+import { overContractKey, freshOverObservation, freshOverState, overTiming, sameOverReading, timedOverEntryValid, assertTimedOverEntry, OVER_FRESH_MS, OVER_MAX_GAP_MS } from './over_verification.mjs';
 import { golfSignal, verifyGolf } from './golf.mjs';
 import { randomUUID } from 'node:crypto';
 import { apiPriority, withApiPriority, createPriorityGate } from './api_priority.mjs';
 import { createExecutionAudit } from './execution_audit.mjs';
-import { finalLeadFraction } from './lead_allocation.mjs';
+import { finalLeadFraction, directLeadFraction, verifiedOverFraction } from './lead_allocation.mjs';
 import { createFillComboQueue } from './fill_combo_queue.mjs';
 import pg from 'pg';
 import { page } from './ui.mjs';
@@ -22,7 +23,7 @@ import { discoverCurrentMilestones, scanMilestones, eligibleForMarkets, prioriti
 import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOverDecision, verifyIndependentTableTennisLeadDecision, verifyIndependentTableTennisMatch } from './score_verification.mjs';
 import { verificationStatus } from './verification_status.mjs';
-import { COMBO_ATTEMPT_MS, VERIFY_DWELL_MS, COMBO_RFQ_PLANS, comboAllocation, comboLegAllocation, comboAllowedCents, comboRfqTargetCents, remainingVerifiedComboCents, availableComboFills, compatibleComboGroups, plannedComboGroups, comboPairDiagnostics, comboExclusionKey, exchangeComboExclusion, comboLegs, filledComboWindow, heldComboLeg, quoteForYes, collectionsForEvents, selectedComboMarkets, liveComboMarket, missingQuoteFill } from './combos.mjs';
+import { COMBO_ATTEMPT_MS, VERIFY_DWELL_MS, COMBO_RFQ_PLANS, comboAllocation, comboLegAllocation, comboAllowedCents, comboRfqTargetCents, remainingVerifiedComboCents, availableComboFills, comboPairDiagnostics, comboExclusionKey, exchangeComboExclusion, comboLegs, filledComboWindow, heldComboLeg, quoteForYes, collectionsForEvents, selectedComboMarkets, liveComboMarket, missingQuoteFill } from './combos.mjs';
 import { selectedTeamName, selectedTeamSide } from './selected_team.mjs';
 import { estimatedSaleProfitCents, halfPotentialProfitExitEligible, oneAndHalfExitEligible, profitTargetAllowed, overCorrectionAffects, correctionExitTargets } from './positions.mjs';
 import { remainingVerifiedOverCents, upgradeEligible } from './upgrades.mjs';
@@ -35,6 +36,7 @@ import { filledOrderGateCount } from './entry_floor.mjs';
 const API='https://external-api.kalshi.com/trade-api/v2';
 const pool = new pg.Pool({connectionString:process.env.DATABASE_URL, max:4, idleTimeoutMillis:15000});
 pool.on('error', e=>console.error('Idle database connection:',e.message));
+const comboPlanner=createComboPlanner(pool);
 const executionAudit=createExecutionAudit((...args)=>pool.query(...args));
 const recordDecision=decision=>executionAudit(decision).catch(e=>console.warn('Execution audit deferred:',e.message));
 const fillComboQueue=createFillComboQueue((fill,options)=>withApiPriority('normal',()=>checkCurrentHeldCombinations(fill,options)),
@@ -325,6 +327,12 @@ async function confirmedIndependentOver(first,milestone,market,{decorate=state=>
   const valid=await pool.query('SELECT 1 FROM over_verification_windows WHERE market_ticker=$1 AND generation=$2',[seller.ticker,window.generation]);
   return valid.rowCount&&timedOverEntryValid(pair.state,seller)?pair.state:null;
 }
+async function resetLostOverWindow(game,market){
+  if(!freshOverObservation(game)||overSignal(game,market))return false;
+  await ensureOverWindows();
+  await pool.query('DELETE FROM over_verification_windows WHERE market_ticker=$1 AND game_id=$2',[market.ticker,game.id]);
+  return true;
+}
 async function pruneOverWindows(games){
   await ensureOverWindows();
   const states=new Map(games.map(g=>[g.state.id,g.state]));
@@ -359,7 +367,8 @@ async function auditSingleReadKalshiLead(game,market,milestone){
   await pool.query('INSERT INTO verification_records(id,market_ticker,passed,evidence) VALUES($1,$2,true,$3)',
     [id,market.ticker,JSON.stringify({mode:'kalshi_only_lead_and_executable_ask',game,
       milestoneId:milestone.id,ask:market.yes_ask_dollars,askSize:market.yes_ask_size_fp,
-      allocation:drawSignal(game,market)?.fraction??.10})]);
+      allocation:directLeadFraction(game,leadSignal(game,market)||additionalLeadSignal(game,market)||
+        cricketLeadSignal(game,market)||drawSignal(game,market)||earlyLeadSignal(game,market),market)})]);
   game.verificationId=id;
   return true;
 }
@@ -443,6 +452,7 @@ async function syncTradeHistory(settlements){
   if(!config)return;
   await upgradeTables();
   await pool.query('ALTER TABLE trade_history ADD COLUMN IF NOT EXISTS reconciled_at timestamptz');
+  await pool.query(`CREATE TABLE IF NOT EXISTS history_reconciliation_work (trade_id uuid PRIMARY KEY,last_attempt_at timestamptz NOT NULL)`);
   const {rows:pending}=await pool.query(`SELECT a.id,a.market_ticker,a.sport,a.order_id,a.fill_count,a.created_at,a.combo_legs,
       u.order_id AS upgrade_order_id,u.fill_count AS upgrade_fill_count,
       ru.order_id AS robust_upgrade_order_id,ru.fill_count AS robust_upgrade_fill_count,
@@ -453,12 +463,16 @@ async function syncTradeHistory(settlements){
       LEFT JOIN position_upgrades u ON u.original_id=a.id AND u.status='filled'
       LEFT JOIN robust_over_upgrades ru ON ru.original_id=a.id AND ru.status='filled'
       LEFT JOIN combo_upgrades cu ON cu.original_id=a.id AND cu.status='filled'
+      LEFT JOIN history_reconciliation_work hw ON hw.trade_id=a.id
     WHERE a.created_at>=$1 AND a.status='filled' AND
       (NOT EXISTS (SELECT 1 FROM trade_history h WHERE h.id=a.id AND h.reconciled_at>=GREATEST(a.updated_at,
         COALESCE(u.updated_at,a.updated_at),COALESCE(ru.updated_at,a.updated_at),COALESCE(cu.updated_at,a.updated_at),
         COALESCE((SELECT max(e.updated_at) FROM exit_attempts e WHERE e.market_ticker=a.market_ticker AND e.filled_count>0),a.updated_at))))
-    ORDER BY EXISTS(SELECT 1 FROM trade_history h WHERE h.id=a.id),a.created_at DESC LIMIT 50`,[config.started_at]);
+    ORDER BY hw.last_attempt_at ASC NULLS FIRST,a.created_at DESC LIMIT 50`,[config.started_at]);
   if(!pending.length)return;
+  await pool.query(`INSERT INTO history_reconciliation_work(trade_id,last_attempt_at)
+    SELECT id,clock_timestamp() FROM unnest($1::uuid[]) id
+    ON CONFLICT(trade_id) DO UPDATE SET last_attempt_at=EXCLUDED.last_attempt_at`,[pending.map(row=>row.id)]);
   const settled=new Map(settlements.map(item=>[item.ticker,item]));
   const direct=settlementLookupCandidates(pending,settled,Date.now(),Math.floor(Date.now()/30000)*5);
   if(direct.length){
@@ -824,13 +838,13 @@ async function submit(signal,game,event,market,balance,bankroll,budgetCents=Infi
     // A partial IOC fill can be below the minimum net profit. Require the
     // entire quantity at the limit price or no entry at all.
     const result=await withEntryProfitFloor({ticker:market.ticker,count,price,fees:feeReserve(event,market),strategy:signal.strategy,bankroll},
-      ()=>kalshi('/portfolio/events/orders',{method:'POST',auth:true,beforeDispatch:()=>{if(signal.strategy==='over'&&!timedOverEntryValid(game,market))throw Error('Timed over verification expired before submission')},body:{ticker:market.ticker,client_order_id:id,side:'bid',count:count.toFixed(2),price:price.toFixed(4),time_in_force:'fill_or_kill',self_trade_prevention_type:'taker_at_cross',post_only:false}}));
+      ()=>kalshi('/portfolio/events/orders',{method:'POST',auth:true,beforeDispatch:()=>{if(signal.strategy==='over')assertTimedOverEntry(game,market)},body:{ticker:market.ticker,client_order_id:id,side:'bid',count:count.toFixed(2),price:price.toFixed(4),time_in_force:'fill_or_kill',self_trade_prevention_type:'taker_at_cross',post_only:false}}));
     if(!result){await pool.query(`UPDATE trade_attempts SET status='unfilled',error='Below filled-order net profit floor',updated_at=now() WHERE id=$1`,[id]);return false}
     const filled=Number(result.fill_count_fp??result.fill_count??result.order?.fill_count_fp??0);
     await pool.query(`UPDATE trade_attempts SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE id=$1`,[id,filled>0?'filled':'unfilled',result.order_id||result.order?.order_id||null,filled]);
     if(filled>0)await confirmedSingleFill(id,market.ticker);
     return filled>0;
-  }catch(e){const message=String(e.message),noLiquidity=/^Kalshi 409 .*fill or kill insufficient resting volume/i.test(message),terminal=/^Kalshi (400|401|403|404|422) /.test(message);await pool.query(`UPDATE trade_attempts SET status=$2,error=$3,updated_at=now() WHERE id=$1`,[id,noLiquidity?'unfilled':terminal?'rejected':'check_order',message.slice(0,250)]);if(/insufficient balance/i.test(message))await invalidateBalance();console.error('Order response:',market.ticker,e.message);return false}
+  }catch(e){const message=String(e.message),noLiquidity=/^Kalshi 409 .*fill or kill insufficient resting volume/i.test(message),terminal=/^Kalshi (400|401|403|404|422) /.test(message);await pool.query(`UPDATE trade_attempts SET status=$2,error=$3,updated_at=now() WHERE id=$1`,[id,noLiquidity||e.code==='LOCAL_OVER_PROOF_EXPIRED'?'unfilled':terminal?'rejected':'check_order',message.slice(0,250)]);if(/insufficient balance/i.test(message))await invalidateBalance();console.error('Order response:',market.ticker,e.message);return false}
 }
 async function recoverPending(signal,game,event,market,balance,bankroll,budgetCents=Infinity,availableCents=bankroll){
   if(signal.strategy==='lead'&&/Kalshi-only live score and executable seller checked/.test(signal.reason||'')&&
@@ -867,10 +881,14 @@ async function recoverPending(signal,game,event,market,balance,bankroll,budgetCe
     return false;
   }
   try{const result=await withEntryProfitFloor({ticker:row.market_ticker,count:Number(row.count),price:Number(row.limit_price),fees:feeReserve(event,market),strategy:signal.strategy,bankroll},
-    ()=>kalshi('/portfolio/events/orders',{method:'POST',auth:true,beforeDispatch:()=>{if(signal.strategy==='over'&&!timedOverEntryValid(game,market))throw Error('Timed over verification expired before retry')},body:{ticker:row.market_ticker,client_order_id:row.id,side:'bid',count:Number(row.count).toFixed(2),price:Number(row.limit_price).toFixed(4),time_in_force:'fill_or_kill',self_trade_prevention_type:'taker_at_cross',post_only:false}}));
+    ()=>kalshi('/portfolio/events/orders',{method:'POST',auth:true,beforeDispatch:()=>{if(signal.strategy==='over')assertTimedOverEntry(game,market)},body:{ticker:row.market_ticker,client_order_id:row.id,side:'bid',count:Number(row.count).toFixed(2),price:Number(row.limit_price).toFixed(4),time_in_force:'fill_or_kill',self_trade_prevention_type:'taker_at_cross',post_only:false}}));
     if(!result){await pool.query(`UPDATE trade_attempts SET status='check_order',retries=0,error='Below filled-order net profit floor',updated_at=now() WHERE id=$1`,[row.id]);return false}
     const filled=Number(result.fill_count_fp??result.fill_count??result.order?.fill_count_fp??result.order?.fill_count??0);await pool.query(`UPDATE trade_attempts SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE id=$1`,[row.id,filled>0?'filled':'unfilled',result.order_id||result.order?.order_id||null,filled]);if(filled>0)await confirmedSingleFill(row.id,row.market_ticker);return filled>0
-  }catch(e){await pool.query(`UPDATE trade_attempts SET status='check_order',error=$2,updated_at=now() WHERE id=$1`,[row.id,'Recovery response uncertain: '+String(e.message).slice(0,200)]);return false}
+  }catch(e){
+    if(e.code==='LOCAL_OVER_PROOF_EXPIRED')await pool.query(`UPDATE trade_attempts SET status='check_order',retries=0,error=$2,updated_at=now() WHERE id=$1`,[row.id,String(e.message)]);
+    else await pool.query(`UPDATE trade_attempts SET status='check_order',error=$2,updated_at=now() WHERE id=$1`,[row.id,'Recovery response uncertain: '+String(e.message).slice(0,200)]);
+    return false;
+  }
 }
 async function reconcileUpgrade(row,robust=false){
   if(!row||!['reserved','check_order'].includes(row.status))return row;
@@ -913,6 +931,7 @@ async function upgradeHeldOver(c,preflight,original,scoreboardCache){
     ON CONFLICT(market_ticker) DO UPDATE SET original_id=EXCLUDED.original_id,verification_id=EXCLUDED.verification_id,
       first_verified_at=CASE WHEN fallback_verifications.original_id=EXCLUDED.original_id THEN fallback_verifications.first_verified_at ELSE now() END,verified_at=now()`,
   [current.ticker,original.id,state.verificationId]);
+  verifiedSignal.fraction=verifiedOverFraction(verifiedSignal,state,current);
   const robust=verifiedSignal.fraction===.40,upgradeTable=robust?'robust_over_upgrades':'position_upgrades';
   const otherTable=robust?'position_upgrades':'robust_over_upgrades';
   let {rows:[other]}=await pool.query(`SELECT * FROM ${otherTable} WHERE market_ticker=$1`,[current.ticker]);
@@ -923,7 +942,7 @@ async function upgradeHeldOver(c,preflight,original,scoreboardCache){
   if(prior&&!['unfilled','rejected'].includes(prior.status))return {verified:true,filled:false};
   const raw=await recoverSummaryAsk(current,{fresh:true});
   const quote=raw&&hasAsk(raw)?await executableQuote(raw):null;
-  if(!quote||overSignal(state,quote)?.fraction!==verifiedSignal.fraction)return {verified:true,filled:false};
+  if(!quote||verifiedOverFraction(overSignal(state,quote),state,quote)!==verifiedSignal.fraction)return {verified:true,filled:false};
   const [account,positions]=await Promise.all([accountBalance({fresh:true}),allOpenPositions()]);
   const position=positions.market_positions?.find(p=>p.ticker===quote.ticker);
   if(!upgradeEligible(original,position,{...c,market:quote,signal:verifiedSignal}))return {verified:true,filled:false};
@@ -956,7 +975,7 @@ async function upgradeHeldOver(c,preflight,original,scoreboardCache){
   await pool.query('INSERT INTO order_verifications(order_id,verification_id) VALUES($1,$2) ON CONFLICT DO NOTHING',[id,state.verificationId]);
   try{
     const result=await withEntryProfitFloor({ticker:quote.ticker,count,price,fees,strategy:'over',bankroll},
-      ()=>kalshi('/portfolio/events/orders',{method:'POST',auth:true,beforeDispatch:()=>{if(!timedOverEntryValid(state,quote))throw Error('Timed over verification expired before upgrade')},body:{ticker:quote.ticker,client_order_id:id,side:'bid',count:count.toFixed(2),price:price.toFixed(4),time_in_force:'fill_or_kill',self_trade_prevention_type:'taker_at_cross',post_only:false}}));
+      ()=>kalshi('/portfolio/events/orders',{method:'POST',auth:true,beforeDispatch:()=>{assertTimedOverEntry(state,quote)},body:{ticker:quote.ticker,client_order_id:id,side:'bid',count:count.toFixed(2),price:price.toFixed(4),time_in_force:'fill_or_kill',self_trade_prevention_type:'taker_at_cross',post_only:false}}));
     if(!result){await pool.query(`UPDATE ${upgradeTable} SET status='unfilled',error='Below filled-order net profit floor',updated_at=now() WHERE id=$1`,[id]);return {verified:true,filled:false}}
     const filled=Number(result.fill_count_fp??result.fill_count??result.order?.fill_count_fp??0);
     await pool.query(`UPDATE ${upgradeTable} SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE id=$1`,
@@ -966,7 +985,7 @@ async function upgradeHeldOver(c,preflight,original,scoreboardCache){
   }catch(e){
     const message=String(e.message),noLiquidity=/^Kalshi 409 .*fill or kill insufficient resting volume/i.test(message),terminal=/^Kalshi (400|401|403|404|422) /.test(message);
     await pool.query(`UPDATE ${upgradeTable} SET status=$2,error=$3,updated_at=now() WHERE id=$1`,
-      [id,noLiquidity?'unfilled':terminal?'rejected':'check_order',message.slice(0,250)]);
+      [id,noLiquidity||e.code==='LOCAL_OVER_PROOF_EXPIRED'?'unfilled':terminal?'rejected':'check_order',message.slice(0,250)]);
     console.error('Upgrade order response:',quote.ticker,e.message);
     return {verified:true,filled:false};
   }
@@ -1181,20 +1200,15 @@ async function recordComboRejection(legs,collection,status,detail){
   const collections=await collectionsForEvents(eligible.map(c=>c.event.event_ticker),kalshi);
   const deadline=Date.now()+COMBO_ATTEMPT_MS;
   const plans=[],funding=[];
-  // Consider every held single, sampling distinct leg sets at each collection
-  // size without enumerating an exponential number of possible tickets.
-  await pool.query('CREATE TABLE IF NOT EXISTS combo_rotation_state (id integer PRIMARY KEY, next_rotation bigint NOT NULL)');
-  const {rows:[rotationRow]}=await pool.query(`INSERT INTO combo_rotation_state(id,next_rotation) VALUES(1,1)
-    ON CONFLICT(id) DO UPDATE SET next_rotation=combo_rotation_state.next_rotation+1
-    RETURNING next_rotation-1 AS rotation`);
-  const rotation=Number(rotationRow.rotation),groups=plannedComboGroups(collections,eligible,COMBO_RFQ_PLANS,rotation,excluded,newTicker);
+  const queued=await comboPlanner.claim(collections,eligible,{requiredTicker:newTicker,excluded,limit:COMBO_RFQ_PLANS});
+  const groups=queued.groups;
   for(const pair of comboPairDiagnostics(collections,eligible)){
     const legs=eligible.filter(l=>pair.tickers.includes(l.market.ticker));
     if(pair.rejection||excluded.has(comboExclusionKey(legs)))await recordComboRejection(legs,null,
       pair.rejection||'exchange_rejected','Combo preflight excluded these exact contract terms');
   }
-  console.info('Combo coverage:',JSON.stringify({held:eligible.length,possiblePairs:eligible.length*(eligible.length-1)/2,collections:collections.length,plannedBySize:Object.fromEntries([...new Set(groups.map(g=>g.legs.length))].map(n=>[n,groups.filter(g=>g.legs.length===n).length])),rotation}));
-  if(!groups.length){
+  console.info('Combo coverage:',JSON.stringify({held:eligible.length,possiblePairs:eligible.length*(eligible.length-1)/2,collections:collections.length,persistentScope:queued.scope,exhausted:queued.exhausted,examined:queued.examined,coverage:queued.coverage,plannedBySize:Object.fromEntries([...new Set(groups.map(g=>g.legs.length))].map(n=>[n,groups.filter(g=>g.legs.length===n).length]))}));
+  if(!groups.length&&!queued.coverage.length){
     console.warn('Combo no compatible collection for trigger:',newTicker,eligible.map(c=>[c.event.event_ticker,c.market.ticker]),'collections',collections.length);
     await pool.query(`CREATE TABLE IF NOT EXISTS combo_diagnostics (
       id bigserial PRIMARY KEY,checked_at timestamptz NOT NULL DEFAULT now(),
@@ -1209,15 +1223,26 @@ async function recordComboRejection(legs,collection,status,detail){
         `No Kalshi all-YES collection includes both held events among ${collections.length} event-filtered collections`]);
     }
   }
-  await mapBatches(groups,5,async ({legs,collection})=>{
-    if(superseded())return;
+  try{
+  await mapBatches(groups,5,async queuePlan=>{
+    const {legs,collection}=queuePlan;
+    if(superseded()||Date.now()>=deadline)return;
     const n=legs.length;let stage='market_creation';
     try{
-      const identifiers=selectedComboMarkets(legs);
-      const created=await kalshi('/multivariate_event_collections/'+encodeURIComponent(collection.collection_ticker),{auth:true,method:'POST',body:{selected_markets:identifiers,with_market_payload:true}});
-      console.info('Combo held-leg market creation:',legs.map(c=>c.market.ticker),created.market_ticker||'missing ticker');
+      let created;
+      if(queuePlan.job.phase==='market_ready'){
+        created={market_ticker:queuePlan.job.combo_ticker,event_ticker:queuePlan.job.combo_event_ticker,market:queuePlan.job.combo_market};
+      }else{
+        if(!await comboPlanner.transition(queuePlan,'planned','creating_market'))return;
+        const identifiers=selectedComboMarkets(legs);
+        created=await kalshi('/multivariate_event_collections/'+encodeURIComponent(collection.collection_ticker),{auth:true,method:'POST',body:{selected_markets:identifiers,with_market_payload:true}});
+        console.info('Combo held-leg market creation:',legs.map(c=>c.market.ticker),created.market_ticker||'missing ticker');
+        if(!created.market_ticker||!created.market||created.market.ticker!==created.market_ticker||
+          created.market.event_ticker!==created.event_ticker||!['initialized','active','open'].includes(created.market.status))throw Error('Invalid combo market creation response');
+        if(!await comboPlanner.transition(queuePlan,'creating_market','market_ready',
+          {ticker:created.market_ticker,eventTicker:created.event_ticker,market:created.market}))return;
+      }
       const ticker=created.market_ticker,combo=created.market;
-      if(!ticker||!combo||combo.ticker!==ticker||combo.event_ticker!==created.event_ticker||!['initialized','active','open'].includes(combo.status))return;
       const strategy=legs.some(c=>c.signal.strategy==='over')?'over':'lead';
       // The fallback and independently verified combination ceilings are
       // selected from the current leg verification state.
@@ -1229,12 +1254,17 @@ async function recordComboRejection(legs,collection,status,detail){
       const budget=comboShardBudget(local,desired);
       if(budget<100)return;
       const existing=await pool.query(`SELECT status FROM trade_attempts WHERE market_ticker=$1`,[ticker]);
-      if(existing.rows.some(r=>['filled','combo_pending','reserved','check_order'].includes(r.status)))return;
+      const prior=existing.rows.find(r=>['filled','combo_pending','reserved','check_order'].includes(r.status));
+      if(prior){await comboPlanner.transition(queuePlan,'market_ready',prior.status==='filled'?'filled':'submitted',{outcome:'existing_'+prior.status});return;}
       if(Date.now()>=deadline||superseded())return;
       stage='rfq_creation';
+      if(!await comboPlanner.transition(queuePlan,'market_ready','creating_rfq'))return;
       const rfq=(await kalshi('/communications/rfqs',{auth:true,method:'POST',body:{market_ticker:ticker,target_cost_dollars:(comboRfqTargetCents(budget)/100).toFixed(2),rest_remainder:false,obscure_creator_id:true,replace_existing:true}})).id;
-      if(rfq)plans.push({legs,created,collection:collection.collection_ticker,ticker,combo,strategy,fraction:groupFraction,shard,budget,rfq});
+      if(!rfq)throw Error('Kalshi RFQ response omitted its ID');
+      if(!await comboPlanner.transition(queuePlan,'creating_rfq','rfq_open',{rfq}))return;
+      plans.push({legs,created,collection:collection.collection_ticker,ticker,combo,strategy,fraction:groupFraction,shard,budget,rfq,queuePlan});
      }catch(e){
+       await comboPlanner.transition(queuePlan,['creating_market','creating_rfq','market_ready','rfq_open'],'complete',{outcome:stage+'_failed: '+String(e.message).slice(0,250)});
        const exclusion=stage==='market_creation'?exchangeComboExclusion(e,legs):null;
        await recordComboRejection(legs,collection.collection_ticker,exclusion?.status||stage+'_failed',String(e.message));
        if(exclusion)await pool.query(`INSERT INTO combo_exclusions(exclusion_key,leg_tickers,status,detail)
@@ -1284,6 +1314,9 @@ async function recordComboRejection(legs,collection,status,detail){
           ON CONFLICT DO NOTHING RETURNING id`,
           [id,ticker,created.event_ticker,legs[0].milestone.id,legs[0].state.sport,strategy,reason,fraction,terms.count,terms.yesCost,Number(latest.balance),JSON.stringify(comboLegs(legs)),rfq,q.id]);
         if(!inserted.rowCount)continue;
+        if(!await comboPlanner.transition(plan.queuePlan,'rfq_open','submitted',{outcome:'quote_acceptance_reserved'})){
+          await pool.query(`UPDATE trade_attempts SET status='unfilled',error='Combo plan lease expired before acceptance',updated_at=now() WHERE id=$1 AND status='combo_pending'`,[id]);continue;
+        }
         try{
           // Accepting the maker's NO bid buys YES (the complementary price).
           const accepted=await withEntryProfitFloor({ticker,count:terms.count,price:terms.yesCost,fees,strategy,bankroll:Number(latest.balance)+Number(latest.portfolio_value)},
@@ -1313,6 +1346,7 @@ async function recordComboRejection(legs,collection,status,detail){
       VALUES($1,$2,'no_executable_quote',$3)`,[JSON.stringify(plan.legs.map(c=>c.market.ticker)),plan.collection,reason]);
   }
   return {filled:false,pending:false};
+  }finally{await Promise.all(groups.map(group=>comboPlanner.release(group,{superseded:superseded()}).catch(e=>console.warn('Combo plan release deferred:',e.message))))}
 }
 async function checkCurrentHeldCombinations(fill,{verifiedSince,superseded}){
   if(!live())return {filled:false,pending:false};
@@ -1398,34 +1432,15 @@ async function checkHeldCombinations(fills,{requestedFill=null,superseded=()=>fa
 async function diagnoseUnfilledCombo(candidates,filled){
   const unfilled=candidates.filter(c=>hasAsk(c.market)&&!filled.has(signalKey(c)));
   if(unfilled.length<2)return;
-  await pool.query(`CREATE TABLE IF NOT EXISTS combo_diagnostics (
-    id bigserial PRIMARY KEY,checked_at timestamptz NOT NULL DEFAULT now(),
-    leg_tickers jsonb NOT NULL,collection_ticker text,status text NOT NULL,detail text)`);
-  const recent=await pool.query(`SELECT 1 FROM combo_diagnostics WHERE checked_at>now()-interval '2 minutes' LIMIT 1`);
+  await ensureComboAudit();
+  const recent=await pool.query(`SELECT 1 FROM combo_diagnostics
+    WHERE status='unfilled_legs_not_eligible' AND checked_at>now()-interval '2 minutes' LIMIT 1`);
   if(recent.rowCount)return;
-  const unique=new Map();
-  for(const c of unfilled){if(!unique.has(c.event.event_ticker))unique.set(c.event.event_ticker,c);if(unique.size===6)break}
-  const legs=[...unique.values()];
-  if(legs.length<2)return;
-  let collection=null,status='no_compatible_collection',detail='';
-  try{
-    const collections=await collectionsForEvents(legs.map(c=>c.event.event_ticker),kalshi);
-    const group=compatibleComboGroups(collections,legs,64)[0];
-    if(group){
-      collection=group.collection.collection_ticker;
-      const selected_markets=selectedComboMarkets(group.legs);
-      try{
-        const created=await kalshi('/multivariate_event_collections/'+encodeURIComponent(collection),
-          {auth:true,method:'POST',body:{selected_markets,with_market_payload:true}});
-        status=created.market_ticker?'market_created':'invalid_response';
-        detail=created.market_ticker||JSON.stringify(created).slice(0,500);
-      }catch(e){status='creation_error';detail=String(e.message).slice(0,500)}
-    }else detail=`No all-YES collection among ${collections.length} event-filtered collections; ${legs.length} distinct events`;
-  }catch(e){status='collection_error';detail=String(e.message).slice(0,500)}
-  await pool.query(`INSERT INTO combo_diagnostics(leg_tickers,collection_ticker,status,detail) VALUES($1,$2,$3,$4)`,
-    [JSON.stringify(legs.map(c=>c.market.ticker)),collection,status,detail]);
-  console.info('Unfilled combo creation diagnostic:',status,collection,detail);
+  await pool.query(`INSERT INTO combo_diagnostics(leg_tickers,status,detail)
+    VALUES($1,'unfilled_legs_not_eligible','Only confirmed, currently held single fills enter the combo queue')`,
+    [JSON.stringify(unfilled.map(c=>c.market.ticker))]);
 }
+
 async function diagnoseHeldCombinations(fills,positions){
   const held=new Set((positions?.market_positions||[]).filter(p=>Number(p.position_fp??p.position??0)>0).map(p=>p.ticker));
   const byEvent=new Map();
@@ -1700,7 +1715,7 @@ async function watchLeadWindows(until){
               const confirmed=directNba?await auditSingleReadNbaLead(second,quote,milestone):
                 await auditSingleReadKalshiLead(second,quote,milestone);
               if(!confirmed)continue;
-              const verified={...signal,fraction:directKalshiLead?Math.min(.10,signal.fraction):finalLeadFraction(first,second,signal,false,quote),
+              const verified={...signal,fraction:directKalshiLead?directLeadFraction(second,signal,quote):finalLeadFraction(first,second,signal,false,quote),
                 reason:signal.reason+(directNba?'; Kalshi-only basketball single read; external and second score waived':
                   '; Kalshi-only live score and executable seller checked')};
               decision.signal=verified;decision.stage='cash_and_score_age';
@@ -1760,7 +1775,8 @@ async function watchReadyOverTickets(until){
           const event=(await marketMap([eventTicker])).get(eventTicker);
           if(!event||event.category!=='Sports')continue;
           const listed=(event.markets||[]).find(m=>m.ticker===ticket.ticker&&m.event_ticker===eventTicker);
-          if(!listed||!overSignal(state,listed))continue;
+          if(!listed)continue;
+          if(!overSignal(state,listed)){await resetLostOverWindow(state,listed);continue;}
           stage='independent_score_verification';
           state=await confirmedIndependentOver(state,milestone,listed);
           if(!state)continue;
@@ -1782,6 +1798,7 @@ async function watchReadyOverTickets(until){
           const fee=feeReserve(event,market),price=Number(market.yes_ask_dollars);
           const currentSignal=overSignal(state,market);
           if(!currentSignal)continue;
+          currentSignal.fraction=verifiedOverFraction(currentSignal,state,market);
           const count=contractCount(Math.min(balance,local),market,currentSignal.fraction,bankroll,Infinity,fee);
           if(!profitableCount(count,price,fee,'over',bankroll,state.type,state.remainingSeconds))continue;
           verified=currentSignal;
@@ -2179,8 +2196,8 @@ async function scan(cachedMilestones,discoveryCount){
         if(directKalshiLead&&!await auditSingleReadKalshiLead(freshState,quote,c.milestone))continue;
         if(c.signal.strategy==='lead'&&!soccerWinnerWindowOpen(freshState))continue;
         const verifiedSignal=stillQualifies;
-        const verifiedFraction=directKalshiLead?Math.min(.10,verifiedSignal.fraction):c.signal.strategy==='lead'?finalLeadFraction(c.state,freshState,verifiedSignal,!kalshiOnly,quote):
-          verifiedSignal.fraction;
+        const verifiedFraction=directKalshiLead?directLeadFraction(freshState,verifiedSignal,quote):c.signal.strategy==='lead'?finalLeadFraction(c.state,freshState,verifiedSignal,!kalshiOnly,quote):
+          c.signal.strategy==='over'?verifiedOverFraction(verifiedSignal,freshState,quote):verifiedSignal.fraction;
         if(verifiedFraction===null)continue;
         c.signal={...verifiedSignal,fraction:verifiedFraction,
           reason:verifiedSignal.reason+(directNba?'; Kalshi-only basketball single read; external and second score waived':
@@ -2256,8 +2273,12 @@ async function scan(cachedMilestones,discoveryCount){
                 checked=await confirmedIndependentOver(checked,c.milestone,executable,{decorate:withPropWindow});
                 if(!checked)continue;
               }
-              if(c.signal.strategy==='lead')c.signal={...c.signal,fraction:directKalshiLead?Math.min(.10,still.fraction):finalLeadFraction(state,checked,still,!kalshiOnly,executable)};
-              if(c.signal.strategy==='over')c.signal=overSignal(checked,executable);
+              if(c.signal.strategy==='lead')c.signal={...c.signal,fraction:directKalshiLead?directLeadFraction(checked,still,executable):finalLeadFraction(state,checked,still,!kalshiOnly,executable)};
+              if(c.signal.strategy==='over'){
+                const checkedSignal=overSignal(checked,executable);
+                c.signal=checkedSignal&&{...checkedSignal,fraction:verifiedOverFraction(checkedSignal,checked,executable)};
+                if(!c.signal)continue;
+              }
               c.market=executable;c.state=state=checked;
           }
         }

@@ -1,4 +1,28 @@
 import { KALSHI_ONLY_FRACTION,strongKalshiOnlyLead,proBasketballLeadRules } from './strategy.mjs';
+import { timedOverEntryValid } from './over_verification.mjs';
+
+export function verifiedOverFraction(signal,game,market){
+  if(signal?.strategy!=='over')return signal?.fraction;
+  if(!timedOverEntryValid(game,market))return Math.min(.10,signal.fraction);
+  return signal.fraction===.40?.40:.20;
+}
+
+export function lateCommandingLead(game,market){
+  if(!game?.verifiedLive||!game.scoreKnown||!game.scoreConsistent||!game.periodConsistent||
+    !Number.isFinite(game.homeUnits)||!Number.isFinite(game.awayUnits))return false;
+  const margin=Math.abs(game.homeUnits-game.awayUnits),seconds=game.remainingSeconds;
+  if(/basketball/.test(game.type||''))return game.period===(game.sport==='NCAAB'?2:4)&&
+    Number.isFinite(seconds)&&seconds>0&&seconds<105&&margin>=(game.sport==='NBA'?20:16);
+  if(/hockey/.test(game.type||''))return game.period===3&&seconds>0&&seconds<120&&margin>=5;
+  if(/football/.test(game.type||''))return game.period===4&&seconds>0&&seconds<90&&margin>=21;
+  if(/soccer/.test(game.type||''))return game.period===2&&game.soccerMinute>85&&margin>=3;
+  return false;
+}
+
+export function directLeadFraction(game,signal,market){
+  return signal?.strategy==='lead'&&lateCommandingLead(game,market)?.20:
+    Math.min(.10,signal?.fraction??.10);
+}
 
 export function leaderHasControl(game){
   if(game?.darts){
@@ -19,7 +43,8 @@ export function finalLeadFraction(first,second,signal,externallyVerified,market)
   if(proBasketballLeadRules(second)){
     const margin=Math.abs(second.homeUnits-second.awayUnits),seconds=second.remainingSeconds;
     if(!Number.isFinite(margin)||!Number.isFinite(seconds))return KALSHI_ONLY_FRACTION;
-    if(margin<20)return .10; // Retained +8 route.
+    if(lateCommandingLead(second,market))return .20;
+    if(margin<20)return .10; // The +9 and +12 NBA routes retain their lower allocation.
     return Math.min(.15,.05+(seconds<240||margin>=25?.05:0)+
       (seconds<120||margin>=30?.05:0));
   }

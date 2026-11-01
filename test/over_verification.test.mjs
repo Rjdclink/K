@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
 import {gameState,overSignal,confirmedOver} from '../src/strategy.mjs';
-import {overContractKey,freshOverState,overTiming,overCushion,sameOverReading,timedOverEntryValid,OVER_FRESH_MS,OVER_MAX_GAP_MS} from '../src/over_verification.mjs';
+import {overContractKey,freshOverObservation,freshOverState,overTiming,overCushion,sameOverReading,timedOverEntryValid,OVER_FRESH_MS,OVER_MAX_GAP_MS} from '../src/over_verification.mjs';
 const start=Date.parse('2026-11-01T12:00:00Z');
 const milestone={id:'game',type:'basketball_game',title:'Boston at New York',details:{league:'NBA'}};
 const market={ticker:'KXNBATOTAL-TEST-T139',event_ticker:'KXNBATOTAL-TEST',status:'active',floor_strike:139.5,title:'Over 139.5 total points',rules_primary:'Combined total points scored in the full game',strike_type:'greater',yes_ask_dollars:'.95',yes_ask_size_fp:'100'};
@@ -15,7 +15,7 @@ function harness({home=70,away=70,seller=true,decisions=[]}={}){
  let time=start,window=null,ids=0,externalCount=0,kalshiCount=0;const events=[],proofs=[];
  class Clock extends Date{constructor(...args){super(...(args.length?args:[time]))}static now(){return time}}
  const context=vm.createContext({Date:Clock,Number,JSON,Math,Promise,console,
-  overContractKey,freshOverState:(g,m)=>freshOverState(g,m,time),overTiming:(w,g,m,at=time)=>overTiming(w,g,m,at),sameOverReading,timedOverEntryValid:(g,m)=>timedOverEntryValid(g,m,time),OVER_FRESH_MS,OVER_MAX_GAP_MS,
+  overContractKey,freshOverObservation:g=>freshOverObservation(g,time),freshOverState:(g,m)=>freshOverState(g,m,time),overTiming:(w,g,m,at=time)=>overTiming(w,g,m,at),sameOverReading,timedOverEntryValid:(g,m)=>timedOverEntryValid(g,m,time),OVER_FRESH_MS,OVER_MAX_GAP_MS,
   gameState:liveState,confirmedOver,overSignal,randomUUID:()=>`id-${++ids}`,auditTable:async()=>{},
   pool:{query:async(sql,args=[])=>{
    if(sql.startsWith('CREATE'))return {rows:[],rowCount:0};
@@ -27,7 +27,7 @@ function harness({home=70,away=70,seller=true,decisions=[]}={}){
    if(sql.startsWith('SELECT 1 FROM over_verification_windows'))return {rows:[],rowCount:window?.generation===args[1]?1:0};
    if(sql.startsWith('UPDATE over_verification_windows SET last_seen')){if(window)window.last_seen=args[2];return {rows:[],rowCount:1}}
    if(sql.startsWith('UPDATE over_verification_windows')){if(!window||window.generation!==args[1])return {rows:[],rowCount:0};window.first_external_at??=args[2];window.first_external_id??=args[3];return {rows:[{...window}],rowCount:1}}
-   if(sql.startsWith('DELETE')){if(window&&(!args[1]||window.generation===args[1]))window=null;return {rows:[],rowCount:1}}
+   if(sql.startsWith('DELETE')){if(window&&(!args[1]||window.generation===args[1]||window.game_id===args[1]))window=null;return {rows:[],rowCount:1}}
    if(sql.startsWith('INSERT INTO verification_records')){proofs.push(JSON.parse(args[2]));return {rows:[],rowCount:1}}
    if(sql.includes('SELECT market_ticker,game_id,contract,generation'))return {rows:window?[window]:[]};
    throw Error(sql);
@@ -83,4 +83,11 @@ test('timing proof binds the exact contract and two distinct external checks',()
  assert.equal(timedOverEntryValid(verified,{...market,floor_strike:138.5},start+220001),false);
  assert.equal(timedOverEntryValid({...verified,overVerification:{...proof,firstExternalAt:start+19999}},market,start+220001),false);
  assert.equal(timedOverEntryValid({...verified,overVerification:{...proof,pairedExternalId:'one'}},market,start+220001),false);
+});
+
+test('a fresh correction seen only by the fast watcher resets both the clock and first external check',async()=>{
+ const h=harness();await h.run(0);await h.run(20000);assert.ok(h.window.first_external_id);
+ const corrected=state(start+19999,69,70);
+ assert.equal(await h.context.resetLostOverWindow(corrected,market),true);assert.equal(h.window,null);
+ await h.run(21000);assert.equal(h.window.initial_at,start+21000);assert.equal(h.window.first_external_id,null);
 });

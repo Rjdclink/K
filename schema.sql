@@ -239,3 +239,21 @@ CREATE TABLE IF NOT EXISTS over_verification_windows (
 
 ALTER TABLE trade_history ADD COLUMN IF NOT EXISTS reconciled_at timestamptz;
 ALTER TABLE account_cache ADD COLUMN IF NOT EXISTS invalidated_at timestamptz;
+
+-- Resume distinct unordered combo plans; never issue a second RFQ for a group.
+
+CREATE TABLE IF NOT EXISTS combo_plan_cursors (
+  scope_key text PRIMARY KEY,progress jsonb NOT NULL,updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS combo_plan_jobs (
+  group_key text PRIMARY KEY,queue_order bigserial NOT NULL,leg_tickers text[] NOT NULL,collection_ticker text NOT NULL,
+  phase text NOT NULL DEFAULT 'planned',lease_id uuid,lease_until timestamptz,
+  combo_ticker text,combo_event_ticker text,combo_market jsonb,rfq_id text,
+  rfq_requested_at timestamptz,rfq_attempts integer NOT NULL DEFAULT 0 CHECK(rfq_attempts<=1),
+  outcome text,created_at timestamptz NOT NULL DEFAULT clock_timestamp(),updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+ALTER TABLE combo_plan_jobs ADD COLUMN IF NOT EXISTS queue_order bigserial;
+CREATE INDEX IF NOT EXISTS combo_plan_jobs_queue_idx ON combo_plan_jobs(queue_order)
+  WHERE phase IN ('planned','market_ready');
+
+CREATE TABLE IF NOT EXISTS history_reconciliation_work (trade_id uuid PRIMARY KEY,last_attempt_at timestamptz NOT NULL);
