@@ -1,4 +1,5 @@
 export function verificationStatus(record){
+  if(record.passed&&record.mode==='independent_timed_over')return 'Both external checks and paired Kalshi check passed; final quote pending';
   if(record.passed)return record.mode==='kalshi_only_crossed_over'?
     'Two Kalshi score checks passed; final quote pending':'External score matched; fresh Kalshi read and final quote pending';
   if(record.verification_issue)return record.verification_issue;

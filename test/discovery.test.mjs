@@ -17,13 +17,13 @@ test('bounded parallel live batches cover every milestone without losing result 
   assert.equal(peak,12);
 });
 
-test('fast over queue reuses only live, executable single-read tickets from the last scan',()=>{
+test('fast over queue reuses only executable over tickets awaiting independent verification from the last scan',()=>{
   const rows=[{milestone:{id:'a'},signals:[
-    {ticker:'A',strategy:'over',execution:'Eligible for one fresh Kalshi score; checking live ask',ask:'.96',ask_size:'8'},
+    {ticker:'A',strategy:'over',execution:'Awaiting score verification',ask:'.96',ask_size:'8'},
     {ticker:'B',strategy:'over',execution:'No ask liquidity',ask:'1.0000',ask_size:'0'},
-    {ticker:'C',strategy:'over',execution:'Eligible for one fresh Kalshi score; checking live ask',ask:'1.0000',ask_size:'10'},
-    {ticker:'D',strategy:'lead',execution:'Eligible for one fresh Kalshi score; checking live ask',ask:'.90',ask_size:'10'}
-  ]},{milestone:{id:'b'},signals:[{ticker:'E',strategy:'over',execution:'Eligible for one fresh Kalshi score; checking live ask',ask:'.98',ask_size:'1'}]}];
+    {ticker:'C',strategy:'over',execution:'Awaiting score verification',ask:'1.0000',ask_size:'10'},
+    {ticker:'D',strategy:'lead',execution:'Awaiting score verification',ask:'.90',ask_size:'10'}
+  ]},{milestone:{id:'b'},signals:[{ticker:'E',strategy:'over',execution:'Awaiting score verification',ask:'.98',ask_size:'1'}]}];
   assert.deepEqual(readyOverTickets(rows,1).map(item=>item.signal.ticker),['A']);
   assert.deepEqual(readyOverTickets(rows).map(item=>item.signal.ticker),['A','E']);
 });

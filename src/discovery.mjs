@@ -101,7 +101,7 @@ export function prioritizeMarketGames(games,{signaledIds=new Set(),heldIds=new S
 export function readyOverTickets(rows,limit=12){
   return rows.flatMap(({milestone,signals})=>(signals||[])
     .filter(signal=>signal.strategy==='over'&&
-      signal.execution==='Eligible for one fresh Kalshi score; checking live ask'&&
+      (/^(?:Awaiting score verification|Waiting for first external check|First external check passed; waiting for paired checks|External score matched)/.test(signal.execution||''))&&
       signal.ticker&&Number(signal.ask)>0&&Number(signal.ask)<1&&Number(signal.ask_size)>0)
     .map(signal=>({milestone,signal}))).slice(0,limit);
 }

@@ -12,16 +12,27 @@ export function settlementLookupCandidates(pending,settled,now=Date.now(),offset
   return Array.from({length:Math.min(limit,due.length)},(_,i)=>due[(start+i)%due.length]);
 }
 export function manualSaleFill(sale){
-  const r=sale?.result||{},count=numeric(r.fill_count),price=numeric(r.average_fill_price),fee=numeric(r.average_fee_paid);
-  if(!sale?.ticker||!r.order_id||!Number.isFinite(count)||count<=0||!Number.isFinite(price)||price<=0||price>1||
-    !Number.isFinite(fee)||fee<0||!time(sale.created_at))return null;
-  return {ticker:sale.ticker,order_id:r.order_id,outcome_side:'yes',action:'sell',count_fp:String(count),
-    yes_price_dollars:String(price),fee_cost:String(count*fee),created_time:time(sale.created_at).toISOString()};
+  const r=sale?.result?.order||sale?.result||{};
+  const count=numeric(r.fill_count_fp??r.fill_count);
+  let price=numeric(r.average_fill_price),totalFee=numeric(r.average_fee_paid)*count;
+  if(!Number.isFinite(price)){
+    const maker=numeric(r.maker_fill_cost_dollars),taker=numeric(r.taker_fill_cost_dollars);
+    // Canonical NO-side buys can represent our reduce-only YES sale. Actual
+    // execution costs, not the limit price, establish its sale proceeds.
+    if(Number.isFinite(maker)&&Number.isFinite(taker))
+      price=r.outcome_side==='no'?(count-maker-taker)/count:(maker+taker)/count;
+    totalFee=numeric(r.maker_fees_dollars)+numeric(r.taker_fees_dollars);
+  }
+  const occurred=time(r.created_time)||time(sale?.created_at);
+  if(!sale?.ticker||!r.order_id||!Number.isFinite(count)||count<=0||!Number.isFinite(price)||price<0||price>1||
+    !Number.isFinite(totalFee)||totalFee<0||!occurred)return null;
+  return {ticker:sale.ticker,order_id:r.order_id,outcome_side:'yes',side:'yes',action:'sell',count_fp:String(count),
+    yes_price_dollars:String(price),fee_cost:String(totalFee),created_time:occurred.toISOString()};
 }
-export function reconcileManualSaleFills(fills,manualFills){
-  const manualOrders=new Set(manualFills.map(fill=>fill.order_id));
-  return fills.map(fill=>fill.action==='sell'&&manualOrders.has(fill.order_id)?
-    {...fill,outcome_side:'yes',side:'yes'}:fill);
+export function reconcileManualSaleFills(fills,manualFills,exitOrderIds=[]){
+  const saleOrders=new Set([...manualFills.map(fill=>fill.order_id),...exitOrderIds].filter(Boolean));
+  return fills.map(fill=>saleOrders.has(fill.order_id)?
+    {...fill,action:'sell',outcome_side:'yes',side:'yes'}:fill);
 }
 
 // Reconcile actual entry and exit fills. A partial sale appears only after its

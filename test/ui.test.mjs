@@ -136,12 +136,12 @@ test('score possession and net sale result refresh with the order display',()=>{
   assert.match(score(base),/Away 6\* · Home 4/);
   assert.match(score({...base,possession_side:'home'}),/Away 6 · Home 4\*/);
   const gain=order(base).children.at(-1);
-  assert.equal(gain.textContent,'↗ +$1.49');
+  assert.equal(gain.textContent,'Sell · +$1.49');
   assert.match(gain.className,/sell-gain/);
   const loss=order({...base,sell_profit_cents:-90}).children.at(-1);
-  assert.equal(loss.textContent,'↗ −$0.90');
+  assert.equal(loss.textContent,'Sell · −$0.90');
   assert.match(loss.className,/sell-loss/);
-  assert.equal(order({...base,sell_profit_cents:null}).children.at(-1).textContent,'↗ —');
+  assert.equal(order({...base,sell_profit_cents:null}).children.at(-1).textContent,'Sell · 92.0¢');
 });
 
 test('filled order timer is bright red, advances each second and reanchors to live score',()=>{
@@ -362,7 +362,7 @@ test('dashboard renders positions before delayed sell quotes and updates them af
   releaseQuote({ok:true,json:async()=>({quotes:[{ticker:'M',sell_quote:{count:10,price:.92},sell_profit_cents:149}]})});
   await new Promise(resolve=>setImmediate(resolve));
   assert.equal(elements.get('orders').children[0].children.at(-1).disabled,false);
-  assert.equal(elements.get('orders').children[0].children.at(-1).textContent,'↗ +$1.49');
+  assert.equal(elements.get('orders').children[0].children.at(-1).textContent,'Sell · +$1.49');
 });
 
 test('a temporary positions timeout keeps the last displayed filled order',async()=>{
@@ -404,3 +404,16 @@ test('filled card sums possible net profit across open positions and refreshes a
   assert.equal(elements.get('ordersProfit').textContent,'$1.10');
 });
 
+
+test('sell quote refresh covers every filled card beyond the first twenty and exposes failures',async()=>{
+ const elements=new Map(),requests=[];
+ const element=()=>({children:[],style:{},classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){},append(...x){this.children.push(...x)},replaceChildren(...x){this.children=x}});
+ const document={getElementById:id=>{if(!elements.has(id))elements.set(id,element());return elements.get(id)},querySelectorAll:()=>[],createElement:element};
+ const context=vm.createContext({document,window:{addEventListener(){}},navigator:{},localStorage:{getItem(){return null}},AbortSignal,URLSearchParams,setInterval(){},
+  fetch:async url=>{if(!url.startsWith('/api/sell-quotes'))return new Promise(()=>{});requests.push(url);const tickers=new URL(url,'https://k.test').searchParams.getAll('ticker');return {ok:true,json:async()=>({quotes:tickers.map(ticker=>({ticker,sell_quote:{price:.9,count:1},sell_profit_cents:-10}))})}}});
+ vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],context);
+ await vm.runInContext("currentOrders=Array.from({length:25},(_,i)=>({market_ticker:'M'+i,strategy:'over',sport:'NBA'}));refreshSellQuotes()",context);
+ assert.equal(requests.length,2);assert.equal(elements.get('orders').children.length,25);
+ assert.equal(elements.get('orders').children.at(-1).children.at(-1).disabled,false);
+ assert.equal(elements.get('orders').children.at(-1).children.at(-1).textContent,'Sell · −$0.10');
+});

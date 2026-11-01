@@ -55,7 +55,7 @@ export async function alternateCheck(source,game,milestone,{fetcher=fetch,market
   const matches=yahooGames(html).filter(g=>g.gameId==='nba.g.'+id&&Math.abs(Date.parse(g.startTime)-Date.parse(milestone.start_date))<3*3600000);
   if(matches.length!==1)return null;const g=matches[0];
   if(player){const value=yahooPlayerValue(g,player);return value===null?null:value===player.value}
-  if(/\d[QH]TOTAL/.test(market?.event_ticker||''))return null;
+  if(/[1-9](?:Q|P|H|INNING)(?:TEAM)?TOTAL/.test(market?.event_ticker||''))return null;
   return Number.isInteger(g.homeScore)&&Number.isInteger(g.awayScore)?g.homeScore===game.home&&g.awayScore===game.away:null;
  }catch{return null}
 }

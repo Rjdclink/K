@@ -222,3 +222,20 @@ CREATE TABLE IF NOT EXISTS player_prop_windows (
   last_seen timestamptz NOT NULL DEFAULT now(),
   last_value integer NOT NULL
 );
+
+-- Timed verification belongs to the exact contract, independently of scan windows.
+CREATE TABLE IF NOT EXISTS over_verification_windows (
+  market_ticker text PRIMARY KEY,
+  game_id text NOT NULL,
+  contract_key text NOT NULL,
+  generation uuid NOT NULL,
+  initial_at bigint NOT NULL,
+  last_seen bigint NOT NULL,
+  first_external_at bigint,
+  first_external_id uuid,
+  contract jsonb NOT NULL,
+  initial_state jsonb NOT NULL
+);
+
+ALTER TABLE trade_history ADD COLUMN IF NOT EXISTS reconciled_at timestamptz;
+ALTER TABLE account_cache ADD COLUMN IF NOT EXISTS invalidated_at timestamptz;

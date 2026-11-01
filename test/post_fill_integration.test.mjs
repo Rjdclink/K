@@ -75,7 +75,7 @@ test('immediate planner includes the newly filled leg even at a high historical 
 test('fast, weather, and upgrade paths share confirmed-fill notification; RFQs do not recursively trigger it',()=>{
   assert.match(functionSource('reconcileUpgrade','upgradeHeldOver'),/if\(filled>0\)await confirmedSingleFill\(row.id,row.market_ticker\)/);
   assert.match(functionSource('upgradeHeldOver','immediatelyUpgradeFilledOver'),/if\(filled>0\)await confirmedSingleFill\(id,quote.ticker\)/);
-  assert.match(source,/fetch:req=>fillComboQueue.run\(\(\)=>handleRequest\(req\)\)/);
+  assert.match(source,/fillComboQueue.run\(\(\)=>handleRequest\(req\)\)/);
   assert.doesNotMatch(functionSource('reconcileCombos','reconcileComboUpgrades'),/confirmedSingleFill/);
   const execute=source.slice(source.indexOf('async function executeCombo('),source.indexOf('async function checkCurrentHeldCombinations('));
   assert.match(execute,/while\(Date.now\(\)<deadline&&!superseded\(\)\)/);

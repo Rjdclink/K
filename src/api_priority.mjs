@@ -3,7 +3,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 const context=new AsyncLocalStorage();
 export const withApiPriority=(priority,work)=>context.run(priority,work);
 export const apiPriority=()=>context.getStore()||'normal';
-const rank={live:0,normal:1,background:2};
+const rank={interactive:0,live:1,normal:2,background:3};
 
 // Reserve only the next available shared slot. A queued catalog request must
 // not book a future slot ahead of a live score/quote that arrives afterward.

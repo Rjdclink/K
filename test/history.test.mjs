@@ -85,3 +85,21 @@ test('history includes a later verified combo add-on only after its actual fill'
   assert.equal(completedTrade(combo,[buy,{...second,order_id:'other'}],yes),null);
 });
 
+
+test('recorded automatic exits normalize canonical NO buys into YES sales and recover losses',()=>{
+  const reported={...sale,outcome_side:'no',side:'no',action:'buy',book_side:'bid'};
+  const normalized=reconcileManualSaleFills([buy,reported],[],['sell-1']);
+  assert.equal(completedTrade(entry,normalized,null)?.profitCents,-265);
+  assert.equal(completedTrade(entry,[buy,reported],null),null);
+  const other=reconcileManualSaleFills([{...reported,order_id:'unrelated'}],[],['sell-1']);
+  assert.equal(other[0].action,'buy','unrelated NO buys must not become YES exits');
+});
+test('modern executed sale uses actual fixed-point costs and fees rather than the limit price',()=>{
+  const actual=manualSaleFill({ticker:entry.market_ticker,created_at:sale.created_time,result:{order_id:'modern',
+    fill_count_fp:'10.00',side:'yes',action:'sell',outcome_side:'no',yes_price_dollars:'.50',
+    maker_fill_cost_dollars:'0.000000',taker_fill_cost_dollars:'4.500000',maker_fees_dollars:'0.000000',taker_fees_dollars:'.05'}});
+  assert.equal(Number(actual.yes_price_dollars),.55);
+  assert.equal(Number(actual.fee_cost),.05);
+  assert.equal(completedTrade(entry,[buy,actual],null)?.profitCents,-265);
+  assert.equal(manualSaleFill({ticker:entry.market_ticker,created_at:sale.created_time,result:{order_id:'unknown',fill_count_fp:'10',yes_price_dollars:'.99'}}),null,'a limit price alone cannot establish proceeds');
+});

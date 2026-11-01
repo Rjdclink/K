@@ -27,3 +27,12 @@ test('a failed admission rejects only that request and the queue recovers',async
   await assert.rejects(first,/database unavailable/);await second;await gate();
   assert.equal(calls,3);
 });
+
+test('interactive dashboard work overtakes live scanners while preserving the common rate limit',async()=>{
+ let release,blocked=true;const admitted=[];
+ const gate=createPriorityGate(async priority=>{if(blocked)return 250;admitted.push(priority);return 0},
+  {wait:()=>new Promise(resolve=>{release=resolve})});
+ const live=gate('live'),normal=gate('normal');await new Promise(r=>setImmediate(r));
+ const interactive=gate('interactive');blocked=false;release();await Promise.all([interactive,live,normal]);
+ assert.deepEqual(admitted,['interactive','live','normal']);
+});
