@@ -1,4 +1,4 @@
-import { KALSHI_ONLY_FRACTION,strongKalshiOnlyLead } from './strategy.mjs';
+import { KALSHI_ONLY_FRACTION,strongKalshiOnlyLead,proBasketballLeadRules } from './strategy.mjs';
 
 export function leaderHasControl(game){
   if(game?.darts){
@@ -16,7 +16,7 @@ export function leaderHasControl(game){
 export function finalLeadFraction(first,second,signal,externallyVerified,market){
   if(signal?.strategy!=='lead')return signal?.fraction;
   if(/^Restricted 5% draw\b/.test(signal.reason||''))return .05;
-  if(second?.sport==='NBA'&&/basketball/.test(second.type)){
+  if(proBasketballLeadRules(second)){
     const margin=Math.abs(second.homeUnits-second.awayUnits),seconds=second.remainingSeconds;
     if(!Number.isFinite(margin)||!Number.isFinite(seconds))return KALSHI_ONLY_FRACTION;
     if(margin<20)return .10; // Retained +8 route.

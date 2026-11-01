@@ -33,6 +33,10 @@ export function soccerOverWaitMs(firstSeen,now=Date.now()){
 }
 export function soccerOverStable(firstSeen,now=Date.now()){return soccerOverWaitMs(firstSeen,now)===0;}
 const N = v => v === null || v === undefined || v === '' ? NaN : Number(v);
+// Four-quarter professional leagues share the NBA entry tiers. WNBA and
+// college basketball retain their separately configured thresholds.
+export const proBasketballLeadRules=game=>/basketball/.test(String(game?.type||''))&&
+  !/esports/.test(String(game?.type||''))&&!['WNBA','NCAAB','NCAAW'].includes(game?.sport);
 const pick = (obj, names) => names.map(k => obj?.[k]).find(v => Number.isFinite(N(v)));
 export function sportName(m) {
   const s = `${m.details?.competition || ''} ${m.details?.league || ''} ${m.type || ''}`.toLowerCase();
@@ -221,7 +225,7 @@ export function periodValue(game,market){
 }
 export function endWindow(game){
   if(!game.verifiedLive||!game.scoreKnown||!game.periodConsistent)return false;
-  if(/basketball/.test(game.type))return game.period===(['NCAAB','NCAAW'].includes(game.sport)?2:4) && game.remainingSeconds>0 && game.remainingSeconds<(game.sport==='NBA'?450:game.sport==='WNBA'?300:90);
+  if(/basketball/.test(game.type))return game.period===(['NCAAB','NCAAW'].includes(game.sport)?2:4) && game.remainingSeconds>0 && game.remainingSeconds<(proBasketballLeadRules(game)?450:game.sport==='WNBA'?300:90);
   if(/football/.test(game.type))return game.sport==='CFB'?cfbLeadWindow(game):game.period===4 && game.remainingSeconds>0 && game.remainingSeconds<360;
   if(/hockey/.test(game.type))return game.period===3 && game.remainingSeconds>0 && game.remainingSeconds<420;
   if(/baseball/.test(game.type))return game.period===9;
@@ -249,11 +253,18 @@ export function leadWatchReason(game){
   }
   if(/basketball/.test(type)){
     const college=['NCAAB','NCAAW'].includes(game.sport),final=college?2:4;
-    const near=college?180:game.sport==='NBA'?540:game.sport==='WNBA'?420:180;
+    const near=college?180:proBasketballLeadRules(game)?540:game.sport==='WNBA'?420:180;
     if(game.period===final&&Number.isFinite(seconds)&&seconds>0&&seconds<=near&&margin>=8)
-      return game.sport==='NBA'&&(seconds<450&&margin>=25||seconds<390&&margin>=20||seconds<90&&margin>=8)?
-        `Tracking ${margin}-point lead; NBA score and clock rule reached; checking market and ask`:
-        `Tracking ${margin}-point lead; waiting for the final-period winner window`;
+      return proBasketballLeadRules(game)&&(seconds<450&&margin>=25||seconds<390&&margin>=20||seconds<90&&margin>=8)?
+        `Tracking ${margin}-point lead; professional basketball score and clock rule reached; checking market and ask`:
+        `Tracking ${margin}-point ${game.sport||'basketball'} lead; entry requires ${
+          college?'+8 strictly under 1:30 in the second half':proBasketballLeadRules(game)?
+          '+25 under 7:30, +20 under 6:30, or +8 under 1:30 in Q4':game.sport==='WNBA'?
+          '+11 at 5:00 or less, or +8 under 1:30 in Q4':'+8 strictly under 1:30 in Q4'}; ${
+          (game.sport==='WNBA'?seconds<=300&&margin>=11||seconds<90&&margin>=8:seconds<90&&margin>=8)?
+          !college&&game.possessionSide!==(game.home>game.away?'home':'away')?
+          'score and clock qualify; waiting for leader possession':'score and clock qualify; checking winner market and ask':
+          'waiting for the score and clock threshold'}`;
   }
   if(/hockey/.test(type)){
     if(game.period===3&&Number.isFinite(seconds)&&seconds>0&&seconds<=180&&margin>=4)
@@ -271,8 +282,10 @@ export function leadWatchReason(game){
   if(/soccer/.test(type)&&game.period===2&&!game.soccerExtraTime&&
     Number.isFinite(game.soccerMinute)&&game.soccerMinute>=45&&
     (margin>=3||game.soccerMinute>=75&&margin>=2))
-    return `Tracking ${margin}-goal lead; ${margin>=3||game.soccerMinute>82.5&&margin>=2?
-      'late winner rule reached; checking winner market and ask':'waiting for the late winner window'}`;
+    return `Tracking ${margin}-goal lead; ${margin>=3&&game.soccerMinute>=50||game.soccerMinute>82.5&&margin>=2?
+      'late winner rule reached; checking winner market and ask':
+      margin>=3?'entry starts at 50\u2032 elapsed (five minutes into the second half)':
+      'entry requires +2 strictly under 7:30 remaining'}`;
   return null;
 }
 export function overSignal(game, market) {
@@ -633,7 +646,7 @@ export function leadSignal(game, market) {
   const baseball=/baseball/.test(game.type);
   const seconds=game.remainingSeconds,margin=Math.abs(game.homeUnits-game.awayUnits);
   const soccerSecondHalf=soccer&&game.period===2&&game.periodConsistent&&
-    Number.isFinite(game.soccerMinute)&&game.soccerMinute>=45;
+    Number.isFinite(game.soccerMinute)&&game.soccerMinute>=50;
   // The displayed elapsed minute is enough to establish the regulation-time
   // window when this live feed omits its final-whistle countdown.
   const soccerLate=soccer&&game.period===2&&game.periodConsistent&&
@@ -645,13 +658,13 @@ export function leadSignal(game, market) {
   const baseballNinth=baseball&&game.period===9&&[1,2].includes(game.inningHalf)&&game.outs>=1&&game.outs<=2;
   const finalTime=baseball?baseballEighth||baseballNinth:soccer?soccerSecondHalf:
     game.period===segments&&game.periodConsistent&&Number.isFinite(seconds)&&seconds>0&&
-    (basketball?game.sport==='NBA'?seconds<450:game.sport==='WNBA'?seconds<=300:seconds<90:
+    (basketball?proBasketballLeadRules(game)?seconds<450:game.sport==='WNBA'?seconds<=300:seconds<90:
       hockey?seconds<120:game.sport==='CFB'?cfbLeadWindow(game):seconds<360);
   if (!game.verifiedLive || !game.scoreKnown || soccer&&!game.scoreConsistent || !finalTime || market.status!=='active' && market.status!=='open') return null;
   const h=game.homeUnits,a=game.awayUnits;
   if (!Number.isFinite(h)||!Number.isFinite(a)) return null;
   const minimum=basketball?['NCAAB','NCAAW'].includes(game.sport)?8:
-      game.sport==='WNBA'?(seconds<90?8:11):game.sport==='NBA'?(seconds<90?8:seconds<390?20:25):8:
+      game.sport==='WNBA'?(seconds<90?8:11):proBasketballLeadRules(game)?(seconds<90?8:seconds<390?20:25):8:
     football?game.sport==='CFB'?(seconds>=CFB_MIDDLE_WINDOW_SECONDS?CFB_EARLY_MINIMUM:
       seconds>=CFB_LEAD_WINDOW_SECONDS?CFB_MIDDLE_MINIMUM:CFB_LEAD_MINIMUM):seconds<120?10:11:
     hockey?4:baseball?baseballEighth?5:4:soccer?soccerLate?2:3:null;
@@ -686,7 +699,7 @@ export function leadFraction(game,margin,minimum){
 // The NBA +25 under 7:30 and +20 under 6:30 Q4 routes use one Kalshi score.
 // This is an entry rule, not proof the lead is irreversible.
 export function nbaSingleReadLead(game,market,now=Date.now()){
-  return game?.sport==='NBA'&&/basketball/.test(String(game.type||''))&&
+  return proBasketballLeadRules(game)&&/basketball/.test(String(game.type||''))&&
     game.period===4&&game.feedId===game.id&&game.scoreConsistent&&game.periodConsistent&&
     Number.isFinite(game.observedAt)&&now>=game.observedAt&&now-game.observedAt<=10000&&
     Number.isFinite(game.updatedAt)&&game.updatedAt<=game.observedAt+5000&&
