@@ -66,7 +66,7 @@ export function nearEntryPhase(game){
     const profile=basketballLeadProfile(game);
     return Boolean(profile)&&period>=profile.period&&seconds>=0&&seconds<=profile.tiers[0][1]+90;
   }
-  if(/hockey/.test(type))return period>=3&&seconds>=0&&seconds<=180;
+  if(/hockey/.test(type))return period>=3&&seconds>=0&&seconds<=300;
   if(/soccer/.test(type))return period===2&&!game.soccerExtraTime&&
     Number.isFinite(game.soccerMinute)&&
     (game.soccerMinute>=75||game.soccerMinute>=45&&

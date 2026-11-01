@@ -30,7 +30,7 @@ test('CFB has no sub-eleven-point exception, even in the final second',()=>{
 });
 test('CFB possession changes do not veto two qualifying fallback reads; all other verification stays',()=>{
   const first=state(102,21,'home',{observed:at-12000}),second=state(89,21,'away');
-  assert.equal(kalshiOnlyLead(state(270,21,'home',{observed:at-12000}),second,market),false,'both reads must be in the new window');
+  assert.equal(kalshiOnlyLead(state(451,21,'home',{observed:at-12000}),second,market),false,'both reads must be in the new window');
   assert.equal(kalshiOnlyLead(first,second,market),true);
   assert.equal(confirmedExternalLead(first,second,market),true);
   assert.equal(kalshiOnlyLead(first,{...second,home:42,homeUnits:42},market),false,'score change still blocks');
@@ -38,22 +38,15 @@ test('CFB possession changes do not veto two qualifying fallback reads; all othe
   assert.equal(kalshiOnlyLead(first,{...second,observedAt:first.observedAt+9000},market),false,'ten-second dwell remains');
   assert.equal(kalshiOnlyLead(first,{...second,feedId:'different'},market),false,'fixture identity remains');
 });
-test('CFB commanding-lead tiers use strict clock boundaries and require external confirmation in the added windows',()=>{
-  for(const [margin,seconds,allowed] of [
-    [24,450,false],[24,449,true],[23,449,false],[24,325,true],
-    [17,300,false],[17,299,true],[16,299,false],
-    [12,270,false],[12,269,true],[11,269,false],
-  ])assert.equal(Boolean(leadSignal(state(seconds,margin),market)),allowed,`${margin} at ${seconds}s`);
-  assert.match(leadWatchReason(state(451,24)),/\+24 under 7:30/);
-  assert.match(leadWatchReason(state(301,17)),/\+17 under 5:00/);
-  assert.equal(leadWatchReason(state(451,17)),null);
-  assert.equal(endWindow(state(449,24)),true);
-  assert.equal(endWindow(state(449,17)),false);
-  const first=state(330,24,'away',{observed:at-12000}),second=state(325,24);
-  assert.equal(confirmedExternalLead(first,second,market),true);
-  assert.equal(kalshiOnlyLead(first,second,market),false);
-  assert.equal(confirmedExternalLead(state(300,17,'away',{observed:at-12000}),state(299,17),market),false);
-  assert.equal(confirmedExternalLead(state(295,17,'away',{observed:at-12000}),state(290,17),market),true);
-  assert.equal(kalshiOnlyLead(state(295,17,'away',{observed:at-12000}),state(290,17),market),false);
-  assert.equal(kalshiOnlyLead(state(260,24,'away',{observed:at-12000}),state(250,24),market),true);
+test('CFB commanding-lead tiers include the exact clock boundary',()=>{
+ for(const [margin,seconds,allowed] of [[18,450,true],[18,451,false],[17,450,false],
+ [15,300,true],[15,301,false],[14,300,false],[12,270,true],[12,271,false],[11,270,false]])
+  assert.equal(Boolean(leadSignal(state(seconds,margin),market)),allowed,`${margin} at ${seconds}s`);
+ assert.match(leadWatchReason(state(451,18)),/18\+.*7:30 or less/);
+ assert.match(leadWatchReason(state(301,15)),/15\+.*5:00 or less/);
+ assert.equal(leadWatchReason(state(451,17)),null);
+ assert.equal(endWindow(state(450,18)),true);
+ assert.equal(endWindow(state(450,17)),false);
+ const first=state(300,15,'away',{observed:at-12000}),second=state(299,15);
+ assert.equal(confirmedExternalLead(first,second,market),true);
 });

@@ -197,6 +197,15 @@ test('filled order timer is bright red, advances each second and reanchors to li
   paintScore(chosen,{...base,strategy:'lead',reason:'Boston leads 71–79 points (8 points ahead)',score_scanned_at:new Date(start).toISOString()},start);
   assert.match(chosen.innerHTML,/Away <strong class="chosen-score">71<\/strong> · Home 79/);
   assert.match(page,/\.chosen-score\{color:#26f5ae/);
+  paintScore(chosen,{...base,sport:'Soccer',sport_family:'soccer_match',strategy:'lead',
+    game_title:'Puskas Akademia vs Debreceni',selected_name:'Debreceni',selected_side:'away',
+    home_score:1,away_score:3,score_scanned_at:new Date(start).toISOString()},start+91000);
+  assert.match(chosen.innerHTML,/Last score · <strong class="chosen-score">Debreceni 3<\/strong> · Puskas Akademia 1/);
+  paintScore(chosen,{...base,sport:'Soccer',strategy:'lead',game_title:'Basaksehir vs Samsunspor',
+    selected_name:'Basaksehir',selected_side:'home',home_score:3,away_score:1,
+    game_status:'inactive',score_scanned_at:new Date(start).toISOString()},start);
+  assert.match(chosen.innerHTML,/Last score · <strong class="chosen-score">Basaksehir 3<\/strong> · Samsunspor 1/);
+
   assert.match(page,/Tennis retains its deciding-set match-clinching service game/);
   const tennis=order({...base,sport:'Tennis',sport_family:'tennis_tournament_singles',game_title:'Berrettini vs de Minaur',strategy:'lead',selected_name:'Alex de Minaur'});
   assert.equal(tennis.children[0].children[0].className,'chosen-name');
