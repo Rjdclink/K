@@ -61,15 +61,20 @@ export function scanMilestones(milestones,recentLiveIds=new Set(),now=Date.now()
 // games with a recent signal, and games with a held position needing exits.
 export function nearEntryPhase(game){
   const type=String(game?.type||''),period=Number(game?.period),seconds=Number(game?.remainingSeconds);
-  if(/football/.test(type))return period>=4||period===3&&seconds>=0&&seconds<=180;
+  if(/football/.test(type))return period>=4&&seconds>=0&&seconds<=(game.sport==='CFB'?390:480);
   if(/basketball/.test(type)){
     const college=['NCAAB','NCAAW'].includes(game.sport),final=college?2:4;
-    return period>=final||period===final-1&&seconds>=0&&seconds<=180;
+    return period>=final&&seconds>=0&&seconds<=(college?180:game.sport==='NBA'?540:420);
   }
-  if(/hockey/.test(type))return period>=3||period===2&&seconds>=0&&seconds<=180;
-  if(/soccer/.test(type))return period>=2&&Number(game.soccerMinute)>=70;
-  if(/baseball/.test(type))return period>=8;
-  if(/rugby|handball|lacrosse/.test(type))return period>=(/lacrosse/.test(type)?4:2);
+  if(/hockey/.test(type))return period>=3&&seconds>=0&&seconds<=180;
+  if(/soccer/.test(type))return period>=2&&Number.isFinite(game.soccerMinute)&&
+    (game.soccerMinute>=45&&game.soccerMinute<50||game.soccerMinute>=80);
+  if(/baseball/.test(type))return period>=9||period===8&&game.inningHalf===2&&game.outs>=1;
+  if(/rugby|handball|lacrosse/.test(type)){
+    const final=/lacrosse/.test(type)?4:2,buffer=/rugby/.test(type)?300:600;
+    return period===final&&seconds>=0&&seconds<=buffer||
+      !/rugby/.test(type)&&period===final-1&&seconds>=0&&seconds<=60;
+  }
   if(/golf/.test(type))return period===4&&game.golf?.board?.some(player=>Number(player.current_round_thru)>=16);
   if(/cricket/.test(type))return game.cricket?.innings===2&&Number(game.cricket.ballsRemaining)<=24;
   if(/table_tennis/.test(type))return game.tableTennis?.setNumber>=game.tableTennis?.bestOf-1;

@@ -114,7 +114,10 @@ function ensurePropWindows(){return propWindowsReady??=pool.query(`CREATE TABLE 
   market_ticker text PRIMARY KEY,game_id text NOT NULL,first_crossed timestamptz NOT NULL DEFAULT now(),
   last_seen timestamptz NOT NULL DEFAULT now(),last_value integer NOT NULL)`).catch(e=>{propWindowsReady=null;throw e})}
 let scanStatusReady;
-function ensureScanStatus(){return scanStatusReady??=pool.query('ALTER TABLE scan_status ADD COLUMN IF NOT EXISTS discovered integer NOT NULL DEFAULT 0').catch(e=>{scanStatusReady=null;throw e})}
+function ensureScanStatus(){return scanStatusReady??=(async()=>{
+  await pool.query('ALTER TABLE scan_status ADD COLUMN IF NOT EXISTS discovered integer NOT NULL DEFAULT 0');
+  await pool.query('ALTER TABLE scan_status ADD COLUMN IF NOT EXISTS early_market_at timestamptz');
+})().catch(e=>{scanStatusReady=null;throw e})}
 let scoreTimeReady;
 function ensureScoreTime(){return scoreTimeReady??=pool.query('ALTER TABLE game_snapshots ADD COLUMN IF NOT EXISTS score_observed_at timestamptz').catch(e=>{scoreTimeReady=null;throw e})}
 let leadWatchReady;
@@ -1603,7 +1606,7 @@ async function publishLivePreview(active,liveMap,scanStarted){
     await pool.query(`INSERT INTO game_snapshots(id,title,sport,sport_family,home,away,status,progress,period,time_left,clock_seconds,clock_label,clock_observed_at,scanned_at,signals,possession_side,home_team_id,away_team_id) VALUES ${values}
       ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,sport=EXCLUDED.sport,sport_family=EXCLUDED.sport_family,home=EXCLUDED.home,away=EXCLUDED.away,status=EXCLUDED.status,progress=EXCLUDED.progress,period=EXCLUDED.period,time_left=EXCLUDED.time_left,clock_seconds=EXCLUDED.clock_seconds,clock_label=EXCLUDED.clock_label,
       clock_observed_at=CASE WHEN game_snapshots.clock_seconds IS NOT DISTINCT FROM EXCLUDED.clock_seconds AND game_snapshots.period=EXCLUDED.period THEN game_snapshots.clock_observed_at ELSE EXCLUDED.clock_observed_at END,
-      scanned_at=EXCLUDED.scanned_at,signals='[]'::jsonb,value_signals='[]'::jsonb,possession_side=EXCLUDED.possession_side,home_team_id=EXCLUDED.home_team_id,away_team_id=EXCLUDED.away_team_id
+      score_observed_at=EXCLUDED.scanned_at,possession_side=EXCLUDED.possession_side,home_team_id=EXCLUDED.home_team_id,away_team_id=EXCLUDED.away_team_id
       WHERE game_snapshots.scanned_at<=EXCLUDED.scanned_at`,batch.flat());
   }
 }
@@ -1628,9 +1631,10 @@ async function scan(cachedMilestones,discoveryCount){
     const games=ms.map(m=>({milestone:m,state:gameState(m,liveMap.get(m.id))})).filter(g=>
       g.state.verifiedLive||Date.parse(g.milestone.start_date||'')>Date.now()-3600000);
     const active=games.filter(g=>g.state.verifiedLive && g.state.scoreKnown);
+    scanned=active.length;
     // Publish fresh live scores before quote discovery or cash/combination
     // work. A slow exchange response must not empty the dashboard's live list.
-    await ensureValueScan();
+    await Promise.all([ensureValueScan(),ensureScoreTime()]);
     await publishLivePreview(active,liveMap,scanStarted);
     if(live()||exitOnly())await Promise.all([reconcileCombos(),reconcileComboUpgrades()]);
     if(live()&&!cachedMilestones)try{await reconcileFundingTransfers()}catch(e){console.warn('Transfer history unavailable:',e.message)}
@@ -1645,12 +1649,20 @@ async function scan(cachedMilestones,discoveryCount){
     const marketCandidates=active.filter(g=>eligibleForMarkets(g.state)).map(g=>({...g,watchable:Boolean(leadWatchReason(g.state))}));
     const {rows:heldGames}=await pool.query(`SELECT DISTINCT game_id FROM trade_attempts
       WHERE status='filled' AND game_id=ANY($1::text[])`,[marketCandidates.map(g=>g.milestone.id)]);
+    // The cheap score feed stays broad enough to spot a crossed over or a game
+    // approaching its entry window. Early-game market catalog/quote requests
+    // are expensive, so rotate those once a minute across all function instances.
+    // The fast pass always includes entry windows, held games and watched props.
+    const {rows:earlySweep}=await pool.query(`UPDATE scan_status SET early_market_at=clock_timestamp()
+      WHERE id=1 AND (early_market_at IS NULL OR early_market_at<clock_timestamp()-interval '60 seconds')
+      RETURNING id`);
     const marketGames=prioritizeMarketGames(marketCandidates,{
       signaledIds:new Set([...propWatchIds,...recentLive.filter(row=>(row.signals||[]).some(signal=>
         signal.strategy!=='watch'&&Number(signal.ask)>0&&Number(signal.ask)<1&&Number(signal.ask_size)>0)).map(row=>row.id)]),
-      heldIds:new Set(heldGames.map(row=>row.game_id))
+      heldIds:new Set(heldGames.map(row=>row.game_id)),
+      lowBudget:earlySweep.length?12:0
     });
-    console.info('Live market priority:',JSON.stringify({live:marketCandidates.length,marketChecked:marketGames.length,earlyDeferred:marketCandidates.length-marketGames.length}));
+    console.info('Live market priority:',JSON.stringify({live:marketCandidates.length,marketChecked:marketGames.length,earlySweep:Boolean(earlySweep.length),earlyDeferred:marketCandidates.length-marketGames.length}));
     const events=await marketMap(marketGames.flatMap(g=>linkedEventTickers(g.milestone)));
     // Market discovery can take longer than a scoring play. Refresh live
     // player stats immediately before deciding which props crossed their line.
@@ -1740,7 +1752,6 @@ async function scan(cachedMilestones,discoveryCount){
           upgradeCandidates.push({...c,upgradeFill:original});
       }
       snapshotCandidates.set(state.id,candidates);
-      if(state.verifiedLive)scanned++;
       snapshotRows.set(state.id,snapshotRow({milestone,state},liveMap,scanStarted));
       snapshotRows.get(state.id).valueSignals=valueSignals;
       snapshotRows.get(state.id).leadWatch=leadWatchReason(state);

@@ -61,8 +61,8 @@ test('market pass prioritizes entry windows across sports and rotates early game
     game('mlb-early','baseball_game',5,120,'MLB'),
     game('cfb-late','football_game',4,240,'CFB'),game('nba-close','basketball_game',3,90,'NBA'),
     game('nhl-close','hockey_game',2,90,'NHL'),
-    {...game('soccer-late','soccer_game',2,120,'Soccer'),state:{type:'soccer_game',period:2,soccerMinute:75}},
-    game('mlb-late','baseball_game',8,120,'MLB'),
+    {...game('soccer-late','soccer_game',2,120,'Soccer'),state:{type:'soccer_game',period:2,soccerMinute:85}},
+    {...game('mlb-late','baseball_game',8,120,'MLB'),state:{type:'baseball_game',period:8,inningHalf:2,outs:2}},
     {...game('tennis','tennis_match',2,0,'ATP'),state:{type:'tennis_match',tennis:{bestOf:3,firstSets:1,secondSets:0}}}
   ];
   assert.equal(nearEntryPhase(games[0].state),false);
@@ -71,11 +71,22 @@ test('market pass prioritizes entry windows across sports and rotates early game
   assert.equal(nearEntryPhase({type:'tennis_match',tennis:{bestOf:3,firstSets:1,secondSets:0}}),true);
   assert.equal(nearEntryPhase({type:'cricket_match',cricket:{innings:2,ballsRemaining:19}}),true);
   assert.deepEqual(prioritizeMarketGames(games,{cycle:0,lowBudget:2}).map(g=>g.milestone.id),
-    ['cfb-late','nba-close','nhl-close','soccer-late','mlb-late','tennis','cfb-early','nba-early']);
+    ['cfb-late','soccer-late','mlb-late','tennis','cfb-early','nba-early']);
   assert.deepEqual(prioritizeMarketGames(games,{cycle:1,lowBudget:2}).slice(-2).map(g=>g.milestone.id),
     ['nhl-early','soccer-early']);
   const urgent=prioritizeMarketGames(games,{cycle:0,lowBudget:0,heldIds:new Set(['cfb-early']),signaledIds:new Set(['nba-early'])});
   assert.deepEqual(urgent.slice(0,2).map(g=>g.milestone.id),['cfb-early','nba-early']);
+});
+
+test('fast market checks start near each sport entry rather than at the start of a final period',()=>{
+  assert.equal(nearEntryPhase({type:'football_game',sport:'CFB',period:4,remainingSeconds:750}),false);
+  assert.equal(nearEntryPhase({type:'football_game',sport:'CFB',period:4,remainingSeconds:389}),true);
+  assert.equal(nearEntryPhase({type:'basketball_game',sport:'NBA',period:4,remainingSeconds:660}),false);
+  assert.equal(nearEntryPhase({type:'basketball_game',sport:'NBA',period:4,remainingSeconds:500}),true);
+  assert.equal(nearEntryPhase({type:'rugby_match',period:2,remainingSeconds:1900}),false);
+  assert.equal(nearEntryPhase({type:'rugby_match',period:2,remainingSeconds:170}),true);
+  assert.equal(nearEntryPhase({type:'soccer_game',period:2,soccerMinute:46}),true);
+  assert.equal(nearEntryPhase({type:'soccer_game',period:2,soccerMinute:63}),false);
 });
 
 test('find game and both total families from a game-only milestone',()=>{
