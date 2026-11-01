@@ -8,7 +8,7 @@ import pg from 'pg';
 import { page } from './ui.mjs';
 import { historyPage } from './history_ui.mjs';
 import { completedTrade, manualSaleFill, reconcileManualSaleFills, settlementLookupCandidates } from './history.mjs';
-import { gameState, overSignal, playerOverSpec, confirmedOver, kalshiOnlyOver, kalshiOnlyLead, fallbackOverFraction, fallbackScoringUnits, confirmedExternalLead, leadSignal, confirmedSoccerTwoGoalClock, confirmedDrawClock, soccerTwoGoalWindowOpen, externallyVerifiedEarlySoccerLead, leadWatchReason, additionalLeadSignal, cricketLeadSignal, drawSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback } from './strategy.mjs';
+import { gameState, overSignal, playerOverSpec, confirmedOver, kalshiOnlyOver, kalshiOnlyLead, fallbackOverFraction, fallbackScoringUnits, confirmedExternalLead, leadSignal, confirmedSoccerTwoGoalClock, confirmedDrawClock, soccerTwoGoalWindowOpen, externallyVerifiedEarlySoccerLead, leadWatchReason, additionalLeadSignal, cricketLeadSignal, drawSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback, PLAYER_PROP_WINDOW_MS } from './strategy.mjs';
 import { reviewMiss } from './ai.mjs';
 import { kalshiSignature } from './auth.mjs';
 import { marketShard, shardCash, transferPlan, comboShardBudget, awaitShardCash } from './funding.mjs';
@@ -30,7 +30,6 @@ import { sellQuote } from './sell.mjs';
 import { manualComboQuote } from './combo_manual.mjs';
 import { yesDepthAtAsk, bestYesAsk, bestAsksForTickers } from './orderbook.mjs';
 import { filledOrderGateCount } from './entry_floor.mjs';
-import { valueCandidate } from './value_scan.mjs';
 
 const API='https://external-api.kalshi.com/trade-api/v2';
 const pool = new pg.Pool({connectionString:process.env.DATABASE_URL, max:4, idleTimeoutMillis:15000});
@@ -126,15 +125,6 @@ function ensureLeadWatch(){return leadWatchReady??=(async()=>{
     game_id text PRIMARY KEY,milestone jsonb NOT NULL,updated_at timestamptz NOT NULL DEFAULT now())`);
   await pool.query('ALTER TABLE lead_watch_milestones ADD COLUMN IF NOT EXISTS watchable boolean NOT NULL DEFAULT false');
 })().catch(e=>{leadWatchReady=null;throw e})}
-let valueScanReady;
-function ensureValueScan(){return valueScanReady??=Promise.all([
-  pool.query(`ALTER TABLE game_snapshots ADD COLUMN IF NOT EXISTS value_signals jsonb NOT NULL DEFAULT '[]'::jsonb`),
-  pool.query(`CREATE TABLE IF NOT EXISTS value_scan_observations (
-    observed_at timestamptz NOT NULL,game_id text NOT NULL,market_ticker text NOT NULL,
-    role text NOT NULL,ask numeric NOT NULL,ask_size numeric NOT NULL,
-    game_state jsonb NOT NULL,market_rules text NOT NULL,
-    PRIMARY KEY(observed_at,market_ticker))`)
-]).catch(e=>{valueScanReady=null;throw e})}
 function accountBalance({fresh=false}={}){
   const job=balanceQueue.catch(()=>{}).then(async()=>{
     const client=await pool.connect();let deadline;const controller=new AbortController();
@@ -1634,7 +1624,7 @@ async function scan(cachedMilestones,discoveryCount){
     scanned=active.length;
     // Publish fresh live scores before quote discovery or cash/combination
     // work. A slow exchange response must not empty the dashboard's live list.
-    await Promise.all([ensureValueScan(),ensureScoreTime()]);
+    await ensureScoreTime();
     await publishLivePreview(active,liveMap,scanStarted);
     if(live()||exitOnly())await Promise.all([reconcileCombos(),reconcileComboUpgrades()]);
     if(live()&&!cachedMilestones)try{await reconcileFundingTransfers()}catch(e){console.warn('Transfer history unavailable:',e.message)}
@@ -1726,19 +1716,15 @@ async function scan(cachedMilestones,discoveryCount){
     // Begin held combo discovery after exits while the ordinary signal scan
     // proceeds. The final quote acceptance rechecks held legs and cash.
     const comboJob=live()?fillComboQueue.enqueue(null,scanStarted):Promise.resolve(null);
-    await Promise.all([candidateTable(),ensureValueScan()]);
+    await candidateTable();
     const opportunities=[],snapshotRows=new Map(),scoreboardCache=new Map();
-    const valueObservations=[];
     const allCandidates=[],upgradeCandidates=[],snapshotCandidates=new Map();
     const upgradeFills=new Map(existingFills.rows.filter(r=>r.strategy==='over'||r.strategy==='lead'&&/Kalshi-only/i.test(r.reason||'')).map(r=>[r.market_ticker,r]));
     const heldPositions=new Map((openPositions?.market_positions||[]).map(p=>[p.ticker,p]));
     for(const {milestone,state} of games){
       const candidates=[];
-      const valueSignals=[];
       if(eligibleForMarkets(state))for(const ticker of linkedEventTickers(milestone)){const event=events.get(ticker);if(!event || !['Sports','Esports'].includes(event.category))continue;
         for(const market of event.markets||[]){if(market.event_ticker!==event.event_ticker)continue;
-          const value=valueCandidate(state,market,event);
-          if(value){valueSignals.push(value);valueObservations.push({gameId:state.id,value,state,market})}
           const signal=overSignal(state,market)||golfSignal(state,market)||leadSignal(state,market)||additionalLeadSignal(state,market)||cricketLeadSignal(state,market)||drawSignal(state,market)||earlyLeadSignal(state,market)||tennisSignal(state,market)||tableTennisSignal(state,market);if(signal)candidates.push({signal:signal.strategy==='lead'?{...signal,fraction:finalLeadFraction(state,state,signal,true)}:signal,event,market,state,milestone})}}
       // Keep crossed, already-filled props visible with their status, but do
       // not send them through order preflight or count them as new candidates.
@@ -1753,7 +1739,6 @@ async function scan(cachedMilestones,discoveryCount){
       }
       snapshotCandidates.set(state.id,candidates);
       snapshotRows.set(state.id,snapshotRow({milestone,state},liveMap,scanStarted));
-      snapshotRows.get(state.id).valueSignals=valueSignals;
       snapshotRows.get(state.id).leadWatch=leadWatchReason(state);
     }
     const missing=[...allCandidates,...upgradeCandidates].filter(c=>!hasAsk(c.market));
@@ -1776,8 +1761,8 @@ async function scan(cachedMilestones,discoveryCount){
         ...candidates.map(c=>({strategy:c.signal.strategy,reason:c.signal.reason,ticker:c.market.ticker,title:c.market.title||c.market.yes_sub_title||'',ask:c.market.yes_ask_dollars,ask_size:c.market.yes_ask_size_fp,execution:signalExecution(c,filled,account,balance,bankroll)})),
         ...crossingRows.filter(row=>row.game_id===id&&!candidates.some(c=>c.market.ticker===row.ticker))
           .map(row=>({strategy:'watch',ticker:row.ticker,title:row.title,
-            reason:`${row.value} recorded; line crossed; waiting for the extra-stat cushion or 10-minute window`,
-            execution:`Waiting for prop window (${Math.max(0,Math.ceil((600000-(Date.now()-new Date(propWindows.get(row.ticker)?.at).getTime()))/60000))} min)`})),
+            reason:`${row.value} recorded; line crossed; waiting for the extra-stat cushion or 7-minute window`,
+            execution:`Waiting for prop window (${Math.max(0,Math.ceil((PLAYER_PROP_WINDOW_MS-(Date.now()-new Date(propWindows.get(row.ticker)?.at).getTime()))/60000))} min)`})),
         ...(snapshotRows.get(id).leadWatch?[{strategy:'watch',title:'Commanding lead watch',execution:snapshotRows.get(id).leadWatch}]:[])
       ]);
     }
@@ -1796,20 +1781,6 @@ async function scan(cachedMilestones,discoveryCount){
       const signalValues=batch.map((_,row)=>`($${row*2+1},$${row*2+2})`).join(',');
       await pool.query(`UPDATE game_snapshots AS g SET signals=v.signals::jsonb,scanned_at=clock_timestamp()
         FROM (VALUES ${signalValues}) AS v(id,signals) WHERE g.id=v.id`,batch.flatMap(row=>[row[0],row[14]]));
-      await pool.query(`UPDATE game_snapshots AS g SET value_signals=v.value_signals::jsonb
-        FROM (VALUES ${signalValues}) AS v(id,value_signals) WHERE g.id=v.id`,batch.flatMap(row=>[row[0],JSON.stringify(row.valueSignals||[])]));
-    }
-    for(let i=0;i<valueObservations.length;i+=50){
-      const batch=valueObservations.slice(i,i+50);
-      const values=batch.map((_,row)=>'('+Array.from({length:8},(_,field)=>'$'+(row*8+field+1)).join(',')+')').join(',');
-      await pool.query(`INSERT INTO value_scan_observations
-        (observed_at,game_id,market_ticker,role,ask,ask_size,game_state,market_rules)
-        VALUES ${values} ON CONFLICT DO NOTHING`,batch.flatMap(({gameId,value,state,market})=>[
-          scanStarted,gameId,value.ticker,value.role,value.ask,value.size,
-          JSON.stringify({sport:state.sport,type:state.type,home:state.home,away:state.away,period:state.period,remainingSeconds:state.remainingSeconds,
-            matchRemainingSeconds:state.matchRemainingSeconds,possessionSide:state.possessionSide,
-            gameObservedAt:state.observedAt,gameUpdatedAt:state.updatedAt}),String(market.rules_primary||'')
-        ]));
     }
     // Make the live score and clock visible before slower order preflights.
     await pool.query(`UPDATE scan_status SET last_scan=$1,scanned=$2,signals=$3,discovered=$4 WHERE id=1`,[scanStarted,scanned,signals,discoveryCount]);
@@ -2152,12 +2123,11 @@ let recentDashboardPositions=null;
 const dashboardDeadline=ms=>new Promise(resolve=>setTimeout(()=>resolve(null),ms));
 async function state(){
   await ensureScoreTime();
-  await ensureValueScan();
   await pool.query(`CREATE TABLE IF NOT EXISTS combo_diagnostics (id bigserial PRIMARY KEY,
     checked_at timestamptz NOT NULL DEFAULT now(),leg_tickers jsonb NOT NULL,
     collection_ticker text,status text NOT NULL,detail text)`);
   const [snap,stats,attempts]=await Promise.all([
-  pool.query(`SELECT id,title,sport,home,away,possession_side,status,time_left,scanned_at,score_observed_at,signals,value_signals FROM game_snapshots
+  pool.query(`SELECT id,title,sport,home,away,possession_side,status,time_left,scanned_at,score_observed_at,signals FROM game_snapshots
     WHERE status IN ('live','inprogress','started') AND GREATEST(score_observed_at,scanned_at)>now()-interval '15 minutes'
     ORDER BY jsonb_array_length(signals) DESC,title`),
   pool.query('SELECT * FROM scan_status WHERE id=1'),
@@ -2186,10 +2156,11 @@ async function state(){
     }
   }
   for(const game of snap.rows){
-    game.stale=new Date(game.scanned_at).getTime()<new Date(stats.rows[0]?.last_scan||0).getTime()-2000 ||
-      Date.now()-new Date(game.scanned_at).getTime()>30000;
+    // Early games can be intentionally deferred while the live score keeps
+    // updating. A newer global scan is not evidence this game's market failed.
+    game.stale=Date.now()-new Date(game.scanned_at).getTime()>30000;
     game.scoreStale=Date.now()-new Date(game.score_observed_at||game.scanned_at).getTime()>60000;
-    if(game.stale)for(const signal of game.signals||[])signal.execution='Market check delayed; last result: '+signal.execution;
+    if(game.stale)for(const signal of game.signals||[])signal.execution='Last market result: '+signal.execution;
   }
   let balance=null,positions=null,accountError=null,positionsError=null,balanceStale=false,balanceAsOf=null;
   if(configured()){
