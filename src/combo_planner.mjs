@@ -14,7 +14,11 @@ CREATE TABLE IF NOT EXISTS combo_plan_jobs (
 );
 ALTER TABLE combo_plan_jobs ADD COLUMN IF NOT EXISTS queue_order bigserial;
 CREATE INDEX IF NOT EXISTS combo_plan_jobs_queue_idx ON combo_plan_jobs(queue_order)
-  WHERE phase IN ('planned','market_ready');`;
+  WHERE phase IN ('planned','market_ready');
+UPDATE combo_plan_jobs SET phase='market_ready',rfq_attempts=0,rfq_id=NULL,outcome='quote_filter_recheck',updated_at=clock_timestamp()
+  WHERE phase='complete' AND outcome='no_executable_quote' AND rfq_attempts=1
+    AND updated_at>='2026-11-01 21:48:00+00' AND updated_at<'2026-11-01 21:50:59+00'
+    AND NOT EXISTS (SELECT 1 FROM trade_attempts a WHERE a.market_ticker=combo_plan_jobs.combo_ticker AND a.status IN ('filled','combo_pending','reserved','check_order'));`;
 
 // A cursor can advance only after its generated jobs are durable. Leases are
 // held across network work, but the planner's transaction/lock is always short.
