@@ -351,7 +351,7 @@ test('ITF men and women accept only the match-clinching deciding-set service gam
   assert.equal(first.verifiedLive,true);
   assert.equal(first.tennis.bestOf,3);
   assert.equal(tennisSignal(first,market)?.fraction,.15);
-  assert.equal(kalshiOnlyLead(first,next,market),false,'removing a completed game defeats this match-clinching state');
+  assert.equal(kalshiOnlyLead(first,next,market),true,'a 40–0 service game remains eligible after one tennis point is removed');
   assert.equal(tennisSignal(state(now,5,4,'del'),market),null);
   assert.equal(tennisSignal(state(now,3,2),market),null);
   assert.equal(tennisSignal(state(now,2,0),market),null);
