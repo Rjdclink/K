@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {gameState,overSignal,playerOverSpec,playerPropEarlyWindow,cushionedOverSignal} from '../src/strategy.mjs';
-import {overCushion} from '../src/over_verification.mjs';
+import {overCushion,overContractKey} from '../src/over_verification.mjs';
+import {verifiedOverFraction} from '../src/lead_allocation.mjs';
 import {playerStatAgreement} from '../src/score_verification.mjs';
 test('player props stop with fewer than ten minutes of regulation remaining',()=>{
   const m={id:'g',type:'basketball_game',details:{league:'NBA'}},market={event_ticker:'KXNBAPTS-TEST',status:'active',floor_strike:1.5,custom_strike:{basketball_player:'p'},yes_sub_title:'Pat: 2+',title:'Pat: 2+ points',yes_ask_dollars:'.95'};
@@ -26,6 +27,13 @@ test('points prop needs a full-play cushion before the seller-only 40% route',()
   assert.equal(overSignal(game,market)?.fraction,.15);assert.equal(overCushion(game,market),null);assert.equal(cushionedOverSignal(game,market),null);
   const comfortable={...game,playerStats:{p:{points:6}}};
   assert.equal(overSignal(comfortable,market)?.fraction,.40);assert.equal(overCushion(comfortable,market),4);
+});
+test('receiving yards have no fixed cushion and timed verification caps them at twenty percent',()=>{
+  const now=Date.now(),game=gameState({id:'g',type:'football_game',details:{league:'NFL'}},{milestone_id:'g',_observed_at:new Date(now).toISOString(),details:{status:'live',home_score:14,away_score:3,period:3,clock:'01:13',player_stats:{p:{receiving_yards:21}}}});
+  const market={ticker:'KXNFLRECYDS-TEST-P',event_ticker:'KXNFLRECYDS-TEST',status:'active',floor_strike:14.5,custom_strike:{football_player:'p'},yes_sub_title:'Ryan Flournoy: 15+',title:'Ryan Flournoy: 15+ receiving yards',yes_ask_dollars:'.99'};
+  assert.equal(overSignal(game,market)?.fraction,.15);assert.equal(overCushion(game,market),null);
+  game.verificationId='final';game.overVerification={route:'elapsed',contractKey:overContractKey(game,market),initialAt:now-181000,firstExternalAt:now-160000,firstExternalId:'first',pairedAt:now-100,pairedExternalId:'second'};
+  assert.equal(verifiedOverFraction(overSignal(game,market),game,market),.20);
 });
 test('non-basketball player overs use an exact linked player statistic and external box score',()=>{
   const game=gameState({id:'fixture',type:'soccer_match',title:'Away at Home'},
