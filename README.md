@@ -55,7 +55,7 @@ NBA official, ESPN/FOX, CBS, and Yahoo requests run in parallel. For NBA markets
 
 ### Late-game value research (no orders)
 
-The dashboard now lists final-five-minute moneyline research candidates in soccer, basketball, football and hockey: leaders offered at 85¢ or higher and trailing teams offered below 50¢. Both teams are inspected against exact event and team identities. The scanner records point-in-time price, size, game clock, score and feed timestamps in `value_scan_observations`; it does not submit orders from these candidates. An ask or the exchange's displayed percentage is not an independent probability estimate.
+The dashboard lists final-five-minute moneyline research candidates in soccer, basketball, football and hockey: leading teams offered at 85¢ or higher, and leading teams still offered below 50¢ (leading underdogs). Trailing teams are excluded regardless of price. Contracts are checked against exact event and team identities. The scanner records point-in-time price, size, game clock, score and feed timestamps in `value_scan_observations`; it does not submit orders from these candidates. An ask or the exchange's displayed percentage is not an independent probability estimate.
 
 Clock-free sports are intentionally excluded from the five-minute definition until a tested, sport-specific endgame equivalent is available. Baseball, tennis, cricket, golf, combat, racing, and esports need their own state models; an arbitrary inning, set, over, or round is not assumed to equal five minutes. Existing production strategies are unchanged.
 
