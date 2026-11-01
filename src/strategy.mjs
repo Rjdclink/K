@@ -3,7 +3,7 @@ import { VERIFY_DWELL_MS } from './combos.mjs';
 export const KALSHI_ONLY_FRACTION=.10;
 export const SOCCER_OVER_STABILITY_MS=10000;
 export const CFB_LEAD_WINDOW_SECONDS=270;
-export const CFB_LEAD_MINIMUM=11;
+export const CFB_LEAD_MINIMUM=12;
 export const reducedAllocation=fraction=>fraction>.10?Math.round((fraction-.05)*100)/100:fraction;
 export function soccerOverWaitMs(firstSeen,now=Date.now()){
   const first=firstSeen instanceof Date?firstSeen.getTime():Date.parse(firstSeen||'');
@@ -199,8 +199,8 @@ export function periodValue(game,market){
 }
 export function endWindow(game){
   if(!game.verifiedLive||!game.scoreKnown||!game.periodConsistent)return false;
-  if(/basketball/.test(game.type))return game.period===(['NCAAB','NCAAW'].includes(game.sport)?2:4) && game.remainingSeconds>0 && game.remainingSeconds<=60;
-  if(/football/.test(game.type))return game.period===4 && game.remainingSeconds>0 && game.remainingSeconds<(game.sport==='CFB'?CFB_LEAD_WINDOW_SECONDS:420);
+  if(/basketball/.test(game.type))return game.period===(['NCAAB','NCAAW'].includes(game.sport)?2:4) && game.remainingSeconds>0 && game.remainingSeconds<(game.sport==='NBA'?420:game.sport==='WNBA'?300:90);
+  if(/football/.test(game.type))return game.period===4 && game.remainingSeconds>0 && game.remainingSeconds<(game.sport==='CFB'?CFB_LEAD_WINDOW_SECONDS:360);
   if(/hockey/.test(game.type))return game.period===3 && game.remainingSeconds>0 && game.remainingSeconds<420;
   if(/baseball/.test(game.type))return game.period===9;
   if(/soccer/.test(game.type))return game.period===2 && Number.isFinite(game.soccerMinute) && game.soccerMinute>=83 && game.soccerMinute<90 && !game.soccerExtraTime;
@@ -214,31 +214,29 @@ export function leadWatchReason(game){
   const type=String(game.type||''),margin=Math.abs(game.home-game.away),seconds=game.remainingSeconds;
   if(!Number.isFinite(margin)||margin<=0)return null;
   if(/football/.test(type)){
-    if(game.sport==='CFB')return game.period===4&&Number.isFinite(seconds)&&seconds>0&&margin>=CFB_LEAD_MINIMUM?
+    if(game.sport==='CFB')return game.period===4&&Number.isFinite(seconds)&&seconds>0&&seconds<=390&&margin>=CFB_LEAD_MINIMUM?
       `Tracking ${margin}-point college-football lead; entry strictly under 4:30 in Q4`:null;
-    if(game.period===3&&Number.isFinite(seconds)&&seconds>=0&&seconds<=180&&margin>=21)
-      return `Tracking ${margin}-point lead; third-quarter entry needs 28+ and under 1:00`;
-    if(game.period===4&&Number.isFinite(seconds)&&seconds>0&&margin>=7)
+    if(game.period===4&&Number.isFinite(seconds)&&seconds>0&&seconds<=480&&margin>=10)
       return `Tracking ${margin}-point lead; fourth-quarter winner window and possession required`;
   }
   if(/basketball/.test(type)){
-    const college=['NCAAB','NCAAW'].includes(game.sport),penultimate=college?1:3,final=college?2:4;
-    if(game.period===penultimate&&Number.isFinite(seconds)&&seconds>=0&&seconds<=180&&margin>=16)
-      return `Tracking ${margin}-point lead; preceding-period entry needs 20+ and under 1:00`;
-    if(game.period===final&&Number.isFinite(seconds)&&seconds>0&&margin>=8)
-      return `Tracking ${margin}-point lead; final-period winner clock and possession required`;
+    const college=['NCAAB','NCAAW'].includes(game.sport),final=college?2:4;
+    const near=college?180:game.sport==='NBA'?540:game.sport==='WNBA'?420:180;
+    if(game.period===final&&Number.isFinite(seconds)&&seconds>0&&seconds<=near&&margin>=8)
+      return `Tracking ${margin}-point lead; waiting for the final-period winner window`;
   }
   if(/hockey/.test(type)){
-    if(game.period===3&&Number.isFinite(seconds)&&seconds>0&&margin>=3)
+    if(game.period===3&&Number.isFinite(seconds)&&seconds>0&&seconds<=180&&margin>=4)
       return `Tracking ${margin}-goal lead; third-period winner clock required`;
   }
   if(/rugby|handball|lacrosse/.test(type)&&Number.isFinite(seconds)&&seconds>0){
-    const rule=/rugby/.test(type)?[2,180,20]:/handball/.test(type)?[2,600,4]:[4,600,3];
+    const rule=/rugby/.test(type)?[2,180,15]:/handball/.test(type)?[2,600,4]:[4,600,3];
     if(game.period===rule[0]&&seconds<=rule[1]&&margin>=rule[2])
       return `Tracking ${margin}-point lead; waiting for final winner window`;
   }
   if(/soccer/.test(type)&&game.period===2&&!game.soccerExtraTime&&margin>=2&&
-    Number.isFinite(game.soccerMinute)&&game.soccerMinute>=75&&game.soccerMinute<90)
+    Number.isFinite(game.soccerMinute)&&game.soccerMinute>=45&&game.soccerMinute<90&&
+    (game.soccerMinute<50&&margin>=3||game.soccerMinute>=80))
     return `Tracking ${margin}-goal lead; waiting for the late winner window`;
   return null;
 }
@@ -291,14 +289,17 @@ export function overSignal(game, market) {
     if(!team||!norm(market.title).includes(norm(team)))return null;
   }
   if (!Number.isFinite(strike) || strike<0 || !Number.isFinite(scored) || scored<=strike) return null;
-  // A player stat may be recredited during play. Require one more credited
-  // unit than the contract needs before independently checking an entry.
-  if(player&&scored-1<=strike)return null;
+  // The extra credited unit permits immediate review. After ten continuous
+  // minutes crossed, the exact line can be reviewed without that cushion.
+  const crossedAt=Date.parse(game.playerPropFirstCrossedAt?.[market.ticker]||'');
+  if(player&&scored-1<=strike&&(!Number.isFinite(crossedAt)||
+    crossedAt>Date.now()-10*60*1000))return null;
   // Only an independently verified, complete play list identifies the last
-  // score precisely enough for the 35% tier. Do not guess a reversal size.
+  // team score precisely enough for the 40% tier. Do not guess its size.
   const lastPlay=game.lastScoringPlay;
   const robust=gameTotal&&!teamTotal&&!player&&!segment&&Number.isInteger(lastPlay)&&lastPlay>0&&scored-lastPlay>strike;
-  return {strategy:'over', reason:`${scored} ${player?.metric||'scored'}${team?` by ${team}`:''}; line ${strike} already passed${segment?`; segment ${segment[1]}`:''}${robust?`; still crossed if the latest ${lastPlay}-unit scoring play is removed`:''}`, fraction:robust?.35:.10,scored,strike};
+  const cushionedPlayer=player&&scored-1>strike;
+  return {strategy:'over', reason:`${scored} ${player?.metric||'scored'}${team?` by ${team}`:''}; line ${strike} already passed${segment?`; segment ${segment[1]}`:''}${player&&scored-1<=strike?'; crossed for at least 10 minutes with independent stat check':''}${cushionedPlayer?'; still crossed if one player statistic is removed':''}${robust?`; still crossed if the latest ${lastPlay}-unit scoring play is removed`:''}`, fraction:(robust||cushionedPlayer)?.40:.10,scored,strike};
 }
 // A Kalshi-only check cannot establish which scoring event was last. Remove
 // the largest ordinary single scoring play for that sport from the displayed
@@ -428,7 +429,9 @@ export function kalshiOnlyLead(first,second,market){
     !confirmedSoccerTwoGoalClock(first,second)||!confirmedDrawClock(first,second,market))return false;
   // A changing soccer possession signal cannot bypass the scoreboard and clock gates.
   if(first.possessionSide!==second.possessionSide&&!/soccer/.test(second.type)&&
-    ![first,second].every(collegeFootballPossessionOptional))return false;
+    ![first,second].every(state=>collegeFootballPossessionOptional(state)||
+      ['NCAAB','NCAAW'].includes(state.sport)&&/basketball/.test(state.type)&&
+      state.period===2&&state.remainingSeconds>0&&state.remainingSeconds<90))return false;
   for(const key of ['tennis','tableTennis','volleyball','darts','cricket']){
     if(JSON.stringify(first[key])!==JSON.stringify(second[key]))return false;
   }
@@ -448,9 +451,6 @@ export function fallbackLeadFraction(first,second,market){
   const original=deciding?/table_tennis/.test(type)?tableTennisSignal(second,market):additionalLeadSignal(second,market):
     leadSignal(second,market)||additionalLeadSignal(second,market)||earlyLeadSignal(second,market);
   if(!original)return null;
-  // A soccer commanding lead must remain at least three goals ahead after
-  // removing the last goal and retain the late regulation winner window.
-  if(/soccer/.test(type)&&Math.abs(second.home-second.away)<4)return null;
   const qualifies=state=>deciding?/table_tennis/.test(type)?tableTennisSignal(state,market):additionalLeadSignal(state,market):
     leadSignal(state,market)||additionalLeadSignal(state,market)||earlyLeadSignal(state,market);
   const reduce=deciding?state=>{
@@ -468,8 +468,7 @@ export function fallbackLeadFraction(first,second,market){
       away:point.away>point.home?point.away-1:point.away}}};
   }:state=>fallbackReducedLeader(state,units);
   let reduced=reduce(first),next=reduce(second);
-  if(!reduced||!next||!qualifies(reduced)||!qualifies(next)||
-    /soccer/.test(type)&&Math.abs(next.home-next.away)<3)return null;
+  if(!reduced||!next||!qualifies(reduced)||!qualifies(next))return null;
   let percent=5;
   for(let i=0;i<2;i++){
     reduced=reduce(next);
@@ -532,39 +531,35 @@ export function leadSignal(game, market) {
   if(soccer&&/^(?:1st|first)$/.test(game.soccerHalf))return null;
   const segments=/baseball/.test(game.type)?9:/hockey/.test(game.type)?3:/soccer/.test(game.type)?2:basketball&&['NCAAB','NCAAW'].includes(game.sport)?2:/basketball|football/.test(game.type)?4:Infinity;
   const baseball=/baseball/.test(game.type);
-  const finalTime=baseball?game.period===9:soccer?game.period===2&&(!Number.isFinite(game.soccerMinute)||game.soccerMinute<90):game.period===segments && game.periodConsistent && Number.isFinite(game.remainingSeconds) && game.remainingSeconds>0 && (basketball?game.remainingSeconds<=60:hockey?game.remainingSeconds<120:game.remainingSeconds<(football&&game.sport==='CFB'?CFB_LEAD_WINDOW_SECONDS:420));
+  const seconds=game.remainingSeconds,margin=Math.abs(game.homeUnits-game.awayUnits);
+  const soccerEarly=soccer&&game.period===2&&Number.isFinite(game.soccerMinute)&&game.soccerMinute>=45&&game.soccerMinute<50;
+  const soccerLate=soccer&&game.period===2&&Number.isFinite(game.soccerMinute)&&game.soccerMinute<90&&
+    Number.isFinite(game.matchRemainingSeconds)&&game.matchRemainingSeconds>0&&game.matchRemainingSeconds<300;
+  const baseballEighth=baseball&&game.period===8&&game.inningHalf===2&&game.outs===2;
+  const baseballNinth=baseball&&game.period===9&&[1,2].includes(game.inningHalf)&&game.outs>=1&&game.outs<=2;
+  const finalTime=baseball?baseballEighth||baseballNinth:soccer?soccerEarly||soccerLate:
+    game.period===segments&&game.periodConsistent&&Number.isFinite(seconds)&&seconds>0&&
+    (basketball?game.sport==='NBA'?seconds<=420:game.sport==='WNBA'?seconds<=300:seconds<90:
+      hockey?seconds<120:seconds<(game.sport==='CFB'?CFB_LEAD_WINDOW_SECONDS:360));
   if (!game.verifiedLive || !game.scoreKnown || soccer&&!game.scoreConsistent || !finalTime || market.status!=='active' && market.status!=='open') return null;
   const h=game.homeUnits,a=game.awayUnits;
   if (!Number.isFinite(h)||!Number.isFinite(a)) return null;
-  const margin=Math.abs(h-a),trailerScore=Math.min(h,a);
-  const finalWhistleSeconds=soccer&&Number.isFinite(game.matchRemainingSeconds)&&game.matchRemainingSeconds>0?game.matchRemainingSeconds:Infinity;
-  // A two-goal lead still needs a reliable final-whistle countdown. An
-  // elapsed minute cannot account for stoppage time or prove this window.
-  if(soccer&&margin===1||soccer&&margin===2&&finalWhistleSeconds>=20)return null;
-  if(soccer&&margin===2&&game.soccerMinute<89)return null;
-  // A three-goal soccer lead can receive the 20% tier only near the end.
-  // When a final countdown is available it takes precedence over an estimated minute.
-  if(soccer&&margin>=3&&!(Number.isFinite(game.matchRemainingSeconds)?
-    game.matchRemainingSeconds>0&&game.matchRemainingSeconds<600:
-    Number.isFinite(game.soccerMinute)&&game.soccerMinute>80&&game.soccerMinute<90))return null;
-  const minimum=basketball?8:football?game.sport==='CFB'?CFB_LEAD_MINIMUM:10:hockey?3:baseball?2:soccer?finalWhistleSeconds<20?2:3:null;
-  const closeLeaderPossession=game.possessionSide===(h>a?'home':'away');
-  const closeLeadThreshold=basketball?4:football?7:hockey?1:Infinity;
-  const closeLead=!basketball&&!hockey&&!(football&&game.sport==='CFB')&&game.remainingSeconds>0&&game.remainingSeconds<21&&
-    margin>=closeLeadThreshold&&margin<minimum&&closeLeaderPossession;
-  const ratio=trailerScore>0?Math.max(h,a)/trailerScore:Infinity;
-  if (minimum===null ? trailerScore<=0||ratio<3.5 : margin<minimum&&!closeLead) return null;
+  const minimum=basketball?['NCAAB','NCAAW'].includes(game.sport)?8:
+      game.sport==='WNBA'?(seconds<90?8:11):game.sport==='NBA'?(seconds<90?8:13):8:
+    football?game.sport==='CFB'?CFB_LEAD_MINIMUM:seconds<120?10:11:
+    hockey?4:baseball?baseballEighth?5:4:soccer?soccerEarly?3:2:null;
+  if(minimum===null||margin<minimum)return null;
   const leader = h>a ? game.homeName : game.awayName;
   const trailer = h>a ? game.awayName : game.homeName;
-  const collegeNoPossession=collegeFootballPossessionOptional(game);
-  if(!hockey&&!soccer&&!baseball&&!collegeNoPossession&&game.possessionSide!==(h>a?'home':'away'))return null;
+  const possessionOptional=collegeFootballPossessionOptional(game)||basketball&&['NCAAB','NCAAW'].includes(game.sport);
+  if(!hockey&&!soccer&&!baseball&&!possessionOptional&&game.possessionSide!==(h>a?'home':'away'))return null;
   const description = `${market.title||''} ${market.yes_sub_title||''}`;
   const teamId=Object.entries(market.custom_strike||{}).find(([k,v])=>/_team$/.test(k)&&typeof v==='string')?.[1];
   const expectedId=h>a?game.homeTeamId:game.awayTeamId;
   const identityMatches=teamId&&expectedId?teamId===expectedId:Boolean(leader&&trailer&&norm(description).includes(norm(leader))&&!norm(description).includes(norm(trailer)));
   if (!/win|winner|victory/i.test(description) || /wins? by|spread|handicap|margin of victory/i.test(description) || market.event_ticker && !/GAME(?:-|$)/i.test(market.event_ticker) || !identityMatches) return null;
   if(soccer && !/after 90 minutes plus stoppage time/i.test(market.rules_primary||''))return null;
-  const fraction=closeLead?.05:leadFraction(game,margin,minimum);
+  const fraction=leadFraction(game,margin,minimum);
   const timing=baseball?'9th inning':soccer?Number.isFinite(game.soccerMinute)?`${game.soccerMinute}' of regulation plus stoppage`:'second half (no clock)':`${basketball?`period ${game.period}, `:''}${game.clock} remaining`;
   return {strategy:'lead', reason:`${leader||market.yes_sub_title} leads ${h}–${a} ${game.unit} (${margin} ${game.unit} ahead); ${timing}`, fraction};
 }
@@ -573,7 +568,7 @@ export function leadFraction(game,margin,minimum){
     // Entry is not the maximum allocation. Both a larger margin and less
     // time remaining increase the ceiling, without changing other sports.
     const clockTier=game.remainingSeconds<90?2:game.remainingSeconds<180?1:0;
-    const marginTier=margin>=21?2:margin>=14?1:0;
+    const marginTier=margin>=21?2:margin>=15?1:0;
     const basePercent=[[5,10,15],[10,20,25],[15,25,35]][clockTier][marginTier];
     const leaderHasBall=game.possessionSide===(game.homeUnits>game.awayUnits?'home':'away');
     return Math.min(35,basePercent+(leaderHasBall?5:0))/100;
@@ -593,8 +588,8 @@ export function externallyVerifiedEarlySoccerLead(first,second,signal,firstConfi
 export function confirmedSoccerTwoGoalClock(first,second){
   if(!/soccer/.test(second.type)||Math.abs(second.home-second.away)!==2)return true;
   return first.clockRunning&&second.clockRunning&&
-    Number.isFinite(first.matchRemainingSeconds)&&first.matchRemainingSeconds>0&&first.matchRemainingSeconds<30&&
-    Number.isFinite(second.matchRemainingSeconds)&&second.matchRemainingSeconds>0&&
+    Number.isFinite(first.matchRemainingSeconds)&&first.matchRemainingSeconds>0&&first.matchRemainingSeconds<300&&
+    Number.isFinite(second.matchRemainingSeconds)&&second.matchRemainingSeconds>0&&second.matchRemainingSeconds<300&&
     second.matchRemainingSeconds<first.matchRemainingSeconds;
 }
 export function confirmedDrawClock(first,second,market){
@@ -632,7 +627,7 @@ export function additionalLeadSignal(game,market){
   if(!leader||!trailer||!identityMatches)return null;
   let minimum=0,very=0,label='';
   if(/handball|rugby|lacrosse/.test(family)){
-    const rule=/handball/.test(family)?[5,8,180,2]:/rugby/.test(family)?[20,27,180,2]:[4,7,180,4];
+    const rule=/handball/.test(family)?[5,8,180,2]:/rugby/.test(family)?[15,Infinity,180,2]:[4,7,180,4];
     [minimum,very]=rule;
     if(game.period!==rule[3]||!game.periodConsistent||!Number.isFinite(game.remainingSeconds)||game.remainingSeconds<=0||
       (/rugby/.test(family)?game.remainingSeconds>=rule[2]:game.remainingSeconds>rule[2]))return null;
@@ -658,47 +653,29 @@ export function cricketLeadSignal(game,market){
     !Number.isFinite(N(market.yes_ask_dollars))||N(market.yes_ask_dollars)<.90||
     !/\bwins?\b/i.test(String(market.rules_primary||''))||/\b(?:draw|tie|spread|handicap)\b/i.test(String(market.title||'')))return null;
   const home=c.homeTotal>c.awayTotal,margin=Math.abs(c.homeTotal-c.awayTotal);
-  if(margin<60||market.custom_strike?.cricket_team!==(home?game.homeTeamId:game.awayTeamId))return null;
+  if(margin<30||market.custom_strike?.cricket_team!==(home?game.homeTeamId:game.awayTeamId))return null;
   return {strategy:'lead',fraction:.10,comboEligible:false,
     reason:'Restricted 10% late cricket chase; verified match totals '+c.homeTotal+'–'+c.awayTotal+
       ' runs ('+margin+' ahead); '+c.ballsRemaining+' balls and '+c.wicketsRemaining+' wickets left'};
 }
 export function earlyLeadSignal(game,market){
   const type=String(game?.type||'');
-  if(/football/.test(type)&&game?.sport==='CFB')return null;
+  // The revised football, basketball, baseball, and soccer winner windows
+  // live in leadSignal. Do not allow their superseded early routes.
+  if(!/handball|lacrosse/.test(type))return null;
   if(!game?.verifiedLive||!game.scoreKnown||!game.scoreConsistent||!game.periodConsistent||
     !['active','open'].includes(market?.status)||market.event_ticker!==game.mainEvent||
     !/^(?:.+ )?wins?\b/i.test(String(market.title||''))||
     /\b(?:spread|handicap|draw|tie)\b/i.test(String(market.title||'')))return null;
-  const ncaab=['NCAAB','NCAAW'].includes(game.sport);
-  // Baseline applies throughout the live final segment; the higher threshold
-  // applies in the last minute of the preceding segment.
-  const rule=/basketball/.test(type)?[18,20,ncaab?1:3,ncaab?2:4,ncaab?1200:game.sport==='WNBA'?600:720]:
-    /football/.test(type)?[21,28,3,4,900]:
-    /handball/.test(type)?[11,13,1,2,1800]:/lacrosse/.test(type)?[4,6,3,4,900]:null;
-  const baseball=/baseball/.test(type),soccer=/soccer/.test(type);
+  const rule=/handball/.test(type)?[11,13,1,2,1800]:[4,6,3,4,900];
   let minimum=NaN,stage='';
   if(rule){
     if(game.period===rule[2]&&Number.isFinite(game.remainingSeconds)&&game.remainingSeconds>=0&&game.remainingSeconds<60){minimum=rule[1];stage='end of penultimate segment'}
     if(game.period===rule[3]&&Number.isFinite(game.remainingSeconds)&&game.remainingSeconds<=rule[4]&&game.remainingSeconds>0){minimum=rule[0];stage='final segment'}
-  }else if(baseball){
-    if(game.period===8&&game.inningHalf===2&&game.outs>=2){minimum=7;stage='end of eighth inning'}
-    if(game.period===9&&[1,2].includes(game.inningHalf)&&game.outs>=0&&game.outs<=2){minimum=5;stage='ninth inning'}
-  }else if(soccer){
-    // A second-half lead can qualify before the final ten minutes only at
-    // four goals or more; three goals must use leadSignal's late window.
-    if(game.period===2&&!game.soccerExtraTime){minimum=4;stage='second half'}
   }
   if(!Number.isFinite(minimum))return null;
   const margin=Math.abs(game.home-game.away);
   if(margin<minimum||teamScorePosition(game,market)!==1)return null;
-  if(/football/.test(type)){
-    const possession=game.possessionSide===(game.home>game.away?'home':'away');
-    const percent=Math.min(10,5+(margin>=minimum+7?2:0)+
-      (game.period===4&&game.remainingSeconds<450?1:0)+(possession?2:0));
-    return {strategy:'lead',fraction:percent/100,comboEligible:false,allocationPolicy:'early_football',
-      reason:`Early football lead (up to 10%): ${game.home>game.away?game.homeName:game.awayName} leads ${game.home}–${game.away} ${game.unit}; ${stage}, ${margin} ${game.unit} ahead`};
-  }
   return {strategy:'lead',fraction:.02,comboEligible:false,reason:`Restricted 2% lead: ${game.home>game.away?game.homeName:game.awayName} leads ${game.home}–${game.away} ${game.unit}; ${stage}, ${margin} ${game.unit} ahead`};
 }
 export function drawSignal(game,market){

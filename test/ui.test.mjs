@@ -197,7 +197,7 @@ test('filled order timer is bright red, advances each second and reanchors to li
   paintScore(chosen,{...base,strategy:'lead',reason:'Boston leads 71–79 points (8 points ahead)',score_scanned_at:new Date(start).toISOString()},start);
   assert.match(chosen.innerHTML,/Away <strong class="chosen-score">71<\/strong> · Home 79/);
   assert.match(page,/\.chosen-score\{color:#26f5ae/);
-  assert.match(page,/Tennis: <strong>5–4 or 6–5<\/strong>/);
+  assert.match(page,/Tennis retains its deciding-set match-clinching service game/);
   const tennis=order({...base,sport:'Tennis',sport_family:'tennis_tournament_singles',game_title:'Berrettini vs de Minaur',strategy:'lead',selected_name:'Alex de Minaur'});
   assert.equal(tennis.children[0].children[0].className,'chosen-name');
   assert.match(tennis.children[0].children[0].textContent,/Alex de Minaur/);
