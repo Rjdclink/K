@@ -18,7 +18,9 @@ const signal=(type,league,margin,period,seconds,extra={})=>{const {state,market}
 test('revised CFB and NFL winners replace the old early football and last-seconds routes',()=>{
  assert.ok(signal('football_game','CFB',12,4,269,{possession_team_id:'away'}));
  assert.equal(signal('football_game','CFB',11,4,269),null);
- assert.equal(signal('football_game','CFB',20,4,270),null);
+ assert.ok(signal('football_game','CFB',20,4,270));
+ assert.ok(signal('football_game','CFB',17,4,299,{possession_team_id:'away'}));
+ assert.ok(signal('football_game','CFB',24,4,449,{possession_team_id:'away'}));
  const {state,market}=team('football_game','NFL',40,3,30);
  assert.equal(earlyLeadSignal(state,market),null);
  assert.ok(signal('football_game','NFL',11,4,359));
