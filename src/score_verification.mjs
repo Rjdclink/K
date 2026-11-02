@@ -184,7 +184,7 @@ export function foxMatches(data,game,milestone){
     return [{source:'FOX Sports',eventId:/^\d+$/.test(eventId)?eventId:null,home:score(home.score),away:score(away.score),period:reportedPeriod,remainingSeconds:clockSeconds(clock),live:e.eventStatus===1,clockOk:clockCompatible(game,reportedPeriod,/soccer/.test(game.type)?e.statusLine:clock),stale:Number.isFinite(game.period)&&Number.isFinite(reportedPeriod)&&reportedPeriod<game.period}];
   }));
 }
-export function scoreAgreement(game,bySource,market){
+export function scoreAgreement(game,bySource,market,{minimumOverValue,onOverValue}={}){
   const segment=String(market?.event_ticker||'').split('-')[0].match(/([1-9])(?:Q|P|H|INNING)(?:TEAM)?TOTAL$/);
   const tennisTotal=/^KX(?:ATP|WTA)GTOTAL$/.test(String(market?.event_ticker||'').split('-')[0]);
   const closeout=basketballCloseoutEntry(game)&&/win|winner|victory/i.test(`${market?.title||''} ${market?.rules_primary||''}`);
@@ -205,7 +205,7 @@ export function scoreAgreement(game,bySource,market){
     }
     if(tennisTotal&&(!Number.isInteger(m.totalGames)||m.totalGames<0))return false;
     if(!externalScoresQualify(game,m,market,{expected,actual,player,
-      minimumMargin:closeout?basketballCloseoutMinimum(game):undefined}))return false;
+      minimumMargin:closeout?basketballCloseoutMinimum(game):undefined,minimumOverValue,onOverValue}))return false;
     agrees++;
   }
   return agrees>=1;
@@ -257,7 +257,7 @@ async function json(url,fetcher){
   if(!response.ok)throw Error(`Scoreboard ${response.status}`);
   return response.json();
 }
-async function verifyExistingOver(game,milestone,{fetcher=fetch,cache,market,source='ESPN',unavailableReasons=[]}={}){
+async function verifyExistingOver(game,milestone,{fetcher=fetch,cache,market,source='ESPN',unavailableReasons=[],minimumOverValue,onOverValue}={}){
   const start=Date.parse(milestone.start_date||'');
   if(!Number.isFinite(start)||!game.scoreKnown)return null;
   const {espn,fox}=feeds(game);
@@ -303,7 +303,8 @@ async function verifyExistingOver(game,milestone,{fetcher=fetch,cache,market,sou
       unavailableReasons.push(`${source}: ${errors.length===results.length?errors.join(', '):'no exact matching fixture'}`);
       return null;
     }
-    if(!scoreAgreement(game,[matches],market))return false;
+    const selectedValues=[];
+    if(!scoreAgreement(game,[matches],market,{minimumOverValue,onOverValue:value=>selectedValues.push(value)}))return false;
     const series=String(market?.event_ticker||'').split('-')[0];
     const soccerGameOver=source==='ESPN'&&/soccer/.test(game.type)&&/TOTAL$/.test(series)&&
       !/TEAMTOTAL$/.test(series)&&!/[1-9](?:Q|P|H|INNING)(?:TEAM)?TOTAL$/.test(series);
@@ -311,8 +312,9 @@ async function verifyExistingOver(game,milestone,{fetcher=fetch,cache,market,sou
       game.verificationIssue=`ESPN goal list confirms ${Number.isFinite(matches[0].documentedGoals)?matches[0].documentedGoals:'no reliable'} of ${game.home+game.away} displayed goals; over ${market.floor_strike} not independently established`;
       return false;
     }
+    if(soccerGameOver&&minimumOverValue!==undefined&&!(matches[0].documentedGoals>=minimumOverValue))return false;
     const player=playerOverSpec(game,market);
-    if(!player){if(source==='ESPN'&&Number.isInteger(matches[0].lastScoringPlay))game.lastScoringPlay=matches[0].lastScoringPlay;return true;}
+    if(!player){for(const value of selectedValues)onOverValue?.(soccerGameOver?Math.min(value,matches[0].documentedGoals):value);if(source==='ESPN'&&Number.isInteger(matches[0].lastScoringPlay))game.lastScoringPlay=matches[0].lastScoringPlay;return true;}
     const matched=matches[0];
     if(!matched.eventId)return null;
     try{
@@ -339,7 +341,7 @@ export function nbaFixtures(data,game,milestone){
   return (data?.scoreboard?.games||[]).filter(g=>/^\d{10}$/.test(String(g.gameId))&&sameFixture(game,milestone,nbaAliases(g.homeTeam),nbaAliases(g.awayTeam),g.gameTimeUTC));
 }
 // null = unavailable; false = a positively identified statistic disagrees.
-export function nbaAgreement(data,game,milestone,market,eventId){
+export function nbaAgreement(data,game,milestone,market,eventId,{minimumOverValue,onOverValue}={}){
   const g=data?.game;
   if(!g||String(g.gameId)!==String(eventId)||!sameFixture(game,milestone,nbaAliases(g.homeTeam),nbaAliases(g.awayTeam),g.gameTimeUTC))return null;
   if(![2,3].includes(g.gameStatus))return null;
@@ -357,9 +359,9 @@ export function nbaAgreement(data,game,milestone,market,eventId){
   const periods=(g.homeTeam.periods||[]).map(p=>({number:Number(p.period),home:score(p.score),away:score(g.awayTeam.periods?.find(a=>a.period===p.period)?.score)}));
   if(periodValue(game,market)&&!periodValue({...game,periodScores:periods},market))return null;
   return scoreAgreement(game,[[{home,away,periods,live:true,clockOk:true,
-    period:Number(g.period),remainingSeconds:clockSeconds(g.gameClock)}]],market);
+    period:Number(g.period),remainingSeconds:clockSeconds(g.gameClock)}]],market,{minimumOverValue,onOverValue});
 }
-async function verifyNbaOver(game,milestone,{fetcher=fetch,market}={}){
+async function verifyNbaOver(game,milestone,{fetcher=fetch,market,minimumOverValue,onOverValue}={}){
   if(game.sport!=='NBA')return null;
   try{
     const board=await json('https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json',fetcher);
@@ -367,7 +369,7 @@ async function verifyNbaOver(game,milestone,{fetcher=fetch,market}={}){
     if(fixtures.length!==1)return null;
     const id=fixtures[0].gameId;
     const box=await json(`https://cdn.nba.com/static/json/liveData/boxscore/boxscore_${id}.json`,fetcher);
-    return nbaAgreement(box,game,milestone,market,id);
+    return nbaAgreement(box,game,milestone,market,id,{minimumOverValue,onOverValue});
   }catch{return null}
 }
 // null means no exact independent fixture/stat was available. A definite

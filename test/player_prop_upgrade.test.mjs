@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
 import {gameState,overSignal,PLAYER_PROP_MAX_FRACTION,orderSize,estimatedCostCents,profitableCount,minimumProfitCents,netSettlementProfitCents} from '../src/strategy.mjs';
 import {overContractKey,timedOverEntryValid,assertTimedOverEntry,sameSportsContract} from '../src/over_verification.mjs';
+import {assertOverExposure} from '../src/over_exposure.mjs';
 import {verifiedOverFraction} from '../src/lead_allocation.mjs';
 import {remainingVerifiedOverCents,upgradeEligible} from '../src/upgrades.mjs';
 import {singleSpendableCash} from '../src/combos.mjs';
@@ -25,7 +26,7 @@ test('a held player prop tops up within 25% only when the new purchase meets its
     const original={id:'original',status:'filled',strategy:'over',market_ticker:market.ticker,event_ticker:market.event_ticker,game_id:'g'};
     const sent=[];
     const client={query:async sql=>({rows:sql.includes('pg_try_advisory_xact_lock')?[{acquired:true}]:[]}),release(){}};
-    const context=vm.createContext({console,setTimeout,PLAYER_PROP_MAX_FRACTION,overSignal,timedOverEntryValid,assertTimedOverEntry,
+    const context=vm.createContext({ensureManualCombos:async()=>{},console,setTimeout,PLAYER_PROP_MAX_FRACTION,overSignal,timedOverEntryValid,assertTimedOverEntry,assertOverExposure,
       sameSportsContract,verifiedOverFraction,remainingVerifiedOverCents,upgradeEligible,estimatedCostCents,profitableCount,
       minimumProfitCents,netSettlementProfitCents,filledOrderGateCount,singleSpendableCash,randomUUID:()=> 'upgrade',
       upgradeTables:async()=>{},recoverSummaryAsk:async m=>m,hasAsk:()=>true,executableQuote:async m=>m,

@@ -1,5 +1,6 @@
 import { KALSHI_ONLY_FRACTION,strongKalshiOnlyLead,proBasketballLeadRules,leadSignal,playerOverSpec,PLAYER_PROP_MAX_FRACTION,basketballCloseoutEntry } from './strategy.mjs';
 import { timedOverEntryValid } from './over_verification.mjs';
+import {externalOverExposureValid} from './over_exposure.mjs';
 export function threeGoalWinner(game,signal,market){
   return Boolean(market&&signal?.strategy==='lead'&&/hockey|soccer/.test(game?.type||'')&&
     Math.abs(game.homeUnits-game.awayUnits)>=3&&leadSignal(game,market));
@@ -12,6 +13,7 @@ export function verifiedOverFraction(signal,game,market){
   if(signal?.strategy!=='over')return signal?.fraction;
   if(!timedOverEntryValid(game,market))return Math.min(.15,signal.fraction);
   if(playerOverSpec(game,market))return PLAYER_PROP_MAX_FRACTION;
+  if(externalOverExposureValid(game,market))return game.externalOverProof.fraction;
   if(game.overVerification?.route==='seller_cushion')return .40;
   return signal.fraction===.40?.40:.20;
 }
