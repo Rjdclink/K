@@ -3,7 +3,7 @@ import {verifyExternalOverExposure,assertOverExposure} from './over_exposure.mjs
 import {rememberIndependentEntry,independentEntryValid,assertExternalPurchase} from './entry_verification.mjs';
 import {createComboPlanner} from './combo_planner.mjs';
 import { sameSportsContract, overContractKey, freshOverObservation, freshOverState, overCushion, overTiming, sameOverReading, timedOverEntryValid, OVER_FRESH_MS, OVER_MAX_GAP_MS } from './over_verification.mjs';
-import { golfSignal, verifyGolf } from './golf.mjs';
+import { golfSignal, verifyGolfDecision, verifySportradarGolf } from './golf.mjs';
 import { randomUUID } from 'node:crypto';
 import { apiPriority, withApiPriority, createPriorityGate } from './api_priority.mjs';
 import { createExecutionAudit } from './execution_audit.mjs';
@@ -25,7 +25,7 @@ import { favorableSettlement } from './settlements.mjs';
 import { authorized, checkCredentials, sessionCookie, loginPage } from './dashboard_auth.mjs';
 import { discoverCurrentMilestones, scanMilestones, eligibleForMarkets, prioritizeMarketGames, linkedEventTickers, winnerEventTickers, readyOverTickets, gameTimeLabel, storedClockSeconds, mapBatches } from './discovery.mjs';
 import { tieRefundPreference } from './settlement_preference.mjs';
-import { verifyIndependentOverDecision, verifyIndependentTableTennisLeadDecision, verifyIndependentTableTennisMatch } from './score_verification.mjs';
+import { verifyIndependentOverDecision, verifySportradarOver, verifyIndependentTableTennisLeadDecision, verifyIndependentTableTennisMatch } from './score_verification.mjs';
 import { verificationStatus } from './verification_status.mjs';
 import { COMBO_ATTEMPT_MS, VERIFY_DWELL_MS, COMBO_RFQ_PLANS, singleSpendableCash, comboAllocation, comboLegAllocation, comboHeldFraction, comboAllowedCents, comboMinimumCents, comboMeetsMinimum, comboRfqTargetCents, remainingVerifiedComboCents, availableComboFills, comboPairDiagnostics, comboExclusionKey, exchangeComboExclusion, comboLegs, filledComboWindow, heldComboLeg, quoteForYes, collectionsForEvents, selectedComboMarkets, liveComboMarket, missingQuoteFill, comboFillPages } from './combos.mjs';
 import { selectedTeamName, selectedTeamSide } from './selected_team.mjs';
@@ -218,15 +218,15 @@ async function auditedOver(game,milestone,options={}){
     const at=new Date().toISOString(),key='raw:'+url,cached=options.cache?.get(key);
     const task=cached&&Date.now()-cached.at<2000?cached.value:(async()=>{
       const r=await fetch(url,opts),raw=await r.text();let data;try{data=JSON.parse(raw)}catch{data=raw}
-      return {ok:r.ok,status:r.status,data,raw,requested_at:at,received_at:new Date().toISOString()};
+      return {ok:r.ok,status:r.status,headers:r.headers,data,raw,requested_at:at,received_at:new Date().toISOString()};
     })();
     if(!cached||Date.now()-cached.at>=2000)options.cache?.set(key,{at:Date.now(),value:task});
-    try{const r=await task;observations.push({source:url.includes('espn.com')?'ESPN':url.includes('cdn.nba.com')?'NBA':url.includes('cbssports.com')?'CBS':url.includes('yahoo.com')?'Yahoo':'FOX',url,requested_at:r.requested_at,received_at:r.received_at,status:r.status,data:r.data});return {ok:r.ok,status:r.status,json:async()=>r.data,text:async()=>r.raw}}
+    try{const r=await task;observations.push({source:url.includes('espn.com')?'ESPN':url.includes('api.sportradar.com')?'Sportradar':url.includes('sofascore.com')?'Sofascore':url.includes('cdn.nba.com')?'NBA':url.includes('cbssports.com')?'CBS':url.includes('yahoo.com')?'Yahoo':'FOX',url,requested_at:r.requested_at,received_at:r.received_at,status:r.status,data:r.data});return {ok:r.ok,status:r.status,headers:r.headers,json:async()=>r.data,text:async()=>r.raw}}
     catch(e){observations.push({url,requested_at:at,error:String(e.message)});throw e}
   };
   // Separate reads retain the exact source response used for this decision.
-  const decision=game.golf?options.event?await verifyGolf(game,milestone,options.event,fetcher):null:
-    game.tableTennis?await verifyIndependentTableTennisLeadDecision(game,milestone,{fetcher}):
+  const decision=game.golf?options.event?(await verifyGolfDecision(game,milestone,options.event,fetcher)??await verifySportradarGolf(game,milestone,options.event,{fetcher})):null:
+    game.tableTennis?(await verifySportradarOver(game,milestone,{...options,fetcher})??await verifyIndependentTableTennisLeadDecision(game,milestone,{fetcher})):
     await verifyIndependentOverDecision(game,milestone,{...options,cache:undefined,fetcher,onOverValue});
   const passed=decision===true;
   await auditTable();const id=randomUUID();
@@ -2769,7 +2769,7 @@ async function settlementAlerts(since){
   return rows;
 }
 async function handleRequest(req){const url=new URL(req.url);
-  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'over-quarter-profit-20261101'});
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'espn-sportradar-fallback-20261102',verification:{primary:'ESPN',fallback:'Sportradar',espnRetries:0,sportradarConfigured:Boolean(process.env.SPORTRADAR_API_KEY)}});
   if(req.method==='GET'&&url.pathname==='/manifest.webmanifest')return response(manifest,'application/manifest+json');
   if(req.method==='GET'&&url.pathname==='/sw.js')return new Response(worker,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','service-worker-allowed':'/','x-content-type-options':'nosniff'}});
   if(req.method==='GET'&&/^\/icon-(192|512)\.png$/.test(url.pathname))return response(Buffer.from(icons[Number(url.pathname.match(/\d+/)[0])],'base64'),'image/png');
