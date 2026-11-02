@@ -26,7 +26,7 @@ import { verifyIndependentOverDecision, verifyIndependentTableTennisLeadDecision
 import { verificationStatus } from './verification_status.mjs';
 import { COMBO_ATTEMPT_MS, VERIFY_DWELL_MS, COMBO_RFQ_PLANS, singleSpendableCash, comboAllocation, comboLegAllocation, comboHeldFraction, comboAllowedCents, comboMinimumCents, comboMeetsMinimum, comboRfqTargetCents, remainingVerifiedComboCents, availableComboFills, comboPairDiagnostics, comboExclusionKey, exchangeComboExclusion, comboLegs, filledComboWindow, heldComboLeg, quoteForYes, collectionsForEvents, selectedComboMarkets, liveComboMarket, missingQuoteFill, comboFillPages } from './combos.mjs';
 import { selectedTeamName, selectedTeamSide } from './selected_team.mjs';
-import { estimatedSaleProfitCents, halfPotentialProfitExitEligible, oneAndHalfExitEligible, profitTargetAllowed, tennisWinnerPosition, tennisProfitExitEligible, overCorrectionAffects, correctionExitTargets } from './positions.mjs';
+import { estimatedSaleProfitCents, halfPotentialProfitExitEligible, oneAndHalfExitEligible, profitTargetAllowed, overCorrectionAffects, correctionExitTargets } from './positions.mjs';
 import { remainingVerifiedOverCents, upgradeEligible } from './upgrades.mjs';
 import { weatherContract } from './weather.mjs';
 import { sellQuote } from './sell.mjs';
@@ -1593,10 +1593,9 @@ async function exitComebacks(games,events,positions){
       const heldCount=Number(position.position_fp??position.position);
       const sale=sellQuote(book,heldCount,market.fractional_trading_enabled===false);
       if(!sale||sale.count<minimumCount(market))continue;
-      // Soccer commanding leads stay open for settlement or an independently
+      // Soccer and tennis singles stay open for settlement or an independently
       // confirmed comeback; a corrected over can still exit immediately.
-      const targetReached=tennisProfitExitEligible(original,position,sale)||
-        profitTargetAllowed(original)&&sale.count>=heldCount-1e-7&&
+      const targetReached=profitTargetAllowed(original)&&sale.count>=heldCount-1e-7&&
         (leadPosition?halfPotentialProfitExitEligible(position,sale):oneAndHalfExitEligible(position,sale));
       if(!leadExit&&!targetReached&&!corrected)continue;
       if(!targetReached&&!reversed&&!corrected)continue;
@@ -1647,37 +1646,6 @@ async function exitComebacks(games,events,positions){
         console.error('Exit order response:',position.ticker,e.message);
       }
     }catch(e){console.error('Position exit deferred:',position.ticker,e.message)}
-  }
-}
-// Profitable tennis exits use live bids and exchange cost basis; they do not
-// wait for a score read, external confirmation or the broad discovery scan.
-async function watchTennisProfits(until){
-  if(!live()&&!exitOnly())return;
-  let rows=[],nextRefresh=0;
-  while(Date.now()<until){
-    const started=Date.now();
-    try{
-      if(started>=nextRefresh){
-        const result=await pool.query(`SELECT DISTINCT ON (a.market_ticker) a.market_ticker,a.game_id,a.sport,a.strategy,a.combo_legs
-          FROM trade_attempts a LEFT JOIN game_snapshots g ON g.id=a.game_id
-          WHERE a.status='filled' AND a.sport='Tennis' AND a.strategy='lead'
-            AND (g.status='live' AND GREATEST(g.scanned_at,g.score_observed_at)>now()-interval '30 minutes'
-              OR a.created_at>now()-interval '2 minutes')
-          ORDER BY a.market_ticker,a.updated_at DESC`);
-        rows=result.rows.filter(tennisWinnerPosition);
-        nextRefresh=Date.now()+2000;
-      }
-      if(rows.length){
-        const tickers=new Set(rows.map(row=>row.market_ticker));
-        const positions=await allOpenPositions();
-        const held=(positions.market_positions||[]).filter(position=>tickers.has(position.ticker)&&
-          Number(position.position_fp??position.position)>0);
-        if(held.length)await exitComebacks([],new Map(),{market_positions:held});
-      }
-    }catch(e){console.error('Fast tennis profit exit deferred:',e)}
-    const pause=Math.max(0,2000-(Date.now()-started));
-    if(Date.now()+pause>=until)break;
-    if(pause)await new Promise(resolve=>setTimeout(resolve,pause));
   }
 }
 // A full discovery scan can take many seconds. Poll only the live games behind
@@ -2602,7 +2570,6 @@ async function handleRequest(req){const url=new URL(req.url);
     const discoveryJob=withApiPriority('background',()=>milestones())
       .then(found=>{discovered=found}).catch(error=>{discoveryError=error});
     cached=knownLive.map(row=>row.milestone);
-    const tennisProfitJob=withApiPriority('live',()=>watchTennisProfits(until)).catch(e=>console.error('Fast tennis profit watcher failed:',e));
     if(!cached.length){await discoveryJob;if(discovered){cached=discovered;discoveryCount=discovered.length;discoveryApplied=true}}
     const correctionJob=withApiPriority('live',()=>watchCorrectedOvers(until)).catch(e=>console.error('Fast correction watcher failed:',e));
     const leadWatchJob=withApiPriority('live',()=>watchLeadWindows(until)).catch(e=>console.error('Fast lead watcher failed:',e));
@@ -2620,7 +2587,7 @@ async function handleRequest(req){const url=new URL(req.url);
         await new Promise(resolve=>setTimeout(resolve,pause));
       }
     }finally{
-      await Promise.all([tennisProfitJob,correctionJob,leadWatchJob,readyOverJob,discoveryJob]);
+      await Promise.all([correctionJob,leadWatchJob,readyOverJob,discoveryJob]);
       if(discoveryError)console.warn('Sports discovery deferred:',discoveryError.message);
     }
     const {next,...summary}=last;return json({...summary,cycles});
