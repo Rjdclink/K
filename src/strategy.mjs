@@ -250,7 +250,7 @@ export function endWindow(game){
   if(/football/.test(game.type))return game.sport==='CFB'?cfbLeadWindow(game):game.period===4 && game.remainingSeconds>0 && game.remainingSeconds<=450;
   if(/hockey/.test(game.type))return game.period===3 && game.remainingSeconds>0 && game.remainingSeconds<=405;
   if(/baseball/.test(game.type))return game.period===8&&game.inningHalf===2&&game.outs===2;
-  if(/soccer/.test(game.type))return soccerLeadClock(game,1200);
+  if(/soccer/.test(game.type))return soccerLeadClock(game,900);
   return false;
 }
 // Keep a small, fast-polled set of games near a winner-entry window. This is
@@ -298,9 +298,9 @@ export function leadWatchReason(game){
   if(/soccer/.test(type)&&game.period===2&&!game.soccerExtraTime&&
     Number.isFinite(game.soccerMinute)&&game.soccerMinute>=60&&
     (margin>=3||game.soccerMinute>=80&&margin>=2))
-    return `Tracking ${margin}-goal lead; ${margin>=3&&soccerLeadClock(game,1200)||soccerLeadClock(game,210)&&margin>=2?
+    return `Tracking ${margin}-goal lead; ${margin>=3&&soccerLeadClock(game,900)||soccerLeadClock(game,210)&&margin>=2?
       'late winner rule reached; checking winner market and ask':
-      margin>=3?'entry requires +3 strictly under 20:00 remaining':
+      margin>=3?'entry requires +3 strictly under 15:00 remaining':
       'entry requires +2 strictly under 3:30 remaining'}`;
   return null;
 }
@@ -702,7 +702,7 @@ export function leadSignal(game, market) {
   const segments=/baseball/.test(game.type)?9:/hockey/.test(game.type)?3:/soccer/.test(game.type)?2:basketball&&game.sport==='NCAAB'?2:/basketball|football/.test(game.type)?4:Infinity;
   const baseball=/baseball/.test(game.type);
   const seconds=game.remainingSeconds,margin=Math.abs(game.homeUnits-game.awayUnits);
-  const soccerSecondHalf=soccer&&game.periodConsistent&&soccerLeadClock(game,1200);
+  const soccerSecondHalf=soccer&&game.periodConsistent&&soccerLeadClock(game,900);
   const soccerLate=soccer&&game.periodConsistent&&soccerLeadClock(game,210);
   const baseballEighth=baseball&&game.period===8&&game.inningHalf===2&&game.outs===2;
   const finalTime=baseball?baseballEighth:soccer?soccerSecondHalf:
@@ -806,7 +806,7 @@ export function confirmedDrawClock(first,second,market){
 }
 export function soccerWinnerWindowOpen(game,now=Date.now()){
   if(!/soccer/.test(game.type)||Math.abs(game.home-game.away)<2)return true;
-  if(!soccerLeadClock(game,Math.abs(game.home-game.away)===2?210:1200))return false;
+  if(!soccerLeadClock(game,Math.abs(game.home-game.away)===2?210:900))return false;
   const regulation=Number.isFinite(game.soccerMinute)?(90-game.soccerMinute)*60:NaN;
   if(Number.isFinite(game.matchRemainingSeconds)&&game.matchRemainingSeconds<=0)return false;
   const remaining=Number.isFinite(game.matchRemainingSeconds)&&game.matchRemainingSeconds>0?

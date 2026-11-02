@@ -91,18 +91,28 @@ test('preview, initial order, and missing-order retry share the goal-lead spend 
  assert.equal((source.match(/estimatedCostCents\([^\n]+<minimumThreeGoalSpend\(/g)||[]).length,3);
 });
 
-test('soccer winner allows +3 strictly under 20:00 and +2 strictly under 3:30',()=>{
+test('soccer winner allows +3 strictly under 15:00 and +2 strictly under 3:30',()=>{
  const soccer=(margin,minute,remaining)=>team('soccer_match','Soccer',margin,2,0,{half:'2nd',time:`${minute}'`,match_remaining_seconds:remaining,clock:''});
  let {state,market}=soccer(3,47,2580);
  assert.equal(leadSignal(state,market),null);
  for(const minute of [45,46,49,49.99])assert.equal(leadSignal(soccer(3,minute,NaN).state,market),null);
  assert.equal(earlyLeadSignal(state,market),null);
  assert.equal(leadSignal(soccer(2,47,2580).state,market),null);
- assert.equal(leadSignal(soccer(3,70,1200).state,market),null);
- assert.ok(leadSignal(soccer(3,70,1199).state,market));
- assert.ok(leadSignal(soccer(3,71,NaN).state,market));
+ assert.equal(leadSignal(soccer(3,75,900).state,market),null);
+ assert.ok(leadSignal(soccer(3,75,899).state,market));
+ for(const margin of [3,4]){
+   assert.equal(leadSignal(soccer(margin,70,1199).state,market),null,'former twenty-minute entry is disabled');
+   assert.equal(leadSignal(soccer(margin,75,900).state,market),null,'exactly fifteen minutes is excluded');
+   assert.ok(leadSignal(soccer(margin,75,899).state,market),'14:59 permits the score rule');
+   assert.equal(leadSignal(soccer(margin,75,NaN).state,market),null,'elapsed minute 75 alone is the excluded boundary');
+   assert.ok(leadSignal(soccer(margin,'75:01',NaN).state,market),'elapsed 75:01 enters without a countdown');
+   assert.equal(soccerSingleReadLead(soccer(margin,75,900).state,market,now),false);
+   assert.equal(soccerWinnerWindowOpen({...soccer(margin,75,900).state,observedAt:now},now),false);
+   assert.equal(soccerWinnerWindowOpen({...soccer(margin,75,899).state,observedAt:now},now),true);
+ }
+ assert.ok(leadSignal(soccer(3,76,NaN).state,market));
  assert.equal(soccerSingleReadLead(soccer(3,46,2640).state,market,now),false);
- assert.equal(soccerSingleReadLead(soccer(3,70,1199).state,market,now),true);
+ assert.equal(soccerSingleReadLead(soccer(3,75,899).state,market,now),true);
  assert.ok(leadSignal(soccer(3,77,NaN).state,market));
  assert.ok(leadSignal(soccer(3,80,599).state,market));
  assert.equal(leadSignal(soccer(2,77,NaN).state,market),null);
@@ -131,7 +141,7 @@ test('soccer winner allows +3 strictly under 20:00 and +2 strictly under 3:30',(
  assert.equal(confirmedSoccerWinnerClock(soccer(2,87,NaN).state,soccer(2,88,NaN).state),true);
  assert.equal(confirmedSoccerWinnerClock(soccer(3,47,2580).state,soccer(3,47,2579).state),true);
  assert.match(leadWatchReason(soccer(3,65,1500).state),/3-goal lead/);
- assert.match(leadWatchReason(soccer(3,65,1500).state),/strictly under 20:00/);
+ assert.match(leadWatchReason(soccer(3,65,1500).state),/strictly under 15:00/);
  assert.match(leadWatchReason(soccer(3,77,NaN).state),/late winner rule reached/);
  assert.match(leadWatchReason(soccer(2,81,540).state),/2-goal lead/);
  assert.match(leadWatchReason(soccer(4,84,NaN).state),/late winner rule reached/);
@@ -141,7 +151,7 @@ test('soccer winner allows +3 strictly under 20:00 and +2 strictly under 3:30',(
  assert.equal(soccerWinnerWindowOpen({...soccer(2,93,NaN).state,observedAt:now},now),false);
  assert.equal(soccerWinnerWindowOpen({...soccer(2,83,5).state,observedAt:now},now),false);
  assert.equal(soccerWinnerWindowOpen({...soccer(2,86,0).state,observedAt:now},now),false);
- assert.equal(soccerWinnerWindowOpen({...soccer(3,71,NaN).state,observedAt:now},now),true);
+ assert.equal(soccerWinnerWindowOpen({...soccer(3,76,NaN).state,observedAt:now},now),true);
 });
 test('soccer entry reuses one Kalshi score for 30 seconds on the correct contract',()=>{
   const soccer=(margin,minute,remaining)=>team('soccer_match','Soccer',margin,2,0,
