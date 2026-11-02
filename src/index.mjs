@@ -33,10 +33,16 @@ import { sellQuote } from './sell.mjs';
 import { manualComboQuote } from './combo_manual.mjs';
 import { yesDepthAtAsk, bestYesAsk, bestAsksForTickers } from './orderbook.mjs';
 import { filledOrderGateCount } from './entry_floor.mjs';
+import { withScannerOwner, assertScannerAuthority } from './scanner_runtime.mjs';
+import { benchmarkWorkerRuntime } from './worker_benchmark.mjs';
 
 const API='https://external-api.kalshi.com/trade-api/v2';
 const pool = new pg.Pool({connectionString:process.env.DATABASE_URL, max:4, idleTimeoutMillis:15000});
 pool.on('error', e=>console.error('Idle database connection:',e.message));
+// Ownership uses a separate pool so a scanner lease cannot consume a slot
+// required by the existing final-order transaction and API rate limiter.
+const runtimePool=new pg.Pool({connectionString:process.env.DATABASE_URL,max:1,idleTimeoutMillis:15000});
+runtimePool.on('error',e=>console.error('Scanner ownership connection:',e.code||e.name));
 const comboPlanner=createComboPlanner(pool);
 let exitLedgerReady;
 const ensureExitFills=()=>exitLedgerReady??=ensureExitLedger((...args)=>pool.query(...args)).catch(e=>{exitLedgerReady=null;throw e});
@@ -117,9 +123,11 @@ async function kalshi(path,opts={}){
   if(opts.body)headers['content-type']='application/json';
   for(let attempt=0;;attempt++){
     opts.signal?.throwIfAborted();
+    await assertScannerAuthority();
     await kalshiRateLimit(method);
     opts.signal?.throwIfAborted();
     if(opts.auth){const {key,privateKey}=credentials();if(!key||!privateKey)throw Error('Kalshi credentials unavailable');const timestamp=String(Date.now());const unsignedPath='/trade-api/v2'+path.split('?')[0];const signature=kalshiSignature(privateKey,timestamp,method,unsignedPath);Object.assign(headers,{'KALSHI-ACCESS-KEY':key,'KALSHI-ACCESS-TIMESTAMP':timestamp,'KALSHI-ACCESS-SIGNATURE':signature})}
+    await assertScannerAuthority({write:method!=='GET'});
     opts.beforeDispatch?.();
     opts.onDispatch?.();
     const response=await fetch(API+path,{method,headers,body:opts.body?JSON.stringify(opts.body):undefined,
@@ -2551,8 +2559,56 @@ async function settlementAlerts(since){
   const {rows}=await pool.query(`SELECT id,ticker,profit_cents,settled_time,created_at FROM settlement_alerts WHERE id>$1 AND created_at>now()-interval '2 days' ORDER BY id LIMIT 50`,[since]);
   return rows;
 }
+async function scannerWindow(until,signal){
+  let cached=null,discoveryCount,cycles=0,last={};
+  await ensureLeadWatch();
+  const {rows:knownLive}=await pool.query(`SELECT w.milestone FROM lead_watch_milestones w
+    JOIN game_snapshots g ON g.id=w.game_id
+    WHERE w.updated_at>now()-interval '30 minutes' AND g.status='live'
+      AND g.scanned_at>now()-interval '30 minutes' ORDER BY w.updated_at DESC`);
+  let discovered=null,discoveryError=null,discoveryApplied=false;
+  const discoveryJob=withApiPriority('background',()=>milestones())
+    .then(found=>{discovered=found}).catch(error=>{discoveryError=error});
+  cached=knownLive.map(row=>row.milestone);
+  if(!cached.length){await discoveryJob;if(discovered){cached=discovered;discoveryCount=discovered.length;discoveryApplied=true}}
+  const correctionJob=withApiPriority('live',()=>watchCorrectedOvers(until)).catch(e=>console.error('Fast correction watcher failed:',e));
+  const leadWatchJob=withApiPriority('live',()=>watchLeadWindows(until)).catch(e=>console.error('Fast lead watcher failed:',e));
+  const readyOverJob=withApiPriority('live',()=>watchReadyOverTickets(until)).catch(e=>console.error('Fast over ticket watcher failed:',e));
+  try{
+    while(Date.now()<until&&!signal?.aborted){
+      if(discovered&&!discoveryApplied&&(cycles>0||!cached.length)){
+        cached=discovered;discoveryCount=discovered.length;discoveryApplied=true;
+      }
+      if(discoveryError&&!cached.length)throw discoveryError;
+      const begun=Date.now();last=await scan(cached,discoveryCount);cycles++;
+      if(last.next)cached=last.next;if(last.discovered!=null)discoveryCount=last.discovered;
+      if(last.error && !/Kalshi 429 /.test(last.error) || !last.error && !last.active)break;
+      const pause=Math.max(0,3000-(Date.now()-begun));if(Date.now()+pause>=until)break;
+      await new Promise(resolve=>setTimeout(resolve,pause));
+    }
+  }finally{
+    await Promise.all([correctionJob,leadWatchJob,readyOverJob,discoveryJob]);
+    if(discoveryError)console.warn('Sports discovery deferred:',discoveryError.message);
+  }
+  const {next,...summary}=last;return {...summary,cycles};
+}
+async function runScannerRuntime(owner,id,until,signal){
+  return withScannerOwner(runtimePool,{owner,id,signal},()=>withApiPriority('normal',
+    ()=>fillComboQueue.run(()=>scannerWindow(until,signal))));
+}
+export async function runWorkerScanner({id,signal}={}){
+  if(process.env.K_WORKER_ROLE!=='active')throw Error('Worker execution is not enabled');
+  return runScannerRuntime('worker',id,Date.now()+55000,signal);
+}
+export async function closeWorkerRuntime(){await Promise.all([pool.end(),runtimePool.end()])}
+export async function measureWorkerRuntime(){
+  if(!configured())throw Error('Kalshi credentials are required for a read-only benchmark');
+  const measured=await withApiPriority('normal',()=>benchmarkWorkerRuntime({get:kalshi,query:sql=>pool.query(sql)}));
+  return {...measured,runtimeId:process.env.K_WORKER_ID||'neon',scannerRuntimeProtocol:1};
+}
+
 async function handleRequest(req){const url=new URL(req.url);
-  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'over-quarter-profit-20261101'});
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'scanner-workers-v1',scannerRuntimeProtocol:1});
   if(req.method==='GET'&&url.pathname==='/manifest.webmanifest')return response(manifest,'application/manifest+json');
   if(req.method==='GET'&&url.pathname==='/sw.js')return new Response(worker,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','service-worker-allowed':'/','x-content-type-options':'nosniff'}});
   if(req.method==='GET'&&/^\/icon-(192|512)\.png$/.test(url.pathname))return response(Buffer.from(icons[Number(url.pathname.match(/\d+/)[0])],'base64'),'image/png');
@@ -2560,37 +2616,8 @@ async function handleRequest(req){const url=new URL(req.url);
     if(!req.headers.get('x-neon-trigger-invocation-id'))return json({error:'Forbidden'},403);
     // Neon cron has minute resolution. Short invocations keep the three-second loop alive
     // without relying on one function instance surviving for a full quarter hour.
-    const now=Date.now();const until=Math.min(now+55000,(Math.floor(now/60000)+1)*60000-2000);let cached=null,discoveryCount,cycles=0,last={};
-    await ensureLeadWatch();
-    const {rows:knownLive}=await pool.query(`SELECT w.milestone FROM lead_watch_milestones w
-      JOIN game_snapshots g ON g.id=w.game_id
-      WHERE w.updated_at>now()-interval '30 minutes' AND g.status='live'
-        AND g.scanned_at>now()-interval '30 minutes' ORDER BY w.updated_at DESC`);
-    let discovered=null,discoveryError=null,discoveryApplied=false;
-    const discoveryJob=withApiPriority('background',()=>milestones())
-      .then(found=>{discovered=found}).catch(error=>{discoveryError=error});
-    cached=knownLive.map(row=>row.milestone);
-    if(!cached.length){await discoveryJob;if(discovered){cached=discovered;discoveryCount=discovered.length;discoveryApplied=true}}
-    const correctionJob=withApiPriority('live',()=>watchCorrectedOvers(until)).catch(e=>console.error('Fast correction watcher failed:',e));
-    const leadWatchJob=withApiPriority('live',()=>watchLeadWindows(until)).catch(e=>console.error('Fast lead watcher failed:',e));
-    const readyOverJob=withApiPriority('live',()=>watchReadyOverTickets(until)).catch(e=>console.error('Fast over ticket watcher failed:',e));
-    try{
-      while(Date.now()<until){
-        if(discovered&&!discoveryApplied&&(cycles>0||!cached.length)){
-          cached=discovered;discoveryCount=discovered.length;discoveryApplied=true;
-        }
-        if(discoveryError&&!cached.length)throw discoveryError;
-        const begun=Date.now();last=await scan(cached,discoveryCount);cycles++;
-        if(last.next)cached=last.next;if(last.discovered!=null)discoveryCount=last.discovered;
-        if(last.error && !/Kalshi 429 /.test(last.error) || !last.error && !last.active)break;
-        const pause=Math.max(0,3000-(Date.now()-begun));if(Date.now()+pause>=until)break;
-        await new Promise(resolve=>setTimeout(resolve,pause));
-      }
-    }finally{
-      await Promise.all([correctionJob,leadWatchJob,readyOverJob,discoveryJob]);
-      if(discoveryError)console.warn('Sports discovery deferred:',discoveryError.message);
-    }
-    const {next,...summary}=last;return json({...summary,cycles});
+    const now=Date.now(),until=Math.min(now+55000,(Math.floor(now/60000)+1)*60000-2000);
+    return json(await runScannerRuntime('neon',null,until));
   }
   if(req.method==='GET'&&url.pathname==='/login')return dashboardAuth(req)?Response.redirect(new URL('/',url),303):response(loginPage(),'text/html; charset=utf-8');
   if(req.method==='POST'&&url.pathname==='/login'){
@@ -2603,6 +2630,10 @@ async function handleRequest(req){const url=new URL(req.url);
   }
   if(!dashboardAuth(req))return ['/', '/history'].includes(url.pathname)?new Response(null,{status:303,headers:{location:'/login','cache-control':'no-store'}}):json({error:'Sign in required'},401);
   try{
+    if(req.method==='POST'&&url.pathname==='/api/worker-benchmark'){
+      if(req.headers.get('origin')!==url.origin)return json({error:'Forbidden'},403);
+      return json(await measureWorkerRuntime());
+    }
     if(req.method==='POST'&&url.pathname==='/api/sell'){
       if(req.headers.get('origin')!==url.origin||!req.headers.get('content-type')?.startsWith('application/json'))return json({error:'Forbidden'},403);
       const raw=await req.text();if(raw.length>512)return json({error:'Invalid sale'},400);

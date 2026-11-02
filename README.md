@@ -31,6 +31,14 @@ The fast lead watcher polls all recently registered live games and applies the w
 
 ## Deployment
 
+An optional [remote worker runtime](workers/README.md) adapts the Antenna/Beam
+scheduling concept while keeping the dashboard and database on Neon. It is not
+activated by building or deploying the default probe container. It shares the
+existing scanner and trading rules, adds single-owner handoff, and provides
+read-only host measurements. A real host, measured latency, and a lower total
+cost projection are required before handing scanning to it. Savings and faster
+fills are not established by the code alone.
+
 Neon project: `floral-wave-57267243`; branch: `br-tiny-hill-b5aiqeg7`; function slug: `k`. Neon injects `DATABASE_URL` from that branch. Apply [schema.sql](schema.sql) once, bundle the function with `npm run build`, zip `dist/index.mjs` at the archive root, then deploy the zip to Neon Functions. The scheduled trigger `k-sports-scan` invokes `/tick` every minute. An invocation runs repeated scans at a three-second target cadence while relevant live games are active; it stops when none are present. Slow API responses can extend an individual cycle beyond three seconds. Idle discovery can therefore lag by up to one minute. Neon free limits do not support uninterrupted three-second scanning around the clock.
 
 Discovery traverses the Sports and Esports milestone pages for games and tournaments started in the last seven days. It follows pagination until future-only pages, drops definitively completed older milestones from live-data polling, retains unknown and potentially active statuses, and rechecks Kalshi live data. The dashboard separately reports milestones assessed and live games checked; the latter is not the size of Kalshi's sports catalog. Supported strategies still require the exact linked, open Kalshi event and market.

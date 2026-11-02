@@ -271,3 +271,13 @@ CREATE INDEX IF NOT EXISTS combo_plan_jobs_queue_idx ON combo_plan_jobs(queue_or
   WHERE phase IN ('planned','market_ready');
 
 CREATE TABLE IF NOT EXISTS history_reconciliation_work (trade_id uuid PRIMARY KEY,last_attempt_at timestamptz NOT NULL);
+
+-- Optional remote scanner ownership. Default remains Neon.
+CREATE TABLE IF NOT EXISTS scanner_runtime_control (
+  id integer PRIMARY KEY CHECK(id=1),
+  owner text NOT NULL CHECK(owner IN ('neon','worker')),
+  worker_id text,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  CHECK(owner='neon' OR (worker_id IS NOT NULL AND length(worker_id)>0))
+);
+INSERT INTO scanner_runtime_control(id,owner) VALUES(1,'neon') ON CONFLICT DO NOTHING;
