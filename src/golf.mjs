@@ -1,3 +1,4 @@
+import {sportradarJson} from './sportradar.mjs';
 const clean=s=>String(s||'').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]/g,'');
 export function golfState(m,live){
  const d=live?.details||{},board=d.leaderboard||[],ranked=board.filter(p=>Number.isFinite(p.total_score)).sort((a,b)=>a.total_score-b.total_score);
@@ -33,9 +34,34 @@ export function golfAgreement(data,game,milestone,event){
  return observed&&rival-observed.score>=ranked[1].total_score-leader.total_score;
 }
 export async function verifyGolf(game,milestone,event,fetcher=fetch){
+ return (await verifyGolfDecision(game,milestone,event,fetcher))===true;
+}
+export async function verifyGolfDecision(game,milestone,event,fetcher=fetch){
  if(!game?.golf)return false;
  try{
   const r=await fetcher(`https://site.web.api.espn.com/apis/site/v2/sports/golf/leaderboard?region=us&lang=en&league=${encodeURIComponent(game.tour)}`,{signal:AbortSignal.timeout(7000)});
-  return r.ok&&golfAgreement(await r.json(),game,milestone,event);
- }catch{return false}
+  if(!r.ok)return null;
+  const data=await r.json();
+  if(!(data.events||[]).some(e=>clean(e.name)===clean(milestone.title)&&Math.abs(Date.parse(e.date)-Date.parse(milestone.start_date))<48*3600000&&e.league?.slug===game.tour))return null;
+  return golfAgreement(data,game,milestone,event);
+ }catch{return null}
+}
+export async function verifySportradarGolf(game,milestone,event,options={}){
+ const key=options.apiKey??process.env.SPORTRADAR_API_KEY,level=process.env.SPORTRADAR_ACCESS_LEVEL||'trial';
+ if(!key||!game?.golf||!['pga','lpga','euro'].includes(game.tour)||!['trial','production'].includes(level))return null;
+ const start=Date.parse(milestone.start_date||'');if(!Number.isFinite(start))return null;
+ const base=`https://api.sportradar.com/golf/${level}/${game.tour}/v3/en/${new Date(start).getUTCFullYear()}/tournaments`;
+ const read=path=>sportradarJson(base+path,{...options,apiKey:key});
+ try{
+  const schedule=await read('/schedule.json');
+  const matches=(schedule.tournaments||[]).filter(t=>clean(t.name)===clean(milestone.title)&&Math.abs(Date.parse(t.start_date)-start)<48*3600000);
+  if(matches.length>1)return false;if(!matches.length)return null;
+  const id=matches[0].id;if(!/^[a-f0-9-]{36}$/i.test(id))return null;
+  const data=await read(`/${id}/leaderboard.json`);
+  if(data.id!==id||clean(data.name)!==clean(milestone.title))return null;
+  if(data.status!=='inprogress'||data.event_type!=='stroke'||!data.rounds?.some(r=>r.number===4&&r.status==='inprogress'))return false;
+  if(!Array.isArray(data.leaderboard)||data.leaderboard.some(p=>!Number.isInteger(p.score)))return null;
+  const competitors=data.leaderboard.map(p=>({athlete:{displayName:`${p.first_name} ${p.last_name}`},score:{displayValue:String(p.score)},status:{period:4,thru:p.rounds?.find(r=>r.sequence===4)?.thru,playoff:false}}));
+  return golfAgreement({events:[{name:data.name,date:data.start_date,league:{slug:game.tour},competitions:[{status:{period:4,type:{state:'in'}},competitors}]}]},game,milestone,event);
+ }catch{return null}
 }

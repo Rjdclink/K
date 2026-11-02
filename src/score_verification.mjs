@@ -1,6 +1,7 @@
 import {externalValueQualifies,externalScoresQualify} from './external_values.mjs';
 import { alternateCheck } from './alternate_scores.mjs';
 import { teamAbbreviationVariants } from './team_identity.mjs';
+import { loadSportradar, sportradarPlayerValue } from './sportradar.mjs';
 // ESPN and FOX publish the scoreboards used by their sites. These endpoints
 // are not contractual data APIs; a changed schema or unavailable fixture must
 // fail closed, never silently turn into permission to buy an over.
@@ -377,8 +378,14 @@ async function verifyNbaOver(game,milestone,{fetcher=fetch,market,minimumOverVal
 export async function verifyIndependentOverDecision(game,milestone,options={}){
   delete game.verificationIssue;
   const unavailableReasons=[],rankedOptions={...options,unavailableReasons};
-  const [preferred,nba]=await Promise.all([verifyExistingOver(game,milestone,rankedOptions),verifyNbaOver(game,milestone,options)]);
+  // Start the fallback directly from ESPN's unavailable result, without
+  // waiting for the parallel NBA check. Each ESPN URL is requested once.
+  const nbaTask=verifyNbaOver(game,milestone,options);
+  const preferred=await verifyExistingOver(game,milestone,rankedOptions);
+  const sportradarTask=preferred===null?verifySportradarOver(game,milestone,rankedOptions):Promise.resolve(null);
+  const [nba,sportradar]=await Promise.all([nbaTask,sportradarTask]);
   if(nba===false||preferred===false)return false;
+  if(sportradar!==null)return sportradar;
   if(nba!==null)return nba;
   if(preferred!==null)return preferred;
   // Only an unavailable source advances to the next rank. An exact
@@ -390,6 +397,44 @@ export async function verifyIndependentOverDecision(game,milestone,options={}){
   const fox=await verifyExistingOver(game,milestone,{...rankedOptions,source:'FOX'});
   if(fox===null&&unavailableReasons.length)game.verificationIssue='External verification unavailable: '+[...new Set(unavailableReasons)].join('; ');
   return fox;
+}
+export async function verifySportradarOver(game,milestone,options={}){
+  const {market,minimumOverValue,onOverValue}=options;
+  const readings=await loadSportradar(game,milestone,{...options,apiKey:options.sportradarApiKey??process.env.SPORTRADAR_API_KEY,
+    matchFixture:(home,away,time)=>sameFixture(game,milestone,home,away,time)});
+  if(readings?.ambiguous)return false;
+  if(!readings)return null;
+  const matches=readings.filter(r=>sameFixture(game,milestone,r.homeAliases,r.awayAliases,r.time));
+  if(matches.length>1)return false;
+  if(!matches.length)return null;
+  const m=matches[0];
+  if(!m.live)return false;
+  if(game.tableTennis){
+    const t=game.tableTennis,p=m.periods.find(p=>p.number===t.setNumber);
+    if(!p)return null;
+    return m.period===t.setNumber&&tableTennisScoreQualifies(game,p)&&
+      m.home===(t.firstIsHome?t.firstSets:t.secondSets)&&m.away===(t.firstIsHome?t.secondSets:t.firstSets);
+  }
+  if(/^tennis_/.test(game.type)){
+    if(!m.periods.length||m.periods.some(p=>![p.home,p.away].every(n=>Number.isInteger(n)&&n>=0&&n<=7)))return null;
+    m.totalGames=m.periods.reduce((total,p)=>total+p.home+p.away,0);
+    m.home=m.periods.at(-1).home;m.away=m.periods.at(-1).away;
+  }
+  if(![m.home,m.away].every(Number.isInteger))return null;
+  if(game.darts&&!/leg/i.test(game.darts.format))return null;
+  if(Number.isFinite(game.period)&&!Number.isFinite(m.period))return null;
+  if(periodValue(game,market)&&!periodValue({...game,periodScores:m.periods},market))return null;
+  m.clockOk=clockCompatible(game,m.period,m.clock);
+  m.remainingSeconds=clockSeconds(m.clock);
+  const values=[];
+  if(!scoreAgreement(game,[[m]],market,{minimumOverValue,onOverValue:value=>values.push(value)}))return false;
+  const player=playerOverSpec(game,market);
+  if(player){const value=sportradarPlayerValue(m,player);return value===null?null:externalValueQualifies(value,player.value,player.line);}
+  const series=String(market?.event_ticker||'').split('-')[0];
+  if(/soccer/.test(game.type)&&/TOTAL$/.test(series)&&!/TEAMTOTAL$|[1-9](?:Q|P|H|INNING)TOTAL$/.test(series)&&
+    (!(m.documentedGoals>Number(market.floor_strike))||minimumOverValue!==undefined&&m.documentedGoals<minimumOverValue))return false;
+  for(const value of values)onOverValue?.(value);
+  return true;
 }
 export async function verifyIndependentOver(game,milestone,options={}){
   return (await verifyIndependentOverDecision(game,milestone,options))===true;
