@@ -49,7 +49,20 @@ export function basketballLeadProfile(game){
 export function basketballEntryTier(game){
   const profile=basketballLeadProfile(game),seconds=game?.remainingSeconds;
   if(!profile||game.period!==profile.period||!Number.isFinite(seconds)||seconds<=0)return null;
-  return profile.tiers.filter(([,limit])=>seconds<limit).at(-1)||null;
+  return basketballCloseoutEntry(game)?[basketballCloseoutMinimum(game),105]:profile.tiers.filter(([,limit])=>seconds<limit).at(-1)||null;
+}
+// This is an additional route. Existing higher-lead routes keep their rules.
+export function basketballCloseoutMinimum(game){
+  return basketballLeadProfile(game)&&game.sport!=='WNBA'?(game.sport==='NBA'?6:7):null;
+}
+export function basketballCloseoutEntry(game){
+  const profile=basketballLeadProfile(game),minimum=basketballCloseoutMinimum(game),seconds=game?.remainingSeconds;
+  if(minimum===null||!profile||game.period!==profile.period||!game.periodConsistent||
+    !Number.isFinite(seconds)||seconds<=0||seconds>=105||
+    !Number.isFinite(game.homeUnits)||!Number.isFinite(game.awayUnits))return false;
+  const margin=Math.abs(game.homeUnits-game.awayUnits),tier=profile.tiers.filter(([,limit])=>seconds<limit).at(-1);
+  const prior=Boolean(tier&&margin>=tier[0]&&(!profile.possession||game.possessionSide===(game.homeUnits>game.awayUnits?'home':'away')));
+  return margin>=minimum&&!prior;
 }
 // Kept as the NBA single-read/allocation selector for existing callers.
 export const proBasketballLeadRules=game=>game?.sport==='NBA'&&Boolean(basketballLeadProfile(game));
@@ -275,10 +288,10 @@ export function leadWatchReason(game){
   if(/basketball/.test(type)){
     const profile=basketballLeadProfile(game),tier=basketballEntryTier(game);
     if(profile&&game.period===profile.period&&Number.isFinite(seconds)&&seconds>0&&
-      seconds<=profile.tiers[0][1]+90&&margin>=profile.tiers.at(-1)[0]){
-      const thresholds=profile.tiers.map(([points,limit])=>`+${points} under ${Math.floor(limit/60)}:${String(limit%60).padStart(2,'0')}`).join(', ');
+      seconds<=profile.tiers[0][1]+90&&margin>=Math.min(profile.tiers.at(-1)[0],basketballCloseoutMinimum(game)??Infinity)){
+      const thresholds=profile.tiers.map(([points,limit])=>`+${points} under ${Math.floor(limit/60)}:${String(limit%60).padStart(2,'0')}`).join(', ')+(basketballCloseoutMinimum(game)?`; additional +${basketballCloseoutMinimum(game)} under 1:45, either possession, external verification required`:'');
       return `Tracking ${margin}-point ${game.sport||'basketball'} lead; entry requires ${thresholds} in ${profile.period===2?'the second half':'Q4'}; ${
-        tier&&margin>=tier[0]?profile.possession&&game.possessionSide!==(game.home>game.away?'home':'away')?
+        tier&&margin>=tier[0]?profile.possession&&!basketballCloseoutEntry(game)&&game.possessionSide!==(game.home>game.away?'home':'away')?
         'score and clock qualify; waiting for leader possession':'score and clock qualify; checking winner market and ask':
         'waiting for the score and clock threshold'}`;
     }
@@ -490,7 +503,7 @@ export function playerOverSpec(game,market){
     GOALS:stats.goals,SAVES:stats.saves,SOG:stats.shots_on_goal,HITS:stats.hits,RBI:stats.runs_batted_in,HR:stats.home_runs,PASSYDS:stats.passing_yards,RUSHYDS:stats.rushing_yards,RECYDS:stats.receiving_yards};
   const value=Number(metrics[suffix]);
   if(!Number.isInteger(value)||value<0)return null;
-  return {id,name,metric:suffix,value};
+  return {id,name,metric:suffix,value,line};
 }
 // Two separate exchange reads ten seconds apart must retain the qualifying
 // score. The feed may legitimately have no new update between reads.
@@ -719,7 +732,7 @@ export function leadSignal(game, market) {
   if(minimum===null||margin<minimum)return null;
   const leader = h>a ? game.homeName : game.awayName;
   const trailer = h>a ? game.awayName : game.homeName;
-  const possessionOptional=football||basketball&&!basketballLeadProfile(game)?.possession;
+  const possessionOptional=football||basketball&&(!basketballLeadProfile(game)?.possession||basketballCloseoutEntry(game));
   if(!hockey&&!soccer&&!baseball&&!possessionOptional&&game.possessionSide!==(h>a?'home':'away'))return null;
   const description = `${market.title||''} ${market.yes_sub_title||''}`;
   const teamId=Object.entries(market.custom_strike||{}).find(([k,v])=>/_team$/.test(k)&&typeof v==='string')?.[1];

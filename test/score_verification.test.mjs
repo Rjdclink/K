@@ -10,6 +10,7 @@ test('Liga Pro table tennis lead requires an exact independent live set score an
   const data={events:[match]};
   assert.equal(tableTennisMatches(data,state,milestone).length,1);
   assert.equal(await verifyIndependentTableTennisLead(state,milestone,{fetcher:async()=>({ok:true,json:async()=>data})}),true);
+  assert.equal(await verifyIndependentTableTennisLead(state,milestone,{fetcher:async()=>({ok:true,json:async()=>({events:[{...match,awayScore:{current:2,period5:3}}]})})}),true,'a larger lead for the same selected player qualifies');
   assert.equal(await verifyIndependentTableTennisLead(state,milestone,{fetcher:async()=>({ok:true,json:async()=>({events:[{...match,awayScore:{current:2,period5:5}}]})})}),false);
   assert.equal(await verifyIndependentTableTennisLead(state,milestone,{fetcher:async()=>({ok:true,json:async()=>({events:[{...match,startTimestamp:match.startTimestamp+86400}]})})}),false);
   assert.equal(await verifyIndependentTableTennisLead(state,milestone,{fetcher:async()=>({ok:true,json:async()=>({events:[match,match]})})}),false);
@@ -198,7 +199,7 @@ test('player point and PRA overs require the named ESPN athlete and matching box
   const board=espn(24,20,{id:'espn-game'});
   const fetcher=async url=>({ok:true,json:async()=>url.includes('/summary?')?summary:url.includes('espn.com')?board:fox()});
   assert.equal(await verifyIndependentOver(state,m,{fetcher,market}),true);
-  assert.equal(await verifyIndependentOver({...state,playerStats:{player1:{points:17,rebounds:4,assists:3}}},m,{fetcher,market}),false);
+  assert.equal(await verifyIndependentOver({...state,playerStats:{player1:{points:17,rebounds:4,assists:3}}},m,{fetcher,market}),true,'external 16 still exceeds the 14.5 contract line');
   assert.equal(await verifyIndependentOver(state,m,{fetcher:async url=>({ok:true,json:async()=>url.includes('/summary?')?{boxscore:{players:[]}}:url.includes('espn.com')?board:fox()}),market}),false);
 });
 test('ESPN player statistic takes precedence over a delayed FOX box score',async()=>{
@@ -238,7 +239,7 @@ test('FOX is queried only when ESPN is unavailable, never as a veto of confirmed
     if(url.includes('foxsports.com'))throw Error('FOX must not be queried when ESPN disagrees');
     return {ok:true,json:async()=>url.includes('/summary?')?summary:espn(83,91,{id:'espn-game',status:{type:{state:'in'},period:4,displayClock:'09:47'}})};
   };
-  assert.equal(await verifyIndependentOver(state,m,{market,fetcher:wrong}),false);
+  assert.equal(await verifyIndependentOver(state,m,{market,fetcher:wrong}),true,'team-score differences cannot veto an independently qualifying named player statistic');
   const fallback=async url=>{
     if(url.includes('cdn.nba.com')||url.includes('cbssports.com')||url.includes('yahoo.com')||url.includes('espn.com'))throw Error('unavailable');
     return {ok:true,json:async()=>fox(85,96,{statusLine:'09:47'})};

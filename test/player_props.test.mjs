@@ -74,5 +74,5 @@ test('non-basketball player overs use an exact linked player statistic and exter
   assert.equal(overSignal({...game,soccerMinute:80.1},market),null);
   assert.equal(overSignal({...game,playerStats:null},market),null);
   assert.equal(playerStatAgreement({boxscore:{players:[{statistics:[{name:'scoring',names:['G'],athletes:[{athlete:{displayName:'John Doe'},stats:['3']}]}]}]}},player),true);
-  assert.equal(playerStatAgreement({boxscore:{players:[{statistics:[{name:'scoring',names:['G'],athletes:[{athlete:{displayName:'John Doe'},stats:['2']}]}]}]}},player),false);
+  assert.equal(playerStatAgreement({boxscore:{players:[{statistics:[{name:'scoring',names:['G'],athletes:[{athlete:{displayName:'John Doe'},stats:['2']}]}]}]}},player),true);
 });

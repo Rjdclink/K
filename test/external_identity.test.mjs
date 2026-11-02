@@ -22,13 +22,13 @@ test('captured WAS/WSH incident matches the fixture and exact ESPN receiving sta
   assert.ok(urls.some(url=>url.includes('/summary?event=401873035')));
 });
 
-test('corrected abbreviations preserve contrary scores, wrong franchises, start times and duplicate vetoes',async()=>{
+test('known abbreviations preserve fixture vetoes while accepting contract-sufficient named statistics',async()=>{
   const check=(game,board=captured.espn,milestone=captured.milestone)=>verifyIndependentOverDecision(game,milestone,{market,fetcher:async url=>{
     assert.match(url,/espn\.com/);return {ok:true,json:async()=>url.includes('/summary?')?summary:board};
   }});
-  assert.equal(await check({...captured.game,home:11}),false);
+  assert.equal(await check({...captured.game,home:11}),true,'the named statistic still independently clears the contract line');
   const otherStat=structuredClone(captured.game);otherStat.playerStats['320ff933-d015-48c1-bc6f-13058dc633f8'].receiving_yards=12;
-  assert.equal(await check(otherStat),false);
+  assert.equal(await check(otherStat),true,'a lower named reading still qualifies when it remains over the exact line');
   assert.equal(espnMatches(captured.espn,{...captured.game,homeName:'WAS Eagles'},captured.milestone).length,0);
   assert.equal(espnMatches(captured.espn,captured.game,{...captured.milestone,start_date:'2026-11-03T01:20:00Z'}).length,0);
   assert.equal(await check({...captured.game},{events:[...captured.espn.events,...captured.espn.events]}),false);

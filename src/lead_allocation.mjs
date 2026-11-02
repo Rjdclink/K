@@ -1,4 +1,4 @@
-import { KALSHI_ONLY_FRACTION,strongKalshiOnlyLead,proBasketballLeadRules,leadSignal,playerOverSpec,PLAYER_PROP_MAX_FRACTION } from './strategy.mjs';
+import { KALSHI_ONLY_FRACTION,strongKalshiOnlyLead,proBasketballLeadRules,leadSignal,playerOverSpec,PLAYER_PROP_MAX_FRACTION,basketballCloseoutEntry } from './strategy.mjs';
 import { timedOverEntryValid } from './over_verification.mjs';
 export function threeGoalWinner(game,signal,market){
   return Boolean(market&&signal?.strategy==='lead'&&/hockey|soccer/.test(game?.type||'')&&
@@ -40,6 +40,7 @@ export function directLeadFraction(game,signal,market){
     Math.min(.15,signal?.fraction??.15);
 }
 export function leadEntryFraction(first,second,signal,market,independent,direct){
+  if(basketballCloseoutEntry(second)||second.basketballVerification)return independent===true?.15:null;
   return independent===true?finalLeadFraction(first,second,signal,true,market):
     direct?directLeadFraction(second,signal,market):finalLeadFraction(first,second,signal,false,market);
 }
@@ -59,6 +60,7 @@ export function leaderHasControl(game){
 // Entry rules stay in sport-specific signal functions; this cannot create one.
 export function finalLeadFraction(first,second,signal,externallyVerified,market){
   if(signal?.strategy!=='lead')return signal?.fraction;
+  if(basketballCloseoutEntry(second)||second.basketballVerification)return .15;
   if(/^Restricted 5% draw\b/.test(signal.reason||''))return .05;
   if(/^Restricted 2% lead\b/.test(signal.reason||''))return .02;
   if(externallyVerified&&lateCommandingLead(second,market))return independentlyVerifiedLeadFraction(second,market);

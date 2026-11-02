@@ -1,4 +1,5 @@
-import {playerOverSpec} from './strategy.mjs';
+import {externalValueQualifies,externalScoresQualify} from './external_values.mjs';
+import {playerOverSpec,basketballCloseoutEntry} from './strategy.mjs';
 import {teamAbbreviationVariants} from './team_identity.mjs';
 const clean=s=>String(s||'').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]/g,'');
 const clubs={ATL:'atlanta-hawks',BOS:'boston-celtics',BKN:'brooklyn-nets',CHA:'charlotte-hornets',CHI:'chicago-bulls',CLE:'cleveland-cavaliers',DAL:'dallas-mavericks',DEN:'denver-nuggets',DET:'detroit-pistons',GSW:'golden-state-warriors',HOU:'houston-rockets',IND:'indiana-pacers',LAC:'los-angeles-clippers',LAL:'los-angeles-lakers',MEM:'memphis-grizzlies',MIA:'miami-heat',MIL:'milwaukee-bucks',MIN:'minnesota-timberwolves',NOP:'new-orleans-pelicans',NYK:'new-york-knicks',OKC:'oklahoma-city-thunder',ORL:'orlando-magic',PHI:'philadelphia-76ers',PHX:'phoenix-suns',POR:'portland-trail-blazers',SAC:'sacramento-kings',SAS:'san-antonio-spurs',TOR:'toronto-raptors',UTA:'utah-jazz',WAS:'washington-wizards'};
@@ -35,7 +36,7 @@ export function yahooPlayerValue(game,player){
  return values.length&&values.every(n=>n===values[0])?values[0]:null;
 }
 export async function alternateCheck(source,game,milestone,{fetcher=fetch,market}={}){
- if(game.sport!=='NBA')return null;
+ if(game.sport!=='NBA'||basketballCloseoutEntry(game))return null;
  const home=club(game.homeName),away=club(game.awayName),player=playerOverSpec(game,market);
  if(!home||!away)return null;
  const date=new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(milestone.start_date)).replaceAll('-','');
@@ -47,7 +48,7 @@ export async function alternateCheck(source,game,milestone,{fetcher=fetch,market
    const path=`/nba/gametracker/boxscore/NBA_${date}_${codes[away]||away}@${codes[home]||home}/`;
    const html=await read('https://www.cbssports.com'+path);
    if(!html.includes('https://www.cbssports.com'+path))return null;
-   const value=cbsPlayerValue(html,player);return value===null?null:value===player.value;
+   const value=cbsPlayerValue(html,player);return value===null?null:externalValueQualifies(value,player.value,player.line);
   }
   const board=await read(`https://sports.yahoo.com/nba/scoreboard/?date=${date.slice(0,4)}-${date.slice(4,6)}-${date.slice(6)}`);
   const prefix=`https://sports.yahoo.com/nba/${clubs[away]}-${clubs[home]}-${date}`;
@@ -55,8 +56,8 @@ export async function alternateCheck(source,game,milestone,{fetcher=fetch,market
   const html=await read(urls[0]),id=urls[0].match(/-(\d+)\/$/)[1];
   const matches=yahooGames(html).filter(g=>g.gameId==='nba.g.'+id&&Math.abs(Date.parse(g.startTime)-Date.parse(milestone.start_date))<3*3600000);
   if(matches.length!==1)return null;const g=matches[0];
-  if(player){const value=yahooPlayerValue(g,player);return value===null?null:value===player.value}
+  if(player){const value=yahooPlayerValue(g,player);return value===null?null:externalValueQualifies(value,player.value,player.line)}
   if(/[1-9](?:Q|P|H|INNING)(?:TEAM)?TOTAL/.test(market?.event_ticker||''))return null;
-  return Number.isInteger(g.homeScore)&&Number.isInteger(g.awayScore)?g.homeScore===game.home&&g.awayScore===game.away:null;
+  return Number.isInteger(g.homeScore)&&Number.isInteger(g.awayScore)?externalScoresQualify(game,{home:g.homeScore,away:g.awayScore},market):null;
  }catch{return null}
 }

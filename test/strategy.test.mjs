@@ -333,8 +333,8 @@ test('late lead requires verified live score, leader identity, and progress',()=
   assert.equal(leadSignal(gameState(milestone,live(140,30,2)),market),null);
   assert.equal(leadSignal(gameState(milestone,{details:{...live(140,30).details,live_data_delayed:true}}),market),null);
   assert.equal(leadSignal(gameState(milestone,live(140,30)),{...market,title:'Will Boston win?',yes_sub_title:'Boston wins'}),null);
-  assert.equal(leadSignal(gameState(milestone,{details:{...live(140,30).details,possession:'away'}}),market),null);
-  assert.equal(leadSignal(gameState(milestone,{details:{...live(140,30).details,possession:undefined}}),market),null);
+  assert.ok(leadSignal(gameState(milestone,{details:{...live(140,30).details,possession:'away'}}),market),'new late rule allows either possession');
+  assert.ok(leadSignal(gameState(milestone,{details:{...live(140,30).details,possession:undefined}}),market),'new late rule does not require possession data');
 });
 test('a soccer over waits ten seconds within the current scan before fresh score checks',()=>{
   const now=Date.now();
