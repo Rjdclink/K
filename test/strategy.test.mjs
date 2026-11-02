@@ -376,18 +376,18 @@ test('regulation soccer totals reject extra-time goals even when live feed says 
   assert.equal(overSignal(stoppage,{...market,yes_ask_dollars:'0.98'})?.fraction,.15);
   assert.equal(overSignal(game("88'",'live'),{...market,yes_ask_dollars:'0.98',result:'no'}),null);
 });
-test('tennis match winner requires a deciding-set service game that can clinch the match',()=>{
+test('tennis match winner requires match point while serving in the deciding set',()=>{
   const m={id:'tennis',title:'Hurkacz vs Bergs',type:'tennis_tournament_singles',details:{best_of:'3',first_competitor_id:'H',second_competitor_id:'B',main_game_event_ticker:'KXATPMATCH-26OCT26HURBER'}};
   const market={status:'active',event_ticker:'KXATPMATCH-26OCT26HURBER',title:'Hubert Hurkacz wins',rules_primary:'If Hubert Hurkacz wins the tennis match after a ball has been played, Yes.',custom_strike:{tennis_competitor:'H'}};
-  const live=(ours=5,theirs=4,sets=1,server='H',p1=30,p2=15,best='3')=>gameState({...m,details:{...m.details,best_of:best}},{details:{status:'live',competitor1_is_home:true,competitor1_round_scores:[{outcome:'winner',score:6},{outcome:'loser',score:3},{outcome:'ongoing',score:ours}],competitor2_round_scores:[{outcome:'loser',score:3},{outcome:'winner',score:6},{outcome:'ongoing',score:theirs}],competitor1_overall_score:sets,competitor2_overall_score:sets,competitor1_current_round_score:p1,competitor2_current_round_score:p2,server,advantage:''}});
+  const live=(ours=5,theirs=4,sets=1,server='H',p1=40,p2=30,best='3')=>gameState({...m,details:{...m.details,best_of:best}},{details:{status:'live',competitor1_is_home:true,competitor1_round_scores:[{outcome:'winner',score:6},{outcome:'loser',score:3},{outcome:'ongoing',score:ours}],competitor2_round_scores:[{outcome:'loser',score:3},{outcome:'winner',score:6},{outcome:'ongoing',score:theirs}],competitor1_overall_score:sets,competitor2_overall_score:sets,competitor1_current_round_score:p1,competitor2_current_round_score:p2,server,advantage:''}});
   assert.equal(tennisSignal(live(),market)?.fraction,.15);
   assert.equal(tennisSignal(live(6,5),market)?.fraction,.15);
   assert.equal(tennisSignal(live(3,1),market),null);
-  assert.equal(tennisSignal(live(5,3),market),null);
+  assert.equal(tennisSignal(live(5,3),market)?.fraction,.15);
   assert.equal(tennisSignal(live(5,5),market),null);
   assert.equal(tennisSignal(live(6,6),market),null);
   assert.equal(tennisSignal(live(5,4,0),market),null);
-  assert.equal(tennisSignal(live(5,4,2,'H',30,15,'5'),market)?.fraction,.15);
+  assert.equal(tennisSignal(live(5,4,2,'H',40,15,'5'),market)?.fraction,.15);
   assert.equal(tennisSignal(live(5,4,1,'H',30,15,'5'),market),null);
   assert.equal(tennisSignal(live(5,4,1,'B',30,40),market),null);
   assert.equal(tennisSignal(live(5,4,1,'H',15,40),market),null);
@@ -403,7 +403,7 @@ test('ITF men and women accept only the match-clinching deciding-set service gam
   assert.equal(first.verifiedLive,true);
   assert.equal(first.tennis.bestOf,3);
   assert.equal(tennisSignal(first,market)?.fraction,.15);
-  assert.equal(kalshiOnlyLead(first,next,market),true,'a 40–0 service game remains eligible after one tennis point is removed');
+  assert.equal(kalshiOnlyLead(first,next,market),false,'removing a point cannot bypass the match-point requirement');
   assert.equal(tennisSignal(state(now,5,4,'del'),market),null);
   assert.equal(tennisSignal(state(now,3,2),market),null);
   assert.equal(tennisSignal(state(now,2,0),market),null);
@@ -463,11 +463,11 @@ test('over allocation is a per-trade cap independent of existing positions',()=>
   assert.equal(overBudget(6000,4000,3000),1500);
   assert.equal(overBudget(10000,0,9000),1500);
 });
-test('entry submissions use full fills and commanding leads use the half-potential exit target',()=>{
+test('entry submissions use full fills and tennis has an immediate profit exit alongside other lead targets',()=>{
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
   assert.equal((source.match(/side:'bid'[^\n]+time_in_force:'fill_or_kill'/g)||[]).length,3);
   assert.match(source,/const leadPosition=original\.strategy==='lead'&&![^;]+;/);
-  assert.match(source,/const targetReached=profitTargetAllowed\(original\)&&sale\.count/);
+  assert.match(source,/const targetReached=tennisProfitExitEligible\(original,position,sale\)\|\|\s+profitTargetAllowed\(original\)&&sale\.count/);
   assert.match(source,/leadPosition\?halfPotentialProfitExitEligible\(position,sale\):oneAndHalfExitEligible\(position,sale\)/);
   assert.match(source,/if\(!leadExit&&!targetReached&&!corrected\)continue;/);
   assert.match(source,/if\(live\(\)\|\|exitOnly\(\)\)await exitComebacks/);

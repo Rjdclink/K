@@ -908,19 +908,22 @@ export function tennisSignal(game,market){
   const t=game.tennis;
   if(!game.verifiedLive||!game.scoreKnown||!t||!['active','open'].includes(market.status)||market.event_ticker!==t.mainEvent||!/(?:wins?|winner).*match|wins?\b/i.test(`${market.title||''} ${market.rules_primary||''}`))return null;
   if(![3,5].includes(t.bestOf)||!t.firstId||!t.secondId||!t.server||!t.mainEvent||t.firstRound!=='ongoing'||t.secondRound!=='ongoing')return null;
-  // Only a leader serving at 5–4 or 6–5 can clinch the deciding set in this game.
-  const first=[5,6].includes(t.firstGames)&&t.firstGames-t.secondGames===1&&t.firstSets===(t.bestOf-1)/2;
-  const second=[5,6].includes(t.secondGames)&&t.secondGames-t.firstGames===1&&t.secondSets===(t.bestOf-1)/2;
+  const before=(t.bestOf-1)/2;
+  if(t.firstSets!==before||t.secondSets!==before||
+    !Number.isInteger(t.firstGames)||!Number.isInteger(t.secondGames)||t.firstGames<0||t.secondGames<0)return null;
+  // One more service-game point must win the final deciding set and match.
+  // A 6–6 tiebreak needs a known scoring format and is not a service game.
+  const clinches=(ours,theirs)=>ours===5&&theirs<=4||ours===6&&theirs===5;
+  const first=clinches(t.firstGames,t.secondGames),second=clinches(t.secondGames,t.firstGames);
   if(first===second)return null;
-  const leaderId=first?t.firstId:t.secondId,opponentId=first?t.secondId:t.firstId;
+  const leaderId=first?t.firstId:t.secondId;
   if(market.custom_strike?.tennis_competitor!==leaderId||t.server!==leaderId)return null;
   const leaderPoints=first?t.firstPoints:t.secondPoints,opponentPoints=first?t.secondPoints:t.firstPoints;
   if(![0,15,30,40].includes(leaderPoints)||![0,15,30,40].includes(opponentPoints))return null;
-  // A known opponent game point is an imminent break or hold, so wait for the next update.
-  if(opponentPoints===40 && leaderPoints<40 || leaderPoints===40 && opponentPoints===40 && t.advantage===opponentId)return null;
-  if(t.advantage && !['',leaderId,opponentId].includes(t.advantage))return null;
+  if(leaderPoints!==40)return null;
+  if(opponentPoints===40?t.advantage!==leaderId:Boolean(t.advantage))return null;
   const leaderGames=first?t.firstGames:t.secondGames,opponentGames=first?t.secondGames:t.firstGames;
-  return {strategy:'lead',reason:`Tennis match-clinching set ${leaderGames}–${opponentGames}; leader serves, points ${leaderPoints}–${opponentPoints}${t.advantage===leaderId?' advantage':''}`,fraction:.15};
+  return {strategy:'lead',reason:`Tennis match-clinching set ${leaderGames}–${opponentGames}; leader serves, points ${leaderPoints}–${opponentPoints}${t.advantage===leaderId?' advantage':''}; deciding-set match point, one point from match win`,fraction:.15};
 }
 export function minimumProfitCents(strategy,availableCents,sportType='',remainingSeconds=NaN,filledOrders=0,{game,market}={}){
   const tier=filledOrders>=20?50:filledOrders>=15?35:filledOrders>=10?15:0;

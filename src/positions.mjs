@@ -55,6 +55,26 @@ export function profitTargetAllowed(original){
     Array.isArray(original.combo_legs)&&original.combo_legs.some(leg=>leg.sport==='Soccer')));
 }
 
+export function tennisWinnerPosition(original){
+  return original?.sport==='Tennis'&&original.strategy==='lead'&&
+    !/TOTAL/i.test(String(original.market_ticker||''))&&
+    !(Array.isArray(original.combo_legs)&&original.combo_legs.length>=2);
+}
+
+// The executable sale must earn strictly more than 10% of the held position's
+// potential net settlement profit, after entry fees and reserved sale fees.
+export function tennisProfitExitEligible(original,position,sale){
+  if(!tennisWinnerPosition(original))return false;
+  const held=Number(position?.position_fp??position?.position);
+  const exposure=Number(position?.market_exposure_dollars),fees=Number(position?.fees_paid_dollars);
+  if(position?.market_exposure_dollars==null||position?.fees_paid_dollars==null||
+    !Number.isFinite(held)||held<=0||!Number.isFinite(exposure)||exposure<0||
+    !Number.isFinite(fees)||fees<0)return false;
+  const maximumNetCents=Math.floor(held*100-(exposure+fees)*100+1e-8);
+  const saleProfitCents=estimatedSaleProfitCents(position,sale);
+  return maximumNetCents>0&&saleProfitCents!==null&&saleProfitCents>0&&saleProfitCents*10>maximumNetCents;
+}
+
 // Compare the exact held over statistic, not a game's aggregate score, with
 // its original crossed line. A reversal matters only once the line uncrosses.
 export function overCorrectionAffects(original,game,market){

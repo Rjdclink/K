@@ -182,7 +182,7 @@ test('timed independent checks unlock 20% for uncushioned overs and preserve 40%
   assert.equal(verifiedOverFraction({strategy:'over',fraction:.15},cushioned,market),.40);
   assert.equal(verifiedOverFraction({strategy:'over',fraction:.10},{...state,overVerification:{...proof,pairedAt:now-11000}},market),.10);
 });
-test('tennis two-match-point fallback permits 20% with an unchanged deciding set',()=>{
+test('tennis conservative fallback cannot bypass match point after removing a point',()=>{
   const m={id:'tennis-fallback',type:'tennis_tournament_singles',title:'Hurkacz vs Bergs',
     details:{best_of:'3',first_competitor_id:'H',second_competitor_id:'B',main_game_event_ticker:'KXATPMATCH-DATE'}};
   const market={status:'active',event_ticker:'KXATPMATCH-DATE',title:'Hubert Hurkacz wins',
@@ -194,8 +194,8 @@ test('tennis two-match-point fallback permits 20% with an unchanged deciding set
       competitor1_overall_score:1,competitor2_overall_score:1,competitor1_current_round_score:points,
       competitor2_current_round_score:15,server:'H',advantage:''}});
   const first=state(now-12000),second=state(now);
-  assert.equal(kalshiOnlyLead(first,second,market),true);
-  assert.equal(finalLeadFraction(first,second,lead,false,market),.20);
+  assert.equal(kalshiOnlyLead(first,second,market),false);
+  assert.equal(finalLeadFraction(first,second,lead,false,market),.15);
   assert.equal(kalshiOnlyLead(state(now-12000,30),state(now,30),market),false);
   assert.equal(finalLeadFraction(first,state(now-3000),lead,false,market),.15);
 });
