@@ -1,4 +1,5 @@
 import { alternateCheck } from './alternate_scores.mjs';
+import { teamAbbreviationVariants } from './team_identity.mjs';
 // ESPN and FOX publish the scoreboards used by their sites. These endpoints
 // are not contractual data APIs; a changed schema or unavailable fixture must
 // fail closed, never silently turn into permission to buy an over.
@@ -31,25 +32,24 @@ function expectedNames(game,milestone){
   // its home/away order is explicit.
   return {home:game.homeName||fallback.home||'',away:game.awayName||fallback.away||''};
 }
-function sameTeam(expected,aliases){
+function sameTeam(expected,aliases,sport){
   const key=clean(expected);
-  const alias={NOP:'NO',NYK:'NY',GSW:'GS',SAS:'SA',PHX:'PHO'};
+  const variants=teamAbbreviationVariants(expected,sport).map(clean);
   // Kalshi NHL milestones often use only a city, while ESPN/FOX append the
   // franchise. Map explicitly to avoid matching two clubs from one city.
   const hockey={Carolina:'Carolina Hurricanes',Columbus:'Columbus Blue Jackets',Dallas:'Dallas Stars',Montreal:'Montreal Canadiens',
     Minnesota:'Minnesota Wild','New York I':'New York Islanders','New York R':'New York Rangers',Pittsburgh:'Pittsburgh Penguins',
     Utah:'Utah Mammoth','St. Louis':'St Louis Blues',Boston:'Boston Bruins','Tampa Bay':'Tampa Bay Lightning',Winnipeg:'Winnipeg Jets'};
   const soccer={'Atletico Mineiro':'Atletico MG','Al Ahli Saudi':'Al Ahli','GA Eagles':'Go Ahead Eagles'};
-  const parts=String(expected||'').match(/^([A-Z]{2,3})\s+(.+)$/);
-  const alternate=parts&&alias[parts[1]]?clean(alias[parts[1]]+' '+parts[2]):null;
   const franchise=hockey[expected]?clean(hockey[expected]):soccer[expected]?clean(soccer[expected]):null;
   const clubName=name=>clean(String(name||'').replace(/^(?:AC|FC|CF|SC|AFC)\s+/i,'').replace(/\s+(?:AC|FC|CF|SC|AFC)$/i,''));
   const stripped=clubName(expected);
-  return key.length>=3 && aliases.some(name=>clean(name)===key||alternate&&clean(name)===alternate||franchise&&clean(name)===franchise||
+  const shortCode=variants.length>1&&/^[A-Za-z]{2}$/.test(String(expected||''));
+  return (key.length>=3||shortCode) && aliases.some(name=>variants.includes(clean(name))||franchise&&clean(name)===franchise||
     stripped.length>=5&&clubName(name)===stripped);
 }
 function teamAliases(t,fox=false,collegeFootball=false){
-  if(fox)return [t?.imageAltText,t?.longName,t?.stackedNameBottom,t?.abbreviation,t?.shortName,`${t?.name||''} ${t?.longName||''}`,`${t?.stackedNameTop||''} ${t?.stackedNameBottom||''}`];
+  if(fox)return [t?.imageAltText,t?.longName,t?.stackedNameBottom,t?.abbreviation,t?.shortName,t?.name,`${t?.name||''} ${t?.longName||''}`,`${t?.stackedNameTop||''} ${t?.stackedNameBottom||''}`];
   return [t?.displayName,t?.shortDisplayName,t?.name,t?.abbreviation,`${t?.abbreviation||''} ${t?.name||''}`,`${t?.location||''} ${t?.name||''}`,
     ...(collegeFootball?[t?.location]:[])];
 }
@@ -66,7 +66,7 @@ function sameFixture(game,milestone,home,away,time){
   const names=expectedNames(game,milestone),start=Date.parse(milestone.start_date||'');
   const other=Date.parse(time||'');
   return Number.isFinite(start)&&Number.isFinite(other)&&Math.abs(start-other)<=3*3600000&&
-    sameTeam(names.home,home)&&sameTeam(names.away,away);
+    sameTeam(names.home,home,game.sport)&&sameTeam(names.away,away,game.sport);
 }
 export function espnMatches(data,game,milestone){
   if(!Array.isArray(data?.events))return [];
@@ -161,12 +161,13 @@ export function foxMatches(data,game,milestone){
     if(!homeUri||!awayUri||homeUri===awayUri||home===away)return [];
     if(!home||!away||!sameFixture(game,milestone,teamAliases(home,true),teamAliases(away,true),e.eventTime))return [];
     const eventId=String(e.entityLink?.layout?.tokens?.id||'');
-    const endOfPeriod=String(e.statusLine||'').match(/\bEND\s+(\d+)(?:ST|ND|RD|TH)\b/i);
-    const reportedPeriod=endOfPeriod?Number(endOfPeriod[1]):NaN;
+    const period=String(e.statusLine||'').match(/\b([1-4])(?:ST|ND|RD|TH)\b/i);
+    const reportedPeriod=period?Number(period[1]):NaN;
+    const clock=String(e.statusLine||'').match(/\b\d{1,2}:\d{2}\b/)?.[0]||'';
     // A source still showing the previous period cannot veto an exact,
     // current independent scoreboard. A disagreement in the current period
     // remains a veto.
-    return [{source:'FOX Sports',eventId:/^\d+$/.test(eventId)?eventId:null,home:score(home.score),away:score(away.score),live:e.eventStatus===1,clockOk:clockCompatible(game,reportedPeriod,e.statusLine),stale:Number.isFinite(game.period)&&Number.isFinite(reportedPeriod)&&reportedPeriod<game.period}];
+    return [{source:'FOX Sports',eventId:/^\d+$/.test(eventId)?eventId:null,home:score(home.score),away:score(away.score),live:e.eventStatus===1,clockOk:clockCompatible(game,reportedPeriod,/soccer/.test(game.type)?e.statusLine:clock),stale:Number.isFinite(game.period)&&Number.isFinite(reportedPeriod)&&reportedPeriod<game.period}];
   }));
 }
 export function scoreAgreement(game,bySource,market){
@@ -209,13 +210,15 @@ export function playerStatAgreement(summary,player){
 // or stat. Parse the named player table, not a recap or similarly named rival.
 export function foxPlayerStat(data,player,eventId){
   if(String(data?.header?.id)!==String(eventId))return null;
-  const column={PTS:'PTS',REB:'REB',AST:'AST','3PT':'3FG',STL:'STL',BLK:'BLK'}[player.metric];
+  const yardType={PASSYDS:'PASSING',RUSHYDS:'RUSHING',RECYDS:'RECEIVING'}[player.metric];
+  const column=yardType?'YDS':{PTS:'PTS',REB:'REB',AST:'AST','3PT':'3FG',STL:'STL',BLK:'BLK'}[player.metric];
   if(!column&&player.metric!=='PRA')return null;
   const matches=[];
   for(const section of data?.boxscore?.boxscoreSections||[])for(const item of section.boxscoreItems||[]){
     const table=item.boxscoreTable;
     if(!table)continue;
     const headers=table.headers?.[0]?.columns||[];
+    if(yardType&&!headers.some(h=>String(h.text).toUpperCase()===yardType))continue;
     const indexes=(player.metric==='PRA'?['PTS','REB','AST']:[column]).map(label=>headers.find(h=>h.text===label)?.index);
     if(indexes.some(n=>!Number.isInteger(n)))continue;
     for(const row of table.rows||[]){
@@ -233,7 +236,7 @@ async function json(url,fetcher){
   if(!response.ok)throw Error(`Scoreboard ${response.status}`);
   return response.json();
 }
-async function verifyExistingOver(game,milestone,{fetcher=fetch,cache,market,source='ESPN'}={}){
+async function verifyExistingOver(game,milestone,{fetcher=fetch,cache,market,source='ESPN',unavailableReasons=[]}={}){
   const start=Date.parse(milestone.start_date||'');
   if(!Number.isFinite(start)||!game.scoreKnown)return null;
   const {espn,fox}=feeds(game);
@@ -248,9 +251,22 @@ async function verifyExistingOver(game,milestone,{fetcher=fetch,cache,market,sou
   };
   const check=async(source,feed)=>{
     if(!feed)return null;
-    const requests=dates.map(day=>source==='ESPN'
-      ?`https://site.api.espn.com/apis/site/v2/sports/${feed}/scoreboard?dates=${day}&limit=500`
-      :`https://api.foxsports.com/bifrost/v1/${feed}/scoreboard/segment/${feed==='soccer'?'c0d'+day:day}?apikey=${FOX_KEY}&api-version=1.1${feed==='soccer'?'&groupId=0':''}`);
+    const foxBase=`https://api.foxsports.com/bifrost/v1/${feed}`;
+    const foxQuery=`apikey=${FOX_KEY}&api-version=1.1`;
+    let requests;
+    if(source==='ESPN')requests=dates.map(day=>`https://site.api.espn.com/apis/site/v2/sports/${feed}/scoreboard?dates=${day}&limit=500`);
+    else if(feed==='nfl'||feed==='cfb'){
+      // Football score segments are season/week IDs, never calendar dates.
+      // Discover the provider's current segment instead of guessing its week.
+      try{
+        const selection=await read(`${foxBase}/league/scores?${foxQuery}`);
+        const id=String(selection?.currentSelectionId||'');
+        if(!/^\d{4}-\d{1,2}-\d$/.test(id))throw Error('missing current score segment');
+        requests=[`${foxBase}/league/scores-segment/${id}?${foxQuery}${feed==='cfb'?'&groupId=-4':''}`];
+      }catch(error){unavailableReasons.push(`${source}: ${error.message}`);return null}
+    }else requests=dates.map(day=>feed==='soccer'
+      ?`${foxBase}/scoreboard/segment/c0d${day}?${foxQuery}&groupId=0`
+      :`${foxBase}/league/scores-segment/${day}?${foxQuery}${feed==='cbk'?'&groupId=-4':''}`);
     const results=await Promise.allSettled(requests.map(read));
     const seen=new Set(),matches=[];
     for(const result of results){
@@ -261,7 +277,11 @@ async function verifyExistingOver(game,milestone,{fetcher=fetch,cache,market,sou
       seen.add(signature);matches.push(...found.filter(m=>!m.stale));
     }
     if(matches.length>1)return false;
-    if(!matches.length)return null;
+    if(!matches.length){
+      const errors=results.filter(r=>r.status==='rejected').map(r=>String(r.reason?.message||'request failed'));
+      unavailableReasons.push(`${source}: ${errors.length===results.length?errors.join(', '):'no exact matching fixture'}`);
+      return null;
+    }
     if(!scoreAgreement(game,[matches],market))return false;
     const series=String(market?.event_ticker||'').split('-')[0];
     const soccerGameOver=source==='ESPN'&&/soccer/.test(game.type)&&/TOTAL$/.test(series)&&
@@ -277,18 +297,23 @@ async function verifyExistingOver(game,milestone,{fetcher=fetch,cache,market,sou
     try{
       if(source==='ESPN'){
         const summary=await read(`https://site.api.espn.com/apis/site/v2/sports/${feed}/summary?event=${encodeURIComponent(matched.eventId)}`);
-        return summary?.boxscore?.players?.length?playerStatAgreement(summary,player):null;
+        const result=summary?.boxscore?.players?.length?playerStatAgreement(summary,player):null;
+        if(result===null)unavailableReasons.push(`${source}: ${player.name} ${player.metric} statistic unavailable`);
+        return result;
       }
-      if(feed!=='nba')return null;
+      if(!['nba','wnba','nfl','cfb'].includes(feed)){
+        unavailableReasons.push(`${source}: ${player.metric} player-stat coverage unavailable`);return null;
+      }
       const box=await read(`https://api.foxsports.com/bifrost/v1/${feed}/event/${matched.eventId}/data?apikey=${FOX_KEY}&api-version=1.1`);
       const value=foxPlayerStat(box,player,matched.eventId);
+      if(value===null)unavailableReasons.push(`${source}: ${player.name} ${player.metric} statistic unavailable`);
       return value===null?null:value===player.value;
-    }catch{return null}
+    }catch(error){unavailableReasons.push(`${source}: ${error.message}`);return null}
   };
   return source==='ESPN'?check('ESPN',espn):source==='FOX'?check('FOX Sports',fox):null;
 }
 
-const nbaAliases=t=>[`${t?.teamCity||''} ${t?.teamName||''}`,`${t?.teamTricode||''} ${t?.teamName||''}`,t?.teamName];
+const nbaAliases=t=>[`${t?.teamCity||''} ${t?.teamName||''}`,`${t?.teamTricode||''} ${t?.teamName||''}`,t?.teamTricode,t?.teamName];
 export function nbaFixtures(data,game,milestone){
   return (data?.scoreboard?.games||[]).filter(g=>/^\d{10}$/.test(String(g.gameId))&&sameFixture(game,milestone,nbaAliases(g.homeTeam),nbaAliases(g.awayTeam),g.gameTimeUTC));
 }
@@ -331,7 +356,9 @@ async function verifyNbaOver(game,milestone,{fetcher=fetch,market}={}){
 // null means no exact independent fixture/stat was available. A definite
 // contradiction remains false and must never authorize a Kalshi-only fallback.
 export async function verifyIndependentOverDecision(game,milestone,options={}){
-  const [preferred,nba]=await Promise.all([verifyExistingOver(game,milestone,options),verifyNbaOver(game,milestone,options)]);
+  delete game.verificationIssue;
+  const unavailableReasons=[],rankedOptions={...options,unavailableReasons};
+  const [preferred,nba]=await Promise.all([verifyExistingOver(game,milestone,rankedOptions),verifyNbaOver(game,milestone,options)]);
   if(nba===false||preferred===false)return false;
   if(nba!==null)return nba;
   if(preferred!==null)return preferred;
@@ -341,7 +368,8 @@ export async function verifyIndependentOverDecision(game,milestone,options={}){
     const result=await alternateCheck(source,game,milestone,options);
     if(result!==null)return result;
   }
-  const fox=await verifyExistingOver(game,milestone,{...options,source:'FOX'});
+  const fox=await verifyExistingOver(game,milestone,{...rankedOptions,source:'FOX'});
+  if(fox===null&&unavailableReasons.length)game.verificationIssue='External verification unavailable: '+[...new Set(unavailableReasons)].join('; ');
   return fox;
 }
 export async function verifyIndependentOver(game,milestone,options={}){

@@ -1,0 +1,263 @@
+{
+  "header": {
+    "id": "11262"
+  },
+  "boxscore": {
+    "boxscoreSections": [
+      {
+        "boxscoreItems": [
+          {
+            "boxscoreTable": {
+              "headers": [
+                {
+                  "columns": [
+                    {
+                      "index": 0,
+                      "text": "RECEIVING",
+                      "priority": 1,
+                      "template": "cell-entity-text",
+                      "weight": 3.8,
+                      "emphasized": true,
+                      "sortable": "none"
+                    },
+                    {
+                      "index": 1,
+                      "text": "REC",
+                      "priority": 2,
+                      "template": "cell-number",
+                      "weight": 0.9,
+                      "emphasized": false,
+                      "sortable": "none"
+                    },
+                    {
+                      "index": 2,
+                      "text": "YDS",
+                      "priority": 3,
+                      "template": "cell-number",
+                      "weight": 1.1,
+                      "emphasized": false,
+                      "sortable": "none"
+                    },
+                    {
+                      "index": 3,
+                      "text": "AVG",
+                      "priority": 7,
+                      "template": "cell-number",
+                      "weight": 1.4,
+                      "emphasized": false,
+                      "sortable": "none"
+                    },
+                    {
+                      "index": 4,
+                      "text": "TD",
+                      "priority": 4,
+                      "template": "cell-number",
+                      "weight": 0.8,
+                      "emphasized": false,
+                      "sortable": "none"
+                    },
+                    {
+                      "index": 5,
+                      "text": "LNG",
+                      "priority": 5,
+                      "template": "cell-number",
+                      "weight": 1.1,
+                      "emphasized": false,
+                      "sortable": "none"
+                    },
+                    {
+                      "index": 6,
+                      "text": "TGT",
+                      "priority": 6,
+                      "template": "cell-number",
+                      "weight": 0.9,
+                      "emphasized": false,
+                      "sortable": "none"
+                    }
+                  ],
+                  "isPrimary": true
+                }
+              ],
+              "rows": [
+                {
+                  "columns": [
+                    {
+                      "index": 0,
+                      "text": "C. Okonkwo",
+                      "emphasized": false
+                    },
+                    {
+                      "index": 1,
+                      "text": "1",
+                      "emphasized": false
+                    },
+                    {
+                      "index": 2,
+                      "text": "11",
+                      "emphasized": false
+                    },
+                    {
+                      "index": 3,
+                      "text": "11.0",
+                      "emphasized": false
+                    },
+                    {
+                      "index": 4,
+                      "text": "0",
+                      "emphasized": false
+                    },
+                    {
+                      "index": 5,
+                      "text": "11",
+                      "emphasized": false
+                    },
+                    {
+                      "index": 6,
+                      "text": "1",
+                      "emphasized": false
+                    }
+                  ],
+                  "isCutoff": false,
+                  "selected": false,
+                  "entityLink": {
+                    "title": "CHIG OKONKWO",
+                    "webUrl": "/nfl/chigoziem-okonkwo-player",
+                    "color": "1, 170, 0, 49",
+                    "imageUrl": "https://b.fssta.com/uploads/application/nfl/headshots/22853.vresize.140.170.medium.6.png",
+                    "imageType": "image-headshot",
+                    "imageAltText": "Chig Okonkwo",
+                    "contentUri": "football/nfl/athletes/22853",
+                    "contentType": "athlete",
+                    "layout": {
+                      "path": "/layouts?type=layout&subtype=playersLayout&elementId=nfl",
+                      "tokens": {
+                        "id": "22853",
+                        "contentUri": "football/nfl/athletes/22853"
+                      }
+                    },
+                    "analyticsName": "chigoziem-okonkwo",
+                    "analyticsSport": "nfl",
+                    "type": "playermodal",
+                    "alternateImageUrl": "https://b.fssta.com/uploads/application/nfl/headshots/22853.vresize.140.170.medium.6.png"
+                  },
+                  "isFaded": false
+                }
+              ]
+            }
+          },
+          {
+            "boxscoreTable": {
+              "headers": [
+                {
+                  "columns": [
+                    {
+                      "index": 0,
+                      "text": "FUMBLES",
+                      "priority": 1,
+                      "template": "cell-entity-text",
+                      "weight": 5.2,
+                      "emphasized": true,
+                      "sortable": "none"
+                    },
+                    {
+                      "index": 1,
+                      "text": "FUM",
+                      "priority": 2,
+                      "template": "cell-number",
+                      "weight": 1.2,
+                      "emphasized": false,
+                      "sortable": "none"
+                    },
+                    {
+                      "index": 2,
+                      "text": "LST",
+                      "priority": 3,
+                      "template": "cell-number",
+                      "weight": 1.2,
+                      "emphasized": false,
+                      "sortable": "none"
+                    },
+                    {
+                      "index": 3,
+                      "text": "FF",
+                      "priority": 4,
+                      "template": "cell-number",
+                      "weight": 1.2,
+                      "emphasized": false,
+                      "sortable": "none"
+                    },
+                    {
+                      "index": 4,
+                      "text": "REC",
+                      "priority": 5,
+                      "template": "cell-number",
+                      "weight": 1.2,
+                      "emphasized": false,
+                      "sortable": "none"
+                    }
+                  ],
+                  "isPrimary": true
+                }
+              ],
+              "rows": [
+                {
+                  "columns": [
+                    {
+                      "index": 0,
+                      "text": "C. Okonkwo",
+                      "emphasized": false
+                    },
+                    {
+                      "index": 1,
+                      "text": "1",
+                      "emphasized": false
+                    },
+                    {
+                      "index": 2,
+                      "text": "1",
+                      "emphasized": false
+                    },
+                    {
+                      "index": 3,
+                      "text": "0",
+                      "emphasized": false
+                    },
+                    {
+                      "index": 4,
+                      "text": "0",
+                      "emphasized": false
+                    }
+                  ],
+                  "isCutoff": false,
+                  "selected": false,
+                  "entityLink": {
+                    "title": "CHIG OKONKWO",
+                    "webUrl": "/nfl/chigoziem-okonkwo-player",
+                    "color": "1, 170, 0, 49",
+                    "imageUrl": "https://b.fssta.com/uploads/application/nfl/headshots/22853.vresize.140.170.medium.6.png",
+                    "imageType": "image-headshot",
+                    "imageAltText": "Chig Okonkwo",
+                    "contentUri": "football/nfl/athletes/22853",
+                    "contentType": "athlete",
+                    "layout": {
+                      "path": "/layouts?type=layout&subtype=playersLayout&elementId=nfl",
+                      "tokens": {
+                        "id": "22853",
+                        "contentUri": "football/nfl/athletes/22853"
+                      }
+                    },
+                    "analyticsName": "chigoziem-okonkwo",
+                    "analyticsSport": "nfl",
+                    "type": "playermodal",
+                    "alternateImageUrl": "https://b.fssta.com/uploads/application/nfl/headshots/22853.vresize.140.170.medium.6.png"
+                  },
+                  "isFaded": false
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,7 +1,8 @@
 import {playerOverSpec} from './strategy.mjs';
+import {teamAbbreviationVariants} from './team_identity.mjs';
 const clean=s=>String(s||'').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]/g,'');
 const clubs={ATL:'atlanta-hawks',BOS:'boston-celtics',BKN:'brooklyn-nets',CHA:'charlotte-hornets',CHI:'chicago-bulls',CLE:'cleveland-cavaliers',DAL:'dallas-mavericks',DEN:'denver-nuggets',DET:'detroit-pistons',GSW:'golden-state-warriors',HOU:'houston-rockets',IND:'indiana-pacers',LAC:'los-angeles-clippers',LAL:'los-angeles-lakers',MEM:'memphis-grizzlies',MIA:'miami-heat',MIL:'milwaukee-bucks',MIN:'minnesota-timberwolves',NOP:'new-orleans-pelicans',NYK:'new-york-knicks',OKC:'oklahoma-city-thunder',ORL:'orlando-magic',PHI:'philadelphia-76ers',PHX:'phoenix-suns',POR:'portland-trail-blazers',SAC:'sacramento-kings',SAS:'san-antonio-spurs',TOR:'toronto-raptors',UTA:'utah-jazz',WAS:'washington-wizards'};
-const club=name=>Object.keys(clubs).find(k=>String(name).startsWith(k+' ')||clean(name)===clean(clubs[k]));
+const club=name=>Object.keys(clubs).find(k=>teamAbbreviationVariants(name,'NBA').some(value=>value===k||value.startsWith(k+' ')||clean(value)===clean(clubs[k])));
 const text=s=>s.replace(/<[^>]*>/g,'').replace(/&nbsp;/g,' ').trim();
 export function cbsPlayerValue(html,player){
  const values=[];

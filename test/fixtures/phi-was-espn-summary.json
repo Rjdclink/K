@@ -1,0 +1,36 @@
+{
+  "boxscore": {
+    "players": [
+      {
+        "statistics": [
+          {
+            "name": "receiving",
+            "labels": [
+              "REC",
+              "YDS",
+              "AVG",
+              "TD",
+              "LONG",
+              "TGTS"
+            ],
+            "athletes": [
+              {
+                "athlete": {
+                  "displayName": "Chig Okonkwo"
+                },
+                "stats": [
+                  "1",
+                  "11",
+                  "11.0",
+                  "0",
+                  "11",
+                  "1"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
