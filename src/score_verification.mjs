@@ -18,7 +18,22 @@ const dateCandidates=ms=>{
   return days.map(dateKey);
 };
 
-function feeds(game){
+function lacrosseFeed(game,milestone){
+  const aliases={pll:'pll',premierlacrosseleague:'pll',nll:'nll',nationallacrosseleague:'nll',
+    ncaam:'mens-college-lacrosse',ncaamlax:'mens-college-lacrosse',ncaamenslacrosse:'mens-college-lacrosse',ncaamenscollegelacrosse:'mens-college-lacrosse',menscollegelacrosse:'mens-college-lacrosse',mensncaalacrosse:'mens-college-lacrosse'};
+  const labels=[game.competition,game.sport,milestone?.details?.league,milestone?.details?.competition].map(clean);
+  if(labels.some(s=>/women|female|^wll$/.test(s)))return null;
+  const matches=new Set(labels.map(s=>aliases[s]).filter(Boolean));
+  const series={KXPLLGAME:'pll',KXNLLGAME:'nll',KXNCAAMLAXGAME:'mens-college-lacrosse'};
+  for(const ticker of [game.mainEvent,...(milestone?.primary_event_tickers||[])]){
+    const league=series[String(ticker||'').split('-')[0]];if(league)matches.add(league);
+  }
+  // One matching league is sufficient. Never borrow a different league's
+  // scoreboard when metadata is absent or contradictory.
+  return matches.size===1?`lacrosse/${[...matches][0]}`:null;
+}
+function feeds(game,milestone){
+  if(/lacrosse/.test(game.type))return {espn:lacrosseFeed(game,milestone),fox:null};
   if(/soccer/.test(game.type))return {espn:'soccer/all',fox:'soccer'};
   if(/^tennis_/.test(game.type))return /^(?:ATP|WTA)$/i.test(game.tour)?{espn:`tennis/${game.tour.toLowerCase()}`,fox:null}:{espn:null,fox:null};
   const league=game.sport;
@@ -53,10 +68,10 @@ function sameTeam(expected,aliases,sport){
   return (key.length>=3||shortCode) && aliases.some(name=>variants.includes(clean(name))||franchise&&clean(name)===franchise||
     stripped.length>=5&&clubName(name)===stripped);
 }
-function teamAliases(t,fox=false,collegeFootball=false){
+function teamAliases(t,fox=false,includeLocation=false){
   if(fox)return [t?.imageAltText,t?.longName,t?.stackedNameBottom,t?.abbreviation,t?.shortName,t?.name,`${t?.name||''} ${t?.longName||''}`,`${t?.stackedNameTop||''} ${t?.stackedNameBottom||''}`];
   return [t?.displayName,t?.shortDisplayName,t?.name,t?.abbreviation,`${t?.abbreviation||''} ${t?.name||''}`,`${t?.location||''} ${t?.name||''}`,
-    ...(collegeFootball?[t?.location]:[])];
+    ...(includeLocation?[t?.location]:[])];
 }
 function clockSeconds(clock){
   const text=String(clock||''),plain=text.match(/^(\d{1,2}):(\d{2})$/),iso=text.match(/^PT(?:(\d+)M)?([\d.]+)S$/);
@@ -82,7 +97,8 @@ export function espnMatches(data,game,milestone){
   if(!Array.isArray(data?.events))return [];
   return data.events.flatMap(e=>{
     const c=e.competitions?.[0],home=c?.competitors?.find(t=>t.homeAway==='home'),away=c?.competitors?.find(t=>t.homeAway==='away');
-    if(!home||!away||!sameFixture(game,milestone,teamAliases(home.team,false,game.sport==='CFB'),teamAliases(away.team,false,game.sport==='CFB'),e.date))return [];
+    const locationAliases=game.sport==='CFB'||/lacrosse/.test(game.type);
+    if(!home||!away||!sameFixture(game,milestone,teamAliases(home.team,false,locationAliases),teamAliases(away.team,false,locationAliases),e.date))return [];
     const status=c.status||e.status;
     const periods=(home.linescores||[]).map((part,i)=>({number:i+1,home:score(part.value),away:score(away.linescores?.[i]?.value)}));
     // Use the last play only when scoring events account for the full score.
@@ -261,7 +277,7 @@ async function json(url,fetcher){
 async function verifyExistingOver(game,milestone,{fetcher=fetch,cache,market,source='ESPN',unavailableReasons=[],minimumOverValue,onOverValue}={}){
   const start=Date.parse(milestone.start_date||'');
   if(!Number.isFinite(start)||!game.scoreKnown)return null;
-  const {espn,fox}=feeds(game);
+  const {espn,fox}=feeds(game,milestone);
   if(!espn&&!fox)return null;
   const dates=dateCandidates(start);
   const read=url=>{
