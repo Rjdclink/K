@@ -41,7 +41,7 @@ test('winner allocations are uniform after independent verification',()=>{
   assert.equal(finalLeadFraction(golf,golf,{...lead,fraction:.10},true),.20,'golf has no possession bonus');
 });
 test('an independent scoreboard raises only late commanding winners with stronger margins',()=>{
- const base={verifiedLive:true,scoreKnown:true,scoreConsistent:true,periodConsistent:true,awayUnits:0};
+ const base={verifiedLive:true,scoreKnown:true,scoreConsistent:true,periodConsistent:true,awayUnits:0,possessionSide:'home'};
  const tiers=[['basketball_game','NBA',4,90,0,20,30],['basketball_game','NCAAB',2,90,0,16,25],
   ['hockey_match','NHL',3,90,0,5,7],['football_game','NFL',4,60,0,21,28],['soccer_match','Soccer',2,240,86,3,4]];
  for(const [type,sport,period,remainingSeconds,soccerMinute,low,high] of tiers){
@@ -92,7 +92,7 @@ test('both live entry paths use the final verified allocation and funding rechec
   assert.match(source,/verifyCommandingLead\(freshState,c.milestone,quote,scoreboardCache\)/);
   assert.match(source,/verifyCommandingLead\(checked,c.milestone,executable,scoreboardCache\)/);
   assert.match(source,/if\(independentLead===false\)continue/);
-  assert.equal((source.match(/beforeDispatch:\(\)=>\{if\(signal.strategy==='over'\)assertTimedOverEntry\(game,market\);if\(signal.strategy==='lead'\)assertFreshLead\(game\)\}/g)||[]).length,2);
+  assert.equal((source.match(/beforeDispatch:\(\)=>\{if\(signal.strategy==='over'\)assertTimedOverEntry\(game,market\);if\(signal.strategy==='lead'\)assertFreshLead\(game,market\)\}/g)||[]).length,2);
 });
 test('strong Kalshi-only leads use 20% only after two stable reads and a score cushion',()=>{
   const now=Date.now(),observed=(age)=>({observedAt:now-age,updatedAt:now-age-1000,

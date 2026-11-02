@@ -9,6 +9,11 @@ test('golf independent board must agree on every named golfer and holes complete
  const event={markets:[market,{custom_strike:{golf_competitor:'b'},yes_sub_title:'Player Two'}]};
  const data={events:[{name:'Example Open',date:m.start_date,league:{slug:'pga'},competitions:[{status:{period:4,type:{state:'in'}},competitors:board.map((p,i)=>({athlete:{displayName:i?'Player Two':'Player One'},score:{displayValue:String(p.total_score)},status:{period:4,thru:p.current_round_thru}}))}]}]};
  assert.equal(golfAgreement(data,state(board),m,event),true);
+ const better=structuredClone(data),players=better.events[0].competitions[0].competitors;
+ players[0].score.displayValue='-14';players[1].status.thru=18;
+ assert.equal(golfAgreement(better,state(board),m,event),true,'a lower stroke score and advanced holes improve the selected winner');
+ players[1].score.displayValue='-9';
+ assert.equal(golfAgreement(better,state(board),m,event),false,'a stronger rival that reduces the lead does not qualify');
  data.events[0].competitions[0].competitors[1].status.thru=16;
  assert.equal(golfAgreement(data,state(board),m,event),false);
 });

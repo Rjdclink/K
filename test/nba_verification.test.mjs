@@ -9,6 +9,9 @@ const fixture={gameId:id,gameTimeUTC:start,gameStatus:2,homeTeam:{teamCity:'Chic
 test('NBA exact fixture and player stats distinguish agreement, disagreement and unavailable',()=>{
  assert.equal(nbaFixtures({scoreboard:{games:[fixture]}},game,milestone).length,1);
  assert.equal(nbaAgreement({game:fixture},game,milestone,market,id),true);
+ assert.equal(nbaAgreement({game:fixture},{...game,playerStats:{p:{rebounds:8}}},milestone,market,id),true,'the external named statistic remains over the line');
+ const higher=structuredClone(fixture);higher.homeTeam.players[0].statistics.reboundsTotal=7;
+ assert.equal(nbaAgreement({game:higher},game,milestone,market,id),true);
  const corrected=structuredClone(fixture);corrected.homeTeam.players[0].statistics.reboundsTotal=5;
  assert.equal(nbaAgreement({game:corrected},game,milestone,market,id),false);
  assert.equal(nbaAgreement({game:fixture},game,milestone,market,'other'),null);
@@ -32,6 +35,7 @@ test('NBA official data governs when available and ESPN is used when NBA is unav
   return {ok:true,json:async()=>data};
  }});
  assert.equal(await run(6),true);
+ assert.equal(await run(7),true);
  assert.equal(await run(5),false);
  assert.equal(await run(null),true);
  assert.equal(await run(6,false),true);
@@ -45,6 +49,7 @@ test('CBS supplies a player statistic only when NBA and preferred scoreboards ar
    return {ok:true,text:async()=>html.replace('<td>6</td>',`<td>${value}</td>`)};
  }});
  assert.equal(await run(6),true);
+ assert.equal(await run(7),true);
  assert.equal(await run(5),false);
 });
 test('NBA fallback tries CBS, then Yahoo, then FOX without querying lower-ranked sources after a reading',async()=>{

@@ -1,9 +1,10 @@
+import {externalValueQualifies,externalScoresQualify} from './external_values.mjs';
 import { alternateCheck } from './alternate_scores.mjs';
 import { teamAbbreviationVariants } from './team_identity.mjs';
 // ESPN and FOX publish the scoreboards used by their sites. These endpoints
 // are not contractual data APIs; a changed schema or unavailable fixture must
 // fail closed, never silently turn into permission to buy an over.
-import { periodValue, playerOverSpec } from './strategy.mjs';
+import { periodValue, playerOverSpec, basketballCloseoutEntry, basketballCloseoutMinimum } from './strategy.mjs';
 const FOX_KEY='jE7yBJVRNAwdDesMgTzTXUUSx1It41Fq'; // Public key in foxsports.com scoreboard URLs.
 const clean=s=>String(s||'').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/&/g,' and ').replace(/[^a-z0-9]/g,'');
 const score=v=>v===null||v===undefined||v===''?NaN:Number(v);
@@ -21,7 +22,10 @@ function feeds(game){
   if(/^tennis_/.test(game.type))return /^(?:ATP|WTA)$/i.test(game.tour)?{espn:`tennis/${game.tour.toLowerCase()}`,fox:null}:{espn:null,fox:null};
   const league=game.sport;
   const supported={NBA:['basketball/nba','nba'],WNBA:['basketball/wnba','wnba'],NCAAB:['basketball/mens-college-basketball','cbk'],NCAAW:['basketball/womens-college-basketball',null],NFL:['football/nfl','nfl'],CFB:['football/college-football','cfb'],NHL:['hockey/nhl','nhl'],MLB:['baseball/mlb','mlb']};
-  const [espn,fox]=supported[league]||[];
+  // Explicit ESPN league feeds; team aliases still use the unchanged identity checks.
+  const international={'Australia NBL':'nbl',NBL:'nbl','FIBA World Cup':'fiba',FIBA:'fiba',
+    "Olympics Men's Basketball":'mens-olympics-basketball',"Olympics Women's Basketball":'womens-olympics-basketball'};
+  const [espn,fox]=supported[league]||(/basketball/.test(game.type)&&international[league]?[`basketball/${international[league]}`,null]:[]);
   return {espn,fox};
 }
 function expectedNames(game,milestone){
@@ -53,6 +57,11 @@ function teamAliases(t,fox=false,collegeFootball=false){
   return [t?.displayName,t?.shortDisplayName,t?.name,t?.abbreviation,`${t?.abbreviation||''} ${t?.name||''}`,`${t?.location||''} ${t?.name||''}`,
     ...(collegeFootball?[t?.location]:[])];
 }
+function clockSeconds(clock){
+  const text=String(clock||''),plain=text.match(/^(\d{1,2}):(\d{2})$/),iso=text.match(/^PT(?:(\d+)M)?([\d.]+)S$/);
+  return plain&&Number(plain[2])<60?Number(plain[1])*60+Number(plain[2]):
+    iso&&Number(iso[2])<60?Number(iso[1]||0)*60+Number(iso[2]):NaN;
+}
 function clockCompatible(game,period,clock){
   if(Number.isFinite(game.period)&&Number.isFinite(Number(period))&&Number(period)>0&&game.period!==Number(period))return false;
   if(/soccer/.test(game.type)){
@@ -81,7 +90,7 @@ export function espnMatches(data,game,milestone){
     const total=score(home.score)+score(away.score);
     const documentedGoals=values.every(v=>Number.isInteger(v)&&v>0)?values.reduce((a,b)=>a+b,0):NaN;
     const lastScoringPlay=values.length&&documentedGoals===total?values.at(-1):null;
-    return [{source:'ESPN',eventId:e.id,home:score(home.score),away:score(away.score),periods,live:status?.type?.state==='in',clockOk:clockCompatible(game,status?.period,status?.displayClock),documentedGoals,lastScoringPlay}];
+    return [{source:'ESPN',eventId:e.id,home:score(home.score),away:score(away.score),periods,period:Number(status?.period),remainingSeconds:clockSeconds(status?.displayClock),live:status?.type?.state==='in',clockOk:clockCompatible(game,status?.period,status?.displayClock),documentedGoals,lastScoringPlay}];
   });
 }
 export function tennisMatches(data,game,milestone){
@@ -115,6 +124,11 @@ export function tableTennisMatches(data,game,milestone){
     return [{home,away,homeSets:score(e.homeScore?.current),awaySets:score(e.awayScore?.current),live:e.status?.type==='inprogress'}];
   });
 }
+function tableTennisScoreQualifies(game,m){
+  if(![m.home,m.away].every(n=>Number.isInteger(n)&&n>=0))return false;
+  const home=game.home>game.away,expected=home?game.home:game.away,actual=home?m.home:m.away;
+  return actual>=expected&&(home?m.home-m.away:m.away-m.home)>=Math.abs(game.home-game.away);
+}
 export async function verifyIndependentTableTennisLeadDecision(game,milestone,{fetcher=fetch}={}){
   if(!game.tableTennis||![3,5,7].includes(game.tableTennis.setNumber)||!game.verifiedLive)return false;
   const start=Date.parse(milestone.start_date||'');
@@ -130,7 +144,7 @@ export async function verifyIndependentTableTennisLeadDecision(game,milestone,{f
     if(matches.length>1)return false;
     if(!matches.length)return null;
     const m=matches[0];
-    return m.live&&m.home===game.home&&m.away===game.away&&
+    return m.live&&tableTennisScoreQualifies(game,m)&&
       m.homeSets===(game.tableTennis.firstIsHome?game.tableTennis.firstSets:game.tableTennis.secondSets)&&
       m.awaySets===(game.tableTennis.firstIsHome?game.tableTennis.secondSets:game.tableTennis.firstSets);
   }catch{return null}
@@ -146,7 +160,7 @@ export async function verifyIndependentTableTennisMatch(game,milestone,{fetcher=
     const data=await Promise.allSettled(dates.map(day=>json(`https://www.sofascore.com/api/v1/sport/table-tennis/scheduled-events/${day}`,fetcher)));
     const matches=data.filter(r=>r.status==='fulfilled').flatMap(r=>tableTennisMatches(r.value,game,milestone));
     const unique=[...new Map(matches.map(m=>[JSON.stringify(m),m])).values()];
-    return unique.length===1&&unique[0].live&&unique[0].home===game.home&&unique[0].away===game.away&&
+    return unique.length===1&&unique[0].live&&tableTennisScoreQualifies(game,unique[0])&&
       unique[0].homeSets===(t.firstIsHome?t.firstSets:t.secondSets)&&
       unique[0].awaySets===(t.firstIsHome?t.secondSets:t.firstSets);
   }catch{return false}
@@ -167,24 +181,31 @@ export function foxMatches(data,game,milestone){
     // A source still showing the previous period cannot veto an exact,
     // current independent scoreboard. A disagreement in the current period
     // remains a veto.
-    return [{source:'FOX Sports',eventId:/^\d+$/.test(eventId)?eventId:null,home:score(home.score),away:score(away.score),live:e.eventStatus===1,clockOk:clockCompatible(game,reportedPeriod,/soccer/.test(game.type)?e.statusLine:clock),stale:Number.isFinite(game.period)&&Number.isFinite(reportedPeriod)&&reportedPeriod<game.period}];
+    return [{source:'FOX Sports',eventId:/^\d+$/.test(eventId)?eventId:null,home:score(home.score),away:score(away.score),period:reportedPeriod,remainingSeconds:clockSeconds(clock),live:e.eventStatus===1,clockOk:clockCompatible(game,reportedPeriod,/soccer/.test(game.type)?e.statusLine:clock),stale:Number.isFinite(game.period)&&Number.isFinite(reportedPeriod)&&reportedPeriod<game.period}];
   }));
 }
 export function scoreAgreement(game,bySource,market){
   const segment=String(market?.event_ticker||'').split('-')[0].match(/([1-9])(?:Q|P|H|INNING)(?:TEAM)?TOTAL$/);
   const tennisTotal=/^KX(?:ATP|WTA)GTOTAL$/.test(String(market?.event_ticker||'').split('-')[0]);
+  const closeout=basketballCloseoutEntry(game)&&/win|winner|victory/i.test(`${market?.title||''} ${market?.rules_primary||''}`);
   let agrees=0;
   for(const matches of bySource){
     if(matches.length>1)return false; // Ambiguous fixture identity.
     if(!matches.length)continue;
     const m=matches[0];
-    if(!m.live||!m.clockOk||!Number.isInteger(m.home)||!Number.isInteger(m.away)||m.home!==game.home||m.away!==game.away)return false;
-    if(tennisTotal&&(!Number.isInteger(m.totalGames)||m.totalGames!==game.tennisTotal))return false;
+    if(!m.live||!m.clockOk)return false;
+    if(closeout&&(!Number.isFinite(m.remainingSeconds)||m.remainingSeconds<=0||
+      m.remainingSeconds>=105||m.period!==game.period||Math.abs(m.remainingSeconds-game.remainingSeconds)>10))return false;
+    const player=Boolean(playerOverSpec(game,market));
+    let expected=game,actual=m;
     if(segment){
-      const expected=periodValue(game,market);
-      const actual=periodValue({type:game.type,sport:game.sport,periodScores:m.periods},market);
-      if(!expected||!actual||actual.home!==expected.home||actual.away!==expected.away)continue;
+      expected=periodValue(game,market);
+      actual=periodValue({type:game.type,sport:game.sport,periodScores:m.periods},market);
+      if(!expected||!actual)continue;
     }
+    if(tennisTotal&&(!Number.isInteger(m.totalGames)||m.totalGames<0))return false;
+    if(!externalScoresQualify(game,m,market,{expected,actual,player,
+      minimumMargin:closeout?basketballCloseoutMinimum(game):undefined}))return false;
     agrees++;
   }
   return agrees>=1;
@@ -204,7 +225,7 @@ export function playerStatAgreement(summary,player){
     });
   }));
   // An absent player or statistic is unavailable, not a contrary reading.
-  return matches.length===1&&Number.isInteger(matches[0])?matches[0]===player.value:null;
+  return matches.length===1&&Number.isInteger(matches[0])?externalValueQualifies(matches[0],player.value,player.line):null;
 }
 // FOX supplies a player statistic only when ESPN cannot verify this fixture
 // or stat. Parse the named player table, not a recap or similarly named rival.
@@ -307,7 +328,7 @@ async function verifyExistingOver(game,milestone,{fetcher=fetch,cache,market,sou
       const box=await read(`https://api.foxsports.com/bifrost/v1/${feed}/event/${matched.eventId}/data?apikey=${FOX_KEY}&api-version=1.1`);
       const value=foxPlayerStat(box,player,matched.eventId);
       if(value===null)unavailableReasons.push(`${source}: ${player.name} ${player.metric} statistic unavailable`);
-      return value===null?null:value===player.value;
+      return value===null?null:externalValueQualifies(value,player.value,player.line);
     }catch(error){unavailableReasons.push(`${source}: ${error.message}`);return null}
   };
   return source==='ESPN'?check('ESPN',espn):source==='FOX'?check('FOX Sports',fox):null;
@@ -329,18 +350,14 @@ export function nbaAgreement(data,game,milestone,market,eventId){
     const stats=players[0].statistics||{};
     const keys=player.metric==='PRA'?['points','reboundsTotal','assists']:[{PTS:'points',REB:'reboundsTotal',AST:'assists','3PT':'threePointersMade',STL:'steals',BLK:'blocks'}[player.metric]];
     const values=keys.map(k=>score(stats[k]));
-    return values.every(n=>Number.isInteger(n)&&n>=0)?values.reduce((a,b)=>a+b,0)===player.value:null;
+    return values.every(n=>Number.isInteger(n)&&n>=0)?externalValueQualifies(values.reduce((a,b)=>a+b,0),player.value,player.line):null;
   }
   const home=score(g.homeTeam?.score),away=score(g.awayTeam?.score);
   if(!Number.isInteger(home)||!Number.isInteger(away))return null;
-  const segment=periodValue(game,market);
-  if(segment){
-    const periods=(g.homeTeam.periods||[]).map(p=>({number:Number(p.period),home:score(p.score),away:score(g.awayTeam.periods?.find(a=>a.period===p.period)?.score)}));
-    const official=periodValue({...game,periodScores:periods},market);
-    if(!official||!Number.isFinite(official.home)||!Number.isFinite(official.away))return null;
-    return segment.home===official.home&&segment.away===official.away;
-  }
-  return home===game.home&&away===game.away;
+  const periods=(g.homeTeam.periods||[]).map(p=>({number:Number(p.period),home:score(p.score),away:score(g.awayTeam.periods?.find(a=>a.period===p.period)?.score)}));
+  if(periodValue(game,market)&&!periodValue({...game,periodScores:periods},market))return null;
+  return scoreAgreement(game,[[{home,away,periods,live:true,clockOk:true,
+    period:Number(g.period),remainingSeconds:clockSeconds(g.gameClock)}]],market);
 }
 async function verifyNbaOver(game,milestone,{fetcher=fetch,market}={}){
   if(game.sport!=='NBA')return null;

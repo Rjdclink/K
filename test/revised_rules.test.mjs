@@ -35,14 +35,14 @@ test('basketball tiers include the stated lead and exclude the exact time bounda
  for(const [league,period,tiers] of categories)for(const [points,seconds] of tiers){
    assert.ok(signal('basketball_game',league,points,period,seconds-1),`${league} +${points} under ${seconds}`);
    assert.ok(signal('basketball_game',league,points+1,period,seconds-1));
-   assert.equal(signal('basketball_game',league,points-1,period,seconds-1),null);
+   assert.equal(Boolean(signal('basketball_game',league,points-1,period,seconds-1)),league==='NBA'&&seconds===105,'the new under-1:45 route may qualify below the older tier');
    assert.equal(signal('basketball_game',league,points,period,seconds),null);
    assert.equal(signal('basketball_game',league,points,period-1,seconds-1),null);
  }
  for(const league of ['NBA','WNBA','NCAAB','NCAAW','China CBA','Italy Serie A']){
    const period=league==='NCAAB'?2:4,minimum=league==='NBA'?9:10;
    assert.ok(signal('basketball_game',league,minimum,period,104),`${league} under 1:45`);
-   assert.equal(signal('basketball_game',league,minimum-1,period,104),null);
+   assert.equal(Boolean(signal('basketball_game',league,minimum-1,period,104)),league!=='WNBA');
    if(league==='NBA'||league==='WNBA')assert.equal(signal('basketball_game',league,minimum,period,105),null);
  }
  for(const league of ['NCAAB','NCAAW','China CBA','Italy Serie A']){

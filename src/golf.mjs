@@ -18,14 +18,19 @@ export function golfAgreement(data,game,milestone,event){
  if(c?.status?.period!==4||c.status.type?.state!=='in')return false;
  const players=c.competitors||[];
  if(players.length!==game.golf.board.length)return false;
- return game.golf.board.every(p=>{
+ const actual=[];
+ if(!game.golf.board.every(p=>{
   const names=[...new Set((event.markets||[]).filter(m=>m.custom_strike?.golf_competitor===p.competitor_id).map(m=>m.yes_sub_title))];
   if(names.length!==1)return false;
   const found=players.filter(a=>clean(a.athlete?.displayName)===clean(names[0]));
   if(found.length!==1)return false;
   const a=found[0],score=a.score?.displayValue==='E'?0:Number(a.score?.displayValue);
-  return Number.isFinite(score)&&score===p.total_score&&a.status?.period===4&&a.status?.thru===p.current_round_thru&&!a.status?.playoff;
- });
+  if(!Number.isFinite(score)||a.status?.period!==4||!Number.isInteger(a.status?.thru)||a.status.thru<p.current_round_thru||a.status.thru>18||a.status?.playoff)return false;
+  actual.push({id:p.competitor_id,score});return true;
+ }))return false;
+ const ranked=[...game.golf.board].sort((a,b)=>a.total_score-b.total_score),leader=ranked[0];
+ const observed=actual.find(p=>p.id===leader.competitor_id),rival=Math.min(...actual.filter(p=>p.id!==leader.competitor_id).map(p=>p.score));
+ return observed&&rival-observed.score>=ranked[1].total_score-leader.total_score;
 }
 export async function verifyGolf(game,milestone,event,fetcher=fetch){
  if(!game?.golf)return false;
