@@ -86,24 +86,19 @@ test('recent live scores remain counted while the market check is delayed',async
   assert.equal(elements.get('games').children[0].children[2].textContent.startsWith('Market last checked'),true);
 });
 
-test('combo controls show live buy and sell liquidity separately',()=>{
+test('filled combo controls include a manual dollar field and separate cash-out availability',()=>{
   const element={classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){}};
   const document={getElementById:()=>element,querySelectorAll:()=>[],createElement:()=>({children:[],append(...items){this.children.push(...items)}})};
   const context=vm.createContext({document,window:{addEventListener(){}},navigator:{},localStorage:{getItem(){return null},setItem(){}},fetch:()=>new Promise(()=>{}),AbortSignal,setInterval(){}});
   vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],context);
   const render=vm.runInContext('order',context);
   const base={strategy:'over',market_ticker:'KXMVE',combo_legs:[{sport:'Soccer',title:'A vs B'},{sport:'Rugby',title:'C vs D'}],
-    combo_buy_quote:{price:.78,count:10,max_cost_cents:800},sell_quote:{price:.7,count:4},sell_profit_cents:-50};
-  const controls=render(base).children.at(-1).children;
-  assert.equal(controls[0].disabled,false);
-  assert.match(controls[0].textContent,/Buy more/);
-  assert.equal(controls[1].disabled,false);
-  assert.match(controls[1].textContent,/Sell/);
-  const unavailable=render({...base,combo_buy_quote:null,combo_buy_status:'No YES seller is available',sell_quote:null}).children.at(-1).children;
-  assert.equal(unavailable[0].disabled,true);
-  assert.match(unavailable[0].className,/combo-unavailable/);
-  assert.equal(unavailable[1].disabled,true);
-  assert.match(unavailable[1].textContent,/No bid/);
+    checked_at:new Date().toISOString(),sell_quote:{price:.7,count:4},sell_value_cents:275,sell_profit_cents:-50};
+  const card=render(base),form=card.children.find(x=>x.className==='invest-controls');
+  assert.equal(form.children[1].type,'number');assert.equal(form.children[2].textContent,'Submit');
+  assert.equal(card.children.at(-1).disabled,false);assert.equal(card.children.at(-1).textContent,'Sell · est. $2.75');
+  const unavailable=render({...base,sell_quote:null,sell_status:'No executable YES bid available'});
+  assert.equal(unavailable.children.at(-1).disabled,true);assert.match(unavailable.children.at(-1).textContent,/No bid/);
 });
 
 test('a filled combo shows each leg’s teams and score, with honest stale and missing labels',()=>{
@@ -166,16 +161,16 @@ test('score possession and net sale result refresh with the order display',()=>{
   const context=vm.createContext({document,window:{addEventListener(){}},navigator:{},localStorage:{getItem(){return null},setItem(){}},fetch:()=>new Promise(()=>{}),AbortSignal,setInterval(){}});
   vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],context);
   const order=vm.runInContext('order',context),score=vm.runInContext('scoreDisplay',context);
-  const base={game_status:'live',score_scanned_at:new Date().toISOString(),home_score:4,away_score:6,possession_side:'away',sport:'Baseball',strategy:'lead',reason:'Away leads 4–6',market_ticker:'M',sell_quote:{count:10,price:.92},sell_profit_cents:149};
+  const base={game_status:'live',score_scanned_at:new Date().toISOString(),home_score:4,away_score:6,possession_side:'away',sport:'Baseball',strategy:'lead',reason:'Away leads 4–6',market_ticker:'M',checked_at:new Date().toISOString(),sell_quote:{count:10,price:.92},sell_value_cents:914,sell_profit_cents:149};
   assert.match(score(base),/Away 6\* · Home 4/);
   assert.match(score({...base,possession_side:'home'}),/Away 6 · Home 4\*/);
   const gain=order(base).children.at(-1);
-  assert.equal(gain.textContent,'Sell · +$1.49');
-  assert.match(gain.className,/sell-gain/);
+  assert.equal(gain.textContent,'Sell · est. $9.14');
+  assert.match(order(base).children.at(-2).textContent,/Est. P\/L \+\$1.49/);
   const loss=order({...base,sell_profit_cents:-90}).children.at(-1);
-  assert.equal(loss.textContent,'Sell · −$0.90');
-  assert.match(loss.className,/sell-loss/);
-  assert.equal(order({...base,sell_profit_cents:null}).children.at(-1).textContent,'Sell · 92.0¢');
+  assert.equal(loss.textContent,'Sell · est. $9.14');
+  assert.match(order({...base,sell_profit_cents:-90}).children.at(-2).textContent,/Est. P\/L −\$0.90/);
+  assert.equal(order({...base,sell_profit_cents:null,sell_value_cents:null}).children.at(-1).textContent,'Sell · 92.00¢ avg bid');
 });
 
 test('filled order timer is bright red, advances each second and reanchors to live score',()=>{
@@ -315,20 +310,21 @@ test('filled position names describe the sport, matchup and current over margin 
   assert.equal(lead.children[1].textContent,'Commanding lead');
 });
 
-test('over ticket offers manual selling only at an available bid with an explicit confirmation',()=>{
-  const refresh={classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){}};
+test('over ticket refreshes its bid and requires explicit confirmation before selling',async()=>{
+  const refresh={replaceChildren(){},classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){}};
   const document={getElementById:()=>refresh,querySelectorAll:()=>[],createElement:()=>({children:[],append(...items){this.children.push(...items)}})};
-  const confirmations=[];const context=vm.createContext({document,window:{addEventListener(){}},navigator:{},localStorage:{getItem(){return null},setItem(){}},fetch:()=>new Promise(()=>{}),AbortSignal,setInterval(){},confirm:message=>{confirmations.push(message);return false}});
+  const confirmations=[];const context=vm.createContext({document,window:{addEventListener(){}},navigator:{},localStorage:{getItem(){return null},setItem(){}},fetch:url=>url.startsWith('/api/sell-quotes')?Promise.resolve({ok:true,json:async()=>({quotes:[{...prop,ticker:'M'}]})}):new Promise(()=>{}),AbortSignal,URLSearchParams,setInterval(){},confirm:message=>{confirmations.push(message);return false}});
   vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],context);
   const order=vm.runInContext('order',context),overReadout=vm.runInContext('overReadout',context);
-  const prop={strategy:'over',sport:'Basketball',game_title:'HOU Rockets at DAL Mavericks',reason:'6 REB by Fred VanVleet; line 5.5 already passed',game_status:'live',score_scanned_at:new Date().toISOString(),home_score:114,away_score:111,sell_quote:{count:29,price:.12},sell_profit_cents:-2461};
+  const prop={strategy:'over',sport:'Basketball',game_title:'HOU Rockets at DAL Mavericks',reason:'6 REB by Fred VanVleet; line 5.5 already passed',game_status:'live',score_scanned_at:new Date().toISOString(),home_score:114,away_score:111,market_ticker:'M',checked_at:new Date().toISOString(),sell_value_cents:326,sell_quote:{count:29,price:.12},sell_profit_cents:-2461};
   assert.equal(overReadout(prop),'OVER TICKET · Fred VanVleet: 6 REB recorded at entry · contract line 5.5');
   const row=order(prop);
   assert.equal(row.children.at(-1).ariaLabel,'Sell position');
   assert.equal(row.children.at(-1).disabled,false);
-  assert.match(row.children.at(-1).textContent,/\$24\.61/);
-  row.children.at(-1).onclick();
-  assert.match(confirmations[0],/Are you sure you want to sell this OVER/);
+  assert.match(row.children.at(-1).textContent,/\$3\.26/);
+  assert.match(row.children.at(-2).textContent,/−\$24.61/);
+  await row.children.at(-1).onclick();
+  assert.match(confirmations[0],/Confirm sale/);
   assert.match(overReadout({...prop,reason:'225 scored; line 207.5 already passed'}),/Live combined total 225 points · contract line 207.5/);
   assert.match(overReadout({...prop,reason:'225 scored; line 207.5 already passed',score_scanned_at:new Date(0).toISOString()}),/225 points recorded at entry · contract line 207.5/);
 });
@@ -394,10 +390,10 @@ test('dashboard renders positions before delayed sell quotes and updates them af
   assert.equal(elements.get('orders').children.length,1,JSON.stringify({error:elements.get('error')?.textContent,requests}));
   assert.equal(elements.get('orders').children[0].children.at(-1).disabled,true);
   assert.equal(requests.filter(url=>url.startsWith('/api/sell-quotes')).length,1);
-  releaseQuote({ok:true,json:async()=>({quotes:[{ticker:'M',sell_quote:{count:10,price:.92},sell_profit_cents:149}]})});
+  releaseQuote({ok:true,json:async()=>({quotes:[{ticker:'M',checked_at:new Date().toISOString(),sell_quote:{count:10,price:.92},sell_value_cents:914,sell_profit_cents:149}]})});
   await new Promise(resolve=>setImmediate(resolve));
   assert.equal(elements.get('orders').children[0].children.at(-1).disabled,false);
-  assert.equal(elements.get('orders').children[0].children.at(-1).textContent,'Sell · +$1.49');
+  assert.equal(elements.get('orders').children[0].children.at(-1).textContent,'Sell · est. $9.14');
 });
 
 test('a temporary positions timeout keeps the last displayed filled order',async()=>{
@@ -445,10 +441,10 @@ test('sell quote refresh covers every filled card beyond the first twenty and ex
  const element=()=>({children:[],style:{},classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){},append(...x){this.children.push(...x)},replaceChildren(...x){this.children=x}});
  const document={getElementById:id=>{if(!elements.has(id))elements.set(id,element());return elements.get(id)},querySelectorAll:()=>[],createElement:element};
  const context=vm.createContext({document,window:{addEventListener(){}},navigator:{},localStorage:{getItem(){return null}},AbortSignal,URLSearchParams,setInterval(){},
-  fetch:async url=>{if(!url.startsWith('/api/sell-quotes'))return new Promise(()=>{});requests.push(url);const tickers=new URL(url,'https://k.test').searchParams.getAll('ticker');return {ok:true,json:async()=>({quotes:tickers.map(ticker=>({ticker,sell_quote:{price:.9,count:1},sell_profit_cents:-10}))})}}});
+  fetch:async url=>{if(!url.startsWith('/api/sell-quotes'))return new Promise(()=>{});requests.push(url);const tickers=new URL(url,'https://k.test').searchParams.getAll('ticker');return {ok:true,json:async()=>({quotes:tickers.map(ticker=>({ticker,checked_at:new Date().toISOString(),sell_quote:{price:.9,count:1},sell_value_cents:89,sell_profit_cents:-10}))})}}});
  vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],context);
  await vm.runInContext("currentOrders=Array.from({length:25},(_,i)=>({market_ticker:'M'+i,strategy:'over',sport:'NBA'}));refreshSellQuotes()",context);
  assert.equal(requests.length,2);assert.equal(elements.get('orders').children.length,25);
  assert.equal(elements.get('orders').children.at(-1).children.at(-1).disabled,false);
- assert.equal(elements.get('orders').children.at(-1).children.at(-1).textContent,'Sell · −$0.10');
+ assert.equal(elements.get('orders').children.at(-1).children.at(-1).textContent,'Sell · est. $0.89');
 });

@@ -84,6 +84,14 @@ test('history includes a later verified combo add-on only after its actual fill'
   assert.equal(completedTrade(combo,[buy],yes),null);
   assert.equal(completedTrade(combo,[buy,{...second,order_id:'other'}],yes),null);
 });
+test('history retains the earlier forty percent fill alongside a later sixty percent top-up',()=>{
+  const upgraded={...entry,robust_upgrade_order_id:'forty',robust_upgrade_fill_count:'2',external_upgrade_order_id:'sixty',external_upgrade_fill_count:'3'};
+  const forty={...buy,order_id:'forty',count_fp:'2',created_time:'2026-10-28T13:05:00Z'};
+  const sixty={...buy,order_id:'sixty',count_fp:'3',created_time:'2026-10-28T13:06:00Z'};
+  const yes={ticker:entry.market_ticker,market_result:'yes',settled_time:'2026-10-28T14:00:00Z'};
+  assert.equal(completedTrade(upgraded,[buy,forty,sixty],yes)?.profitCents,270);
+  assert.equal(completedTrade(upgraded,[buy,forty],yes),null);
+});
 test('history counts a manual combo add-on and its actual fee',()=>{
   const combo={...entry,manual_combo_buys:[{order_id:'manual-add-on',fill_count:5}]};
   const extra={...buy,order_id:'manual-add-on',count_fp:'5',yes_price_dollars:'.90',fee_cost:'.15',created_time:'2026-10-28T13:05:00Z'};

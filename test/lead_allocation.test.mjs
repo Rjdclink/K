@@ -93,7 +93,7 @@ test('both live entry paths use the final verified allocation and funding rechec
   assert.match(source,/verifyCommandingLead\(freshState,c.milestone,quote,scoreboardCache,c.event\)/);
   assert.match(source,/verifyCommandingLead\(checked,c.milestone,executable,scoreboardCache,c.event\)/);
   assert.match(source,/if\(independentLead===false\)continue/);
-  assert.equal((source.match(/beforeDispatch:\(\)=>\{if\(signal.strategy==='over'\)assertTimedOverEntry\(game,market\);if\(signal.strategy==='lead'\)assertFreshLead\(game,market\)\}/g)||[]).length,2);
+  assert.equal((source.match(/beforeDispatch:\(\)=>\{if\(signal.strategy==='over'\)assertOverExposure\(game,market,signal.fraction\);if\(signal.strategy==='lead'\)assertFreshLead\(game,market\)\}/g)||[]).length,2);
 });
 test('strong Kalshi-only leads use 20% only after two stable reads and a score cushion',()=>{
   const now=Date.now(),observed=(age)=>({observedAt:now-age,updatedAt:now-age-1000,

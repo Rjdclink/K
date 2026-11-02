@@ -35,7 +35,7 @@ export function yahooPlayerValue(game,player){
  }
  return values.length&&values.every(n=>n===values[0])?values[0]:null;
 }
-export async function alternateCheck(source,game,milestone,{fetcher=fetch,market}={}){
+export async function alternateCheck(source,game,milestone,{fetcher=fetch,market,minimumOverValue,onOverValue}={}){
  if(game.sport!=='NBA'||basketballCloseoutEntry(game))return null;
  const home=club(game.homeName),away=club(game.awayName),player=playerOverSpec(game,market);
  if(!home||!away)return null;
@@ -58,6 +58,6 @@ export async function alternateCheck(source,game,milestone,{fetcher=fetch,market
   if(matches.length!==1)return null;const g=matches[0];
   if(player){const value=yahooPlayerValue(g,player);return value===null?null:externalValueQualifies(value,player.value,player.line)}
   if(/[1-9](?:Q|P|H|INNING)(?:TEAM)?TOTAL/.test(market?.event_ticker||''))return null;
-  return Number.isInteger(g.homeScore)&&Number.isInteger(g.awayScore)?externalScoresQualify(game,{home:g.homeScore,away:g.awayScore},market):null;
+  return Number.isInteger(g.homeScore)&&Number.isInteger(g.awayScore)?externalScoresQualify(game,{home:g.homeScore,away:g.awayScore},market,{minimumOverValue,onOverValue}):null;
  }catch{return null}
 }

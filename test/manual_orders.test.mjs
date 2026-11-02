@@ -56,7 +56,7 @@ test('manual combo purchase honors the shared final profit gate before dispatch'
   const ctx=context({pool,live:()=>true,ensureManualCombos:async()=>{},
     allOpenPositions:async()=>({market_positions:[{ticker:'LEG',position_fp:'1'},{ticker:'M',position_fp:'1'}]}),
     accountBalance:async()=>({balance:1000,portfolio_value:1000}),marketShard:()=>0,shardCash:()=>1000,
-    manualComboQuote:()=>({count:1,price:.99}),comboHeldFraction:()=>.10,
+    verifiedPurchaseEntries:async()=>[],manualComboQuote:()=>({count:1,price:.99}),comboHeldFraction:()=>.10,
     withEntryProfitFloor:async()=>null,kalshi:async path=>{sent.push(path);return path.endsWith('/orderbook')?{orderbook_fp:{}}:{market:{ticker:'M'}}},
     json:(body,status=200)=>({body,status})});
   vm.runInContext(segment,ctx);

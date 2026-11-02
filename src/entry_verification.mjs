@@ -3,10 +3,10 @@ const sorted=value=>Array.isArray(value)?value.map(sorted):value&&typeof value==
 export function sportsContractKey(game,market){
   return JSON.stringify(sorted({game:game.id,ticker:market.ticker,event:market.event_ticker,
     rules:market.rules_primary,secondary:market.rules_secondary,strike:market.floor_strike,
-    cap:market.cap_strike,strikeType:market.strike_type,close:market.close_time,custom:market.custom_strike||{}}));
+    cap:market.cap_strike,strikeType:market.strike_type,close:market.close_time,custom:market.custom_strike||{},collection:market.mve_collection_ticker,legs:market.mve_selected_legs}));
 }
-export function rememberIndependentEntry(game,market,verificationId,requestedAt){
-  game.independentEntry={contractKey:sportsContractKey(game,market),verificationId,requestedAt};
+export function rememberIndependentEntry(game,market,verificationId,requestedAt,overValue){
+  game.independentEntry={contractKey:sportsContractKey(game,market),verificationId,requestedAt,overValue};
 }
 export function independentEntryValid(game,market,now=Date.now()){
   const proof=game?.independentEntry;
