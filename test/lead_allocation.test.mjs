@@ -1,3 +1,4 @@
+import {rememberIndependentEntry} from '../src/entry_verification.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -88,9 +89,9 @@ test('both live entry paths use the final verified allocation and funding rechec
   assert.match(source,/leadEntryFraction\(first,second,signal,quote,independentLead,directKalshiLead\)/);
   assert.match(source,/leadEntryFraction\(c.state,freshState,verifiedSignal,quote,independentLead,directKalshiLead\)/);
   assert.match(source,/leadEntryFraction\(state,checked,still,executable,independentLead,directKalshiLead\)/);
-  assert.match(source,/verifyCommandingLead\(second,milestone,quote,scoreboardCache\)/);
-  assert.match(source,/verifyCommandingLead\(freshState,c.milestone,quote,scoreboardCache\)/);
-  assert.match(source,/verifyCommandingLead\(checked,c.milestone,executable,scoreboardCache\)/);
+  assert.match(source,/verifyCommandingLead\(second,milestone,quote,scoreboardCache,event\)/);
+  assert.match(source,/verifyCommandingLead\(freshState,c.milestone,quote,scoreboardCache,c.event\)/);
+  assert.match(source,/verifyCommandingLead\(checked,c.milestone,executable,scoreboardCache,c.event\)/);
   assert.match(source,/if\(independentLead===false\)continue/);
   assert.equal((source.match(/beforeDispatch:\(\)=>\{if\(signal.strategy==='over'\)assertTimedOverEntry\(game,market\);if\(signal.strategy==='lead'\)assertFreshLead\(game,market\)\}/g)||[]).length,2);
 });
@@ -173,6 +174,7 @@ test('timed independent checks unlock 20% for uncushioned overs and preserve 40%
   const state={id:'game',feedId:'game',verifiedLive:true,scoreKnown:true,scoreConsistent:true,
     periodConsistent:true,type:'basketball_game',sport:'NBA',home:71,away:70,observedAt:now,
     updatedAt:now-1000,verificationId:'verified'};
+  rememberIndependentEntry(state,market,'verified',now);
   const proof={contractKey:overContractKey(state,market),initialAt:now-220000,
     firstExternalAt:now-200000,firstExternalId:'one',pairedAt:now,pairedExternalId:'two',route:'elapsed'};
   assert.equal(verifiedOverFraction({strategy:'over',fraction:.10},{...state,overVerification:proof},market),.20);

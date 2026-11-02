@@ -1,3 +1,4 @@
+import {rememberIndependentEntry} from '../src/entry_verification.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {gameState,overSignal,playerOverSpec,playerPropEarlyWindow,cushionedOverSignal} from '../src/strategy.mjs';
@@ -14,7 +15,7 @@ test('unit-count cushions and add-ons cannot raise a player prop above twenty-fi
     custom_strike:{basketball_player:'p'},yes_sub_title:'Pat: 6+',title:'Pat: 6+ rebounds',yes_ask_dollars:'.95'};
   assert.equal(overSignal(game,market)?.fraction,.25);
   assert.equal(cushionedOverSignal(game,market)?.fraction,.25);
-  game.verificationId='verified';game.overVerification={route:'seller_cushion',contractKey:overContractKey(game,market),sellerAt:now};
+  game.verificationId='verified';rememberIndependentEntry(game,market,'verified',now);game.overVerification={route:'seller_cushion',contractKey:overContractKey(game,market),sellerAt:now};
   const fraction=verifiedOverFraction({strategy:'over',fraction:.40},game,market);
   assert.equal(fraction,.25);
   const position={position_fp:'15',market_exposure_dollars:'14.00',fees_paid_dollars:'.25'};
@@ -55,7 +56,7 @@ test('receiving yards wait four minutes and cap at twenty-five percent',()=>{
   assert.equal(overSignal(game,market)?.fraction,.25);assert.equal(overCushion(game,market),null);
   const window={initial_at:now-180000,first_external_at:now-160000,first_external_id:'first'};
   assert.equal(overTiming(window,game,market,now).stage,'final_wait');assert.equal(overTiming({...window,initial_at:now-240000,first_external_at:now-220000},game,market,now).stage,'paired');
-  game.verificationId='final';game.overVerification={route:'elapsed',contractKey:overContractKey(game,market),initialAt:now-181000,firstExternalAt:now-160000,firstExternalId:'first',pairedAt:now-100,pairedExternalId:'second'};
+  game.verificationId='final';rememberIndependentEntry(game,market,'final',now);game.overVerification={route:'elapsed',contractKey:overContractKey(game,market),initialAt:now-181000,firstExternalAt:now-160000,firstExternalId:'first',pairedAt:now-100,pairedExternalId:'second'};
   assert.equal(timedOverEntryValid(game,market),false);game.overVerification.initialAt=now-241000;game.overVerification.firstExternalAt=now-220000;
   assert.equal(timedOverEntryValid(game,market),true);assert.equal(verifiedOverFraction(overSignal(game,market),game,market),.25);
   game.overVerification={route:'seller_cushion',contractKey:overContractKey(game,market),sellerAt:now};
