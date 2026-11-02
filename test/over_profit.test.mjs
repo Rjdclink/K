@@ -13,14 +13,14 @@ const floor=(g,m=market(),filled=0,strategy='over')=>minimumProfitCents(strategy
 
 test('crossed-over floor follows the entry quarter and preserves higher filled-order tiers',()=>{
   for(const sport of ['NBA','WNBA','NCAAW','International']){
-    assert.equal(floor(game(1,sport)),15);
-    assert.equal(floor(game(2,sport)),10);
+    assert.equal(floor(game(1,sport)),9);
+    assert.equal(floor(game(2,sport)),6);
     assert.equal(floor(game(3,sport)),1);
     assert.equal(floor(game(4,sport)),1);
   }
   for(const sport of ['NFL','CFB']){
-    assert.equal(floor(game(1,sport,'football_game'),market('football','RECYDS')),15);
-    assert.equal(floor(game(2,sport,'football_game'),market('football','RECYDS')),10);
+    assert.equal(floor(game(1,sport,'football_game'),market('football','RECYDS')),9);
+    assert.equal(floor(game(2,sport,'football_game'),market('football','RECYDS')),6);
   }
   assert.equal(floor(game(2),market(),10),15);
   assert.equal(floor(game(1),market(),15),35);
@@ -28,7 +28,7 @@ test('crossed-over floor follows the entry quarter and preserves higher filled-o
   assert.equal(floor({type:'esports_match',sport:'eBasketball',phase:'Quarter 1'}),15);
   assert.equal(floor({type:'esports_match',sport:'eBasketball',phase:'Quarter 2'}),10);
   assert.equal(floor({type:'esports_match',sport:'eBasketball',phase:'Quarter 3'}),1);
-  assert.equal(floor({...game(1),period:NaN}),15);
+  assert.equal(floor({...game(1),period:NaN}),9);
 });
 
 test('winners, halves, innings and hockey periods retain their own requirements',()=>{
@@ -43,7 +43,7 @@ test('winners, halves, innings and hockey periods retain their own requirements'
   assert.equal(floor(game(1,'Soccer','soccer_match'),market('soccer','GOALS')),1);
 });
 
-test('crossed player, game, team and period totals share the live entry-quarter floor',()=>{
+test('player props use their lower floor while game, team and period totals retain theirs',()=>{
   const milestone={id:'g',type:'basketball_game',details:{league:'NBA',home_team_id:'ny',away_team_id:'bos'}};
   const total={status:'active',event_ticker:'KXNBATOTAL-TEST',title:'Over 39.5 total points',
     rules_primary:'Combined total points scored in the full game',floor_strike:39.5,yes_ask_dollars:'.88'};
@@ -56,14 +56,15 @@ test('crossed player, game, team and period totals share the live entry-quarter 
     for(const m of markets){
       const signal=overSignal(g,m);
       assert.equal(signal?.strategy,'over');
-      assert.equal(floor(g,m),period===1?15:10);
-      assert.equal(profitableCount(1,.88,2,signal.strategy,5000,g.type,g.remainingSeconds,{game:g}),period===1?0:1);
+      const player=m.custom_strike?.basketball_player;
+      assert.equal(floor(g,m),player?(period===1?9:6):(period===1?15:10));
+      assert.equal(profitableCount(1,.88,2,signal.strategy,5000,g.type,g.remainingSeconds,{game:g,market:m}),player?1:period===1?0:1);
     }
   }
 });
 
 test('each purchase must meet the quarter floor after fee rounding, including exact boundaries',()=>{
-  const cases=[[1,.83,15,true],[1,.84,14,false],[2,.88,10,true],[2,.89,9,false]];
+  const cases=[[1,.89,9,true],[1,.90,8,false],[2,.93,6,true],[2,.94,5,false]];
   for(const [period,price,net,allowed] of cases){
     const g=game(period);
     assert.equal(netSettlementProfitCents(1,price,2),net);
@@ -74,7 +75,7 @@ test('each purchase must meet the quarter floor after fee rounding, including ex
 const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
 const gate=source.slice(source.indexOf('async function withEntryProfitFloor('),source.indexOf('async function milestones('));
 test('the serialized final gate blocks exchange dispatch below the per-purchase floor',async()=>{
-  for(const [period,price,allowed,filled] of [[1,.83,true,0],[1,.84,false,0],[2,.88,true,0],[2,.89,false,0],[2,.88,false,10]]){
+  for(const [period,price,allowed,filled] of [[1,.89,true,0],[1,.90,false,0],[2,.93,true,0],[2,.94,false,0],[2,.93,false,10]]){
     let sends=0,released=false;
     const rows=Array.from({length:filled},(_,i)=>({market_ticker:'HELD'+i,status:'filled'}));
     const client={query:async sql=>({rows:sql.includes('pg_try_advisory_xact_lock')?[{acquired:true}]:rows}),

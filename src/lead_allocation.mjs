@@ -1,4 +1,4 @@
-import { KALSHI_ONLY_FRACTION,strongKalshiOnlyLead,proBasketballLeadRules,leadSignal,playerOverSpec,variableValuePlayerMetric } from './strategy.mjs';
+import { KALSHI_ONLY_FRACTION,strongKalshiOnlyLead,proBasketballLeadRules,leadSignal,playerOverSpec,PLAYER_PROP_MAX_FRACTION } from './strategy.mjs';
 import { timedOverEntryValid } from './over_verification.mjs';
 export function threeGoalWinner(game,signal,market){
   return Boolean(market&&signal?.strategy==='lead'&&/hockey|soccer/.test(game?.type||'')&&
@@ -11,7 +11,7 @@ export const minimumThreeGoalSpend=(game,signal,market,bankroll)=>
 export function verifiedOverFraction(signal,game,market){
   if(signal?.strategy!=='over')return signal?.fraction;
   if(!timedOverEntryValid(game,market))return Math.min(.15,signal.fraction);
-  if(variableValuePlayerMetric(playerOverSpec(game,market)?.metric))return .15;
+  if(playerOverSpec(game,market))return PLAYER_PROP_MAX_FRACTION;
   if(game.overVerification?.route==='seller_cushion')return .40;
   return signal.fraction===.40?.40:.20;
 }

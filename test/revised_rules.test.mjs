@@ -186,12 +186,12 @@ test('rugby +15 is one tier; cricket +15 and golf +4 use the revised thresholds'
 test('crossed player props are candidates through the ten-minute boundary',()=>{
  const market={ticker:'KXNBASTL-TEST-P',event_ticker:'KXNBASTL-TEST',status:'active',floor_strike:1.5,yes_sub_title:'Pat Player: 2+',title:'Pat Player: 2+ steals',custom_strike:{basketball_player:'p'},yes_ask_dollars:'.90'};
  const game=steals=>({...team('basketball_game','NBA',15,4,600).state,playerStats:{p:{steals}},playerPropFirstCrossedAt:{}});
- assert.equal(overSignal(game(2),market)?.fraction,.15);
- assert.equal(overSignal(game(3),market)?.fraction,.40);
+ assert.equal(overSignal(game(2),market)?.fraction,.25);
+ assert.equal(overSignal(game(3),market)?.fraction,.25);
  const early=game(2);early.playerPropFirstCrossedAt[market.ticker]=new Date(now-419000).toISOString();
- assert.equal(overSignal(early,market)?.fraction,.15);
+ assert.equal(overSignal(early,market)?.fraction,.25);
  const aged=game(2);aged.playerPropFirstCrossedAt[market.ticker]=new Date(now-421000).toISOString();
- assert.equal(overSignal(aged,market)?.fraction,.15);
+ assert.equal(overSignal(aged,market)?.fraction,.25);
  assert.equal(overSignal(game(1),market),null);
  assert.equal(overSignal({...game(3),remainingSeconds:599},market),null);
 });

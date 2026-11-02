@@ -14,6 +14,7 @@ test('verified over top-up deducts held exposure and fees from the total 15% cap
   assert.equal(remainingVerifiedOverCents({...position,position_fp:'0.00'},100000),0);
   assert.equal(remainingVerifiedOverCents(position,100000,.40),37000,'a robust verified over may reach 40% inclusive of its held cost');
   assert.equal(remainingVerifiedOverCents(position,100000,.20),17000,'a timed uncushioned over may reach 20% inclusive of its held cost');
+  assert.equal(remainingVerifiedOverCents(position,100000,.25),22000,'a player prop may reach 25% inclusive of its held cost');
 });
 
 test('held overs can upgrade after timed proof to 20%, or to 40% with a scoring cushion',()=>{
@@ -23,6 +24,7 @@ test('held overs can upgrade after timed proof to 20%, or to 40% with a scoring 
   assert.equal(upgradeEligible(fill,position,candidate),true);
   assert.equal(upgradeEligible(fill,position,{...candidate,signal:{strategy:'over',fraction:.40}}),true);
   assert.equal(upgradeEligible(fill,position,{...candidate,signal:{strategy:'over',fraction:.20}}),true);
+  assert.equal(upgradeEligible(fill,position,{...candidate,signal:{strategy:'over',fraction:.25}}),true);
   assert.equal(upgradeEligible({...fill,reason:'independently verified'},position,{...candidate,signal:{strategy:'over',fraction:.40}}),true,'an existing verified over can later be topped up only at the robust tier');
   assert.equal(upgradeEligible({...fill,reason:'independently verified'},position,candidate),true);
   for(const altered of [{...fill,strategy:'lead'},{...fill,game_id:'m2'},{...fill,combo_legs:[1]}])

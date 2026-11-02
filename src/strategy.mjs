@@ -317,6 +317,7 @@ export function playerPropEarlyWindow(game){
   return Boolean(timing&&Number.isInteger(period)&&period>=1&&period<=timing[0]&&
     Number.isFinite(seconds)&&seconds>=0&&seconds<=timing[1]&&(timing[0]-period)*timing[1]+seconds>=600);
 }
+export const PLAYER_PROP_MAX_FRACTION=.25;
 export const variableValuePlayerMetric=metric=>['PASSYDS','RUSHYDS','RECYDS','PTS','PRA','RBI'].includes(metric);
 export function overCushionUnits(game,market){
   const player=playerOverSpec(game,market);
@@ -380,7 +381,7 @@ export function overSignal(game, market) {
   const robust=gameTotal&&!teamTotal&&!player&&!segment&&Number.isInteger(lastPlay)&&lastPlay>0&&scored-lastPlay>strike;
   const cushionUnits=player?overCushionUnits(game,market):null;
   const cushionedPlayer=Number.isInteger(cushionUnits)&&scored-cushionUnits>strike;
-  return {strategy:'over', reason:`${scored} ${player?.metric||'scored'}${team?` by ${team}`:''}; line ${strike} already passed${segment?`; segment ${segment[1]}`:''}${cushionedPlayer?`; still crossed after removing ${cushionUnits} player-stat unit${cushionUnits===1?'':'s'}`:''}${robust?`; still crossed if the latest ${lastPlay}-unit scoring play is removed`:''}`, fraction:(robust||cushionedPlayer)?.40:.15,scored,strike};
+  return {strategy:'over', reason:`${scored} ${player?.metric||'scored'}${team?` by ${team}`:''}; line ${strike} already passed${segment?`; segment ${segment[1]}`:''}${cushionedPlayer?`; still crossed after removing ${cushionUnits} player-stat unit${cushionUnits===1?'':'s'}`:''}${robust?`; still crossed if the latest ${lastPlay}-unit scoring play is removed`:''}`, fraction:player?PLAYER_PROP_MAX_FRACTION:robust?.40:.15,scored,strike};
 }
 // A Kalshi-only check cannot establish which scoring event was last. Remove
 // the largest ordinary single scoring play for that sport from the displayed
@@ -407,7 +408,7 @@ export function cushionedOverSignal(game,market){
   if(!Number.isInteger(units)||signal.scored-units<=signal.strike)return null;
   const series=String(market.event_ticker||'').split('-')[0];
   const wholeGame=/TOTAL$/.test(series)&&!/TEAMTOTAL$|[1-9](?:Q|P|H|INNING)(?:TEAM)?TOTAL$/.test(series);
-  return {...signal,fraction:(player||wholeGame)? .40:signal.fraction,
+  return {...signal,fraction:player?PLAYER_PROP_MAX_FRACTION:wholeGame?.40:signal.fraction,
     reason:`${signal.reason}; still over after removing ${units} ${player?'player-stat':'score'} unit${units===1?'':'s'}`};
 }
 // Yardage props have no safe fixed one-play bound and retain the ordinary path.
@@ -921,7 +922,7 @@ export function tennisSignal(game,market){
   const leaderGames=first?t.firstGames:t.secondGames,opponentGames=first?t.secondGames:t.firstGames;
   return {strategy:'lead',reason:`Tennis match-clinching set ${leaderGames}–${opponentGames}; leader serves, points ${leaderPoints}–${opponentPoints}${t.advantage===leaderId?' advantage':''}`,fraction:.15};
 }
-export function minimumProfitCents(strategy,availableCents,sportType='',remainingSeconds=NaN,filledOrders=0,{game}={}){
+export function minimumProfitCents(strategy,availableCents,sportType='',remainingSeconds=NaN,filledOrders=0,{game,market}={}){
   const tier=filledOrders>=20?50:filledOrders>=15?35:filledOrders>=10?15:0;
   const existing=strategy==='weather'?30:
     strategy==='over'||strategy==='lead'?1:
@@ -931,8 +932,9 @@ export function minimumProfitCents(strategy,availableCents,sportType='',remainin
   const quarters=esports||/football|lacrosse/.test(String(game?.type||''))||basketballLeadProfile(game)?.period===4;
   const quarter=esports?Number(String(game.phase||'').match(/^Quarter ([1-4])$/)?.[1]):game?.period;
   // An unknown quarter cannot justify a lower early-entry floor.
+  const player=Boolean(playerOverSpec(game,market));
   const overFloor=strategy==='over'&&quarters?
-    !Number.isInteger(quarter)||quarter<1||quarter===1?15:quarter===2?10:0:0;
+    !Number.isInteger(quarter)||quarter<1||quarter===1?(player?9:15):quarter===2?(player?6:10):0:0;
   return Math.max(existing,tier,overFloor);
 }
 export function netSettlementProfitCents(count,price,feeMultiplier=2){
