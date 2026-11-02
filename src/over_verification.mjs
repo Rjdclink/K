@@ -1,4 +1,5 @@
 import { overSignal, overCushionUnits, playerOverSpec, variableValuePlayerMetric, periodValue } from './strategy.mjs';
+import {sportsContractKey,independentEntryValid} from './entry_verification.mjs';
 export function sameSportsContract(a,b){
   return Boolean(a&&b&&['ticker','event_ticker','rules_primary','floor_strike','cap_strike','close_time']
     .every(key=>a[key]===b[key])&&JSON.stringify(a.custom_strike||{})===JSON.stringify(b.custom_strike||{}));
@@ -10,13 +11,7 @@ export const OVER_SOCCER_CONFIRM_DELAY_MS=150000;
 export const OVER_VARIABLE_CONFIRM_DELAY_MS=240000;
 export const OVER_FRESH_MS=10000;
 export const OVER_MAX_GAP_MS=90000;
-const sorted=value=>Array.isArray(value)?value.map(sorted):value&&typeof value==='object'?
-  Object.fromEntries(Object.keys(value).sort().map(k=>[k,sorted(value[k])])):value;
-export function overContractKey(game,market){
-  return JSON.stringify(sorted({game:game.id,ticker:market.ticker,event:market.event_ticker,
-    rules:market.rules_primary,secondary:market.rules_secondary,strike:market.floor_strike,
-    cap:market.cap_strike,strikeType:market.strike_type,close:market.close_time,custom:market.custom_strike||{}}));
-}
+export const overContractKey=sportsContractKey;
 export function freshOverObservation(game,now=Date.now()){
   return Boolean(game&&game.verifiedLive&&game.scoreKnown&&game.scoreConsistent&&game.feedId===game.id&&game.periodConsistent&&
     Number.isFinite(game.observedAt)&&game.observedAt<=now&&now-game.observedAt<=OVER_FRESH_MS&&
@@ -51,6 +46,7 @@ export function sameOverReading(first,second,market){
   return Boolean(p)===Boolean(q)&&(!p||p.home===q.home&&p.away===q.away);
 }
 export function timedOverEntryValid(game,market,now=Date.now()){
+  if(!independentEntryValid(game,market,now))return false;
   const proof=game?.overVerification;
   if(proof?.route==='seller_cushion')return Boolean(game.verificationId&&proof.contractKey===overContractKey(game,market)&&
     Number.isFinite(proof.sellerAt)&&now>=proof.sellerAt&&now-proof.sellerAt<=OVER_FRESH_MS&&

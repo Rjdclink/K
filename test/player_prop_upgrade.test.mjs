@@ -1,3 +1,4 @@
+import {rememberIndependentEntry} from '../src/entry_verification.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -18,7 +19,7 @@ test('a held player prop tops up within 25% only when the new purchase meets its
       yes_ask_dollars:String(price),yes_ask_size_fp:'100',fractional_trading_enabled:false};
     const state=gameState(milestone,{milestone_id:'g',_observed_at:new Date(now).toISOString(),details:{
       status:'live',home_score:30,away_score:20,period,clock:'08:00',player_stats:{p:{rebounds:7}}}});
-    state.verificationId='verified';
+    state.verificationId='verified';rememberIndependentEntry(state,market,'verified',now);
     state.overVerification={route:'seller_cushion',contractKey:overContractKey(state,market),sellerAt:now};
     const position={ticker:market.ticker,position_fp:'24',market_exposure_dollars:String(exposure),fees_paid_dollars:'0'};
     const original={id:'original',status:'filled',strategy:'over',market_ticker:market.ticker,event_ticker:market.event_ticker,game_id:'g'};

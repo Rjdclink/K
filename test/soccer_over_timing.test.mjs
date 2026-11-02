@@ -1,3 +1,4 @@
+import {rememberIndependentEntry} from '../src/entry_verification.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {gameState,overSignal} from '../src/strategy.mjs';
@@ -41,7 +42,7 @@ test('soccer dispatch proof enforces 2:30, distinct external reads, contract ide
   const proof={contractKey:overContractKey(state('soccer_match'),market),initialAt:start,
     firstExternalAt:start+20000,firstExternalId:'first',pairedAt:start+150000,
     pairedExternalId:'second',route:'elapsed'};
-  const game={...state('soccer_match'),verificationId:'aggregate',overVerification:proof};
+  const game={...state('soccer_match'),verificationId:'aggregate',overVerification:proof};rememberIndependentEntry(game,market,'aggregate',start+150000);
   assert.equal(timedOverEntryValid({...game,overVerification:{...proof,pairedAt:start+149999}},market,start+150000),false);
   assert.equal(timedOverEntryValid(game,market,start+150000),true);
   assert.equal(timedOverEntryValid({...game,overVerification:{...proof,pairedExternalId:'first'}},market,start+150000),false);
@@ -58,6 +59,8 @@ test('other sport timers retain 3:00, including eSoccer; soccer scoring cushions
   }
   const game={...state('soccer_match'),home:3};
   assert.equal(overTiming(window,game,market,start+20000).route,'cushion');
-  assert.equal(timedOverEntryValid({...game,verificationId:'seller',overVerification:{route:'seller_cushion',
-    contractKey:overContractKey(game,market),sellerAt:start+150000}},market,start+150000),true);
+  const verified={...game,verificationId:'external',overVerification:{route:'seller_cushion',contractKey:overContractKey(game,market),sellerAt:start+150000}};
+  assert.equal(timedOverEntryValid(verified,market,start+150000),false);
+  rememberIndependentEntry(verified,market,'external',start+150000);
+  assert.equal(timedOverEntryValid(verified,market,start+150000),true);
 });

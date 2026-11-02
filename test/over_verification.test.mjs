@@ -1,3 +1,4 @@
+import {rememberIndependentEntry} from '../src/entry_verification.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -21,7 +22,7 @@ function harness({home=70,away=70,seller=true,decisions=[]}={}){
  class Clock extends Date{constructor(...args){super(...(args.length?args:[time]))}static now(){return time}}
  const context=vm.createContext({Date:Clock,Number,JSON,Math,Promise,console,
   overContractKey,overCushion,freshOverObservation:g=>freshOverObservation(g,time),freshOverState:(g,m)=>freshOverState(g,m,time),overTiming:(w,g,m,at=time)=>overTiming(w,g,m,at),sameOverReading,timedOverEntryValid:(g,m)=>timedOverEntryValid(g,m,time),OVER_FRESH_MS,OVER_MAX_GAP_MS,
-  gameState:liveState,confirmedOver,overSignal,randomUUID:()=>`id-${++ids}`,auditTable:async()=>{},
+  rememberIndependentEntry,gameState:liveState,confirmedOver,overSignal,randomUUID:()=>`id-${++ids}`,auditTable:async()=>{},
   pool:{query:async(sql,args=[])=>{
    if(sql.startsWith('CREATE'))return {rows:[],rowCount:0};
    if(sql.startsWith('INSERT INTO over_verification_windows')){
@@ -37,7 +38,7 @@ function harness({home=70,away=70,seller=true,decisions=[]}={}){
    if(sql.includes('SELECT market_ticker,game_id,contract,generation'))return {rows:window?[window]:[]};
    throw Error(sql);
   }},reportVerifiedGate:async(g,t,message)=>events.push(['progress',message]),kalshi:async()=>({market}),recoverSummaryAsk:async m=>m,hasAsk:()=>seller,executableQuote:async m=>seller?m:null,
-  auditedOver:async(g,m,opts)=>{assert.equal(opts.cache,undefined);events.push(['external',time]);externalCount++;const decision=decisions.length?decisions.shift():true;if(decision===true)g.verificationId='external-'+externalCount;return decision},
+  auditedOver:async(g,m,opts)=>{assert.equal(opts.cache,undefined);events.push(['external',time]);externalCount++;const decision=decisions.length?decisions.shift():true;if(decision===true){g.verificationId='external-'+externalCount;rememberIndependentEntry(g,opts.market,g.verificationId,time)}return decision},
   liveMilestone:async(id,opts={})=>{kalshiCount++;events.push(['kalshi-dispatch',time]);opts.onDispatch?.();if(opts.onDispatch)assert.equal(events.at(-1)[0],'external');time+=2;return {milestone_id:'game',details:{status:'live',home_score:home,away_score:away,quarter:3,time_remaining:'5:00',last_updated_ts:time/1000}}}
  });vm.runInContext(runtime,context);
  return {events,proofs,context,get window(){return window},get externalCount(){return externalCount},get kalshiCount(){return kalshiCount},run:async(ms)=>{if(ms!==undefined)time=start+ms;return context.confirmedIndependentOver(state(time-1,home,away),milestone,market)},setScore:(h,a)=>{home=h;away=a},setSeller:v=>{seller=v}};
@@ -52,8 +53,8 @@ test('uncushioned over waits 20 seconds for external check one and 3:00 for the 
  assert.deepEqual(h.events.filter(e=>['kalshi-dispatch','external'].includes(e[0])).slice(-2),[['kalshi-dispatch',start+180000],['external',start+180000]]);
  assert.equal(h.proofs.at(-1).mode,'independent_timed_over');assert.equal(timedOverEntryValid(verified,market,start+180003),true);assert.equal(timedOverEntryValid(verified,market,start+190001),false);
 });
-test('a cushioned over enters immediately with a seller and no external check',async()=>{
- const h=harness({home:75});const verified=await h.run(0);assert.ok(verified);assert.equal(h.externalCount,0);assert.equal(h.kalshiCount,0);assert.equal(h.window,null);
+test('a cushioned over needs independent external confirmation before entry',async()=>{
+ const h=harness({home:75});const verified=await h.run(0);assert.ok(verified);assert.equal(h.externalCount,1);assert.equal(h.kalshiCount,0);assert.equal(h.window,null);
  assert.equal(verified.overVerification.route,'seller_cushion');assert.equal(verified.overVerification.cushionUnits,4);
  assert.equal(timedOverEntryValid(verified,market,start+3),true);assert.equal(timedOverEntryValid({...verified,home:70},market,start+3),false);
  assert.equal(timedOverEntryValid(verified,market,start+10001),false);
@@ -65,6 +66,12 @@ test('seller is required to start; a gap or changed contract starts a new clock'
  h.setSeller(true);await h.run(10000);assert.equal(h.window.initial_at,start+10000);
  await h.run(100001);assert.equal(h.window.initial_at,start+100001);assert.equal(h.externalCount,0);
  h.window.contract_key='changed';await h.run(100002);assert.equal(h.window.initial_at,start+100002);
+});
+test('even a large scoring cushion is blocked when independent confirmation is missing or contradictory',async()=>{
+ for(const decision of [null,false]){
+  const h=harness({home:90,decisions:[decision]});
+  assert.equal(await h.run(0),null);assert.equal(h.externalCount,1);
+ }
 });
 test('missing and contradictory external readings block uncushioned entries',async()=>{
  for(const decision of [null,false]){
@@ -88,7 +95,7 @@ test('player, team and period cushions use the exact selected statistic',()=>{
 });
 test('timing proof binds the exact contract and two distinct external checks',()=>{
  const g=state(start+220000),proof={contractKey:overContractKey(g,market),initialAt:start,firstExternalAt:start+20000,firstExternalId:'one',pairedAt:start+220000,pairedExternalId:'two',route:'elapsed'};
- const verified={...g,verificationId:'aggregate',overVerification:proof};assert.equal(timedOverEntryValid(verified,market,start+220001),true);
+ const verified={...g,verificationId:'aggregate',overVerification:proof};rememberIndependentEntry(verified,market,'aggregate',start+220000);assert.equal(timedOverEntryValid(verified,market,start+220001),true);
  assert.equal(timedOverEntryValid(verified,{...market,floor_strike:138.5},start+220001),false);
  assert.equal(timedOverEntryValid({...verified,overVerification:{...proof,firstExternalAt:start+19999}},market,start+220001),false);
  assert.equal(timedOverEntryValid({...verified,overVerification:{...proof,pairedExternalId:'one'}},market,start+220001),false);

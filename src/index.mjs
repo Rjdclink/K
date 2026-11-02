@@ -1,4 +1,5 @@
 import {parallelBasketballVerification,assertBasketballVerification} from './basketball_verification.mjs';
+import {rememberIndependentEntry,independentEntryValid,assertExternalPurchase} from './entry_verification.mjs';
 import {createComboPlanner} from './combo_planner.mjs';
 import { sameSportsContract, overContractKey, freshOverObservation, freshOverState, overCushion, overTiming, sameOverReading, timedOverEntryValid, assertTimedOverEntry, OVER_FRESH_MS, OVER_MAX_GAP_MS } from './over_verification.mjs';
 import { golfSignal, verifyGolf } from './golf.mjs';
@@ -122,6 +123,7 @@ async function kalshi(path,opts={}){
     opts.signal?.throwIfAborted();
     if(opts.auth){const {key,privateKey}=credentials();if(!key||!privateKey)throw Error('Kalshi credentials unavailable');const timestamp=String(Date.now());const unsignedPath='/trade-api/v2'+path.split('?')[0];const signature=kalshiSignature(privateKey,timestamp,method,unsignedPath);Object.assign(headers,{'KALSHI-ACCESS-KEY':key,'KALSHI-ACCESS-TIMESTAMP':timestamp,'KALSHI-ACCESS-SIGNATURE':signature})}
     opts.beforeDispatch?.();
+    assertExternalPurchase(path,method,opts.body,opts.entryVerifications);
     opts.onDispatch?.();
     const response=await fetch(API+path,{method,headers,body:opts.body?JSON.stringify(opts.body):undefined,
       signal:opts.signal?AbortSignal.any([opts.signal,AbortSignal.timeout(12000)]):AbortSignal.timeout(12000)});
@@ -204,6 +206,8 @@ function upgradeTables(){return upgradesReady??=Promise.all([
   pool.query(`CREATE TABLE IF NOT EXISTS combo_upgrades (market_ticker text PRIMARY KEY,original_id uuid NOT NULL,verification_ids jsonb NOT NULL,status text NOT NULL,rfq_id text NOT NULL,quote_id text NOT NULL,order_id text,fill_count numeric NOT NULL DEFAULT 0,error text,created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now())`)
 ]).catch(e=>{upgradesReady=null;throw e})}
 async function auditedOver(game,milestone,options={}){
+  delete game.independentEntry;
+  const requestedAt=Date.now();
   const observations=[];
   const fetcher=async(url,opts)=>{
     const at=new Date().toISOString(),key='raw:'+url,cached=options.cache?.get(key);
@@ -216,19 +220,23 @@ async function auditedOver(game,milestone,options={}){
     catch(e){observations.push({url,requested_at:at,error:String(e.message)});throw e}
   };
   // Separate reads retain the exact source response used for this decision.
-  const decision=await verifyIndependentOverDecision(game,milestone,{...options,cache:undefined,fetcher});
+  const decision=game.golf?options.event?await verifyGolf(game,milestone,options.event,fetcher):null:
+    game.tableTennis?await verifyIndependentTableTennisLeadDecision(game,milestone,{fetcher}):
+    await verifyIndependentOverDecision(game,milestone,{...options,cache:undefined,fetcher});
   const passed=decision===true;
   await auditTable();const id=randomUUID();
   await pool.query('INSERT INTO verification_records(id,market_ticker,passed,evidence) VALUES($1,$2,$3,$4)',[id,options.market?.ticker||'',passed,JSON.stringify({game,milestone,observations,firstObservation:options.firstObservation,independentUnavailable:decision===null})]);
-  if(passed)game.verificationId=id;
+  if(passed){game.verificationId=id;rememberIndependentEntry(game,options.market,id,requestedAt)}
   return options.allowUnavailable?decision:passed;
 }
-async function verifyCommandingLead(game,milestone,market,cache){
+async function verifyCommandingLead(game,milestone,market,cache,event){
   if(basketballCloseoutEntry(game)){
-    try{assertBasketballVerification(game,market);return Boolean(game.basketballVerification)}catch{return false}
+    try{assertBasketballVerification(game,market);return Boolean(game.basketballVerification&&independentEntryValid(game,market))}catch{return false}
   }
-  return lateCommandingLead(game,market)&&leadSignal(game,market)?
-    auditedOver(game,milestone,{market,cache,allowUnavailable:true}):null;
+  const passed=await auditedOver(game,milestone,{market,event,cache,allowUnavailable:true});
+  if(passed!==true)return false;
+  // External proof is mandatory; retain the existing allocation selection.
+  return lateCommandingLead(game,market)&&leadSignal(game,market)?true:null;
 }
 async function verifiedEntryQuote(game,milestone,market,cache,strategy='lead',onRawQuote){
   const readQuote=async()=>{
@@ -247,6 +255,7 @@ async function verifiedEntryQuote(game,milestone,market,cache,strategy='lead',on
     verify:()=>auditedOver(game,milestone,{market,cache,allowUnavailable:true})});
 }
 function assertFreshLead(game,market){
+  if(!independentEntryValid(game,market))throw Object.assign(Error('Independent lead verification expired before dispatch'),{code:'LOCAL_EXTERNAL_VERIFICATION_REQUIRED'});
   assertBasketballVerification(game,market);
   if(!Number.isFinite(game.observedAt)||Date.now()-game.observedAt>30000)
     throw Object.assign(Error('Lead score expired before order dispatch'),{code:'LOCAL_LEAD_SCORE_EXPIRED'});
@@ -316,7 +325,9 @@ async function confirmedIndependentOver(first,milestone,market,{decorate=state=>
     const id=randomUUID(),proof={route:'seller_cushion',contractKey:key,sellerAt:now,cushionUnits:overCushion(first,seller)};
     await auditTable();await pool.query('INSERT INTO verification_records(id,market_ticker,passed,evidence) VALUES($1,$2,true,$3)',
       [id,seller.ticker,JSON.stringify({mode:'seller_backed_cushioned_over',game:first,timing:proof})]);
-    first.verificationId=id;first.overVerification=proof;return first;
+    first.verificationId=id;first.overVerification=proof;
+    if(await auditedOver(first,milestone,{market:seller,allowUnavailable:true})!==true)return null;
+    return timedOverEntryValid(first,seller)?first:null;
   }
   const {rows:[window]}=await pool.query(`INSERT INTO over_verification_windows
     (market_ticker,game_id,contract_key,generation,initial_at,last_seen,contract,initial_state)
@@ -373,6 +384,7 @@ async function confirmedIndependentOver(first,milestone,market,{decorate=state=>
   await pool.query('INSERT INTO verification_records(id,market_ticker,passed,evidence) VALUES($1,$2,true,$3)',
     [id,seller.ticker,JSON.stringify({mode:'independent_timed_over',game:pair.state,initial:window.initial_state,timing:proof})]);
   pair.state.verificationId=id;pair.state.overVerification=proof;
+  rememberIndependentEntry(pair.state,seller,id,pair.pairedAt);
   // If another observer reset this crossing, its old timer cannot authorize entry.
   const valid=await pool.query('SELECT 1 FROM over_verification_windows WHERE market_ticker=$1 AND generation=$2',[seller.ticker,window.generation]);
   return valid.rowCount&&timedOverEntryValid(pair.state,seller)?pair.state:null;
@@ -516,7 +528,7 @@ async function manualBuyCombo(body){
       if(filled>0)await invalidateBalance();
       return json({ok:true,filled});
     }catch(e){
-      const terminal=/^Kalshi (400|401|403|404|409|422) /.test(String(e.message));
+      const terminal=e.code==='LOCAL_EXTERNAL_VERIFICATION_REQUIRED'||/^Kalshi (400|401|403|404|409|422) /.test(String(e.message));
       if(terminal)await pool.query("UPDATE manual_combo_buys SET status='unfilled',result=$2,updated_at=now() WHERE id=$1",[body.id,JSON.stringify({error:e.message})]);
       return json({error:terminal?'No fill: '+e.message:'Purchase response uncertain. Do not resubmit until the order is reconciled.'},terminal?409:502);
     }
@@ -940,13 +952,13 @@ async function submit(signal,game,event,market,balance,bankroll,budgetCents=Infi
     // A partial IOC fill can be below the minimum net profit. Require the
     // entire quantity at the limit price or no entry at all.
     const result=await withEntryProfitFloor({ticker:market.ticker,count,price,fees:feeReserve(event,market),strategy:signal.strategy,bankroll,game,market},
-      ()=>kalshi('/portfolio/events/orders',{method:'POST',auth:true,beforeDispatch:()=>{if(signal.strategy==='over')assertTimedOverEntry(game,market);if(signal.strategy==='lead')assertFreshLead(game,market)},body:{ticker:market.ticker,client_order_id:id,side:'bid',count:count.toFixed(2),price:price.toFixed(4),time_in_force:'fill_or_kill',self_trade_prevention_type:'taker_at_cross',post_only:false}}));
+      ()=>kalshi('/portfolio/events/orders',{method:'POST',auth:true,entryVerifications:[{game,market}],beforeDispatch:()=>{if(signal.strategy==='over')assertTimedOverEntry(game,market);if(signal.strategy==='lead')assertFreshLead(game,market)},body:{ticker:market.ticker,client_order_id:id,side:'bid',count:count.toFixed(2),price:price.toFixed(4),time_in_force:'fill_or_kill',self_trade_prevention_type:'taker_at_cross',post_only:false}}));
     if(!result){await pool.query(`UPDATE trade_attempts SET status='unfilled',error='Below filled-order net profit floor',updated_at=now() WHERE id=$1`,[id]);return false}
     const filled=Number(result.fill_count_fp??result.fill_count??result.order?.fill_count_fp??0);
     await pool.query(`UPDATE trade_attempts SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE id=$1`,[id,filled>0?'filled':'unfilled',result.order_id||result.order?.order_id||null,filled]);
     if(filled>0)await confirmedSingleFill(id,market.ticker);
     return filled>0;
-  }catch(e){const message=String(e.message),noLiquidity=/^Kalshi 409 .*fill or kill insufficient resting volume/i.test(message),terminal=/^Kalshi (400|401|403|404|422) /.test(message);await pool.query(`UPDATE trade_attempts SET status=$2,error=$3,updated_at=now() WHERE id=$1`,[id,noLiquidity||e.code==='LOCAL_OVER_PROOF_EXPIRED'||e.code==='LOCAL_LEAD_SCORE_EXPIRED'?'unfilled':terminal?'rejected':'check_order',message.slice(0,250)]);if(/insufficient balance/i.test(message))await invalidateBalance();console.error('Order response:',market.ticker,e.message);return false}
+  }catch(e){const message=String(e.message),noLiquidity=/^Kalshi 409 .*fill or kill insufficient resting volume/i.test(message),terminal=/^Kalshi (400|401|403|404|422) /.test(message);await pool.query(`UPDATE trade_attempts SET status=$2,error=$3,updated_at=now() WHERE id=$1`,[id,noLiquidity||['LOCAL_OVER_PROOF_EXPIRED','LOCAL_EXTERNAL_VERIFICATION_REQUIRED'].includes(e.code)||e.code==='LOCAL_LEAD_SCORE_EXPIRED'?'unfilled':terminal?'rejected':'check_order',message.slice(0,250)]);if(/insufficient balance/i.test(message))await invalidateBalance();console.error('Order response:',market.ticker,e.message);return false}
 }
 async function recoverPending(signal,game,event,market,balance,bankroll,budgetCents=Infinity,availableCents=bankroll,cashCents=balance){
   balance=Math.min(balance,singleSpendableCash(cashCents));
@@ -986,7 +998,7 @@ async function recoverPending(signal,game,event,market,balance,bankroll,budgetCe
     return false;
   }
   try{const result=await withEntryProfitFloor({ticker:row.market_ticker,count:Number(row.count),price:Number(row.limit_price),fees:feeReserve(event,market),strategy:signal.strategy,bankroll,game,market},
-    ()=>kalshi('/portfolio/events/orders',{method:'POST',auth:true,beforeDispatch:()=>{if(signal.strategy==='over')assertTimedOverEntry(game,market);if(signal.strategy==='lead')assertFreshLead(game,market)},body:{ticker:row.market_ticker,client_order_id:row.id,side:'bid',count:Number(row.count).toFixed(2),price:Number(row.limit_price).toFixed(4),time_in_force:'fill_or_kill',self_trade_prevention_type:'taker_at_cross',post_only:false}}));
+    ()=>kalshi('/portfolio/events/orders',{method:'POST',auth:true,entryVerifications:[{game,market}],beforeDispatch:()=>{if(signal.strategy==='over')assertTimedOverEntry(game,market);if(signal.strategy==='lead')assertFreshLead(game,market)},body:{ticker:row.market_ticker,client_order_id:row.id,side:'bid',count:Number(row.count).toFixed(2),price:Number(row.limit_price).toFixed(4),time_in_force:'fill_or_kill',self_trade_prevention_type:'taker_at_cross',post_only:false}}));
     if(!result){await pool.query(`UPDATE trade_attempts SET status='check_order',retries=0,error='Below filled-order net profit floor',updated_at=now() WHERE id=$1`,[row.id]);return false}
     const filled=Number(result.fill_count_fp??result.fill_count??result.order?.fill_count_fp??result.order?.fill_count??0);await pool.query(`UPDATE trade_attempts SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE id=$1`,[row.id,filled>0?'filled':'unfilled',result.order_id||result.order?.order_id||null,filled]);if(filled>0)await confirmedSingleFill(row.id,row.market_ticker);return filled>0
   }catch(e){
@@ -1077,7 +1089,7 @@ async function upgradeHeldOver(c,preflight,original,scoreboardCache){
   await pool.query('INSERT INTO order_verifications(order_id,verification_id) VALUES($1,$2) ON CONFLICT DO NOTHING',[id,state.verificationId]);
   try{
     const result=await withEntryProfitFloor({ticker:quote.ticker,count,price,fees,strategy:'over',bankroll,game:state,market:quote},
-      ()=>kalshi('/portfolio/events/orders',{method:'POST',auth:true,beforeDispatch:()=>{assertTimedOverEntry(state,quote)},body:{ticker:quote.ticker,client_order_id:id,side:'bid',count:count.toFixed(2),price:price.toFixed(4),time_in_force:'fill_or_kill',self_trade_prevention_type:'taker_at_cross',post_only:false}}));
+      ()=>kalshi('/portfolio/events/orders',{method:'POST',auth:true,entryVerifications:[{game:state,market:quote}],beforeDispatch:()=>{assertTimedOverEntry(state,quote)},body:{ticker:quote.ticker,client_order_id:id,side:'bid',count:count.toFixed(2),price:price.toFixed(4),time_in_force:'fill_or_kill',self_trade_prevention_type:'taker_at_cross',post_only:false}}));
     if(!result){await pool.query(`UPDATE ${upgradeTable} SET status='unfilled',error='Below filled-order net profit floor',updated_at=now() WHERE id=$1`,[id]);return {verified:true,filled:false}}
     const filled=Number(result.fill_count_fp??result.fill_count??result.order?.fill_count_fp??0);
     await pool.query(`UPDATE ${upgradeTable} SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE id=$1`,
@@ -1087,7 +1099,7 @@ async function upgradeHeldOver(c,preflight,original,scoreboardCache){
   }catch(e){
     const message=String(e.message),noLiquidity=/^Kalshi 409 .*fill or kill insufficient resting volume/i.test(message),terminal=/^Kalshi (400|401|403|404|422) /.test(message);
     await pool.query(`UPDATE ${upgradeTable} SET status=$2,error=$3,updated_at=now() WHERE id=$1`,
-      [id,noLiquidity||e.code==='LOCAL_OVER_PROOF_EXPIRED'?'unfilled':terminal?'rejected':'check_order',message.slice(0,250)]);
+      [id,noLiquidity||['LOCAL_OVER_PROOF_EXPIRED','LOCAL_EXTERNAL_VERIFICATION_REQUIRED'].includes(e.code)?'unfilled':terminal?'rejected':'check_order',message.slice(0,250)]);
     console.error('Upgrade order response:',quote.ticker,e.message);
     return {verified:true,filled:false};
   }
@@ -1801,11 +1813,11 @@ async function watchLeadWindows(until){
               const confirmed=directNba?await auditSingleReadNbaLead(second,quote,milestone):
                 await auditSingleReadKalshiLead(second,quote,milestone);
               if(!confirmed)continue;
-              const independentLead=await verifyCommandingLead(second,milestone,quote,scoreboardCache);
+              const independentLead=await verifyCommandingLead(second,milestone,quote,scoreboardCache,event);
               if(independentLead===false)continue;
-              const verified={...signal,fraction:leadEntryFraction(first,second,signal,quote,independentLead,directKalshiLead),externallyVerified:independentLead===true,
-                reason:signal.reason+(independentLead===true?'; independent live scoreboard confirmed':directNba?'; Kalshi-only basketball single read; external and second score waived':
-                  '; Kalshi-only live score and executable seller checked')};
+              const verified={...signal,fraction:leadEntryFraction(first,second,signal,quote,independentLead,directKalshiLead),externallyVerified:independentEntryValid(second,quote),
+                reason:signal.reason+(independentLead===true?'; independent live scoreboard confirmed':directNba?'; mandatory independent external score confirmed':
+                  '; mandatory independent external score and executable seller checked')};
               decision.signal=verified;decision.stage='cash_and_score_age';
               const account=await accountBalance({fresh:true}),balance=Number(account.balance),bankroll=balance+Number(account.portfolio_value);
               const local=shardCash(account,marketShard(event,quote));
@@ -2282,16 +2294,16 @@ async function scan(cachedMilestones,discoveryCount){
         if(!stillQualifies)continue;
         if(directNba&&!await auditSingleReadNbaLead(freshState,quote,c.milestone))continue;
         if(directKalshiLead&&!await auditSingleReadKalshiLead(freshState,quote,c.milestone))continue;
-        let independentLead=c.signal.strategy==='lead'?await verifyCommandingLead(freshState,c.milestone,quote,scoreboardCache):null;
+        let independentLead=c.signal.strategy==='lead'?await verifyCommandingLead(freshState,c.milestone,quote,scoreboardCache,c.event):null;
         if(independentLead===false)continue;
         if(c.signal.strategy==='lead'&&!soccerWinnerWindowOpen(freshState))continue;
         const verifiedSignal=stillQualifies;
         const verifiedFraction=c.signal.strategy==='lead'?leadEntryFraction(c.state,freshState,verifiedSignal,quote,independentLead,directKalshiLead):
           c.signal.strategy==='over'?verifiedOverFraction(verifiedSignal,freshState,quote):verifiedSignal.fraction;
         if(verifiedFraction===null)continue;
-        c.signal={...verifiedSignal,fraction:verifiedFraction,externallyVerified:independentLead===true,
-          reason:verifiedSignal.reason+(independentLead===true?'; independent live scoreboard confirmed':directNba?'; Kalshi-only basketball single read; external and second score waived':
-            directKalshiLead?'; Kalshi-only live score and executable seller checked':
+        c.signal={...verifiedSignal,fraction:verifiedFraction,externallyVerified:independentEntryValid(freshState,quote),
+          reason:verifiedSignal.reason+(independentLead===true?'; independent live scoreboard confirmed':directNba?'; mandatory independent external score confirmed':
+            directKalshiLead?'; mandatory independent external score and executable seller checked':
             kalshiOnly?`; Kalshi-only reads, one ${fallbackScoringUnits(freshState)}-unit score removed`:'')};
         c.market=quote;
         c.state=state=freshState;
@@ -2356,16 +2368,16 @@ async function scan(cachedMilestones,discoveryCount){
               if(directNba&&!await auditSingleReadNbaLead(checked,executable,c.milestone))continue;
               if(directKalshiLead&&!await auditSingleReadKalshiLead(checked,executable,c.milestone))continue;
               if(c.signal.strategy==='lead'){
-                independentLead=await verifyCommandingLead(checked,c.milestone,executable,scoreboardCache);
+                independentLead=await verifyCommandingLead(checked,c.milestone,executable,scoreboardCache,c.event);
                 if(independentLead===false)continue;
               }
               if(c.signal.strategy==='over'){
                 checked=await confirmedIndependentOver(checked,c.milestone,executable,{decorate:withPropWindow});
                 if(!checked)continue;
               }
-              if(c.signal.strategy==='lead')c.signal={...still,externallyVerified:independentLead===true,
+              if(c.signal.strategy==='lead')c.signal={...still,externallyVerified:independentEntryValid(checked,executable),
                 fraction:leadEntryFraction(state,checked,still,executable,independentLead,directKalshiLead),
-                reason:still.reason+(independentLead===true?'; independent live scoreboard confirmed':directNba?'; Kalshi-only basketball single read; external and second score waived':'; Kalshi-only live score and executable seller checked')};
+                reason:still.reason+(independentLead===true?'; independent live scoreboard confirmed':directNba?'; mandatory independent external score confirmed':'; mandatory independent external score and executable seller checked')};
               if(c.signal.strategy==='over'){
                 const checkedSignal=overSignal(checked,executable);
                 c.signal=checkedSignal&&{...checkedSignal,fraction:verifiedOverFraction(checkedSignal,checked,executable)};
