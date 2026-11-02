@@ -6,6 +6,7 @@ export function sameSportsContract(a,b){
 
 export const OVER_EXTERNAL_DELAY_MS=20000;
 export const OVER_CONFIRM_DELAY_MS=180000;
+export const OVER_SOCCER_CONFIRM_DELAY_MS=150000;
 export const OVER_VARIABLE_CONFIRM_DELAY_MS=240000;
 export const OVER_FRESH_MS=10000;
 export const OVER_MAX_GAP_MS=90000;
@@ -38,7 +39,8 @@ export function overTiming(window,game,market,now=Date.now()){
   if(external===null)return {stage:'first_external',remainingMs:0};
   if(!Number.isFinite(external)||external<initial+OVER_EXTERNAL_DELAY_MS||external>now||!window.first_external_id)return {stage:'invalid'};
   const cushion=overCushion(game,market);
-  const delay=variableValuePlayerMetric(playerOverSpec(game,market)?.metric)?OVER_VARIABLE_CONFIRM_DELAY_MS:OVER_CONFIRM_DELAY_MS;
+  const delay=variableValuePlayerMetric(playerOverSpec(game,market)?.metric)?OVER_VARIABLE_CONFIRM_DELAY_MS:
+    /soccer/.test(String(game?.type||''))?OVER_SOCCER_CONFIRM_DELAY_MS:OVER_CONFIRM_DELAY_MS;
   if(elapsed<delay&&cushion===null)return {stage:'final_wait',remainingMs:delay-elapsed,minimumMs:delay};
   return {stage:'paired',route:elapsed>=delay?'elapsed':'cushion',cushionUnits:cushion};
 }
