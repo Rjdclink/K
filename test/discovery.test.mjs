@@ -194,12 +194,13 @@ test('table tennis live set points come from period_scores with competitor orien
   const details={status:'live',competitor1_is_home:true,competitor1_overall_score:0,competitor2_overall_score:0,period_scores:[{competitor1_score:3,competitor2_score:7,number:1,type:'set'}]};
   const first=gameState(milestone,{details});
   assert.equal(first.home,3);assert.equal(first.away,7);assert.equal(first.scoreKnown,true);
-  assert.equal(gameTimeLabel(first),'Set 1 · no countdown clock');
+  assert.equal(gameTimeLabel(first),'Set 1');
   const reversed=gameState(milestone,{details:{...details,competitor1_is_home:false}});
   assert.equal(reversed.home,7);assert.equal(reversed.away,3);
   assert.equal(eligibleForMarkets(first),true);
   const missing=gameState(milestone,{details:{status:'live',period_scores:[]}});
   assert.equal(missing.scoreKnown,false);
+  assert.equal(gameTimeLabel(missing),'Set number unavailable');
 });
 
 test('darts overall scores and esports phase display without an invented clock',()=>{
