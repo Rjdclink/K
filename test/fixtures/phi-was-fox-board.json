@@ -1,0 +1,77 @@
+{
+  "sectionList": [
+    {
+      "events": [
+        {
+          "template": "scores-team",
+          "id": "nfl11262",
+          "liveStartTime": "2026-11-02T00:50:00Z",
+          "uri": "https://api.foxsports.com/bifrost/v1/nfl/scorechip/nfl11262",
+          "contentUri": "football/nfl/events/11262",
+          "contentType": "event",
+          "eventStatus": 1,
+          "eventTime": "2026-11-02T01:20:00Z",
+          "sortKey": "112026110201203200011262",
+          "altSortKey": "131202611020120200011262",
+          "statusLine": "2ND 4:56",
+          "tvStation": "NBC",
+          "favoriteEntities": [
+            "football/nfl/teams/19",
+            "football/nfl/teams/17"
+          ],
+          "isTba": false,
+          "entityLink": {
+            "webUrl": "/nfl/week-8-philadelphia-eagles-vs-washington-commanders-nov-01-2026-game-boxscore-11262",
+            "contentUri": "football/nfl/events/11262",
+            "contentType": "event",
+            "layout": {
+              "path": "/layouts?type=layout&subtype=nflEventLayout",
+              "tokens": {
+                "id": "11262",
+                "eventUri": "football/nfl/events/11262",
+                "homeUri": "football/nfl/teams/19",
+                "awayUri": "football/nfl/teams/17"
+              }
+            },
+            "analyticsSport": "nfl",
+            "type": "entity"
+          },
+          "league": "NFL",
+          "eventHeadline": "Eagles getting out-rushed by Commanders 77-36",
+          "importance": 0,
+          "hasStreamPromo": true,
+          "upperTeam": {
+            "name": "PHI",
+            "uri": "football/nfl/teams/17",
+            "longName": "Eagles",
+            "stackedNameTop": "Philadelphia",
+            "stackedNameBottom": "Eagles",
+            "logoUrl": "https://b.fssta.com/uploads/application/nfl/team-logos/Eagles.vresize.80.80.medium.0.png",
+            "imageType": "image-logo",
+            "imageAltText": "Philadelphia Eagles",
+            "record": "2-5",
+            "score": 10,
+            "isLoser": false,
+            "hasPossession": false,
+            "alternateLogoUrl": "https://b.fssta.com/uploads/application/nfl/team-logos/Eagles.vresize.80.80.medium.0.png"
+          },
+          "lowerTeam": {
+            "name": "WAS",
+            "uri": "football/nfl/teams/19",
+            "longName": "Commanders",
+            "stackedNameTop": "Washington",
+            "stackedNameBottom": "Commanders",
+            "logoUrl": "https://b.fssta.com/uploads/application/nfl/team-logos/Commanders.vresize.80.80.medium.4.png",
+            "imageType": "image-logo",
+            "imageAltText": "Washington Commanders",
+            "record": "1-4-1",
+            "score": 10,
+            "isLoser": false,
+            "hasPossession": false,
+            "alternateLogoUrl": "https://b.fssta.com/uploads/application/nfl/team-logos/Commanders-alternate.vresize.80.80.medium.1.png"
+          }
+        }
+      ]
+    }
+  ]
+}

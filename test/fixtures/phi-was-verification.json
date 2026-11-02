@@ -1,0 +1,164 @@
+{
+  "game": {
+    "id": "0bb9860c-5b9d-4931-9886-d59480b502b4",
+    "away": 10,
+    "home": 10,
+    "outs": null,
+    "tour": "",
+    "type": "football_game",
+    "unit": "points",
+    "clock": "2:31",
+    "darts": null,
+    "phase": "",
+    "sport": "NFL",
+    "title": "PHI Eagles at WAS Commanders",
+    "feedId": "0bb9860c-5b9d-4931-9886-d59480b502b4",
+    "period": 2,
+    "status": "inprogress",
+    "tennis": null,
+    "cricket": null,
+    "awayName": "PHI Eagles",
+    "homeName": "WAS Commanders",
+    "progress": 0.45805555555555555,
+    "awayUnits": 10,
+    "homeUnits": 10,
+    "mainEvent": "KXNFLGAME-26NOV01PHIWAS",
+    "setNumber": null,
+    "updatedAt": 1793587004000,
+    "awayTeamId": "bc65405b-5bda-425c-b7c5-681c382e6a5a",
+    "homeTeamId": "aa65dda6-9cb8-4c8b-812b-d0c1feaae54f",
+    "inningHalf": null,
+    "observedAt": 1793587006424,
+    "scoreKnown": true,
+    "soccerHalf": "",
+    "volleyball": null,
+    "competition": "NFL",
+    "playerStats": {
+      "320ff933-d015-48c1-bc6f-13058dc633f8": {
+        "targets": 1,
+        "receptions": 1,
+        "touchdowns": 0,
+        "fantasy_points": 0.1,
+        "receiving_yards": 11,
+        "longest_reception": 11,
+        "receiving_touchdowns": 0
+      }
+    },
+    "tableTennis": null,
+    "tennisTotal": null,
+    "clockRunning": true,
+    "periodScores": [],
+    "soccerMinute": null,
+    "verifiedLive": true,
+    "possessionSide": "home",
+    "soccerOvertime": false,
+    "scoreConsistent": true,
+    "soccerExtraTime": false,
+    "periodConsistent": true,
+    "remainingSeconds": 151,
+    "esportsPeriodsValid": false,
+    "matchRemainingSeconds": null
+  },
+  "milestone": {
+    "id": "0bb9860c-5b9d-4931-9886-d59480b502b4",
+    "type": "football_game",
+    "title": "PHI Eagles at WAS Commanders",
+    "start_date": "2026-11-02T01:20:00Z",
+    "details": {
+      "season": {
+        "type": "REG",
+        "week": 8,
+        "year": 2026
+      }
+    }
+  },
+  "espn": {
+    "events": [
+      {
+        "id": "401873035",
+        "date": "2026-11-02T01:20Z",
+        "status": {
+          "type": {
+            "id": "2",
+            "name": "STATUS_IN_PROGRESS",
+            "state": "in",
+            "detail": "2:31 - 2nd Quarter",
+            "completed": false,
+            "description": "In Progress",
+            "shortDetail": "2:31 - 2nd"
+          },
+          "clock": 151,
+          "period": 2,
+          "displayClock": "2:31"
+        },
+        "competitions": [
+          {
+            "status": {
+              "type": {
+                "id": "2",
+                "name": "STATUS_IN_PROGRESS",
+                "state": "in",
+                "detail": "2:31 - 2nd Quarter",
+                "completed": false,
+                "description": "In Progress",
+                "shortDetail": "2:31 - 2nd"
+              },
+              "clock": 151,
+              "period": 2,
+              "isTBDFlex": false,
+              "displayClock": "2:31"
+            },
+            "competitors": [
+              {
+                "homeAway": "home",
+                "score": "10",
+                "team": {
+                  "displayName": "Washington Commanders",
+                  "shortDisplayName": "Commanders",
+                  "abbreviation": "WSH",
+                  "name": "Commanders",
+                  "location": "Washington"
+                },
+                "linescores": [
+                  {
+                    "value": 3,
+                    "period": 1,
+                    "displayValue": "3"
+                  },
+                  {
+                    "value": 7,
+                    "period": 2,
+                    "displayValue": "7"
+                  }
+                ]
+              },
+              {
+                "homeAway": "away",
+                "score": "10",
+                "team": {
+                  "displayName": "Philadelphia Eagles",
+                  "shortDisplayName": "Eagles",
+                  "abbreviation": "PHI",
+                  "name": "Eagles",
+                  "location": "Philadelphia"
+                },
+                "linescores": [
+                  {
+                    "value": 10,
+                    "period": 1,
+                    "displayValue": "10"
+                  },
+                  {
+                    "value": 0,
+                    "period": 2,
+                    "displayValue": "0"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
