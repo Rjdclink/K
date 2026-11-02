@@ -33,6 +33,8 @@ import { sellQuote } from './sell.mjs';
 import { manualComboQuote } from './combo_manual.mjs';
 import { yesDepthAtAsk, bestYesAsk, bestAsksForTickers } from './orderbook.mjs';
 import { filledOrderGateCount } from './entry_floor.mjs';
+import { supplementalCatalog } from './catalog_helper.mjs';
+import { CATALOG_HELPER_URL, CATALOG_HELPER_EXPIRES_AT } from './catalog_helper_config.mjs';
 
 const API='https://external-api.kalshi.com/trade-api/v2';
 const pool = new pg.Pool({connectionString:process.env.DATABASE_URL, max:4, idleTimeoutMillis:15000});
@@ -693,11 +695,13 @@ async function milestones(){
     const {rows:[current]}=await client.query(`SELECT milestones FROM sports_discovery_cache
       WHERE id=1 AND discovered_at>now()-interval '60 seconds'`);
     if(current){await client.query('COMMIT');return current.milestones}
-    const started=Date.now(),found=await discoverCurrentMilestones(kalshi);
+    const started=Date.now();
+    const supplement=await supplementalCatalog(CATALOG_HELPER_URL,{expiresAt:CATALOG_HELPER_EXPIRES_AT});
+    const found=supplement?.milestones||await discoverCurrentMilestones(kalshi);
     await client.query(`INSERT INTO sports_discovery_cache(id,milestones,discovered_at) VALUES(1,$1,clock_timestamp())
       ON CONFLICT(id) DO UPDATE SET milestones=EXCLUDED.milestones,discovered_at=EXCLUDED.discovered_at`,[JSON.stringify(found)]);
     await client.query('COMMIT');
-    console.info('Sports discovery:',JSON.stringify({milestones:found.length,elapsedMs:Date.now()-started}));
+    console.info('Sports discovery:',JSON.stringify({milestones:found.length,elapsedMs:Date.now()-started,source:supplement?'supplement':'direct'}));
     return found;
   }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}
   finally{client.release()}
