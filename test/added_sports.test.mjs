@@ -40,12 +40,13 @@ test('darts ticker is discovered but incomplete checkout feed cannot authorize a
   const state=gameState(m,{details:{status:'live',competitor1_overall_score:2,competitor2_overall_score:1}});
   assert.equal(additionalLeadSignal(state,{status:'active',event_ticker:'KXDARTSMATCH-26OCT29',title:'Home wins'}),null);
 });
-test('table tennis deciding seventh set uses the same clock-free point margins',()=>{
+test('table tennis deciding seventh set uses the same ten-to-five clock-free rule',()=>{
   const m={id:'tt',type:'table_tennis_match',title:'Alice vs Bob',details:{best_of:7,first_competitor_id:'a',second_competitor_id:'b'}};
   const details={status:'live',competitor1_overall_score:3,competitor2_overall_score:3,
-    period_scores:[{type:'set',number:7,competitor1_score:12,competitor2_score:8}]};
+    period_scores:[{type:'set',number:7,competitor1_score:10,competitor2_score:5}]};
   const market={status:'active',event_ticker:'KXTABLETENNISMATCH-26OCT29',title:'Alice wins',yes_sub_title:'Alice',custom_strike:{table_tennis_competitor:'a'}};
   assert.equal(tableTennisSignal(gameState(m,{details}),market)?.fraction,.10);
+  assert.equal(tableTennisSignal(gameState(m,{details:{...details,period_scores:[{type:'set',number:7,competitor1_score:10,competitor2_score:6}]}}),market),null);
 });
 test('new sport event links in the current Kalshi milestones field are discovered',()=>{
   assert.deepEqual(linkedEventTickers({type:'darts_match',events:['KXDARTSMATCH-26OCT29']}),['KXDARTSMATCH-26OCT29']);

@@ -3,6 +3,22 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {page} from '../src/ui.mjs';
 
+test('table-tennis scanner cards remove old countdown wording while retaining the set and score',()=>{
+  const element=()=>({children:[],style:{},classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){},append(...items){this.children.push(...items)}});
+  const document={getElementById:element,querySelectorAll:()=>[],createElement:element};
+  const context=vm.createContext({document,window:{addEventListener(){}},navigator:{},localStorage:{getItem(){return null}},
+    fetch:()=>new Promise(()=>{}),AbortSignal,setInterval(){}});
+  vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],context);
+  const render=vm.runInContext('item',context);
+  const card=render({title:'Moshnikov vs Kharlakin',sport:'Table tennis',home:10,away:5,time_left:'Set 5 · no countdown clock',signals:[]});
+  assert.match(card.children[1].textContent,/Set 5/);
+  assert.match(card.children[1].textContent,/5–10/);
+  assert.doesNotMatch(card.children[1].textContent,/countdown|clock unavailable/i);
+  const label=vm.runInContext('scanTimeLabel',context);
+  assert.equal(label({sport:'Table tennis',time_left:'No countdown clock'}),'Set unavailable');
+  assert.equal(label({sport:'NBA',time_left:'Quarter 4 · 01:22 remaining'}),'Quarter 4 · 01:22 remaining');
+});
+
 test('ask counter excludes watch rows, missing depth, terminal prices, and already-filled signals',async()=>{
   const elements=new Map();
   const element=()=>({children:[],style:{},classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){},append(...x){this.children.push(...x)},replaceChildren(...x){this.children=x}});

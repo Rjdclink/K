@@ -11,19 +11,28 @@ test('each trade has its own percentage of the full bankroll',()=>{
   assert.ok(orderSize(10228,'.98','1000',.15,1,bankroll,Infinity,2)>20);
 });
 
-test('table tennis deciding set uses four and six point tiers without a clock',()=>{
+test('table tennis enters only at ten points to five or fewer in the deciding set without a clock',()=>{
   const m={id:'liga',type:'table_tennis_match',title:'Oleg Moshnikov vs Iurii Krivenkii',details:{league:'Russia Liga Pro',best_of:5,first_competitor_id:'oleg',second_competitor_id:'iurii'},related_event_tickers:['KXLIGAPROMATCH-DATE']};
   const state=(a,b,sets=[2,2],number=5,status='live')=>gameState(m,{milestone_id:m.id,_observed_at:new Date().toISOString(),details:{status,competitor1_is_home:true,competitor1_overall_score:sets[0],competitor2_overall_score:sets[1],period_scores:[{type:'set',number,competitor1_score:a,competitor2_score:b}]}});
   const market={event_ticker:'KXLIGAPROMATCH-DATE',status:'active',title:'Oleg Moshnikov',yes_sub_title:'Oleg Moshnikov',custom_strike:{table_tennis_competitor:'oleg'},yes_ask_dollars:'0.93'};
   assert.equal(tableTennisSignal(state(10,4),market)?.fraction,.15);
   assert.equal(tableTennisSignal(state(10,5),market)?.fraction,.10);
-  assert.equal(tableTennisSignal(state(8,4),market)?.fraction,.10);
-  assert.equal(tableTennisSignal(state(10,4),market)?.fraction,.15);
+  assert.equal(tableTennisSignal(state(8,4),market),null);
+  assert.equal(tableTennisSignal(state(9,5),market),null);
+  assert.equal(tableTennisSignal(state(9,0),market),null);
+  assert.equal(tableTennisSignal(state(10,6),market),null);
+  assert.equal(tableTennisSignal(state(10,0),market)?.strategy,'lead');
+  assert.equal(tableTennisSignal(state(11,5),market),null);
+  assert.equal(tableTennisSignal(state(10,-1),market),null);
   assert.equal(tableTennisSignal(state(8,5),market),null);
   assert.equal(tableTennisSignal(state(10,4,[2,1]),market),null);
   assert.equal(tableTennisSignal(state(10,4,[2,2],4),market),null);
   assert.equal(tableTennisSignal(state(10,4,[2,2],5,'final'),market),null);
   assert.equal(tableTennisSignal(state(4,10),market),null);
+  const other={...market,title:'Iurii Krivenkii',yes_sub_title:'Iurii Krivenkii',custom_strike:{table_tennis_competitor:'iurii'}};
+  assert.equal(tableTennisSignal(state(5,10),other)?.fraction,.10);
+  assert.equal(tableTennisSignal(state(6,10),other),null);
+  assert.equal(tableTennisSignal(state(4,8),other),null);
 });
 
 test('late baseball commanding leads enter the fast watch before the winner window',()=>{
@@ -35,15 +44,15 @@ test('late baseball commanding leads enter the fast watch before the winner wind
   assert.equal(leadWatchReason(state(8,'top',2,8,3)),null);
 });
 
-test('table tennis lead fallback verifies two live scores without using a clock',()=>{
+test('table tennis conservative fallback cannot bypass the ten-point floor after removing a point',()=>{
   const m={id:'liga-clockless',type:'table_tennis_match',title:'Oleg Moshnikov vs Iurii Krivenkii',details:{league:'Russia Liga Pro',best_of:5,first_competitor_id:'oleg',second_competitor_id:'iurii'}};
   const market={event_ticker:'KXLIGAPROMATCH-DATE',status:'active',title:'Oleg Moshnikov',yes_sub_title:'Oleg Moshnikov',custom_strike:{table_tennis_competitor:'oleg'},yes_ask_dollars:'0.93'};
   const now=Date.now();
   const state=(at,updated,clock,points=10)=>gameState(m,{milestone_id:m.id,_observed_at:new Date(at).toISOString(),details:{status:'live',last_updated_ts:updated/1000,competitor1_overall_score:2,competitor2_overall_score:2,period_remaining_time:clock,period_scores:[{type:'set',number:5,competitor1_score:points,competitor2_score:4}]}});
   const first=state(now-12000,now-13000,'00:10'),second=state(now,now-1000,'00:11');
-  assert.equal(kalshiOnlyLead(first,second,market),true,'an incidental clock increase cannot veto a table tennis score');
-  assert.equal(kalshiOnlyLead(state(now-12000,now-13000,''),state(now,now-1000,''),market),true,'no clock is accepted');
-  assert.equal(kalshiOnlyLead(state(now-12000,NaN,''),state(now,NaN,''),market),true,'the clockless fallback accepts two reads when both update timestamps are absent');
+  assert.equal(kalshiOnlyLead(first,second,market),false,'removing a point leaves only nine and cannot qualify');
+  assert.equal(kalshiOnlyLead(state(now-12000,now-13000,''),state(now,now-1000,''),market),false,'an absent clock cannot bypass the point floor');
+  assert.equal(kalshiOnlyLead(state(now-12000,NaN,''),state(now,NaN,''),market),false,'absent update times cannot bypass the point floor');
   assert.equal(kalshiOnlyLead(first,state(now,now-1000,'00:11',9),market),false,'changed points still fail');
   assert.equal(kalshiOnlyLead(first,state(now-3000,now-4000,'00:11'),market),false,'ten-second dwell remains mandatory');
 });

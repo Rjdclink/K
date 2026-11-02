@@ -664,8 +664,8 @@ export function tableTennisSignal(game,market){
   const bestOf=Number.isFinite(t.bestOf)?t.bestOf:game.competition==='Russia Liga Pro'?5:NaN;
   const before=(bestOf-1)/2;
   if(![3,5,7].includes(bestOf)||t.setNumber!==bestOf||t.firstSets!==before||t.secondSets!==before||
-    !Number.isInteger(t.firstPoints)||!Number.isInteger(t.secondPoints))return null;
-  const first=t.firstPoints>=8&&t.firstPoints-t.secondPoints>=4,second=t.secondPoints>=8&&t.secondPoints-t.firstPoints>=4;
+    !Number.isInteger(t.firstPoints)||!Number.isInteger(t.secondPoints)||t.firstPoints<0||t.secondPoints<0)return null;
+  const first=t.firstPoints===10&&t.secondPoints<=5,second=t.secondPoints===10&&t.firstPoints<=5;
   if(first===second)return null;
   const selectedId=first?t.firstId:t.secondId;
   const leaderName=first?(t.firstIsHome?game.homeName:game.awayName):(t.firstIsHome?game.awayName:game.homeName);

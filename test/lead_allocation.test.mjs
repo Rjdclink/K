@@ -99,7 +99,7 @@ test('strong Kalshi-only leads use 20% only after two stable reads and a score c
     id:'game',feedId:'game',verifiedLive:true,scoreKnown:true,scoreConsistent:true,periodConsistent:true});
   const tableMarket={event_ticker:'KXLIGAPROMATCH-DATE',status:'active',title:'Oleg Moshnikov',yes_sub_title:'Oleg Moshnikov',custom_strike:{table_tennis_competitor:'oleg'},yes_ask_dollars:'0.93'};
   const table={type:'table_tennis_match',home:2,away:2,homeName:'Oleg Moshnikov',awayName:'Iurii Krivenkii',
-    tableTennis:{bestOf:5,setNumber:5,firstSets:2,secondSets:2,firstPoints:9,secondPoints:2,firstId:'oleg',secondId:'iurii',firstIsHome:true}};
+    tableTennis:{bestOf:5,setNumber:5,firstSets:2,secondSets:2,firstPoints:10,secondPoints:3,firstId:'oleg',secondId:'iurii',firstIsHome:true}};
   const check=(state,market,expected,qualifies=true)=>{
     const a={...observed(12000),...state},b={...observed(0),...state,
       ...(/soccer/.test(state.type)?{matchRemainingSeconds:state.matchRemainingSeconds-1}:{}),
@@ -108,8 +108,8 @@ test('strong Kalshi-only leads use 20% only after two stable reads and a score c
     assert.equal(finalLeadFraction(a,b,lead,false,market),threeGoalWinner(b,lead,market)?Math.max(.20,expected):expected);
     assert.equal(finalLeadFraction({...a,observedAt:now-3000},b,lead,false,market),threeGoalWinner(b,lead,market)?.20:.15);
   };
-  check(table,tableMarket,.20);
-  check({...table,tableTennis:{...table.tableTennis,firstPoints:10,secondPoints:4}},tableMarket,.15);
+  check(table,tableMarket,.15,false);
+  check({...table,tableTennis:{...table.tableTennis,firstPoints:10,secondPoints:4}},tableMarket,.15,false);
 
   const market={event_ticker:'KXGAME-TEST',status:'active',title:'Home wins',yes_sub_title:'Home',
     custom_strike:{soccer_team:'home',hockey_team:'home'},rules_primary:'Home wins after 90 minutes plus stoppage time.',yes_ask_dollars:'0.95'};
