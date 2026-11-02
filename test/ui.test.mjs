@@ -241,6 +241,7 @@ test('filled order timer is bright red, advances each second and reanchors to li
   assert.match(chosen.innerHTML,/Last score · <strong class="chosen-score">Basaksehir 3<\/strong> · Samsunspor 1/);
 
   assert.match(page,/Tennis requires the selected player serving on match point in the final deciding set/);
+  assert.match(page,/Tennis winner positions have no automatic profit-taking exit/);
   const tennis=order({...base,sport:'Tennis',sport_family:'tennis_tournament_singles',game_title:'Berrettini vs de Minaur',strategy:'lead',selected_name:'Alex de Minaur'});
   assert.equal(tennis.children[0].children[0].className,'chosen-name');
   assert.match(tennis.children[0].children[0].textContent,/Alex de Minaur/);

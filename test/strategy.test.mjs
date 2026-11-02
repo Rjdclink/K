@@ -463,11 +463,11 @@ test('over allocation is a per-trade cap independent of existing positions',()=>
   assert.equal(overBudget(6000,4000,3000),1500);
   assert.equal(overBudget(10000,0,9000),1500);
 });
-test('entry submissions use full fills and tennis has an immediate profit exit alongside other lead targets',()=>{
+test('entry submissions use full fills and ordinary profit targets remain policy-gated',()=>{
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
   assert.equal((source.match(/side:'bid'[^\n]+time_in_force:'fill_or_kill'/g)||[]).length,3);
   assert.match(source,/const leadPosition=original\.strategy==='lead'&&![^;]+;/);
-  assert.match(source,/const targetReached=tennisProfitExitEligible\(original,position,sale\)\|\|\s+profitTargetAllowed\(original\)&&sale\.count/);
+  assert.match(source,/const targetReached=profitTargetAllowed\(original\)&&sale\.count/);
   assert.match(source,/leadPosition\?halfPotentialProfitExitEligible\(position,sale\):oneAndHalfExitEligible\(position,sale\)/);
   assert.match(source,/if\(!leadExit&&!targetReached&&!corrected\)continue;/);
   assert.match(source,/if\(live\(\)\|\|exitOnly\(\)\)await exitComebacks/);
