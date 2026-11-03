@@ -129,7 +129,7 @@ test('filled combo controls include a manual dollar field and separate cash-out 
     checked_at:new Date().toISOString(),sell_quote:{price:.7,count:4},sell_value_cents:275,sell_profit_cents:-50};
   const card=render(base),form=card.children.find(x=>x.className==='invest-controls');
   assert.equal(form.children[1].type,'number');assert.equal(form.children[2].textContent,'Submit');
-  assert.equal(card.children.at(-1).disabled,false);assert.equal(card.children.at(-1).textContent,'Sell · est. $2.75');
+  assert.equal(card.children.at(-1).disabled,false);assert.equal(card.children.at(-1).textContent,'Sell · est. loss −$0.50');
   const unavailable=render({...base,sell_quote:null,sell_status:'No executable YES bid available'});
   assert.equal(unavailable.children.at(-1).disabled,true);assert.match(unavailable.children.at(-1).textContent,/No bid/);
 });
@@ -198,12 +198,12 @@ test('score possession and net sale result refresh with the order display',()=>{
   assert.match(score(base),/Away 6\* · Home 4/);
   assert.match(score({...base,possession_side:'home'}),/Away 6 · Home 4\*/);
   const gain=order(base).children.at(-1);
-  assert.equal(gain.textContent,'Sell · est. $9.14');
+  assert.equal(gain.textContent,'Sell · est. profit +$1.49');
   assert.match(order(base).children.at(-2).textContent,/Est. P\/L \+\$1.49/);
   const loss=order({...base,sell_profit_cents:-90}).children.at(-1);
-  assert.equal(loss.textContent,'Sell · est. $9.14');
+  assert.equal(loss.textContent,'Sell · est. loss −$0.90');
   assert.match(order({...base,sell_profit_cents:-90}).children.at(-2).textContent,/Est. P\/L −\$0.90/);
-  assert.equal(order({...base,sell_profit_cents:null,sell_value_cents:null}).children.at(-1).textContent,'Sell · 92.00¢ avg bid');
+  assert.equal(order({...base,sell_profit_cents:null,sell_value_cents:null}).children.at(-1).textContent,'Sell · profit unavailable');
 });
 
 test('filled order timer is bright red, advances each second and reanchors to live score',()=>{
@@ -354,7 +354,8 @@ test('over ticket refreshes its bid and requires explicit confirmation before se
   const row=order(prop);
   assert.equal(row.children.at(-1).ariaLabel,'Sell position');
   assert.equal(row.children.at(-1).disabled,false);
-  assert.match(row.children.at(-1).textContent,/\$3\.26/);
+  assert.match(row.children.at(-1).textContent,/loss −\$24\.61/);
+  assert.match(row.children.at(-2).textContent,/cash out \$3\.26/);
   assert.match(row.children.at(-2).textContent,/−\$24.61/);
   await row.children.at(-1).onclick();
   assert.match(confirmations[0],/Confirm sale/);
@@ -426,7 +427,7 @@ test('dashboard renders positions before delayed sell quotes and updates them af
   releaseQuote({ok:true,json:async()=>({quotes:[{ticker:'M',checked_at:new Date().toISOString(),sell_quote:{count:10,price:.92},sell_value_cents:914,sell_profit_cents:149}]})});
   await new Promise(resolve=>setImmediate(resolve));
   assert.equal(elements.get('orders').children[0].children.at(-1).disabled,false);
-  assert.equal(elements.get('orders').children[0].children.at(-1).textContent,'Sell · est. $9.14');
+  assert.equal(elements.get('orders').children[0].children.at(-1).textContent,'Sell · est. profit +$1.49');
 });
 
 test('a temporary positions timeout keeps the last displayed filled order',async()=>{
@@ -479,5 +480,19 @@ test('sell quote refresh covers every filled card beyond the first twenty and ex
  await vm.runInContext("currentOrders=Array.from({length:25},(_,i)=>({market_ticker:'M'+i,strategy:'over',sport:'NBA'}));refreshSellQuotes()",context);
  assert.equal(requests.length,2);assert.equal(elements.get('orders').children.length,25);
  assert.equal(elements.get('orders').children.at(-1).children.at(-1).disabled,false);
- assert.equal(elements.get('orders').children.at(-1).children.at(-1).textContent,'Sell · est. $0.89');
+ assert.equal(elements.get('orders').children.at(-1).children.at(-1).textContent,'Sell · est. loss −$0.10');
+});
+
+test('untracked Kalshi positions show their side without offering an unverified YES sale',async()=>{
+ const elements=new Map(),requests=[];
+ const element=()=>({children:[],classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){},append(...x){this.children.push(...x)},replaceChildren(...x){this.children=x}});
+ const document={getElementById:id=>{if(!elements.has(id))elements.set(id,element());return elements.get(id)},querySelectorAll:()=>[],createElement:element};
+ const context=vm.createContext({document,window:{addEventListener(){}},navigator:{},localStorage:{getItem(){return null}},fetch:url=>{requests.push(url);return new Promise(()=>{})},AbortSignal,setInterval(){}});
+ vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],context);
+ vm.runInContext("currentOrders=[{external_position:true,side:'NO',market_ticker:'NO-MARKET',market_title:'10+ rushing yards',allocated_cents:188,potential_profit_cents:48}];renderOrders();refreshSellQuotes()",context);
+ const card=elements.get('orders').children[0];
+ assert.equal(card.children[0].textContent,'NO · 10+ rushing yards');
+ assert.match(card.children.at(-1).textContent,/Manage this position on Kalshi/);
+ assert.equal(card.children.some(child=>child.ariaLabel==='Sell position'),false);
+ assert.equal(requests.filter(url=>url.startsWith('/api/sell-quotes')).length,0);
 });
