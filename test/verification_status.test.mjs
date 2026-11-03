@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {verificationStatus} from '../src/verification_status.mjs';
+import {verificationStatus,completedOverWait} from '../src/verification_status.mjs';
 
 test('dashboard separates absent soccer coverage from a conflicting independent score',()=>{
   assert.match(verificationStatus({passed:false,independent_unavailable:'true'}),/No matching external live score; entry blocked/);
@@ -9,4 +9,11 @@ test('dashboard separates absent soccer coverage from a conflicting independent 
   assert.match(verificationStatus({passed:true,independent_unavailable:'false'}),/External score matched; fresh Kalshi read/);
   assert.match(verificationStatus({passed:true,mode:'kalshi_only_crossed_over'}),/Two Kalshi score checks passed/);
   assert.match(verificationStatus({passed:true,mode:'seller_backed_cushioned_over'}),/Cushioned over; live seller checked/);
+});
+test('a completed second external check supersedes only its own pending wait',()=>{
+  const signal={verification_wait:{updatedAt:1000}};
+  assert.equal(completedOverWait(signal,{passed:true,mode:'independent_timed_over',created_at:new Date(2000).toISOString()}),true);
+  assert.equal(completedOverWait(signal,{passed:true,mode:'independent_timed_over',created_at:new Date(999).toISOString()}),false);
+  assert.equal(completedOverWait(signal,{passed:false,mode:'independent_timed_over',created_at:new Date(2000).toISOString()}),false);
+  assert.equal(completedOverWait(signal,{passed:true,mode:'first_external',created_at:new Date(2000).toISOString()}),false);
 });
