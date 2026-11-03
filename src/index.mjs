@@ -2,7 +2,7 @@ import {parallelBasketballVerification,assertBasketballVerification} from './bas
 import {verifyExternalOverExposure,assertOverExposure} from './over_exposure.mjs';
 import {rememberIndependentEntry,independentEntryValid,assertExternalPurchase} from './entry_verification.mjs';
 import {createComboPlanner} from './combo_planner.mjs';
-import { sameSportsContract, overContractKey, freshOverObservation, freshOverState, overCushion, overTiming, sameOverReading, timedOverEntryValid, OVER_FRESH_MS, OVER_MAX_GAP_MS } from './over_verification.mjs';
+import { sameSportsContract, overContractKey, freshOverObservation, freshOverState, overCushion, overTiming, sameOverReading, timedOverEntryValid, OVER_FRESH_MS } from './over_verification.mjs';
 import { golfSignal, verifyGolfDecision, verifySportradarGolf } from './golf.mjs';
 import { randomUUID } from 'node:crypto';
 import { apiPriority, withApiPriority, createPriorityGate } from './api_priority.mjs';
@@ -272,13 +272,13 @@ function ensureOverWindows(){return overWindowsReady??=pool.query(`CREATE TABLE 
   generation uuid NOT NULL,initial_at bigint NOT NULL,last_seen bigint NOT NULL,
   first_external_at bigint,first_external_id uuid,contract jsonb NOT NULL,initial_state jsonb NOT NULL
 )`).catch(e=>{overWindowsReady=null;throw e})}
-async function overProgress(game,market,timing){
+async function overProgress(game,market,timing,initialAt){
   const now=Date.now();
   const seconds=Math.ceil(timing.remainingMs/1000);
   const message=timing.stage==='first_wait'?`Waiting for first external check (${seconds}s; minimum 20s)`:
     timing.stage==='final_wait'?`First external check passed; waiting for paired checks (${seconds}s remaining)`:
     'Awaiting score verification';
-  await reportVerifiedGate(game,market.ticker,message,false,{dueAt:now+timing.remainingMs,updatedAt:now});
+  await reportVerifiedGate(game,market.ticker,message,false,{dueAt:Number(initialAt)+timing.minimumMs,updatedAt:now});
 }
 async function pairedOverRead(first,milestone,market,decorate=state=>state){
   // Start the external request at actual Kalshi HTTP dispatch, after its shared
@@ -303,13 +303,12 @@ async function pairedOverRead(first,milestone,market,decorate=state=>state){
 async function confirmedIndependentOver(first,milestone,market,{decorate=state=>state}={}){
   await ensureOverWindows();
   const {rows:[prior]}=await pool.query('SELECT * FROM over_verification_windows WHERE market_ticker=$1',[market.ticker]);
-  if(prior&&prior.contract_key===overContractKey(first,market)&&
-    Date.now()-Number(prior.last_seen)<=OVER_MAX_GAP_MS&&freshOverState(first,market)){
+  if(prior&&prior.game_id===first.id&&prior.contract_key===overContractKey(first,market)&&freshOverState(first,market)){
     const pending=overTiming(prior,first,market);
     if(['first_wait','final_wait'].includes(pending.stage)&&overCushion(first,market)===null){
       await pool.query('UPDATE over_verification_windows SET last_seen=GREATEST(last_seen,$3) WHERE market_ticker=$1 AND generation=$2',
         [market.ticker,prior.generation,Date.now()]);
-      await overProgress(first,market,pending);return null;
+      await overProgress(first,market,pending,prior.initial_at);return null;
     }
   }
   // An actual seller on the unchanged contract is required to start the clock.
@@ -343,17 +342,17 @@ async function confirmedIndependentOver(first,milestone,market,{decorate=state=>
     ON CONFLICT(market_ticker) DO UPDATE SET
       contract_key=EXCLUDED.contract_key,game_id=EXCLUDED.game_id,contract=EXCLUDED.contract,
       generation=CASE WHEN over_verification_windows.contract_key=EXCLUDED.contract_key AND
-        over_verification_windows.last_seen>=$5-$8 THEN over_verification_windows.generation ELSE EXCLUDED.generation END,
+        over_verification_windows.game_id=EXCLUDED.game_id THEN over_verification_windows.generation ELSE EXCLUDED.generation END,
       initial_at=CASE WHEN over_verification_windows.contract_key=EXCLUDED.contract_key AND
-        over_verification_windows.last_seen>=$5-$8 THEN over_verification_windows.initial_at ELSE EXCLUDED.initial_at END,
+        over_verification_windows.game_id=EXCLUDED.game_id THEN over_verification_windows.initial_at ELSE EXCLUDED.initial_at END,
       initial_state=CASE WHEN over_verification_windows.contract_key=EXCLUDED.contract_key AND
-        over_verification_windows.last_seen>=$5-$8 THEN over_verification_windows.initial_state ELSE EXCLUDED.initial_state END,
+        over_verification_windows.game_id=EXCLUDED.game_id THEN over_verification_windows.initial_state ELSE EXCLUDED.initial_state END,
       first_external_at=CASE WHEN over_verification_windows.contract_key=EXCLUDED.contract_key AND
-        over_verification_windows.last_seen>=$5-$8 THEN over_verification_windows.first_external_at ELSE NULL END,
+        over_verification_windows.game_id=EXCLUDED.game_id THEN over_verification_windows.first_external_at ELSE NULL END,
       first_external_id=CASE WHEN over_verification_windows.contract_key=EXCLUDED.contract_key AND
-        over_verification_windows.last_seen>=$5-$8 THEN over_verification_windows.first_external_id ELSE NULL END,
+        over_verification_windows.game_id=EXCLUDED.game_id THEN over_verification_windows.first_external_id ELSE NULL END,
       last_seen=GREATEST(over_verification_windows.last_seen,EXCLUDED.last_seen)
-    RETURNING *`,[seller.ticker,first.id,key,randomUUID(),now,JSON.stringify(seller),JSON.stringify(first),OVER_MAX_GAP_MS]);
+    RETURNING *`,[seller.ticker,first.id,key,randomUUID(),now,JSON.stringify(seller),JSON.stringify(first)]);
   let timing=overTiming(window,first,seller);
   if(timing.stage==='first_external'){
     const requestedAt=Date.now();
@@ -369,7 +368,7 @@ async function confirmedIndependentOver(first,milestone,market,{decorate=state=>
     Object.assign(window,updated);
     timing=overTiming(window,first,seller);
   }
-  if(timing.stage!=='paired'){await overProgress(first,seller,timing);return null}
+  if(timing.stage!=='paired'){await overProgress(first,seller,timing,window.initial_at);return null}
   // Refresh an old baseline before launching the simultaneous final reads.
   if(!freshOverState(first,seller)){
     const raw=await liveMilestone(milestone.id);if(!raw)return null;
@@ -408,7 +407,7 @@ async function pruneOverWindows(games){
   const states=new Map(games.map(g=>[g.state.id,g.state]));
   const {rows}=await pool.query('SELECT market_ticker,game_id,contract,generation FROM over_verification_windows WHERE game_id=ANY($1::text[])',[[...states.keys()]]);
   for(const w of rows){const state=states.get(w.game_id);
-    if(!overSignal(state,w.contract))await pool.query('DELETE FROM over_verification_windows WHERE market_ticker=$1 AND generation=$2',[w.market_ticker,w.generation]);
+    if(freshOverObservation(state)&&!overSignal(state,w.contract))await pool.query('DELETE FROM over_verification_windows WHERE market_ticker=$1 AND generation=$2',[w.market_ticker,w.generation]);
   }
 }
 async function auditSingleReadNbaLead(game,market,milestone){
@@ -2040,13 +2039,15 @@ async function watchReadyOverTickets(until){
     try{
       const {rows}=await pool.query(`SELECT w.milestone,w.live_score,g.signals FROM game_snapshots g
         JOIN lead_watch_milestones w ON w.game_id=g.id
-        WHERE g.status='live' AND GREATEST(g.score_observed_at,g.scanned_at)>now()-interval '4 minutes'
-          AND w.updated_at>now()-interval '4 minutes'
+        LEFT JOIN (SELECT DISTINCT game_id FROM over_verification_windows) active ON active.game_id=g.id
+        WHERE g.status='live' AND (active.game_id IS NOT NULL OR
+          (GREATEST(g.score_observed_at,g.scanned_at)>now()-interval '4 minutes' AND w.updated_at>now()-interval '4 minutes'))
           AND g.signals @> '[{"strategy":"over"}]'::jsonb
-        ORDER BY g.scanned_at DESC LIMIT 60`);
-      const allTickets=readyOverTickets(rows,Infinity);
-      const {rows:windows}=allTickets.length?await pool.query(`SELECT market_ticker,last_seen FROM over_verification_windows
-        WHERE market_ticker=ANY($1::text[]) AND last_seen>$2`,[allTickets.map(t=>t.signal.ticker),Date.now()-OVER_MAX_GAP_MS]):{rows:[]};
+        ORDER BY (active.game_id IS NOT NULL) DESC,g.scanned_at DESC LIMIT 60`);
+      const tickers=[...new Set(rows.flatMap(row=>(row.signals||[]).filter(s=>s.strategy==='over'&&s.ticker).map(s=>s.ticker)))];
+      const {rows:windows}=tickers.length?await pool.query(`SELECT market_ticker,last_seen FROM over_verification_windows
+        WHERE market_ticker=ANY($1::text[])`,[tickers]):{rows:[]};
+      const allTickets=readyOverTickets(rows,Infinity,new Set(windows.map(w=>w.market_ticker)));
       const tickets=prioritizeReadyOverTickets(allTickets,windows);
       for(const {milestone,signal:ticket} of tickets){
         if(Date.now()>=until)break;
@@ -2184,8 +2185,8 @@ async function scan(cachedMilestones,discoveryCount){
   try{
     ms=cachedMilestones||await milestones();discoveryCount??=ms.length;
     await ensurePropWindows();
-    const {rows:propWatch}=await pool.query(`SELECT DISTINCT game_id FROM player_prop_windows
-      WHERE last_seen>now()-interval '3 minutes'`);
+    const {rows:propWatch}=await pool.query(`SELECT DISTINCT p.game_id FROM player_prop_windows p
+      JOIN game_snapshots g ON g.id=p.game_id WHERE g.status='live' AND g.scanned_at>now()-interval '30 minutes'`);
     const propWatchIds=new Set(propWatch.map(row=>row.game_id));
     const {rows:recentLive}=await pool.query(`SELECT id,signals FROM game_snapshots
       WHERE status='live' AND scanned_at>now()-interval '30 minutes'`);
@@ -2255,8 +2256,7 @@ async function scan(cachedMilestones,discoveryCount){
           jsonb_to_recordset($1::jsonb) AS x(ticker text,game_id text,value integer)
         ON CONFLICT(market_ticker) DO UPDATE SET
           game_id=EXCLUDED.game_id,
-          first_crossed=CASE WHEN player_prop_windows.game_id=EXCLUDED.game_id AND
-            player_prop_windows.last_seen>now()-interval '3 minutes' THEN player_prop_windows.first_crossed
+          first_crossed=CASE WHEN player_prop_windows.game_id=EXCLUDED.game_id THEN player_prop_windows.first_crossed
             ELSE EXCLUDED.first_crossed END,
           last_seen=EXCLUDED.last_seen,last_value=EXCLUDED.last_value
         RETURNING market_ticker,game_id,first_crossed`,[JSON.stringify(batch)]);
@@ -2700,18 +2700,19 @@ async function state(){
       }
     }
   }
-  const waitTickers=[...new Set(snap.rows.flatMap(g=>(g.signals||[]).filter(s=>s.verification_wait).map(s=>s.ticker)))];
-  if(waitTickers.length){
+  if(snap.rows.length){
     const {rows}=await pool.query(`SELECT market_ticker,game_id,initial_at,last_seen,first_external_at,first_external_id,contract,initial_state
-      FROM over_verification_windows WHERE market_ticker=ANY($1::text[])`,[waitTickers]);
+      FROM over_verification_windows WHERE game_id=ANY($1::text[])`,[snap.rows.map(game=>game.id)]);
     const windows=new Map(rows.map(row=>[row.market_ticker,row]));
     const now=Date.now();
     for(const game of snap.rows)for(const signal of game.signals||[]){
-      if(!signal.verification_wait)continue;
       const row=windows.get(signal.ticker),window=row?.game_id===game.id?row:null;
+      if(!signal.verification_wait&&(!window||signal.strategy!=='over'||signal.execution==='Already filled'))continue;
+      if(signal.execution==='Both external checks passed; ask, cash and profit still required')continue;
       let timing=null;
       if(window)try{timing=overTiming(window,window.initial_state,window.contract,now)}catch{}
-      const progress=verificationWindowStatus(signal,window,timing,now);
+      const progress=verificationWindowStatus(signal.verification_wait?signal:{...signal,verification_wait:{}},window,timing,now);
+      if(!progress)continue;
       signal.execution=progress.execution;
       if(progress.wait)signal.verification_wait=progress.wait;
       else delete signal.verification_wait;

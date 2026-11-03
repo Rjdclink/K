@@ -109,10 +109,10 @@ export function prioritizeMarketGames(games,{signaledIds=new Set(),heldIds=new S
   return [...urgent,...selected];
 }
 
-export function readyOverTickets(rows,limit=12){
+export function readyOverTickets(rows,limit=12,activeTickers=new Set()){
   return rows.flatMap(({milestone,signals})=>(signals||[])
     .filter(signal=>signal.strategy==='over'&&
-      (/^(?:Awaiting score verification|Waiting for first external check|First external check passed; waiting for paired checks|External score matched)/.test(signal.execution||''))&&
+      (activeTickers.has(signal.ticker)||/^(?:Awaiting score verification|Waiting for first external check|First external check passed; waiting for paired checks|External score matched)/.test(signal.execution||''))&&
       signal.ticker&&Number(signal.ask)>0&&Number(signal.ask)<1&&Number(signal.ask_size)>0)
     .map(signal=>({milestone,signal}))).slice(0,limit);
 }

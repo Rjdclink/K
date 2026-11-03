@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
 import {gameState,overSignal,confirmedOver} from '../src/strategy.mjs';
 import {verifyExternalOverExposure} from '../src/over_exposure.mjs';
-import {sameSportsContract,overContractKey,freshOverObservation,freshOverState,overTiming,overCushion,sameOverReading,timedOverEntryValid,OVER_FRESH_MS,OVER_MAX_GAP_MS} from '../src/over_verification.mjs';
+import {sameSportsContract,overContractKey,freshOverObservation,freshOverState,overTiming,overCushion,sameOverReading,timedOverEntryValid,OVER_FRESH_MS} from '../src/over_verification.mjs';
 const start=Date.parse('2026-11-01T12:00:00Z');
 const milestone={id:'game',type:'basketball_game',title:'Boston at New York',details:{league:'NBA'}};
 const market={ticker:'KXNBATOTAL-TEST-T139',event_ticker:'KXNBATOTAL-TEST',status:'active',floor_strike:139.5,title:'Over 139.5 total points',rules_primary:'Combined total points scored in the full game',strike_type:'greater',yes_ask_dollars:'.95',yes_ask_size_fp:'100'};
@@ -22,12 +22,12 @@ function harness({home=70,away=70,seller=true,decisions=[]}={}){
  let time=start,window=null,ids=0,externalCount=0,kalshiCount=0;const events=[],proofs=[];
  class Clock extends Date{constructor(...args){super(...(args.length?args:[time]))}static now(){return time}}
  const context=vm.createContext({Date:Clock,Number,JSON,Math,Promise,console,
-  overContractKey,overCushion,freshOverObservation:g=>freshOverObservation(g,time),freshOverState:(g,m)=>freshOverState(g,m,time),overTiming:(w,g,m,at=time)=>overTiming(w,g,m,at),sameOverReading,timedOverEntryValid:(g,m)=>timedOverEntryValid(g,m,time),OVER_FRESH_MS,OVER_MAX_GAP_MS,
+  overContractKey,overCushion,freshOverObservation:g=>freshOverObservation(g,time),freshOverState:(g,m)=>freshOverState(g,m,time),overTiming:(w,g,m,at=time)=>overTiming(w,g,m,at),sameOverReading,timedOverEntryValid:(g,m)=>timedOverEntryValid(g,m,time),OVER_FRESH_MS,
   verifyExternalOverExposure,rememberIndependentEntry,gameState:liveState,confirmedOver,overSignal,randomUUID:()=>`id-${++ids}`,auditTable:async()=>{},
   pool:{query:async(sql,args=[])=>{
    if(sql.startsWith('CREATE'))return {rows:[],rowCount:0};
    if(sql.startsWith('INSERT INTO over_verification_windows')){
-    if(!window||window.contract_key!==args[2]||time-Number(window.last_seen)>OVER_MAX_GAP_MS)window={market_ticker:args[0],game_id:args[1],contract_key:args[2],generation:args[3],initial_at:args[4],last_seen:args[4],contract:JSON.parse(args[5]),initial_state:JSON.parse(args[6]),first_external_at:null,first_external_id:null};
+    if(!window||window.contract_key!==args[2]||window.game_id!==args[1])window={market_ticker:args[0],game_id:args[1],contract_key:args[2],generation:args[3],initial_at:args[4],last_seen:args[4],contract:JSON.parse(args[5]),initial_state:JSON.parse(args[6]),first_external_at:null,first_external_id:null};
     window.last_seen=time;return {rows:[{...window}],rowCount:1};
    }
    if(sql.startsWith('SELECT * FROM over_verification_windows'))return {rows:window?[{...window}]:[]};
@@ -46,7 +46,7 @@ function harness({home=70,away=70,seller=true,decisions=[]}={}){
 }
 test('uncushioned over waits 20 seconds for external check one and 3:00 for the simultaneous final pair',async()=>{
  const h=harness();assert.equal(await h.run(0),null);assert.equal(h.externalCount,0);assert.equal(h.window.initial_at,start);
- assert.deepEqual(JSON.parse(JSON.stringify(h.events.at(-1))),['progress','Waiting for first external check (20s; minimum 20s)',{dueAt:start+20000,updatedAt:start}]);
+ assert.deepEqual(JSON.parse(JSON.stringify(h.events.at(-1))),['progress','Waiting for first external check (20s; minimum 20s)',{dueAt:start+180000,updatedAt:start}]);
  assert.equal(await h.run(19999),null);assert.equal(h.externalCount,0);
  assert.equal(await h.run(20000),null);assert.equal(h.externalCount,1);assert.equal(h.kalshiCount,0);
  for(const ms of [80000,140000,179999])assert.equal(await h.run(ms),null);
@@ -62,11 +62,11 @@ test('a cushioned over needs independent external confirmation before entry',asy
  assert.equal(timedOverEntryValid(verified,market,start+10001),false);
  assert.equal(timedOverEntryValid(verified,{...market,floor_strike:138.5},start+3),false);
 });
-test('seller is required to start; a gap or changed contract starts a new clock',async()=>{
+test('seller is required to start; a scan gap preserves the clock and a changed contract resets it',async()=>{
  const noSeller=harness({home:75,seller:false});assert.equal(await noSeller.run(0),null);assert.equal(noSeller.externalCount,0);
  const h=harness({seller:false});await h.run(0);assert.equal(h.window,null);assert.equal(h.externalCount,0);
  h.setSeller(true);await h.run(10000);assert.equal(h.window.initial_at,start+10000);
- await h.run(100001);assert.equal(h.window.initial_at,start+100001);assert.equal(h.externalCount,0);
+ await h.run(100001);assert.equal(h.window.initial_at,start+10000);assert.equal(h.externalCount,1);
  h.window.contract_key='changed';await h.run(100002);assert.equal(h.window.initial_at,start+100002);
 });
 test('even a large scoring cushion is blocked when independent confirmation is missing or contradictory',async()=>{
@@ -83,12 +83,15 @@ test('missing and contradictory external readings block uncushioned entries',asy
 });
 test('lost crossing clears the durable clock; increasing scores preserve it',async()=>{
  const h=harness();await h.run(0);await h.run(20000);h.setScore(72,70);await h.run(80000);assert.equal(h.window.initial_at,start);
+ await h.context.pruneOverWindows([{state:state(start,69,70)}]);assert.equal(h.window.initial_at,start);
  await h.context.pruneOverWindows([{state:state(start+80000,69,70)}]);assert.equal(h.window,null);
 });
 test('player, team and period cushions use the exact selected statistic',()=>{
  const g={...state(start,75,70),homeTeamId:'ny',awayTeamId:'bos',homeName:'New York',awayName:'Boston'};
  const prop={...market,event_ticker:'KXNBAREB-TEST',title:'Pat Player: 6+ rebounds',yes_sub_title:'Pat Player: 6+',floor_strike:5.5,custom_strike:{basketball_player:'p'}};
  assert.equal(overCushion({...g,playerStats:{p:{rebounds:6}}},prop),null);assert.equal(overCushion({...g,playerStats:{p:{rebounds:7}}},prop),1);
+ const points={...market,event_ticker:'KXNBAPTS-TEST',title:'Pat Player: 20+ points',yes_sub_title:'Pat Player: 20+',floor_strike:19.5,custom_strike:{basketball_player:'p'}};
+ assert.equal(overTiming({initial_at:start,first_external_at:null},{...g,playerStats:{p:{points:20}}},points,start).minimumMs,210000);
  assert.equal(overTiming({initial_at:start,first_external_at:start+20000,first_external_id:'first'},{...g,playerStats:{p:{rebounds:7}}},prop,start+20000).route,'cushion');
  const team={...market,event_ticker:'KXNBATEAMTOTAL-TEST',title:'New York over 73.5 total points',floor_strike:73.5,custom_strike:{basketball_team:'ny'}};
  assert.equal(overCushion(g,team),null);
