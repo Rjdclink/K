@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {VERIFY_DWELL_MS,COMBO_RFQ_PLANS,COMBO_CASH_RESERVE_CENTS,singleSpendableCash,comboAllocation,comboLegAllocation,comboHeldFraction,comboAllowedCents,comboMinimumCents,comboMeetsMinimum,comboRfqTargetCents,remainingVerifiedComboCents,availableComboFills,comboCandidates,comboCollection,compatibleComboGroups,prioritizedComboGroups,plannedComboGroups,comboPairDiagnostics,quoteForYes,comboLegs,filledComboWindow,eligibleFillTrigger,heldComboLeg,collectionsForEvents,selectedComboMarkets,liveComboMarket,missingQuoteFill,comboFillPages} from '../src/combos.mjs';
-test('singles leave seven dollars available for a separate combo purchase',()=>{
+test('singles no longer reserve seven dollars for combos',()=>{
  assert.equal(COMBO_CASH_RESERVE_CENTS,0);assert.equal(singleSpendableCash(1249),1249);assert.equal(singleSpendableCash(700),700);assert.equal(singleSpendableCash(63),63);
 });
 test('held verified lead add-ons share the combo ceiling with automated orders',()=>{
