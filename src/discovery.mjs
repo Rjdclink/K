@@ -153,6 +153,27 @@ export function linkedEventTickers(milestone){
   return [...new Set([...listed,...derived])];
 }
 
+export function playerPropEntryClosed(game){
+  const type=String(game?.type||''),period=game?.period,seconds=game?.remainingSeconds;
+  if(/soccer/.test(type))return Number.isFinite(game.soccerMinute)&&game.soccerMinute>80||
+    Number.isFinite(game.matchRemainingSeconds)&&game.matchRemainingSeconds<600;
+  if(/baseball/.test(type))return Number.isInteger(period)&&period>7;
+  const last=/basketball/.test(type)?game.sport==='NCAAB'?2:4:
+    /hockey/.test(type)?3:/football|lacrosse/.test(type)?4:
+    /rugby|handball/.test(type)?2:null;
+  return last!==null&&Number.isInteger(period)&&period>=last&&Number.isFinite(seconds)&&seconds<600;
+}
+
+export function entryEventTickers(milestone,game){
+  const tickers=linkedEventTickers(milestone);
+  if(!playerPropEntryClosed(game))return tickers;
+  return tickers.filter(ticker=>{
+    const series=String(ticker).split('-')[0];
+    if(!/(?:PTS|REB|AST|3PT|PRA|STL|BLK|GOALS|SAVES|SOG|HITS|RBI|HR|RUSHYDS|PASSYDS|RECYDS|RRYDS|RECPROT|PASSATT|PASSCOMP|PASSINT|PASSTDS)(?:PROT)?$/.test(series))return true;
+    return ['NFL','CFB'].includes(game?.sport)&&game.period>=3&&/(?:RUSHYDS|RECYDS)$/.test(series);
+  });
+}
+
 export function winnerEventTickers(milestone){
   return linkedEventTickers(milestone).filter(ticker=>/GAME$/.test(String(ticker).split('-')[0]));
 }
