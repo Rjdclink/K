@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {page} from '../src/ui.mjs';
 
-test('verification wait decreases each second and stops claiming a live countdown after updates stall',()=>{
+test('only the final 20 seconds count down from the seller-backed verification deadline',()=>{
   let now=Date.now();
   class Clock extends Date{static now(){return now}}
   const elements=[];
@@ -14,16 +14,22 @@ test('verification wait decreases each second and stops claiming a live countdow
     localStorage:{getItem(){return null}},fetch:()=>new Promise(()=>{}),AbortSignal,setInterval(){}});
   vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],context);
   const signal={ticker:'OVER',title:'Player over',execution:'Waiting for first external check (20s; minimum 20s)',
-    verification_wait:{dueAt:now+20000,updatedAt:now}};
+    verification_wait:{dueAt:now+180000,updatedAt:now}};
   const card=vm.runInContext('item',context)({title:'Game',sport:'NBA',home:3,away:2,signals:[signal]});
   const detail=card.children.at(-1);elements.push(detail);
-  assert.match(detail.textContent,/20s; minimum 20s/);
-  now+=1000;vm.runInContext('paintCountdowns()',context);assert.match(detail.textContent,/19s; minimum 20s/);
-  now+=19000;vm.runInContext('paintCountdowns()',context);assert.match(detail.textContent,/First external check due/);
-  now+=11000;vm.runInContext('paintCountdowns()',context);assert.match(detail.textContent,/Verification last checked 31s ago; recheck pending/);
+  assert.match(detail.textContent,/Verification in progress/);
+  assert.doesNotMatch(detail.textContent,/20s/);
+  now+=1000;vm.runInContext('paintCountdowns()',context);assert.doesNotMatch(detail.textContent,/179s/);
+  now+=158000;signal.verification_wait.updatedAt=now;
+  vm.runInContext('paintCountdowns()',context);assert.doesNotMatch(detail.textContent,/21s/);
+  now+=1000;vm.runInContext('paintCountdowns()',context);assert.match(detail.textContent,/Verification: 20s remaining/);
+  now+=1000;vm.runInContext('paintCountdowns()',context);assert.match(detail.textContent,/Verification: 19s remaining/);
+  now+=19000;vm.runInContext('paintCountdowns()',context);assert.match(detail.textContent,/Verification due; awaiting fresh checks/);
+  now+=11000;vm.runInContext('paintCountdowns()',context);assert.match(detail.textContent,/Verification last checked 32s ago; recheck pending/);
   const final={...signal,execution:'First external check passed; waiting for paired checks (210s remaining)',
     verification_wait:{dueAt:now+210000,updatedAt:now}};
-  assert.match(vm.runInContext('verificationExecution',context)(final,now+1000),/209s remaining/);
+  assert.match(vm.runInContext('verificationExecution',context)(final,now+1000),/First external check passed; verification in progress/);
+  assert.match(vm.runInContext('verificationExecution',context)(final,now+190000),/Verification: 20s remaining/);
 });
 
 test('table-tennis scanner cards remove old countdown wording while retaining the set and score',()=>{
