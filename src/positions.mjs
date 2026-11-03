@@ -1,5 +1,23 @@
 import { periodValue, playerOverSpec } from './strategy.mjs';
 
+export function untrackedOpenPositions(positions,trackedTickers,games){
+  return (positions||[]).flatMap(position=>{
+    const held=Number(position.position_fp??position.position);
+    if(!position.ticker||!Number.isFinite(held)||held===0||trackedTickers.has(position.ticker))return [];
+    const game=games.find(g=>(g.signals||[]).some(s=>s.ticker===position.ticker));
+    const signal=game?.signals?.find(s=>s.ticker===position.ticker);
+    const exposure=Number(position.market_exposure_dollars),fees=Number(position.fees_paid_dollars);
+    const known=position.market_exposure_dollars!=null&&position.fees_paid_dollars!=null&&
+      Number.isFinite(exposure)&&exposure>=0&&Number.isFinite(fees)&&fees>=0;
+    const allocated=known?Math.ceil(exposure*100)+Math.ceil(fees*100):null;
+    const count=Math.abs(held);
+    return [{market_ticker:position.ticker,external_position:true,side:held>0?'YES':'NO',
+      market_title:signal?.title||position.ticker,game_id:game?.id||null,game_title:game?.title||null,
+      sport:game?.sport||null,fill_count:count,allocated_cents:allocated,
+      potential_profit_cents:known?Math.floor(count*100-allocated):null}];
+  });
+}
+
 // The displayed amount is for the shares that can actually sell at the
 // current bid. Exposure and paid fees come from the exchange's open position.
 export function estimatedSaleProfitCents(position, sale, fallbackPrice) {

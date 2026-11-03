@@ -29,7 +29,7 @@ import { verifyIndependentOverDecision, verifySportradarOver, verifyIndependentT
 import { verificationStatus, completedOverWait, verificationWindowStatus } from './verification_status.mjs';
 import { COMBO_ATTEMPT_MS, VERIFY_DWELL_MS, COMBO_RFQ_PLANS, singleSpendableCash, comboAllocation, comboLegAllocation, comboHeldFraction, comboAllowedCents, comboMinimumCents, comboMeetsMinimum, comboRfqTargetCents, remainingVerifiedComboCents, availableComboFills, comboPairDiagnostics, comboExclusionKey, exchangeComboExclusion, comboLegs, filledComboWindow, heldComboLeg, quoteForYes, collectionsForEvents, selectedComboMarkets, liveComboMarket, missingQuoteFill, comboFillPages } from './combos.mjs';
 import { selectedTeamName, selectedTeamSide } from './selected_team.mjs';
-import { estimatedSaleProfitCents, halfPotentialProfitExitEligible, oneAndHalfExitEligible, profitTargetAllowed, overCorrectionAffects, correctionExitTargets } from './positions.mjs';
+import { estimatedSaleProfitCents, halfPotentialProfitExitEligible, oneAndHalfExitEligible, profitTargetAllowed, overCorrectionAffects, correctionExitTargets, untrackedOpenPositions } from './positions.mjs';
 import { remainingVerifiedOverCents, upgradeEligible } from './upgrades.mjs';
 import { weatherContract } from './weather.mjs';
 import { sellQuote,cashoutQuote } from './sell.mjs';
@@ -2767,10 +2767,11 @@ async function state(){
     }
   }else accountError='Kalshi credentials are missing from the Neon function environment';
   const open=new Set((positions?.market_positions||[]).filter(p=>Number(p.position_fp??p.position??0)!==0).map(p=>p.ticker));
+  const positive=new Set((positions?.market_positions||[]).filter(p=>Number(p.position_fp??p.position??0)>0).map(p=>p.ticker));
   const {rows:comboIssues}=await pool.query(`SELECT checked_at,leg_tickers,status,detail FROM combo_diagnostics
     WHERE status IN ('no_compatible_collection','no_executable_quote','insufficient_cash') AND checked_at>now()-interval '10 minutes'
     ORDER BY checked_at DESC LIMIT 20`);
-  const orders=positions?attempts.rows.filter(o=>open.has(o.market_ticker)).map(o=>{
+  const managed=positions?attempts.rows.filter(o=>positive.has(o.market_ticker)).map(o=>{
     const position=(positions.market_positions||[]).find(p=>p.ticker===o.market_ticker);
     const count=Number(position?.position_fp||0);
     const exposure=Number(position?.market_exposure_dollars),fees=Number(position?.fees_paid_dollars);
@@ -2779,8 +2780,12 @@ async function state(){
     const allocated=actual?Math.ceil(exposure*100)+Math.ceil(fees*100):Math.ceil(count*Number(o.limit_price)*100);
     return {...o,combo_legs:Array.isArray(o.combo_legs)?o.combo_legs.map(l=>({...l,score:comboScores.get(l.game_id)||null})):o.combo_legs,position,fill_count:count,allocated_cents:allocated,
       potential_profit_cents:actual?Math.floor(count*100-allocated):netSettlementProfitCents(count,Number(o.limit_price),2)};
-  }).sort((a,b)=>b.potential_profit_cents-a.potential_profit_cents):[];
+  }):[];
+  const orders=positions?[...managed,...untrackedOpenPositions(positions.market_positions,
+    new Set(managed.map(o=>o.market_ticker)),snap.rows)].sort((a,b)=>
+      (b.potential_profit_cents??-Infinity)-(a.potential_profit_cents??-Infinity)):[];
   for(const o of orders){
+    if(o.external_position)continue;
     o.selected_name=o.strategy==='lead'?selectedTeamName(o):
       String(o.reason||'').match(/\bby ([^;]+);/)?.[1]||null;
     o.selected_side=selectedTeamSide(o);
