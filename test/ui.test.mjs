@@ -173,6 +173,11 @@ test('game list prioritizes preflights then available asks in descending counts'
   assert.match(shown[1],/90¢ ask/);
   assert.match(shown[2],/60¢ ask/);
   assert.match(shown[3],/No ask liquidity/);
+  const lead={title:'Houston wins',strategy:'lead',execution:'No ask liquidity'};
+  const withLead={...mixed,sport:'NBA',signals:[noAsk,lead,noAsk]};
+  assert.equal([mixed,withLead].sort(compare)[0],mixed);
+  assert.equal([games.find(g=>g.title==='No asks'),withLead].sort(compare)[0],withLead);
+  assert.match(render(withLead).children[2].textContent,/Commanding lead · Houston wins · No ask liquidity/);
 });
 
 test('crossed player props show the actual statistic, ask, and execution blocker',()=>{
