@@ -14,7 +14,7 @@ import { page } from './ui.mjs';
 import { historyPage } from './history_ui.mjs';
 import { completedTrade, completedNoTrade, manualSaleFill, reconcileManualSaleFills, settlementLookupCandidates } from './history.mjs';
 import { ensureExitLedger, recordExitFill } from './exit_ledger.mjs';
-import { gameState, overSignal, PLAYER_PROP_MAX_FRACTION, BASKETBALL_COUNT_PROP_MAX_FRACTION, playerOverSpec, playerPropEarlyWindow, confirmedOver, fallbackScoringUnits, confirmedExternalLead, leadSignal, proBasketballLeadRules, basketballCloseoutEntry, nbaSingleReadLead, kalshiSingleReadLead, confirmedSoccerWinnerClock, confirmedDrawClock, soccerWinnerWindowOpen, leadWatchReason, additionalLeadSignal, cricketLeadSignal, drawSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback } from './strategy.mjs';
+import { gameState, overSignal, PLAYER_PROP_MAX_FRACTION, BASKETBALL_COUNT_PROP_MAX_FRACTION, BASKETBALL_WINNER_ENTRY_SECONDS, playerOverSpec, playerPropEarlyWindow, confirmedOver, fallbackScoringUnits, confirmedExternalLead, leadSignal, proBasketballLeadRules, basketballCloseoutEntry, nbaSingleReadLead, kalshiSingleReadLead, confirmedSoccerWinnerClock, confirmedDrawClock, soccerWinnerWindowOpen, leadWatchReason, additionalLeadSignal, cricketLeadSignal, drawSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback } from './strategy.mjs';
 import { reviewMiss } from './ai.mjs';
 import { kalshiSignature } from './auth.mjs';
 import { marketShard, shardCash, transferPlan, comboShardBudget, awaitShardCash } from './funding.mjs';
@@ -1038,8 +1038,8 @@ function signalExecution(c,filled,account,balance,bankroll){
     return 'Below minimum net profit after fees';
   }
   const local=shardCash(account,marketShard(c.event,c.market));
-  const singleRead=c.signal.strategy==='lead'&&proBasketballLeadRules(c.state)&&
-    (c.state.remainingSeconds<450&&Math.abs(c.state.home-c.state.away)>=18||
+  const singleRead=c.signal.strategy==='lead'&&proBasketballLeadRules(c.state)&&c.state.remainingSeconds<BASKETBALL_WINNER_ENTRY_SECONDS&&
+    (Math.abs(c.state.home-c.state.away)>=18||
       c.state.remainingSeconds<390&&Math.abs(c.state.home-c.state.away)>=12);
   if(local===null)return 'Shard balance unavailable';
   if(local<estimatedCostCents(raw,price,fees)){

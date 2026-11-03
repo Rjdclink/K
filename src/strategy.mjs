@@ -34,6 +34,7 @@ export function soccerOverWaitMs(firstSeen,now=Date.now()){
 }
 export function soccerOverStable(firstSeen,now=Date.now()){return soccerOverWaitMs(firstSeen,now)===0;}
 const N = v => v === null || v === undefined || v === '' ? NaN : Number(v);
+export const BASKETBALL_WINNER_ENTRY_SECONDS=270;
 export const BASKETBALL_LEAD_RULES=Object.freeze({
   NBA:{period:4,possession:false,tiers:[[18,450],[12,390],[9,105]]},
   WNBA:{period:4,possession:false,tiers:[[11,360],[10,105]]},
@@ -48,7 +49,7 @@ export function basketballLeadProfile(game){
 }
 export function basketballEntryTier(game){
   const profile=basketballLeadProfile(game),seconds=game?.remainingSeconds;
-  if(!profile||game.period!==profile.period||!Number.isFinite(seconds)||seconds<=0)return null;
+  if(!profile||game.period!==profile.period||!Number.isFinite(seconds)||seconds<=0||seconds>=BASKETBALL_WINNER_ENTRY_SECONDS)return null;
   return basketballCloseoutEntry(game)?[basketballCloseoutMinimum(game),105]:profile.tiers.filter(([,limit])=>seconds<limit).at(-1)||null;
 }
 // This is an additional route. Existing higher-lead routes keep their rules.
@@ -289,7 +290,7 @@ export function leadWatchReason(game){
     const profile=basketballLeadProfile(game),tier=basketballEntryTier(game);
     if(profile&&game.period===profile.period&&Number.isFinite(seconds)&&seconds>0&&
       seconds<=profile.tiers[0][1]+90&&margin>=Math.min(profile.tiers.at(-1)[0],basketballCloseoutMinimum(game)??Infinity)){
-      const thresholds=profile.tiers.map(([points,limit])=>`+${points} under ${Math.floor(limit/60)}:${String(limit%60).padStart(2,'0')}`).join(', ')+(basketballCloseoutMinimum(game)?`; additional +${basketballCloseoutMinimum(game)} under 1:45, either possession, external verification required`:'');
+      const thresholds=profile.tiers.map(([points,limit])=>`+${points} under ${Math.floor(Math.min(limit,BASKETBALL_WINNER_ENTRY_SECONDS)/60)}:${String(Math.min(limit,BASKETBALL_WINNER_ENTRY_SECONDS)%60).padStart(2,'0')}`).join(', ')+(basketballCloseoutMinimum(game)?`; additional +${basketballCloseoutMinimum(game)} under 1:45, either possession, external verification required`:'');
       return `Tracking ${margin}-point ${game.sport||'basketball'} lead; entry requires ${thresholds} in ${profile.period===2?'the second half':'Q4'}; ${
         tier&&margin>=tier[0]?profile.possession&&!basketballCloseoutEntry(game)&&game.possessionSide!==(game.home>game.away?'home':'away')?
         'score and clock qualify; waiting for leader possession':'score and clock qualify; checking winner market and ask':
@@ -761,7 +762,7 @@ export function leadFraction(game,margin,minimum){
   if(/soccer/.test(game.type)&&margin>=3)return .20;
   return .15;
 }
-// The NBA +18 under 7:30 and +12 under 6:30 Q4 routes use one Kalshi score.
+// The NBA +18 and +12 Q4 routes use one Kalshi score inside the 4:30 window.
 // This is an entry rule, not proof the lead is irreversible.
 export function nbaSingleReadLead(game,market,now=Date.now()){
   return proBasketballLeadRules(game)&&/basketball/.test(String(game.type||''))&&
@@ -769,7 +770,7 @@ export function nbaSingleReadLead(game,market,now=Date.now()){
     Number.isFinite(game.observedAt)&&now>=game.observedAt&&now-game.observedAt<=30000&&
     Number.isFinite(game.updatedAt)&&game.updatedAt<=game.observedAt+5000&&
     game.observedAt-game.updatedAt<=30000&&
-    Number.isFinite(game.remainingSeconds)&&game.remainingSeconds>0&&game.remainingSeconds<450&&
+    Number.isFinite(game.remainingSeconds)&&game.remainingSeconds>0&&game.remainingSeconds<BASKETBALL_WINNER_ENTRY_SECONDS&&
     Number.isFinite(game.homeUnits)&&Number.isFinite(game.awayUnits)&&
     (game.remainingSeconds<390&&Math.abs(game.homeUnits-game.awayUnits)>=12||
       Math.abs(game.homeUnits-game.awayUnits)>=18)&&Boolean(leadSignal(game,market));

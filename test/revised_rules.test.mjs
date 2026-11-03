@@ -33,11 +33,16 @@ test('basketball tiers include the stated lead and exclude the exact time bounda
    ['NCAAB',2,[[16,300],[10,270]]],['NCAAW',4,[[16,300],[10,270]]],
    ...['China CBA','Italy Serie A','LNB Elite','Japan B League'].map(s=>[s,4,[[16,300],[10,270]]])];
  for(const [league,period,tiers] of categories)for(const [points,seconds] of tiers){
-   assert.ok(signal('basketball_game',league,points,period,seconds-1),`${league} +${points} under ${seconds}`);
-   assert.ok(signal('basketball_game',league,points+1,period,seconds-1));
-   assert.equal(Boolean(signal('basketball_game',league,points-1,period,seconds-1)),league==='NBA'&&seconds===105,'the new under-1:45 route may qualify below the older tier');
+   const entrySeconds=Math.min(seconds,270);
+   assert.ok(signal('basketball_game',league,points,period,entrySeconds-1),`${league} +${points} under ${entrySeconds}`);
+   assert.ok(signal('basketball_game',league,points+1,period,entrySeconds-1));
+   if(seconds<=270)assert.equal(Boolean(signal('basketball_game',league,points-1,period,entrySeconds-1)),league==='NBA'&&seconds===105,'the new under-1:45 route may qualify below the older tier');
    assert.equal(signal('basketball_game',league,points,period,seconds),null);
-   assert.equal(signal('basketball_game',league,points,period-1,seconds-1),null);
+   assert.equal(signal('basketball_game',league,points,period-1,entrySeconds-1),null);
+ }
+ for(const [league,period,margin] of [['NBA',4,18],['WNBA',4,11],['NCAAB',2,16],['NCAAW',4,16],['China CBA',4,16]]){
+   assert.equal(signal('basketball_game',league,margin,period,270),null,`${league} exactly 4:30`);
+   assert.ok(signal('basketball_game',league,margin,period,269),`${league} under 4:30`);
  }
  for(const league of ['NBA','WNBA','NCAAB','NCAAW','China CBA','Italy Serie A']){
    const period=league==='NCAAB'?2:4,minimum=league==='NBA'?9:10;
@@ -47,13 +52,13 @@ test('basketball tiers include the stated lead and exclude the exact time bounda
  }
  for(const league of ['NCAAB','NCAAW','China CBA','Italy Serie A']){
    const period=league==='NCAAB'?2:4;
-   const {state,market}=team('basketball_game',league,16,period,299,{possession_team_id:null});
+   const {state,market}=team('basketball_game',league,16,period,269,{possession_team_id:null});
    assert.ok(leadSignal(state,market));
    assert.match(leadWatchReason(state),/score and clock qualify/);
    assert.equal(nbaSingleReadLead({...state,updatedAt:now-1000},market,now),false);
  }
  for(const league of ['NBA','WNBA']){
-   const margin=league==='NBA'?18:11,seconds=league==='NBA'?449:359;
+   const margin=league==='NBA'?18:11,seconds=269;
    for(const possession of ['home','away',null]){
      const {state,market}=team('basketball_game',league,margin,4,seconds,{possession_team_id:possession});
      assert.ok(leadSignal(state,market));
@@ -252,8 +257,8 @@ test('a soccer over uses one recorded Kalshi score without an extra-goal cushion
 
 
 test('commanding leads qualify on one recent Kalshi observation without an external scoreboard',()=>{
- const cases=[['basketball_game','NBA',18,4,449,{}],['basketball_game','WNBA',10,4,89,{}],
- ['basketball_game','NCAAB',16,2,299,{}],['basketball_game','China CBA',16,4,299,{}],
+ const cases=[['basketball_game','NBA',18,4,269,{}],['basketball_game','WNBA',10,4,89,{}],
+ ['basketball_game','NCAAB',16,2,269,{}],['basketball_game','China CBA',16,4,269,{}],
  ['football_game','CFB',24,4,449,{}],['football_game','NFL',11,4,359,{}],
  ['hockey_match','NHL',4,3,119,{}],['baseball_game','MLB',5,8,0,{inning:8,inning_half:'bottom',outs:2,clock:''}]];
  for(const args of cases){
@@ -277,7 +282,7 @@ test('non-player overs do not require an extra scoring cushion; player overs sti
 
 test('college women use the fourth quarter rather than a second-half period number',()=>{
  assert.equal(signal('basketball_game','NCAAW',16,2,299),null);
- assert.ok(signal('basketball_game','NCAAW',16,4,299));
+ assert.ok(signal('basketball_game','NCAAW',16,4,269));
  assert.equal(signal('basketball_game','NCAAW',10,4,270),null);
  assert.ok(signal('basketball_game','NCAAW',10,4,269));
 });
