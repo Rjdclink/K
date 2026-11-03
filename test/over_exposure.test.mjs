@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
-import {gameState,overSignal,orderSize,estimatedCostCents,profitableCount,PLAYER_PROP_MAX_FRACTION} from '../src/strategy.mjs';
+import {gameState,overSignal,orderSize,estimatedCostCents,profitableCount,PLAYER_PROP_MAX_FRACTION,BASKETBALL_COUNT_PROP_MAX_FRACTION} from '../src/strategy.mjs';
 import {overContractKey,timedOverEntryValid,sameSportsContract} from '../src/over_verification.mjs';
 import {singleSpendableCash} from '../src/combos.mjs';
 import {externalOverMinimum,verifyExternalOverExposure,externalOverExposureValid,assertOverExposure} from '../src/over_exposure.mjs';
@@ -122,7 +122,7 @@ test('existing player-prop caps and combinations are not raised by the new tier'
   assert.equal(externalOverMinimum(g,prop),null);
   assert.equal(await verifyExternalOverExposure(g,prop,{verify:async()=>{throw Error('must not request a player increase')}}),false);
   rememberIndependentEntry(g,prop,g.verificationId,now);
-  assert.equal(verifiedOverFraction(overSignal(g,prop),g,prop),.25);
+  assert.equal(verifiedOverFraction(overSignal(g,prop),g,prop),.10);
 });
 test('sixty percent subtracts held exposure and paid fees from the entire position budget',()=>{
   const position={ticker:'OVER',position_fp:'40',market_exposure_dollars:'39',fees_paid_dollars:'1'};
@@ -157,7 +157,7 @@ test('an existing forty percent fill can top up once through its separate sixty 
     const original={id:'initial',status:'filled',strategy:'over',market_ticker:market.ticker,event_ticker:market.event_ticker,game_id:game.id};
     const position={ticker:market.ticker,position_fp:'40',market_exposure_dollars:'39',fees_paid_dollars:'1'};
     const sent=[],reserved=[];
-    const context=vm.createContext({console,PLAYER_PROP_MAX_FRACTION,overSignal,timedOverEntryValid,sameSportsContract,
+    const context=vm.createContext({console,PLAYER_PROP_MAX_FRACTION,BASKETBALL_COUNT_PROP_MAX_FRACTION,overSignal,timedOverEntryValid,sameSportsContract,
       verifiedOverFraction,remainingVerifiedOverCents,upgradeEligible,estimatedCostCents,profitableCount,assertOverExposure,singleSpendableCash,
       upgradeTables:async()=>{},reconcileUpgrade:async row=>row,randomUUID:()=> 'external-upgrade',
       recoverSummaryAsk:async m=>m,hasAsk:()=>true,executableQuote:async m=>m,

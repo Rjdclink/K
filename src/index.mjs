@@ -14,7 +14,7 @@ import { page } from './ui.mjs';
 import { historyPage } from './history_ui.mjs';
 import { completedTrade, completedNoTrade, manualSaleFill, reconcileManualSaleFills, settlementLookupCandidates } from './history.mjs';
 import { ensureExitLedger, recordExitFill } from './exit_ledger.mjs';
-import { gameState, overSignal, PLAYER_PROP_MAX_FRACTION, playerOverSpec, playerPropEarlyWindow, confirmedOver, fallbackScoringUnits, confirmedExternalLead, leadSignal, proBasketballLeadRules, basketballCloseoutEntry, nbaSingleReadLead, kalshiSingleReadLead, confirmedSoccerWinnerClock, confirmedDrawClock, soccerWinnerWindowOpen, leadWatchReason, additionalLeadSignal, cricketLeadSignal, drawSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback } from './strategy.mjs';
+import { gameState, overSignal, PLAYER_PROP_MAX_FRACTION, BASKETBALL_COUNT_PROP_MAX_FRACTION, BASKETBALL_WINNER_ENTRY_SECONDS, playerOverSpec, playerPropEarlyWindow, confirmedOver, fallbackScoringUnits, confirmedExternalLead, leadSignal, proBasketballLeadRules, basketballCloseoutEntry, nbaSingleReadLead, kalshiSingleReadLead, confirmedSoccerWinnerClock, confirmedDrawClock, soccerWinnerWindowOpen, leadWatchReason, additionalLeadSignal, cricketLeadSignal, drawSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback } from './strategy.mjs';
 import { reviewMiss } from './ai.mjs';
 import { kalshiSignature } from './auth.mjs';
 import { marketShard, shardCash, transferPlan, comboShardBudget, awaitShardCash } from './funding.mjs';
@@ -1038,8 +1038,8 @@ function signalExecution(c,filled,account,balance,bankroll){
     return 'Below minimum net profit after fees';
   }
   const local=shardCash(account,marketShard(c.event,c.market));
-  const singleRead=c.signal.strategy==='lead'&&proBasketballLeadRules(c.state)&&
-    (c.state.remainingSeconds<450&&Math.abs(c.state.home-c.state.away)>=18||
+  const singleRead=c.signal.strategy==='lead'&&proBasketballLeadRules(c.state)&&c.state.remainingSeconds<BASKETBALL_WINNER_ENTRY_SECONDS&&
+    (Math.abs(c.state.home-c.state.away)>=18||
       c.state.remainingSeconds<390&&Math.abs(c.state.home-c.state.away)>=12);
   if(local===null)return 'Shard balance unavailable';
   if(local<estimatedCostCents(raw,price,fees)){
@@ -1225,7 +1225,7 @@ async function upgradeHeldOver(c,preflight,original,scoreboardCache){
   const current=(await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market;
   const verifiedSignal=current?overSignal(state,current):null;
   if(!sameSportsContract(current,c.market)||current.ticker!==original.market_ticker||current.event_ticker!==original.event_ticker||
-    !verifiedSignal||![.15,PLAYER_PROP_MAX_FRACTION,.40].includes(verifiedSignal.fraction))return {verified:false,filled:false};
+    !verifiedSignal||![BASKETBALL_COUNT_PROP_MAX_FRACTION,.15,PLAYER_PROP_MAX_FRACTION,.40].includes(verifiedSignal.fraction))return {verified:false,filled:false};
   await upgradeTables();
   if(/Kalshi-only/i.test(original.reason||''))await pool.query(`INSERT INTO fallback_verifications(market_ticker,original_id,verification_id,verified_at) VALUES($1,$2,$3,now())
     ON CONFLICT(market_ticker) DO UPDATE SET original_id=EXCLUDED.original_id,verification_id=EXCLUDED.verification_id,
@@ -1298,7 +1298,7 @@ async function immediatelyUpgradeFilledOver(c,scoreboardCache){
   const second=await confirmedIndependentOver(c.state,c.milestone,c.market);
   if(!second)return false;
   const verifiedSignal=overSignal(second,c.market);
-  if(!verifiedSignal||![.15,PLAYER_PROP_MAX_FRACTION,.40].includes(verifiedSignal.fraction))return false;
+  if(!verifiedSignal||![BASKETBALL_COUNT_PROP_MAX_FRACTION,.15,PLAYER_PROP_MAX_FRACTION,.40].includes(verifiedSignal.fraction))return false;
   const {rows:[fill]}=await pool.query(`SELECT id,market_ticker,event_ticker,game_id,sport,strategy,reason,status,combo_legs
     FROM trade_attempts WHERE market_ticker=$1 AND status='filled'`,[c.market.ticker]);
   if(!fill)return false;

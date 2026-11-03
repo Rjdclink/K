@@ -106,7 +106,7 @@ test('one fresh Kalshi score admits only a crossed over with a conservative cush
     title:'Pat Player: 2+ steals',yes_sub_title:'Pat Player: 2+',floor_strike:1.5,
     custom_strike:{basketball_player:'pat'},yes_ask_dollars:'.95'};
   const prop=steals=>({...state(74,71),remainingSeconds:600,playerStats:{pat:{steals}},playerPropFirstCrossedAt:{}});
-  assert.equal(singleReadCushionedOver(prop(3),player,now)?.fraction,.25);
+  assert.equal(singleReadCushionedOver(prop(3),player,now)?.fraction,.10);
   assert.equal(singleReadCushionedOver(prop(2),player,now),null);
   const points={...player,event_ticker:'KXNBAPTS-TEST',title:'Pat Player: 20+ points',
     yes_sub_title:'Pat Player: 20+',floor_strike:19.5};
@@ -253,20 +253,20 @@ test('team overs use only the named team score; player props cannot use the game
   const player={...team,event_ticker:'KXNBAPRA-26OCT27BKNBOS',title:'Jayson Tatum: 35+ points, rebounds, and assists',floor_strike:34.5,custom_strike:{basketball_player:'tatum'}};
   assert.equal(overSignal(gameState({...milestone,details:{...milestone.details,home_team_id:'boston',away_team_id:'brooklyn'}},live(57,56)),player),null);
 });
-test('crossed player statistics and extra-unit cushions share the 25% cap',()=>{
+test('crossed basketball count statistics and extra-unit cushions share the 10% cap',()=>{
   const m={id:'nba',title:'New York Knicks at Chicago Bulls',type:'basketball_game',details:{home_team_id:'chi',away_team_id:'nyk'}};
   const market={status:'active',event_ticker:'KXNBAREB-26OCT28NYKCHI',title:'Matas Buzelis: 6+ rebounds',yes_sub_title:'Matas Buzelis: 6+',floor_strike:5.5,strike_type:'greater',custom_strike:{basketball_player:'buzelis'},yes_ask_dollars:'0.81'};
   const state=rebounds=>gameState(m,{details:{status:'live',home_score:127,away_score:133,quarter:4,clock:'10:00',player_stats:{buzelis:{rebounds}}}});
   assert.equal(overSignal(state(5),market),null);
-  assert.equal(overSignal(state(6),market)?.fraction,.25);
+  assert.equal(overSignal(state(6),market)?.fraction,.10);
   assert.equal(overSignal(state(7),market)?.strategy,'over');
   const three={...market,event_ticker:'KXNBA3PT-26OCT28NYKCHI',title:'Matas Buzelis: 1+ threes',yes_sub_title:'Matas Buzelis: 1+',floor_strike:.5};
   const shots=n=>gameState(m,{details:{status:'live',home_score:127,away_score:133,quarter:4,clock:'10:00',player_stats:{buzelis:{three_points_made:n}}}});
-  assert.equal(overSignal(shots(1),three)?.fraction,.25);
+  assert.equal(overSignal(shots(1),three)?.fraction,.10);
   assert.equal(overSignal(shots(2),three)?.strategy,'over');
   const steals={...market,event_ticker:'KXNBASTL-26OCT28NYKCHI',title:'Matas Buzelis: 2+ steals',yes_sub_title:'Matas Buzelis: 2+',floor_strike:1.5};
   const defense=n=>gameState(m,{details:{status:'live',home_score:127,away_score:133,quarter:4,clock:'10:00',player_stats:{buzelis:{steals:n}}}});
-  assert.equal(overSignal(defense(2),steals)?.fraction,.25);
+  assert.equal(overSignal(defense(2),steals)?.fraction,.10);
   assert.equal(overSignal(defense(3),steals)?.strategy,'over');
 });
 test('WTA full-match game totals use all completed and current set games',()=>{

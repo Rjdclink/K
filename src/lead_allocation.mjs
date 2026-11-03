@@ -1,4 +1,4 @@
-import { KALSHI_ONLY_FRACTION,strongKalshiOnlyLead,proBasketballLeadRules,leadSignal,playerOverSpec,PLAYER_PROP_MAX_FRACTION,basketballCloseoutEntry } from './strategy.mjs';
+import { KALSHI_ONLY_FRACTION,strongKalshiOnlyLead,proBasketballLeadRules,leadSignal,playerOverSpec,playerPropMaxFraction,basketballCloseoutEntry } from './strategy.mjs';
 import { timedOverEntryValid } from './over_verification.mjs';
 import {externalOverExposureValid} from './over_exposure.mjs';
 export function threeGoalWinner(game,signal,market){
@@ -11,8 +11,9 @@ export const minimumThreeGoalSpend=(game,signal,market,bankroll)=>
 
 export function verifiedOverFraction(signal,game,market){
   if(signal?.strategy!=='over')return signal?.fraction;
-  if(!timedOverEntryValid(game,market))return Math.min(.15,signal.fraction);
-  if(playerOverSpec(game,market))return PLAYER_PROP_MAX_FRACTION;
+  const player=playerOverSpec(game,market);
+  if(!timedOverEntryValid(game,market))return Math.min(.15,signal.fraction,player?playerPropMaxFraction(game,market):Infinity);
+  if(player)return playerPropMaxFraction(game,market);
   if(externalOverExposureValid(game,market))return game.externalOverProof.fraction;
   if(game.overVerification?.route==='seller_cushion')return .40;
   return signal.fraction===.40?.40:.20;

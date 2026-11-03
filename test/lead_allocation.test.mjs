@@ -125,10 +125,10 @@ test('strong Kalshi-only leads use 20% only after two stable reads and a score c
   check({...team,type:'hockey_match',sport:'NHL',period:3,home:6,homeUnits:6,away:1,awayUnits:1,remainingSeconds:80},market,.20);
   check({...team,type:'hockey_match',sport:'NHL',period:3,home:5,homeUnits:5,away:1,awayUnits:1,remainingSeconds:80},market,.15);
 });
-test('NBA +18 under 7:30 and +12 under 6:30 use single-read sizing',()=>{
+test('NBA +18 and +12 under 4:30 use single-read sizing',()=>{
   const market={status:'active',event_ticker:'KXGAME-TEST',title:'Home wins',yes_sub_title:'Home',
     custom_strike:{basketball_team:'home'},yes_ask_dollars:'.95'};
-  const g={...game('basketball_game'),sport:'NBA',period:4,remainingSeconds:389,home:120,away:100,
+  const g={...game('basketball_game'),sport:'NBA',period:4,remainingSeconds:269,home:120,away:100,
     homeUnits:120,awayUnits:100,verifiedLive:true,scoreKnown:true,scoreConsistent:true,periodConsistent:true,homeName:'Home',awayName:'Away',homeTeamId:'home',awayTeamId:'away'};
   assert.equal(finalLeadFraction(g,g,lead,true,market),.05);
   assert.equal(finalLeadFraction(g,{...g,home:126,homeUnits:126},lead,true,market),.10);
@@ -137,10 +137,10 @@ test('NBA +18 under 7:30 and +12 under 6:30 use single-read sizing',()=>{
   assert.equal(finalLeadFraction(g,{...g,home:108,homeUnits:108,remainingSeconds:60},lead,true,market),.15);
   const now=Date.now(),fresh={...g,id:'game',feedId:'game',observedAt:now,updatedAt:now-1000};
   assert.equal(nbaSingleReadLead(fresh,market,now),true);
-  assert.equal(nbaSingleReadLead({...fresh,remainingSeconds:449,home:125,homeUnits:125},market,now),true);
-  assert.equal(nbaSingleReadLead({...fresh,remainingSeconds:450,home:125,homeUnits:125},market,now),false);
-  assert.equal(nbaSingleReadLead({...fresh,remainingSeconds:449,home:117,homeUnits:117},market,now),false);
-  assert.equal(finalLeadFraction(fresh,{...fresh,remainingSeconds:449,home:125,homeUnits:125},lead,false,market),.10);
+  assert.equal(nbaSingleReadLead({...fresh,remainingSeconds:269,home:125,homeUnits:125},market,now),true);
+  assert.equal(nbaSingleReadLead({...fresh,remainingSeconds:270,home:125,homeUnits:125},market,now),false);
+  assert.equal(nbaSingleReadLead({...fresh,remainingSeconds:269,home:111,homeUnits:111},market,now),false);
+  assert.equal(finalLeadFraction(fresh,{...fresh,remainingSeconds:269,home:125,homeUnits:125},lead,false,market),.10);
   assert.equal(nbaSingleReadLead({...fresh,remainingSeconds:390,home:112,homeUnits:112},market,now),false);
   assert.equal(nbaSingleReadLead({...fresh,home:111,homeUnits:111},market,now),false);
   assert.equal(nbaSingleReadLead({...fresh,updatedAt:now-31000},market,now),false);
