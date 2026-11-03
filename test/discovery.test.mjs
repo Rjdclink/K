@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {discoverCurrentMilestones,scanMilestones,nearEntryPhase,prioritizeMarketGames,eligibleForMarkets,linkedEventTickers,winnerEventTickers,readyOverTickets,prioritizeReadyOverTickets,gameTimeLabel,storedClockSeconds,mapBatches} from '../src/discovery.mjs';
+import {discoverCurrentMilestones,scanMilestones,nearEntryPhase,prioritizeMarketGames,eligibleForMarkets,linkedEventTickers,playerPropEntryClosed,entryEventTickers,winnerEventTickers,readyOverTickets,prioritizeReadyOverTickets,gameTimeLabel,storedClockSeconds,mapBatches} from '../src/discovery.mjs';
 import {gameState,overSignal,sportName} from '../src/strategy.mjs';
 
 test('bounded parallel live batches cover every milestone without losing result order',async()=>{
@@ -141,6 +141,23 @@ test('find game and both total families from a game-only milestone',()=>{
 test('fast lead watch finds actual linked winner events without a main event field',()=>{
   const m={type:'baseball_game',related_event_tickers:['KXMLBGAME-26OCT31AB','KXMLBTOTAL-26OCT31AB','KXMLB1INNINGGAME-26OCT31AB']};
   assert.deepEqual(winnerEventTickers(m),['KXMLBGAME-26OCT31AB']);
+});
+
+test('closed player-prop entries stop catalog lookups while third-quarter yardage NO remains eligible',()=>{
+  const nba={type:'basketball_game',related_event_tickers:['KXNBAGAME-DATE','KXNBAPTS-DATE','KXNBAREB-DATE']};
+  const open={type:'basketball_game',sport:'NBA',period:4,remainingSeconds:600};
+  assert.ok(entryEventTickers(nba,open).includes('KXNBAPTS-DATE'));
+  assert.ok(entryEventTickers(nba,{...open,period:1,remainingSeconds:700}).includes('KXNBAPTS-DATE'));
+  assert.deepEqual(entryEventTickers(nba,{...open,remainingSeconds:599}).filter(t=>/PTS|REB/.test(t)),[]);
+  assert.ok(entryEventTickers(nba,{...open,remainingSeconds:599}).includes('KXNBAGAME-DATE'));
+  const nfl={type:'football_game',related_event_tickers:['KXNFLGAME-DATE','KXNFLRUSHYDS-DATE','KXNFLRECYDS-DATE','KXNFLPASSYDS-DATE']};
+  const closed={type:'football_game',sport:'NFL',period:4,remainingSeconds:599};
+  assert.ok(entryEventTickers(nfl,closed).includes('KXNFLRUSHYDS-DATE'));
+  assert.ok(entryEventTickers(nfl,closed).includes('KXNFLRECYDS-DATE'));
+  assert.ok(!entryEventTickers(nfl,closed).includes('KXNFLPASSYDS-DATE'));
+  assert.equal(playerPropEntryClosed({type:'soccer_game',soccerMinute:79}),false);
+  assert.equal(playerPropEntryClosed({type:'soccer_game',soccerMinute:81}),true);
+  assert.equal(playerPropEntryClosed({type:'baseball_game',period:8}),true);
 });
 
 test('retain actual linked period total markets plus primary winner and tennis match',()=>{

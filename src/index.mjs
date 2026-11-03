@@ -23,7 +23,7 @@ import { manifest, worker } from './pwa.mjs';
 import { vapidIdentity, validateSubscription, deliverPush } from './push.mjs';
 import { favorableSettlement } from './settlements.mjs';
 import { authorized, checkCredentials, sessionCookie, loginPage } from './dashboard_auth.mjs';
-import { refreshDiscovery, scanMilestones, eligibleForMarkets, prioritizeMarketGames, linkedEventTickers, winnerEventTickers, readyOverTickets, prioritizeReadyOverTickets, gameTimeLabel, storedClockSeconds, mapBatches } from './discovery.mjs';
+import { refreshDiscovery, scanMilestones, eligibleForMarkets, prioritizeMarketGames, linkedEventTickers, playerPropEntryClosed, entryEventTickers, winnerEventTickers, readyOverTickets, prioritizeReadyOverTickets, gameTimeLabel, storedClockSeconds, mapBatches } from './discovery.mjs';
 import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOverDecision, verifySportradarOver, verifyIndependentTableTennisLeadDecision, verifyIndependentTableTennisMatch } from './score_verification.mjs';
 import { verificationStatus, completedOverWait, verificationWindowStatus } from './verification_status.mjs';
@@ -2063,6 +2063,7 @@ async function watchReadyOverTickets(until){
           const raw=useCached?cached:await liveMilestone(milestone.id);
           if(!raw)continue;
           if(!useCached)raw._observed_at=new Date().toISOString();state=gameState(milestone,raw);
+          if(!entryEventTickers(milestone,state).some(t=>ticket.ticker.startsWith(t+'-')))continue;
           const current=(await kalshi('/markets/'+encodeURIComponent(ticket.ticker))).market;
           const eventTicker=current?.event_ticker;
           if(!eventTicker||!linkedEventTickers(milestone).includes(eventTicker))continue;
@@ -2346,6 +2347,7 @@ async function scan(cachedMilestones,discoveryCount){
     const marketCandidates=active.filter(g=>eligibleForMarkets(g.state)).map(g=>({...g,watchable:Boolean(leadWatchReason(g.state))}));
     const {rows:heldGames}=await pool.query(`SELECT DISTINCT game_id FROM trade_attempts
       WHERE status='filled' AND game_id=ANY($1::text[])`,[marketCandidates.map(g=>g.milestone.id)]);
+    const heldIds=new Set(heldGames.map(row=>row.game_id));
     // The cheap score feed stays broad enough to spot a crossed over or a game
     // approaching its entry window. Early-game market catalog/quote requests
     // are expensive, so rotate those once a minute across all function instances.
@@ -2354,13 +2356,13 @@ async function scan(cachedMilestones,discoveryCount){
       WHERE id=1 AND (early_market_at IS NULL OR early_market_at<clock_timestamp()-interval '60 seconds')
       RETURNING id`);
     const marketGames=prioritizeMarketGames(marketCandidates,{
-      signaledIds:new Set([...propWatchIds,...recentLive.filter(row=>(row.signals||[]).some(signal=>
+      signaledIds:new Set([...marketCandidates.filter(g=>propWatchIds.has(g.milestone.id)&&!playerPropEntryClosed(g.state)).map(g=>g.milestone.id),...recentLive.filter(row=>(row.signals||[]).some(signal=>
         signal.strategy!=='watch'&&Number(signal.ask)>0&&Number(signal.ask)<1&&Number(signal.ask_size)>0)).map(row=>row.id)]),
-      heldIds:new Set(heldGames.map(row=>row.game_id)),
+      heldIds,
       lowBudget:earlySweep.length?12:0
     });
     console.info('Live market priority:',JSON.stringify({live:marketCandidates.length,marketChecked:marketGames.length,earlySweep:Boolean(earlySweep.length),earlyDeferred:marketCandidates.length-marketGames.length}));
-    const events=await marketMap(marketGames.flatMap(g=>linkedEventTickers(g.milestone)));
+    const events=await marketMap(marketGames.flatMap(g=>heldIds.has(g.milestone.id)?linkedEventTickers(g.milestone):entryEventTickers(g.milestone,g.state)));
     // Market discovery can take longer than a scoring play. Refresh live
     // player stats immediately before deciding which props crossed their line.
     const currentLive=await liveBatch(marketGames.map(g=>g.milestone));
@@ -2370,7 +2372,7 @@ async function scan(cachedMilestones,discoveryCount){
     const crossingRows=[];
     for(const {milestone,state} of marketGames){
       if(!state.verifiedLive||!state.scoreConsistent)continue;
-      for(const ticker of linkedEventTickers(milestone))for(const market of events.get(ticker)?.markets||[]){
+      for(const ticker of entryEventTickers(milestone,state))for(const market of events.get(ticker)?.markets||[]){
         if(market.event_ticker!==ticker||!market.ticker||!['active','open'].includes(market.status))continue;
         const player=playerOverSpec(state,market);
         if(player&&player.value>Number(market.floor_strike))
@@ -2431,7 +2433,7 @@ async function scan(cachedMilestones,discoveryCount){
     const heldPositions=new Map((openPositions?.market_positions||[]).map(p=>[p.ticker,p]));
     for(const {milestone,state} of games){
       const candidates=[];
-      if(eligibleForMarkets(state))for(const ticker of linkedEventTickers(milestone)){const event=events.get(ticker);if(!event || !['Sports','Esports'].includes(event.category))continue;
+      if(eligibleForMarkets(state))for(const ticker of entryEventTickers(milestone,state)){const event=events.get(ticker);if(!event || !['Sports','Esports'].includes(event.category))continue;
         for(const market of event.markets||[]){if(market.event_ticker!==event.event_ticker)continue;
           const signal=overSignal(state,market)||golfSignal(state,market)||leadSignal(state,market)||additionalLeadSignal(state,market)||cricketLeadSignal(state,market)||drawSignal(state,market)||earlyLeadSignal(state,market)||tennisSignal(state,market)||tableTennisSignal(state,market);if(signal)candidates.push({signal:signal.strategy==='lead'?{...signal,fraction:finalLeadFraction(state,state,signal,false)}:signal,event,market,state,milestone})}}
       // Keep crossed, already-filled props visible with their status, but do
