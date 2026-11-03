@@ -28,6 +28,15 @@ test('fast over queue reuses only executable over tickets awaiting independent v
   assert.deepEqual(readyOverTickets(rows).map(item=>item.signal.ticker),['A','E']);
 });
 
+test('fast over queue retains active seller-backed windows despite a changed dashboard status',()=>{
+  const rows=[{milestone:{id:'a'},signals:[
+    {ticker:'ACTIVE',strategy:'over',execution:'Verification pending; shard transfer needed if confirmed',ask:'.96',ask_size:'8'},
+    {ticker:'COLD',strategy:'over',execution:'Verification pending; shard transfer needed if confirmed',ask:'.96',ask_size:'8'},
+    {ticker:'NOASK',strategy:'over',execution:'Verification pending; shard transfer needed if confirmed',ask:'1.00',ask_size:'0'}
+  ]}];
+  assert.deepEqual(readyOverTickets(rows,12,new Set(['ACTIVE','NOASK'])).map(t=>t.signal.ticker),['ACTIVE']);
+});
+
 test('sports discovery traverses pages and includes esports and older live tournaments',async()=>{
   const now=Date.parse('2026-10-30T13:00:00Z'),at=days=>new Date(now+days*86400000).toISOString();
   const requests=[];
