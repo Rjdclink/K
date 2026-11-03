@@ -38,7 +38,7 @@ function harness({home=70,away=70,seller=true,decisions=[]}={}){
    if(sql.startsWith('INSERT INTO verification_records')){proofs.push(JSON.parse(args[2]));return {rows:[],rowCount:1}}
    if(sql.includes('SELECT market_ticker,game_id,contract,generation'))return {rows:window?[window]:[]};
    throw Error(sql);
-  }},reportVerifiedGate:async(g,t,message)=>events.push(['progress',message]),kalshi:async()=>({market}),recoverSummaryAsk:async m=>m,hasAsk:()=>seller,executableQuote:async m=>seller?m:null,
+  }},reportVerifiedGate:async(g,t,message,clearAsk,wait)=>events.push(['progress',message,wait]),kalshi:async()=>({market}),recoverSummaryAsk:async m=>m,hasAsk:()=>seller,executableQuote:async m=>seller?m:null,
   auditedOver:async(g,m,opts)=>{assert.equal(opts.cache,undefined);events.push(['external',time]);externalCount++;const decision=decisions.length?decisions.shift():true;if(decision===true){g.verificationId='external-'+externalCount;rememberIndependentEntry(g,opts.market,g.verificationId,time)}return decision},
   liveMilestone:async(id,opts={})=>{kalshiCount++;events.push(['kalshi-dispatch',time]);opts.onDispatch?.();if(opts.onDispatch)assert.equal(events.at(-1)[0],'external');time+=2;return {milestone_id:'game',details:{status:'live',home_score:home,away_score:away,quarter:3,time_remaining:'5:00',last_updated_ts:time/1000}}}
  });vm.runInContext(runtime,context);
@@ -46,6 +46,7 @@ function harness({home=70,away=70,seller=true,decisions=[]}={}){
 }
 test('uncushioned over waits 20 seconds for external check one and 3:00 for the simultaneous final pair',async()=>{
  const h=harness();assert.equal(await h.run(0),null);assert.equal(h.externalCount,0);assert.equal(h.window.initial_at,start);
+ assert.deepEqual(JSON.parse(JSON.stringify(h.events.at(-1))),['progress','Waiting for first external check (20s; minimum 20s)',{dueAt:start+20000,updatedAt:start}]);
  assert.equal(await h.run(19999),null);assert.equal(h.externalCount,0);
  assert.equal(await h.run(20000),null);assert.equal(h.externalCount,1);assert.equal(h.kalshiCount,0);
  for(const ms of [80000,140000,179999])assert.equal(await h.run(ms),null);
