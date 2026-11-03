@@ -116,6 +116,12 @@ export function readyOverTickets(rows,limit=12){
       signal.ticker&&Number(signal.ask)>0&&Number(signal.ask)<1&&Number(signal.ask_size)>0)
     .map(signal=>({milestone,signal}))).slice(0,limit);
 }
+export function prioritizeReadyOverTickets(tickets,windows,limit=12,cycle=Math.floor(Date.now()/60000)){
+  const seen=new Map(windows.map(w=>[w.market_ticker,Number(w.last_seen)]));
+  const active=tickets.filter(t=>seen.has(t.signal.ticker)).sort((a,b)=>seen.get(a.signal.ticker)-seen.get(b.signal.ticker));
+  const other=tickets.filter(t=>!seen.has(t.signal.ticker)),offset=other.length?cycle*limit%other.length:0;
+  return [...active,...other.slice(offset),...other.slice(0,offset)].slice(0,limit);
+}
 
 export function linkedEventTickers(milestone){
   if(milestone.type==='golf_tournament')return [milestone.details?.main_game_event_ticker].filter(Boolean);

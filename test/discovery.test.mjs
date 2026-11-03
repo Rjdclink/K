@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {discoverCurrentMilestones,scanMilestones,nearEntryPhase,prioritizeMarketGames,eligibleForMarkets,linkedEventTickers,winnerEventTickers,readyOverTickets,gameTimeLabel,storedClockSeconds,mapBatches} from '../src/discovery.mjs';
+import {discoverCurrentMilestones,scanMilestones,nearEntryPhase,prioritizeMarketGames,eligibleForMarkets,linkedEventTickers,winnerEventTickers,readyOverTickets,prioritizeReadyOverTickets,gameTimeLabel,storedClockSeconds,mapBatches} from '../src/discovery.mjs';
 import {gameState,overSignal,sportName} from '../src/strategy.mjs';
 
 test('bounded parallel live batches cover every milestone without losing result order',async()=>{
@@ -87,6 +87,17 @@ test('market pass prioritizes entry windows across sports and rotates early game
     ['nhl-early','soccer-early']);
   const urgent=prioritizeMarketGames(games,{cycle:0,lowBudget:0,heldIds:new Set(['cfb-early']),signaledIds:new Set(['nba-early'])});
   assert.deepEqual(urgent.slice(0,2).map(g=>g.milestone.id),['cfb-early','nba-early']);
+});
+
+test('ready over watcher revisits oldest active windows before newer tickets',()=>{
+  const tickets=Array.from({length:15},(_,i)=>({signal:{ticker:`T${i}`}}));
+  const windows=tickets.map((t,i)=>({market_ticker:t.signal.ticker,last_seen:i}));
+  const first=prioritizeReadyOverTickets(tickets,windows,12,0);
+  assert.deepEqual(first.map(t=>t.signal.ticker),tickets.slice(0,12).map(t=>t.signal.ticker));
+  for(const ticket of first)windows[Number(ticket.signal.ticker.slice(1))].last_seen=100;
+  assert.deepEqual(prioritizeReadyOverTickets(tickets,windows,12,1).slice(0,3).map(t=>t.signal.ticker),['T12','T13','T14']);
+  assert.deepEqual(prioritizeReadyOverTickets(tickets,[],12,0).map(t=>t.signal.ticker),tickets.slice(0,12).map(t=>t.signal.ticker));
+  assert.ok(prioritizeReadyOverTickets(tickets,[],12,1).some(t=>t.signal.ticker==='T12'));
 });
 
 test('fast market checks start near each sport entry rather than at the start of a final period',()=>{
