@@ -273,11 +273,12 @@ function ensureOverWindows(){return overWindowsReady??=pool.query(`CREATE TABLE 
   first_external_at bigint,first_external_id uuid,contract jsonb NOT NULL,initial_state jsonb NOT NULL
 )`).catch(e=>{overWindowsReady=null;throw e})}
 async function overProgress(game,market,timing){
+  const now=Date.now();
   const seconds=Math.ceil(timing.remainingMs/1000);
   const message=timing.stage==='first_wait'?`Waiting for first external check (${seconds}s; minimum 20s)`:
     timing.stage==='final_wait'?`First external check passed; waiting for paired checks (${seconds}s remaining)`:
     'Awaiting score verification';
-  await reportVerifiedGate(game,market.ticker,message);
+  await reportVerifiedGate(game,market.ticker,message,false,{dueAt:now+timing.remainingMs,updatedAt:now});
 }
 async function pairedOverRead(first,milestone,market,decorate=state=>state){
   // Start the external request at actual Kalshi HTTP dispatch, after its shared
@@ -982,16 +983,19 @@ async function executableQuote(market){
   const available=yesDepthAtAsk(orderbook_fp,market.yes_ask_dollars,market.yes_ask_size_fp);
   return available>=minimumCount(market)?{...market,yes_ask_size_fp:String(available)}:null;
 }
-async function reportVerifiedGate(game,ticker,reason,clearAsk=false){
+async function reportVerifiedGate(game,ticker,reason,clearAsk=false,wait=null){
   console.info('Verified candidate blocked at final gate:',JSON.stringify({ticker,reason}));
   await pool.query(`UPDATE game_snapshots AS g SET signals=(
     SELECT jsonb_agg(CASE WHEN s->>'ticker'=$2 THEN
-      CASE WHEN $6::boolean THEN jsonb_set(jsonb_set(s,'{execution}',to_jsonb($3::text)),'{ask_size}',to_jsonb('0.00'::text))
-        ELSE jsonb_set(s,'{execution}',to_jsonb($3::text)) END
+      CASE WHEN $7::jsonb IS NULL THEN
+        (CASE WHEN $6::boolean THEN jsonb_set(jsonb_set(s,'{execution}',to_jsonb($3::text)),'{ask_size}',to_jsonb('0.00'::text))
+          ELSE jsonb_set(s,'{execution}',to_jsonb($3::text)) END) - 'verification_wait'
+      ELSE jsonb_set(CASE WHEN $6::boolean THEN jsonb_set(jsonb_set(s,'{execution}',to_jsonb($3::text)),'{ask_size}',to_jsonb('0.00'::text))
+        ELSE jsonb_set(s,'{execution}',to_jsonb($3::text)) END,'{verification_wait}',$7::jsonb) END
       ELSE s END) FROM jsonb_array_elements(g.signals) s)
     WHERE g.id=$1 AND g.home=$4 AND g.away=$5 AND
       g.signals @> jsonb_build_array(jsonb_build_object('ticker',$2::text))`,
-  [game.id,ticker,reason,game.home,game.away,clearAsk]);
+  [game.id,ticker,reason,game.home,game.away,clearAsk,wait&&JSON.stringify(wait)]);
 }
 async function recoverSummaryAsk(market){
   if(hasAsk(market))return market;

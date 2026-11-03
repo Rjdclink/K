@@ -3,6 +3,29 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {page} from '../src/ui.mjs';
 
+test('verification wait decreases each second and stops claiming a live countdown after updates stall',()=>{
+  let now=Date.now();
+  class Clock extends Date{static now(){return now}}
+  const elements=[];
+  const element=()=>({children:[],classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){},append(...items){this.children.push(...items)}});
+  const document={getElementById:element,createElement:element,
+    querySelectorAll:selector=>selector==='.verification-wait'?elements:[]};
+  const context=vm.createContext({Date:Clock,document,window:{addEventListener(){}},navigator:{},
+    localStorage:{getItem(){return null}},fetch:()=>new Promise(()=>{}),AbortSignal,setInterval(){}});
+  vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],context);
+  const signal={ticker:'OVER',title:'Player over',execution:'Waiting for first external check (20s; minimum 20s)',
+    verification_wait:{dueAt:now+20000,updatedAt:now}};
+  const card=vm.runInContext('item',context)({title:'Game',sport:'NBA',home:3,away:2,signals:[signal]});
+  const detail=card.children.at(-1);elements.push(detail);
+  assert.match(detail.textContent,/20s; minimum 20s/);
+  now+=1000;vm.runInContext('paintCountdowns()',context);assert.match(detail.textContent,/19s; minimum 20s/);
+  now+=19000;vm.runInContext('paintCountdowns()',context);assert.match(detail.textContent,/First external check due/);
+  now+=11000;vm.runInContext('paintCountdowns()',context);assert.match(detail.textContent,/Verification update delayed/);
+  const final={...signal,execution:'First external check passed; waiting for paired checks (210s remaining)',
+    verification_wait:{dueAt:now+210000,updatedAt:now}};
+  assert.match(vm.runInContext('verificationExecution',context)(final,now+1000),/209s remaining/);
+});
+
 test('table-tennis scanner cards remove old countdown wording while retaining the set and score',()=>{
   const element=()=>({children:[],style:{},classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){},append(...items){this.children.push(...items)}});
   const document={getElementById:element,querySelectorAll:()=>[],createElement:element};
