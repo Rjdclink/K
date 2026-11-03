@@ -26,5 +26,6 @@ test('dashboard uses the durable window stage instead of an older wait message',
   const first=verificationWindowStatus(signal,window,{stage:'first_wait',remainingMs:20000,minimumMs:137000},now);
   assert.deepEqual(first.wait,{dueAt:now+37000,updatedAt:now-3000});
   assert.match(verificationWindowStatus(signal,window,{stage:'paired'},now).execution,/Second external check due/);
-  assert.match(verificationWindowStatus(signal,{...window,last_seen:now-90001},{stage:'final_wait',remainingMs:1},now).execution,/expired/);
+  assert.deepEqual(verificationWindowStatus(signal,{...window,last_seen:now-90001},{stage:'final_wait',remainingMs:37000,minimumMs:137000},now).wait,
+    {dueAt:now+37000,updatedAt:now-90001});
 });
