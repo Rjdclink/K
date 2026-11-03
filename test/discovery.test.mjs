@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {discoverCurrentMilestones,scanMilestones,nearEntryPhase,prioritizeMarketGames,eligibleForMarkets,linkedEventTickers,winnerEventTickers,readyOverTickets,gameTimeLabel,storedClockSeconds,mapBatches} from '../src/discovery.mjs';
+import {discoverCurrentMilestones,scanMilestones,nearEntryPhase,prioritizeMarketGames,entryWindowDistance,eligibleForMarkets,linkedEventTickers,winnerEventTickers,readyOverTickets,gameTimeLabel,storedClockSeconds,mapBatches} from '../src/discovery.mjs';
 import {gameState,overSignal,sportName} from '../src/strategy.mjs';
 
 test('bounded parallel live batches cover every milestone without losing result order',async()=>{
@@ -17,7 +17,7 @@ test('bounded parallel live batches cover every milestone without losing result 
   assert.equal(peak,12);
 });
 
-test('fast over queue reuses only executable over tickets awaiting independent verification from the last scan',()=>{
+test('fast over queue prepares crossed overs while waiting for an executable seller',()=>{
   const rows=[{milestone:{id:'a'},signals:[
     {ticker:'A',strategy:'over',execution:'Awaiting score verification',ask:'.96',ask_size:'8'},
     {ticker:'B',strategy:'over',execution:'No ask liquidity',ask:'1.0000',ask_size:'0'},
@@ -25,7 +25,7 @@ test('fast over queue reuses only executable over tickets awaiting independent v
     {ticker:'D',strategy:'lead',execution:'Awaiting score verification',ask:'.90',ask_size:'10'}
   ]},{milestone:{id:'b'},signals:[{ticker:'E',strategy:'over',execution:'Awaiting score verification',ask:'.98',ask_size:'1'}]}];
   assert.deepEqual(readyOverTickets(rows,1).map(item=>item.signal.ticker),['A']);
-  assert.deepEqual(readyOverTickets(rows).map(item=>item.signal.ticker),['A','E']);
+  assert.deepEqual(readyOverTickets(rows).map(item=>item.signal.ticker),['A','B','C','E']);
 });
 
 test('sports discovery traverses pages and includes esports and older live tournaments',async()=>{
@@ -82,11 +82,26 @@ test('market pass prioritizes entry windows across sports and rotates early game
   assert.equal(nearEntryPhase({type:'tennis_match',tennis:{bestOf:3,firstSets:1,secondSets:0}}),true);
   assert.equal(nearEntryPhase({type:'cricket_match',cricket:{innings:2,ballsRemaining:19}}),true);
   assert.deepEqual(prioritizeMarketGames(games,{cycle:0,lowBudget:2}).map(g=>g.milestone.id),
-    ['cfb-late','soccer-late','mlb-late','tennis','cfb-early','nba-early']);
+    ['cfb-late','mlb-late','tennis','soccer-late','cfb-early','nba-early']);
   assert.deepEqual(prioritizeMarketGames(games,{cycle:1,lowBudget:2}).slice(-2).map(g=>g.milestone.id),
     ['nhl-early','soccer-early']);
   const urgent=prioritizeMarketGames(games,{cycle:0,lowBudget:0,heldIds:new Set(['cfb-early']),signaledIds:new Set(['nba-early'])});
   assert.deepEqual(urgent.slice(0,2).map(g=>g.milestone.id),['cfb-early','nba-early']);
+});
+test('market work orders ready signals first, then the closest applicable entry windows',()=>{
+  const make=(id,type,sport,period,remainingSeconds,lead)=>({milestone:{id},state:{type,sport,period,remainingSeconds,homeUnits:lead,awayUnits:0}});
+  const nba=make('nba','basketball_game','NBA',4,460,20);
+  const nhl=make('nhl','hockey_game','NHL',3,245,2);
+  const soccer={...make('soccer','soccer_game','Soccer',2,0,3),state:{type:'soccer_game',period:2,soccerMinute:74,matchRemainingSeconds:960,homeUnits:3,awayUnits:0}};
+  const early=make('early','basketball_game','NBA',1,600,3);
+  const ready=make('ready-prop','basketball_game','NBA',2,600,3);
+  assert.equal(entryWindowDistance(nba.state),10);assert.equal(entryWindowDistance(nhl.state),20);
+  assert.equal(entryWindowDistance(soccer.state),60);assert.equal(entryWindowDistance(early.state),Infinity);
+  assert.deepEqual(prioritizeMarketGames([early,soccer,nhl,nba,ready],{signaledIds:new Set(['ready-prop']),cycle:0,lowBudget:1}).map(g=>g.milestone.id),
+    ['ready-prop','nba','nhl','soccer','early']);
+  assert.equal(entryWindowDistance({...nba.state,homeUnits:12}),70);
+  assert.equal(entryWindowDistance({...nba.state,remainingSeconds:100,homeUnits:6}),0);
+  assert.equal(entryWindowDistance({...soccer.state,homeUnits:2}),750);
 });
 
 test('fast market checks start near each sport entry rather than at the start of a final period',()=>{
