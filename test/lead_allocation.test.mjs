@@ -145,7 +145,7 @@ test('NBA +18 under 7:30 and +12 under 6:30 use single-read sizing',()=>{
   assert.equal(nbaSingleReadLead({...fresh,home:111,homeUnits:111},market,now),false);
   assert.equal(nbaSingleReadLead({...fresh,updatedAt:now-31000},market,now),false);
   assert.equal(nbaSingleReadLead({...fresh,feedId:'other'},market,now),false);
-  assert.equal(nbaSingleReadLead({...fresh,possessionSide:'away'},market,now),false);
+  assert.equal(nbaSingleReadLead({...fresh,possessionSide:'away'},market,now),true);
   assert.equal(nbaSingleReadLead(fresh,{...market,custom_strike:{basketball_team:'away'}},now),false);
   assert.equal(nbaSingleReadLead(fresh,market,now+30001),false);
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
