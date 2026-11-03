@@ -6,7 +6,7 @@ import {leadEntryFraction} from '../src/lead_allocation.mjs';
 import {parallelBasketballVerification,assertBasketballVerification} from '../src/basketball_verification.mjs';
 import {scoreAgreement,verifyIndependentOverDecision,nbaAgreement} from '../src/score_verification.mjs';
 const start='2026-11-02T12:00:00Z',now=Date.now();
-function fixture(league='NBA',margin=6,seconds=104,possession='away'){
+function fixture(league='NBA',margin=7,seconds=104,possession='away'){
   const milestone={id:'game',type:'basketball_game',title:'Brooklyn Nets at Boston Celtics',start_date:start,
     details:{league,home_team_id:'home',away_team_id:'away'}};
   const period=league==='NCAAB'?2:4;
@@ -17,9 +17,9 @@ function fixture(league='NBA',margin=6,seconds=104,possession='away'){
     yes_sub_title:'Boston Celtics',custom_strike:{basketball_team:'home'},yes_ask_dollars:'.90',yes_ask_size_fp:'20'};
   return {game,market,milestone};
 }
-test('new basketball route uses +6 NBA / +7 college and international, strictly under 1:45, either or unknown possession',()=>{
+test('new basketball route uses +7 NBA / +7 college and international, strictly under 1:45, either or unknown possession',()=>{
   for(const league of ['NBA','NCAAB','NCAAW','Australia NBL','EuroLeague']){
-    const minimum=league==='NBA'?6:7;
+    const minimum=7;
     for(const possession of ['home','away',null]){
       const {game,market}=fixture(league,minimum,104,possession);
       assert.ok(leadSignal(game,market),league);
@@ -71,7 +71,7 @@ test('proof rejects missing ask, changed contract, stale score, expired external
 });
 test('mandatory external basketball check needs a compatible final-period clock and a sufficient selected-team lead',()=>{
   const {game,market}=fixture();
-  const reading={home:96,away:90,live:true,clockOk:true,period:4,remainingSeconds:100};
+  const reading={home:97,away:90,live:true,clockOk:true,period:4,remainingSeconds:100};
   assert.equal(scoreAgreement(game,[[reading]],market),true);
   assert.equal(scoreAgreement(game,[[{...reading,home:99}]],market),true);
   assert.equal(scoreAgreement(game,[[{...reading,away:91}]],market),false);

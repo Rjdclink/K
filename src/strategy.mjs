@@ -54,7 +54,7 @@ export function basketballEntryTier(game){
 }
 // The late NBA route also covers stronger leads; other earlier tiers remain.
 export function basketballCloseoutMinimum(game){
-  return basketballLeadProfile(game)&&game.sport!=='WNBA'?(game.sport==='NBA'?6:7):null;
+  return basketballLeadProfile(game)&&game.sport!=='WNBA'?7:null;
 }
 export function basketballCloseoutEntry(game){
   const profile=basketballLeadProfile(game),minimum=basketballCloseoutMinimum(game),seconds=game?.remainingSeconds;

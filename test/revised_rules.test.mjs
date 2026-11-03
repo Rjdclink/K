@@ -45,7 +45,7 @@ test('basketball tiers include the stated lead and exclude the exact time bounda
    assert.ok(signal('basketball_game',league,margin,period,269),`${league} under 4:30`);
  }
  for(const league of ['NBA','WNBA','NCAAB','NCAAW','China CBA','Italy Serie A']){
-   const period=league==='NCAAB'?2:4,minimum=league==='NBA'?6:league==='WNBA'?7:10;
+   const period=league==='NCAAB'?2:4,minimum=league==='NBA'||league==='WNBA'?7:10;
    assert.ok(signal('basketball_game',league,minimum,period,104),`${league} under 1:45`);
    assert.equal(Boolean(signal('basketball_game',league,minimum-1,period,104)),!['NBA','WNBA'].includes(league));
    if(league==='NBA'||league==='WNBA')assert.equal(signal('basketball_game',league,minimum,period,105),null);
