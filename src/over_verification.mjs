@@ -30,12 +30,12 @@ export function overTiming(window,game,market,now=Date.now()){
   const initial=Number(window.initial_at),external=window.first_external_at==null?null:Number(window.first_external_at);
   const elapsed=now-initial;
   if(!Number.isFinite(initial)||elapsed<0)return {stage:'invalid'};
-  if(elapsed<OVER_EXTERNAL_DELAY_MS)return {stage:'first_wait',remainingMs:OVER_EXTERNAL_DELAY_MS-elapsed};
+  const delay=variableValuePlayerMetric(playerOverSpec(game,market)?.metric)?OVER_VARIABLE_CONFIRM_DELAY_MS:
+    /soccer/.test(String(game?.type||''))?OVER_SOCCER_CONFIRM_DELAY_MS:OVER_CONFIRM_DELAY_MS;
+  if(elapsed<OVER_EXTERNAL_DELAY_MS)return {stage:'first_wait',remainingMs:OVER_EXTERNAL_DELAY_MS-elapsed,minimumMs:delay};
   if(external===null)return {stage:'first_external',remainingMs:0};
   if(!Number.isFinite(external)||external<initial+OVER_EXTERNAL_DELAY_MS||external>now||!window.first_external_id)return {stage:'invalid'};
   const cushion=overCushion(game,market);
-  const delay=variableValuePlayerMetric(playerOverSpec(game,market)?.metric)?OVER_VARIABLE_CONFIRM_DELAY_MS:
-    /soccer/.test(String(game?.type||''))?OVER_SOCCER_CONFIRM_DELAY_MS:OVER_CONFIRM_DELAY_MS;
   if(elapsed<delay&&cushion===null)return {stage:'final_wait',remainingMs:delay-elapsed,minimumMs:delay};
   return {stage:'paired',route:elapsed>=delay?'elapsed':'cushion',cushionUnits:cushion};
 }
