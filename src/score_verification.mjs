@@ -252,7 +252,7 @@ export function playerStatAgreement(summary,player){
 // NO requires the exact independently observed zero; the over comparison
 // accepts larger values and cannot be reused for this decision.
 export async function verifyIndependentYardageZero(game,milestone,player,{fetcher=fetch}={}){
-  if(!['NFL','CFB'].includes(game?.sport)||game.period!==3)return false;
+  if(!['NFL','CFB'].includes(game?.sport)||!Number.isInteger(game.period)||game.period<3)return false;
   const feed=game.sport==='NFL'?'football/nfl':'football/college-football';
   const start=Date.parse(milestone?.start_date||'');
   if(!Number.isFinite(start))return false;
@@ -261,7 +261,7 @@ export async function verifyIndependentYardageZero(game,milestone,player,{fetche
     const fixtures=(await Promise.all(dateCandidates(start).map(day=>
       read(`https://site.api.espn.com/apis/site/v2/sports/${feed}/scoreboard?dates=${day}&limit=500${game.sport==='CFB'?'&groups=80':''}`))))
       .flatMap(data=>espnMatches(data,game,milestone));
-    if(!fixtures.length||fixtures.some(match=>!match.live||!match.clockOk||match.period!==3))return false;
+    if(!fixtures.length||fixtures.some(match=>!match.live||!match.clockOk||match.period!==game.period))return false;
     const ids=[...new Set(fixtures.map(match=>match.eventId))];
     if(ids.length!==1)return false;
     const summary=await read(`https://site.api.espn.com/apis/site/v2/sports/${feed}/summary?event=${encodeURIComponent(ids[0])}`);

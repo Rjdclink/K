@@ -2278,7 +2278,7 @@ async function scanThirdQuarterNos(games,events){
         [verificationId,refreshed.ticker,JSON.stringify({mode:'independent_yardage_zero_no',game,milestone:c.milestone,
           firstAt:window.first_at,secondAt:new Date(verifiedAt),player,ask:price,depth:ask.size})]);
       game.verificationId=verificationId;rememberIndependentEntry(game,refreshed,verificationId,verifiedAt);
-      const signal={strategy:'no',fraction:.30,reason:`NO ${player.name} ${player.metric} ${player.line+.5}+; verified zero in Q3`};
+      const signal={strategy:'no',fraction:.30,reason:`NO ${player.name} ${player.metric} ${player.line+.5}+; verified zero in period ${game.period}`};
       const id=await reserve(signal,game,c.event,refreshed,quantity,price,account.balance);
       if(!id)continue;
       try{
