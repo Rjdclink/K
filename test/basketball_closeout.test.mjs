@@ -30,15 +30,16 @@ test('new basketball route uses +6 NBA / +7 college and international, strictly 
       assert.equal(leadSignal({...game,period:game.period-1},market),null);
     }
   }
-  assert.equal(leadSignal(fixture('WNBA',6).game,fixture('WNBA',6).market),null,'existing WNBA routes are unchanged');
+  assert.equal(leadSignal(fixture('WNBA',6).game,fixture('WNBA',6).market),null);
+  assert.ok(leadSignal(fixture('WNBA',7).game,fixture('WNBA',7).market),'WNBA +7 under 1:45');
 });
 test('new route cannot allocate without independent verification and caps at fifteen percent',()=>{
   const {game,market}=fixture(),signal=leadSignal(game,market);
   for(const decision of [null,false])assert.equal(leadEntryFraction(game,game,signal,market,decision,true),null);
   assert.equal(leadEntryFraction(game,game,signal,market,true,true),.15);
-  const old=fixture('NBA',20,90,'home');
-  assert.equal(basketballCloseoutEntry(old.game),false);
-  assert.equal(leadEntryFraction(old.game,old.game,leadSignal(old.game,old.market),old.market,true,true),.25);
+  const strong=fixture('NBA',20,90,'home');
+  assert.equal(basketballCloseoutEntry(strong.game),true,'all NBA leads under 1:45 use the paired check');
+  assert.equal(leadEntryFraction(strong.game,strong.game,leadSignal(strong.game,strong.market),strong.market,true,true),.15);
 });
 test('seller/depth and external requests start together and both must complete successfully',async()=>{
   const {game,market}=fixture(),started=[];

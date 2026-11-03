@@ -86,9 +86,9 @@ test('a whole-game over gets 40% only when removing the independently recorded l
   assert.equal(overSignal(score(1,0),soccerMarket)?.fraction,.15);
   assert.equal(overSignal({...score(2,0),lastScoringPlay:1},soccerMarket)?.fraction,.40);
   const player={...market,event_ticker:'KXNBAPTS-26OCT30BOSNYK',title:'Player: 20+ points',yes_sub_title:'Player: 20+',floor_strike:19.5,custom_strike:{basketball_player:'p'}};
-  assert.equal(overSignal(gameState({...milestone,details:{...milestone.details,home_team_id:'ny',away_team_id:'bos'}},{details:{...live(81,88).details,clock:'10:00',player_stats:{p:{points:30}}}}),player)?.fraction,.25);
-  assert.equal(overSignal({...gameState({...milestone,details:{...milestone.details,home_team_id:'ny',away_team_id:'bos'}},{details:{...live(81,88).details,clock:'10:00',player_stats:{p:{points:30}}}}),lastScoringPlay:3},player)?.fraction,.25,
-    'a whole-game scoring play does not change the variable-value player cap');
+  assert.equal(overSignal(gameState({...milestone,details:{...milestone.details,home_team_id:'ny',away_team_id:'bos'}},{details:{...live(81,88).details,clock:'10:00',player_stats:{p:{points:30}}}}),player),null);
+  assert.equal(overSignal({...gameState({...milestone,details:{...milestone.details,home_team_id:'ny',away_team_id:'bos'}},{details:{...live(81,88).details,clock:'10:00',player_stats:{p:{points:30}}}}),lastScoringPlay:3},player),null,
+    'a whole-game scoring play cannot admit a variable-value YES player prop');
 });
 test('one fresh Kalshi score admits only a crossed over with a conservative cushion',()=>{
   const now=Date.now();

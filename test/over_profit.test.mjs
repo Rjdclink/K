@@ -6,8 +6,8 @@ import {gameState,overSignal,minimumProfitCents,netSettlementProfitCents,profita
 import {filledOrderGateCount} from '../src/entry_floor.mjs';
 
 const game=(period,sport='NBA',type='basketball_game')=>({type,sport,period,remainingSeconds:600,
-  playerStats:{p:{points:3,receiving_yards:25,shots_on_goal:3,hits:3,goals:3}}});
-const market=(family='basketball',metric='PTS')=>({ticker:'PROP',event_ticker:`KXTEST${metric}-GAME`,
+  playerStats:{p:{points:3,rebounds:3,receiving_yards:25,shots_on_goal:3,hits:3,goals:3}}});
+const market=(family='basketball',metric='REB')=>({ticker:'PROP',event_ticker:`KXTEST${metric}-GAME`,
   custom_strike:{[family+'_player']:'p'},floor_strike:1.5,yes_sub_title:'Pat: 2+'});
 const floor=(g,m=market(),filled=0,strategy='over')=>minimumProfitCents(strategy,5000,g.type,g.remainingSeconds,filled,{game:g,market:m});
 
@@ -52,7 +52,7 @@ test('player props use their lower floor while game, team and period totals reta
     {...total,event_ticker:'KXNBA1QTOTAL-TEST',title:'Over 39.5 total points in 1st quarter'}];
   for(const period of [1,2]){
     const g=gameState(milestone,{details:{status:'live',home_score:25,away_score:20,home_team_name:'New York',away_team_name:'Boston',
-      period,clock:'10:00',period_scores:[{number:1,home_score:25,away_score:20}],player_stats:{p:{points:3}}}});
+      period,clock:'10:00',period_scores:[{number:1,home_score:25,away_score:20}],player_stats:{p:{rebounds:3}}}});
     for(const m of markets){
       const signal=overSignal(g,m);
       assert.equal(signal?.strategy,'over');

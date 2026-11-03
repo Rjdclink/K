@@ -21,7 +21,7 @@ test('a held basketball count prop tops up within 10% only when the new purchase
     const state=gameState(milestone,{milestone_id:'g',_observed_at:new Date(now).toISOString(),details:{
       status:'live',home_score:30,away_score:20,period,clock:'08:00',player_stats:{p:{rebounds:7}}}});
     state.verificationId='verified';rememberIndependentEntry(state,market,'verified',now);
-    state.overVerification={route:'seller_cushion',contractKey:overContractKey(state,market),sellerAt:now};
+    state.overVerification={route:'cushion',contractKey:overContractKey(state,market),initialAt:now-110000,firstExternalAt:now-90000,firstExternalId:'first',pairedAt:now,pairedExternalId:'second'};
     const position={ticker:market.ticker,position_fp:String(exposure),market_exposure_dollars:String(exposure),fees_paid_dollars:'0'};
     const original={id:'original',status:'filled',strategy:'over',market_ticker:market.ticker,event_ticker:market.event_ticker,game_id:'g'};
     const sent=[];

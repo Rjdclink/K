@@ -36,8 +36,8 @@ export function soccerOverStable(firstSeen,now=Date.now()){return soccerOverWait
 const N = v => v === null || v === undefined || v === '' ? NaN : Number(v);
 export const BASKETBALL_WINNER_ENTRY_SECONDS=270;
 export const BASKETBALL_LEAD_RULES=Object.freeze({
-  NBA:{period:4,possession:false,tiers:[[18,450],[12,390],[9,105]]},
-  WNBA:{period:4,possession:false,tiers:[[11,360],[10,105]]},
+  NBA:{period:4,possession:false,tiers:[[18,450],[12,390]]},
+  WNBA:{period:4,possession:false,tiers:[[11,360],[7,105]]},
   college:{period:2,possession:false,tiers:[[16,300],[10,270]]},
   collegeWomen:{period:4,possession:false,tiers:[[16,300],[10,270]]},
   international:{period:4,possession:false,tiers:[[16,300],[10,270]]}
@@ -52,7 +52,7 @@ export function basketballEntryTier(game){
   if(!profile||game.period!==profile.period||!Number.isFinite(seconds)||seconds<=0||seconds>=BASKETBALL_WINNER_ENTRY_SECONDS)return null;
   return basketballCloseoutEntry(game)?[basketballCloseoutMinimum(game),105]:profile.tiers.filter(([,limit])=>seconds<limit).at(-1)||null;
 }
-// This is an additional route. Existing higher-lead routes keep their rules.
+// The late NBA route also covers stronger leads; other earlier tiers remain.
 export function basketballCloseoutMinimum(game){
   return basketballLeadProfile(game)&&game.sport!=='WNBA'?(game.sport==='NBA'?6:7):null;
 }
@@ -63,7 +63,7 @@ export function basketballCloseoutEntry(game){
     !Number.isFinite(game.homeUnits)||!Number.isFinite(game.awayUnits))return false;
   const margin=Math.abs(game.homeUnits-game.awayUnits),tier=profile.tiers.filter(([,limit])=>seconds<limit).at(-1);
   const prior=Boolean(tier&&margin>=tier[0]&&(!profile.possession||game.possessionSide===(game.homeUnits>game.awayUnits?'home':'away')));
-  return margin>=minimum&&!prior;
+  return margin>=minimum&&(game.sport==='NBA'||!prior);
 }
 // Kept as the NBA single-read/allocation selector for existing callers.
 export const proBasketballLeadRules=game=>game?.sport==='NBA'&&Boolean(basketballLeadProfile(game));
@@ -343,6 +343,7 @@ export function overCushionUnits(game,market){
 }
 export function overSignal(game, market) {
   const player=playerOverSpec(game,market);
+  if(player&&variableValuePlayerMetric(player.metric))return null;
   if (!game.verifiedLive || !game.scoreKnown || !game.scoreConsistent || Math.min(game.home,game.away)<0 || !player&&game.home+game.away<=0 || market.status!=='active' && market.status!=='open') return null;
   if(game.type==='cricket_match')return cricketOverSignal(game,market);
   if(player&&!playerPropEarlyWindow(game))return null;
@@ -392,7 +393,7 @@ export function overSignal(game, market) {
   }
   if (!Number.isFinite(strike) || strike<0 || !Number.isFinite(scored) || scored<=strike) return null;
   // Player props stop when fewer than ten regulation minutes remain; the
-  // shared over verifier selects the seller-backed cushion or timed route.
+  // shared over verifier requires a removable cushion and two external reads.
   // Only an independently verified, complete play list identifies the last
   // team score precisely enough for the 40% tier. Do not guess its size.
   const lastPlay=game.lastScoringPlay;

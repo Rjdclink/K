@@ -1,4 +1,4 @@
-import {externalValueQualifies,externalScoresQualify} from './external_values.mjs';
+import {playerValueQualifies,externalScoresQualify} from './external_values.mjs';
 import {playerOverSpec,basketballCloseoutEntry} from './strategy.mjs';
 import {teamAbbreviationVariants} from './team_identity.mjs';
 const clean=s=>String(s||'').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]/g,'');
@@ -48,7 +48,7 @@ export async function alternateCheck(source,game,milestone,{fetcher=fetch,market
    const path=`/nba/gametracker/boxscore/NBA_${date}_${codes[away]||away}@${codes[home]||home}/`;
    const html=await read('https://www.cbssports.com'+path);
    if(!html.includes('https://www.cbssports.com'+path))return null;
-   const value=cbsPlayerValue(html,player);return value===null?null:externalValueQualifies(value,player.value,player.line);
+   const value=cbsPlayerValue(html,player);return value===null?null:playerValueQualifies(value,player);
   }
   const board=await read(`https://sports.yahoo.com/nba/scoreboard/?date=${date.slice(0,4)}-${date.slice(4,6)}-${date.slice(6)}`);
   const prefix=`https://sports.yahoo.com/nba/${clubs[away]}-${clubs[home]}-${date}`;
@@ -56,7 +56,7 @@ export async function alternateCheck(source,game,milestone,{fetcher=fetch,market
   const html=await read(urls[0]),id=urls[0].match(/-(\d+)\/$/)[1];
   const matches=yahooGames(html).filter(g=>g.gameId==='nba.g.'+id&&Math.abs(Date.parse(g.startTime)-Date.parse(milestone.start_date))<3*3600000);
   if(matches.length!==1)return null;const g=matches[0];
-  if(player){const value=yahooPlayerValue(g,player);return value===null?null:externalValueQualifies(value,player.value,player.line)}
+  if(player){const value=yahooPlayerValue(g,player);return value===null?null:playerValueQualifies(value,player)}
   if(/[1-9](?:Q|P|H|INNING)(?:TEAM)?TOTAL/.test(market?.event_ticker||''))return null;
   return Number.isInteger(g.homeScore)&&Number.isInteger(g.awayScore)?externalScoresQualify(game,{home:g.homeScore,away:g.awayScore},market,{minimumOverValue,onOverValue}):null;
  }catch{return null}

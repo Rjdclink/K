@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
-import {gameState,overSignal,confirmedOver} from '../src/strategy.mjs';
+import {gameState,overSignal,confirmedOver,playerOverSpec} from '../src/strategy.mjs';
 import {verifyExternalOverExposure} from '../src/over_exposure.mjs';
 import {sameSportsContract,overContractKey,freshOverObservation,freshOverState,overTiming,overCushion,sameOverReading,timedOverEntryValid,OVER_FRESH_MS} from '../src/over_verification.mjs';
 const start=Date.parse('2026-11-01T12:00:00Z');
@@ -22,7 +22,7 @@ function harness({home=70,away=70,seller=true,decisions=[]}={}){
  let time=start,window=null,ids=0,externalCount=0,kalshiCount=0;const events=[],proofs=[];
  class Clock extends Date{constructor(...args){super(...(args.length?args:[time]))}static now(){return time}}
  const context=vm.createContext({Date:Clock,Number,JSON,Math,Promise,console,
-  overContractKey,overCushion,freshOverObservation:g=>freshOverObservation(g,time),freshOverState:(g,m)=>freshOverState(g,m,time),overTiming:(w,g,m,at=time)=>overTiming(w,g,m,at),sameOverReading,timedOverEntryValid:(g,m)=>timedOverEntryValid(g,m,time),OVER_FRESH_MS,
+  overContractKey,overCushion,playerOverSpec,freshOverObservation:g=>freshOverObservation(g,time),freshOverState:(g,m)=>freshOverState(g,m,time),overTiming:(w,g,m,at=time)=>overTiming(w,g,m,at),sameOverReading,timedOverEntryValid:(g,m)=>timedOverEntryValid(g,m,time),OVER_FRESH_MS,
   verifyExternalOverExposure,rememberIndependentEntry,gameState:liveState,confirmedOver,overSignal,randomUUID:()=>`id-${++ids}`,auditTable:async()=>{},
   pool:{query:async(sql,args=[])=>{
    if(sql.startsWith('CREATE'))return {rows:[],rowCount:0};
@@ -91,12 +91,27 @@ test('player, team and period cushions use the exact selected statistic',()=>{
  const prop={...market,event_ticker:'KXNBAREB-TEST',title:'Pat Player: 6+ rebounds',yes_sub_title:'Pat Player: 6+',floor_strike:5.5,custom_strike:{basketball_player:'p'}};
  assert.equal(overCushion({...g,playerStats:{p:{rebounds:6}}},prop),null);assert.equal(overCushion({...g,playerStats:{p:{rebounds:7}}},prop),1);
  const points={...market,event_ticker:'KXNBAPTS-TEST',title:'Pat Player: 20+ points',yes_sub_title:'Pat Player: 20+',floor_strike:19.5,custom_strike:{basketball_player:'p'}};
- assert.equal(overTiming({initial_at:start,first_external_at:null},{...g,playerStats:{p:{points:20}}},points,start).minimumMs,210000);
- assert.equal(overTiming({initial_at:start,first_external_at:start+20000,first_external_id:'first'},{...g,playerStats:{p:{rebounds:7}}},prop,start+20000).route,'cushion');
+ assert.equal(overTiming({initial_at:start,first_external_at:null},{...g,playerStats:{p:{points:20}}},points,start).stage,'invalid');
+ assert.deepEqual(overTiming({initial_at:start,first_external_at:start+20000,first_external_id:'first'},{...g,playerStats:{p:{rebounds:7}}},prop,start+109999),{stage:'final_wait',remainingMs:1,minimumMs:110000});
+ assert.equal(overTiming({initial_at:start,first_external_at:start+20000,first_external_id:'first'},{...g,playerStats:{p:{rebounds:7}}},prop,start+110000).route,'cushion');
  const team={...market,event_ticker:'KXNBATEAMTOTAL-TEST',title:'New York over 73.5 total points',floor_strike:73.5,custom_strike:{basketball_team:'ny'}};
  assert.equal(overCushion(g,team),null);
  const segment={...market,event_ticker:'KXNBA1QTOTAL-TEST',title:'Over 39.5 total points in 1st quarter',floor_strike:39.5};
  const periods={...g,periodScores:[{number:1,home:21,away:19}]};assert.equal(overCushion(periods,segment),null);assert.equal(sameOverReading(periods,{...periods,periodScores:[{number:1,home:22,away:19}]},segment),false);
+});
+test('one credited steal cannot authorize YES after any wait; two steals need both checks and 1:50',()=>{
+ const prop={...market,event_ticker:'KXNBASTL-TEST',title:'Dillon Brooks: 1+ steals',yes_sub_title:'Dillon Brooks: 1+',floor_strike:.5,custom_strike:{basketball_player:'p'}};
+ const one={...state(start+180000),playerStats:{p:{steals:1}}},two={...one,playerStats:{p:{steals:2}}};
+ const window={initial_at:start,first_external_at:start+20000,first_external_id:'first'};
+ assert.equal(overTiming(window,one,prop,start+180000).stage,'invalid');
+ assert.equal(overTiming(window,two,prop,start+109999).stage,'final_wait');
+ assert.equal(overTiming(window,two,prop,start+110000).route,'cushion');
+ const proof={contractKey:overContractKey(one,prop),initialAt:start,firstExternalAt:start+20000,firstExternalId:'first',pairedAt:start+180000,pairedExternalId:'second',route:'elapsed'};
+ const verified={...one,verificationId:'aggregate',overVerification:proof};rememberIndependentEntry(verified,prop,'aggregate',start+180000);
+ assert.equal(timedOverEntryValid(verified,prop,start+180001),false);
+ const cushioned={...state(start+110000),playerStats:{p:{steals:2}},verificationId:'aggregate',overVerification:{...proof,route:'cushion',pairedAt:start+110000}};rememberIndependentEntry(cushioned,prop,'aggregate',start+110000);
+ assert.equal(timedOverEntryValid(cushioned,prop,start+110001),true);
+ assert.equal(timedOverEntryValid({...cushioned,overVerification:{...cushioned.overVerification,route:'seller_cushion'}},prop,start+110001),false);
 });
 test('timing proof binds the exact contract and two distinct external checks',()=>{
  const g=state(start+220000),proof={contractKey:overContractKey(g,market),initialAt:start,firstExternalAt:start+20000,firstExternalId:'one',pairedAt:start+220000,pairedExternalId:'two',route:'elapsed'};

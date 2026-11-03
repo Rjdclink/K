@@ -47,7 +47,7 @@ test('an independent scoreboard raises only late commanding winners with stronge
   ['hockey_match','NHL',3,90,0,5,7],['football_game','NFL',4,60,0,21,28],['soccer_match','Soccer',2,240,86,3,4]];
  for(const [type,sport,period,remainingSeconds,soccerMinute,low,high] of tiers){
   const g={...base,type,sport,period,remainingSeconds,soccerMinute,homeUnits:low};
-  assert.equal(finalLeadFraction(g,g,lead,true),.25);assert.equal(finalLeadFraction({...g,homeUnits:high},{...g,homeUnits:high},lead,true),.30);
+  assert.equal(finalLeadFraction(g,g,lead,true),sport==='NBA'?.15:.25);assert.equal(finalLeadFraction({...g,homeUnits:high},{...g,homeUnits:high},lead,true),sport==='NBA'?.15:.30);
   assert.equal(directLeadFraction({...g,homeUnits:high},lead),.20);
  }
 });
@@ -156,10 +156,10 @@ test('NBA +18 and +12 under 4:30 use single-read sizing',()=>{
   assert.match(source,/leadWatch&&!candidates.some\(c=>c.signal.strategy==='lead'\)/);
   assert.match(source,/signal\.execution\+'; last catalog result is older'/);
 });
-test('very late commanding leads may use 20%, while ordinary late entries retain lower allocation',()=>{
+test('NBA under-1:45 entries retain the fifteen percent closeout cap',()=>{
   const base={...game('basketball_game'),sport:'NBA',period:4,remainingSeconds:104,
     verifiedLive:true,scoreKnown:true,scoreConsistent:true,periodConsistent:true};
-  assert.equal(finalLeadFraction({...base,homeUnits:30,awayUnits:10},{...base,homeUnits:30,awayUnits:10},lead,false),.20);
+  assert.equal(finalLeadFraction({...base,homeUnits:30,awayUnits:10},{...base,homeUnits:30,awayUnits:10},lead,false),.15);
   assert.equal(finalLeadFraction({...base,homeUnits:19,awayUnits:10},{...base,homeUnits:19,awayUnits:10},lead,false),.15);
   assert.equal(finalLeadFraction(base,{...base,remainingSeconds:105},lead,false),.15);
   const college={...base,sport:'NCAAB',period:2,homeUnits:26,awayUnits:10};
