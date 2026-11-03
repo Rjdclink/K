@@ -41,7 +41,7 @@ test('cash-out estimates and profit/loss disappear after the unchanged thirty-se
   const render=vm.runInContext('order',h.context),fresh=vm.runInContext('saleQuoteFresh',h.context),now=Date.now();
   const quote={...h.order,checked_at:new Date(now).toISOString(),sell_quote:{price:.7,count:5,partial:true},sell_value_cents:345,sell_profit_cents:-100,sell_held_count:10};
   assert.equal(fresh(quote,now+30000),true);assert.equal(fresh(quote,now+30001),false);
-  const card=render(quote);assert.equal(card.children.at(-1).textContent,'Sell · est. $3.45');
+  const card=render(quote);assert.equal(card.children.at(-1).textContent,'Sell · est. loss −$1.00');
   assert.match(card.children.at(-2).textContent,/5 of 10 shares/);assert.match(card.children.at(-2).textContent,/P\/L −\$1.00/);
   const stale=render({...quote,checked_at:new Date(now-31000).toISOString()});
   assert.equal(stale.children.at(-1).textContent,'Sell · Refresh quote');assert.doesNotMatch(stale.children.at(-2).textContent,/\$3.45|\$1.00/);
