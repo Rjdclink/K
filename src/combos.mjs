@@ -281,6 +281,8 @@ export async function liveComboMarket(get,ticker){
 export function heldComboLeg(row,market,snapshot={}){
   if(!row||Number(row.fill_count)<=0||!market||market.ticker!==row.market_ticker||market.event_ticker!==row.event_ticker||
     !['active','open'].includes(market.status)||market.result&&!['','not_determined'].includes(String(market.result)))return null;
+  if(/basketball/.test(String(snapshot.sport_family||''))&&
+    !['NBA','WNBA','NCAAB','NCAAW'].includes(snapshot.sport))return null;
   if(/Restricted 20% cricket final innings/i.test(row.reason||''))return null;
   // A corrected soccer goal can uncross a held total. Never compound that
   // position into a fresh all-YES ticket while the observed total is below the line.

@@ -9,7 +9,7 @@ const functionSource=(name,next)=>source.slice(source.indexOf('async function '+
 const order={id:'fill-id',market_ticker:'NEW',strategy:'lead',count:10,limit_price:.95,created_at:new Date(Date.now()-60000),updated_at:new Date(Date.now()-30000),retries:0};
 function harness({filled=2,recovery=false,retry=false,age=0,balance=10000}={}){
   const events=[];
-  const context=vm.createContext({console,Date,URLSearchParams,JSON,Math,Number,singleSpendableCash,
+  const context=vm.createContext({console,Date,URLSearchParams,JSON,Math,Number,singleSpendableCash,internationalBasketball:()=>false,
     pool:{query:async(sql,values)=>{
       if(sql.startsWith('SELECT * FROM trade_attempts'))return {rows:[order]};
       if(sql.startsWith('UPDATE trade_attempts'))events.push(['ledger',values]);

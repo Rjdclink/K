@@ -1008,14 +1008,13 @@ export function comeback(game,market,strategy){
     return Number.isInteger(ours)&&Number.isInteger(theirs)&&theirs>=14&&theirs>ours;
   }
   const position=teamScorePosition(game,market);
-  if(position===null||position===1)return false;
+  if(position!==-1)return false;
   const type=String(game.type||'');
   if(!/basketball|football|hockey|soccer/.test(type))return position===-1;
   const soccer=/soccer/.test(type),basketball=/basketball/.test(type),hockey=/hockey/.test(type);
   const finalPeriod=soccer?2:hockey?3:basketball?game.sport==='NCAAB'?2:4:4;
   const seconds=soccer?game.matchRemainingSeconds:game.remainingSeconds;
-  return game.period===finalPeriod&&(!soccer||!game.soccerExtraTime)&&Number.isFinite(seconds)&&seconds>=0&&
-    seconds<(position===0?30:120);
+  return game.period===finalPeriod&&(!soccer||!game.soccerExtraTime)&&Number.isFinite(seconds)&&seconds>=0&&seconds<120;
 }
 export function teamScorePosition(game,market){
   if(!game?.verifiedLive||!game.scoreKnown||!market)return null;

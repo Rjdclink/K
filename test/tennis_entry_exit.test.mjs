@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
-import {gameState,tennisSignal,kalshiSingleReadLead,kalshiOnlyLead,confirmedExternalLead,comeback} from '../src/strategy.mjs';
+import {gameState,tennisSignal,kalshiSingleReadLead,kalshiOnlyLead,confirmedExternalLead,comeback,teamScorePosition} from '../src/strategy.mjs';
 import * as exits from '../src/positions.mjs';
 import {sellQuote} from '../src/sell.mjs';
 
@@ -67,13 +67,13 @@ test('tennis singles have no automatic profit target, including the previous hal
 });
 
 const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
-async function runExit({owner=original,position=held,price='.99',count='10',pending=false,reversal=false}={}){
+async function runExit({owner=original,position=held,price='.99',count='10',pending=false,reversal=false,fixtureOverride=null}={}){
   const orders=[],now=Date.now();
-  const first=fixture({games:[5,6],points:[30,40],server:'lew',at:now-1000});
+  const first=fixtureOverride||fixture({games:[5,6],points:[30,40],server:'lew',at:now-1000});
   const second=fixture({games:[5,6],points:[30,40],server:'lew',at:now}).game;
   const context=vm.createContext({console,Date,Number,Math,Map,Set,JSON,...exits,sellQuote,
     ensureExitFills:async()=>{},reconcilePendingExit:async()=>!pending,minimumCount:()=>.01,
-    randomUUID:()=> 'exit-id',comeback,linkedEventTickers:()=>[first.market.event_ticker],
+    randomUUID:()=> 'exit-id',comeback,teamScorePosition,linkedEventTickers:()=>[first.market.event_ticker],
     auditedOver:async()=>true,liveMilestone:async()=>({}),gameState:()=>second,
     recordExitFill:async()=>{},invalidateBalance:async()=>{},
     pool:{query:async(sql)=>{
@@ -85,13 +85,21 @@ async function runExit({owner=original,position=held,price='.99',count='10',pend
     }},kalshi:async(path,options)=>{
       if(options?.method==='POST'){orders.push(options.body);return {fill_count_fp:count,order_id:'sold'}}
       if(path.endsWith('/orderbook'))return {orderbook_fp:{yes_dollars:[[price,count]]}};
-      return {market:{status:'active'}};
+      return {market:fixtureOverride?first.market:{status:'active'}};
     }});
   vm.runInContext(source.slice(source.indexOf('async function exitComebacks('),source.indexOf('// A full discovery scan')),context);
-  await context.exitComebacks(reversal?[{milestone:first.milestone,state:first.game}]:[],
-    reversal?new Map([[first.market.event_ticker,{markets:[first.market]}]]):new Map(),{market_positions:[position]});
+  await context.exitComebacks(reversal||fixtureOverride?[{milestone:first.milestone,state:first.game}]:[],
+    reversal||fixtureOverride?new Map([[first.market.event_ticker,{markets:[first.market]}]]):new Map(),{market_positions:[position]});
   return orders;
 }
+test('a tied basketball winner cannot auto-sell even at a profitable bid',async()=>{
+  const milestone={id:'basketball-tie',type:'basketball_game',details:{league:'NBA',home_team_id:'home',away_team_id:'away',main_game_event_ticker:'KXNBAGAME-TEST'}};
+  const game=gameState(milestone,{details:{status:'live',home_score:98,away_score:98,period:4,clock:'00:08'}});
+  const market={ticker:'KXNBAGAME-TEST-HOME',event_ticker:'KXNBAGAME-TEST',status:'active',title:'Home wins',custom_strike:{basketball_team:'home'}};
+  const owner={...original,market_ticker:market.ticker,game_id:milestone.id,sport:'NBA'};
+  const position={...held,ticker:market.ticker};
+  assert.deepEqual(await runExit({owner,position,fixtureOverride:{milestone,game,market},price:'.99'}),[]);
+});
 test('the live exit path never takes tennis profit at ten percent, half-profit, or higher targets',async()=>{
   for(const price of ['.74','.77','.88','.99'])
     assert.deepEqual(await runExit({price}),[],price);

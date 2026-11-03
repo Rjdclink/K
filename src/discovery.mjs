@@ -12,7 +12,9 @@ export async function mapBatches(items,limit,task){
   return results;
 }
 
-export function eligibleForMarkets(game){return game?.verifiedLive && game.scoreKnown &&
+export const internationalBasketball=game=>/basketball/.test(String(game?.type||''))&&
+  !['NBA','WNBA','NCAAB','NCAAW'].includes(game?.sport);
+export function eligibleForMarkets(game){return game?.verifiedLive && game.scoreKnown && !internationalBasketball(game) &&
   (supportedType(game.type)||game.type==='cricket_match'&&(cricketOneInningsFormat(game.competition)||game.cricket?.innings===4)||
     game.type==='esports_match'&&['eSoccer','eBasketball'].includes(game.sport)&&game.esportsPeriodsValid)}
 

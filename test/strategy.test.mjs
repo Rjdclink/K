@@ -522,7 +522,8 @@ test('basketball positive exit cannot bypass tie and trailing clock windows',()=
   const market={title:'New York wins',yes_sub_title:'New York',custom_strike:{basketball_team:'NY'}};
   const at=(home,away,period,clock)=>gameState(m,{details:{...live(home,away,period).details,clock}});
   assert.equal(timedProfitExitAllowed(at(100,100,4,'00:30'),market),false);
-  assert.equal(timedProfitExitAllowed(at(100,100,4,'00:29'),market),true);
+  assert.equal(timedProfitExitAllowed(at(100,100,4,'00:29'),market),false);
+  assert.equal(comeback(at(98,98,4,'00:08'),market,'lead'),false,'a tie never authorizes a loss exit');
   assert.equal(timedProfitExitAllowed(at(100,101,4,'02:00'),market),false);
   assert.equal(timedProfitExitAllowed(at(100,101,4,'01:59'),market),true);
   assert.equal(timedProfitExitAllowed(at(101,100,4,'03:00'),market),true);
