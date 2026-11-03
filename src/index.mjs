@@ -2624,7 +2624,8 @@ async function scan(cachedMilestones,discoveryCount){
             .catch(e=>console.warn('Immediate over verification deferred:',c.market.ticker,e.message)));
           const account=await accountBalance({fresh:true});balance=Number(account.balance);bankroll=balance+Number(account.portfolio_value);
         }
-      }catch(e){outcome='error';detail=String(e.message);const message=`${c.market.ticker}: ${detail.slice(0,170)}`;executionErrors.push(message);console.error('Candidate execution failed:',message)}
+      }catch(e){outcome='error';detail=String(e.message);const message=`${c.market.ticker}: ${detail.slice(0,170)}`;executionErrors.push(message);console.error('Candidate execution failed:',message);
+        if(e.message==='Kalshi balance refresh timed out')break}
       finally{await recordDecision({source:'scan',market:c.market,signal:c.signal,game:state,stage,outcome,detail,startedAt})}
     }
     await Promise.all([workersDone,leadWorkers,preparationJob,...immediateUpgradeJobs]);
