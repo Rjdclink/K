@@ -20,7 +20,7 @@ test('verification wait decreases each second and stops claiming a live countdow
   assert.match(detail.textContent,/20s; minimum 20s/);
   now+=1000;vm.runInContext('paintCountdowns()',context);assert.match(detail.textContent,/19s; minimum 20s/);
   now+=19000;vm.runInContext('paintCountdowns()',context);assert.match(detail.textContent,/First external check due/);
-  now+=11000;vm.runInContext('paintCountdowns()',context);assert.match(detail.textContent,/Verification update delayed/);
+  now+=11000;vm.runInContext('paintCountdowns()',context);assert.match(detail.textContent,/Verification last checked 31s ago; recheck pending/);
   const final={...signal,execution:'First external check passed; waiting for paired checks (210s remaining)',
     verification_wait:{dueAt:now+210000,updatedAt:now}};
   assert.match(vm.runInContext('verificationExecution',context)(final,now+1000),/209s remaining/);
