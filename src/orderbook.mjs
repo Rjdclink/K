@@ -40,7 +40,7 @@ export function yesDepthAtAsk(orderbook,ask,size){
 }
 export function bestYesAsk(orderbook){
   if(!Array.isArray(orderbook?.no_dollars))return null;
-  const levels=orderbook.no_dollars.map(([price,size])=>({bid:Number(price),size:Number(size)}))
+  const levels=orderbook.no_dollars.filter(Array.isArray).map(([price,size])=>({bid:Number(price),size:Number(size)}))
     .filter(x=>Number.isFinite(x.bid)&&x.bid>0&&x.bid<1&&Number.isFinite(x.size)&&x.size>0)
     .sort((a,b)=>b.bid-a.bid);
   if(!levels.length)return null;
@@ -60,12 +60,12 @@ export async function bestAsksForTickers(tickers,fetchBatch,fetchOne,onError=()=
       if(!Array.isArray(books))throw Error('Batch orderbooks response missing');
     }catch(error){onError('batch',error);}
     const found=new Map(books.filter(book=>group.includes(book?.ticker)).map(book=>[book.ticker,book]));
-    const absent=group.filter(ticker=>!found.has(ticker));
+    const absent=group.filter(ticker=>!Array.isArray(found.get(ticker)?.orderbook_fp?.no_dollars));
     await Promise.all(absent.map(async ticker=>{
       try{found.set(ticker,await fetchOne(ticker))}
       catch(error){onError(ticker,error);found.set(ticker,null)}
     }));
-    return group.map(ticker=>[ticker,found.get(ticker)?.orderbook_fp?bestYesAsk(found.get(ticker).orderbook_fp):undefined]);
+    return group.map(ticker=>[ticker,Array.isArray(found.get(ticker)?.orderbook_fp?.no_dollars)?bestYesAsk(found.get(ticker).orderbook_fp):undefined]);
   }));
   return new Map(results.flat());
 }

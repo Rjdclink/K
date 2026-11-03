@@ -3,6 +3,28 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {page} from '../src/ui.mjs';
 
+test('verification countdowns advance between dashboard polls and show pending after their deadlines',()=>{
+ let now=100000;const timers=[];
+ const element=()=>({children:[],style:{},classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){},append(...items){this.children.push(...items)}});
+ const document={getElementById:element,querySelectorAll:selector=>selector==='.verification-timer'?timers:[],createElement:element};
+ class Clock extends Date{static now(){return now}}
+ const ctx=vm.createContext({Date:Clock,document,window:{addEventListener(){}},navigator:{},localStorage:{getItem(){return null}},fetch:()=>new Promise(()=>{}),AbortSignal,setInterval(){}});
+ vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],ctx);
+ const render=vm.runInContext('item',ctx),prop=vm.runInContext('propItem',ctx),paint=vm.runInContext('paintCountdowns',ctx),format=vm.runInContext('verificationText',ctx);
+ const first={ticker:'PROP',title:'Player: 1+ steals',strategy:'over',execution:'Last market result: Waiting for first external check',verification_wait:{stage:'first',due_at:105000}};
+ const game={title:'Game',signals:[first]};
+ timers.push(render(game).children.at(-1),prop(game,first).children.at(-1));
+ assert.ok(timers.every(el=>el.textContent.includes('(5s; minimum 20s)')));
+ now+=3000;paint();assert.ok(timers.every(el=>el.textContent.includes('(2s; minimum 20s)')));
+ now+=90000;paint();assert.ok(timers.every(el=>el.textContent.includes('First external check pending; minimum wait elapsed')));
+ assert.ok(timers.every(el=>!el.textContent.includes('passed')));
+ const paired={execution:'First external check passed; waiting for paired checks',verification_wait:{stage:'paired',due_at:now+1000}};
+ assert.match(format(paired),/1s remaining/);now+=2000;
+ assert.match(format(paired),/paired checks pending; minimum wait elapsed/);
+ assert.match(format({execution:'Last market result: Waiting for first external check (5s; minimum 20s)'}),/timer update unavailable/);
+ assert.equal(format({execution:'No ask liquidity'}),'No ask liquidity');
+});
+
 test('table-tennis scanner cards remove old countdown wording while retaining the set and score',()=>{
   const element=()=>({children:[],style:{},classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){},append(...items){this.children.push(...items)}});
   const document={getElementById:element,querySelectorAll:()=>[],createElement:element};

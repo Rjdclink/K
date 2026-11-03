@@ -39,6 +39,18 @@ export function overTiming(window,game,market,now=Date.now()){
   if(elapsed<delay&&cushion===null)return {stage:'final_wait',remainingMs:delay-elapsed,minimumMs:delay};
   return {stage:'paired',route:elapsed>=delay?'elapsed':'cushion',cushionUnits:cushion};
 }
+// Dashboard timing comes from the durable crossing, not a saved countdown.
+// Expiry means a check is due; it never means verification has passed.
+export function overWaitStatus(window,now=Date.now()){
+  if(!window)return {execution:'Awaiting score verification'};
+  if(now-Number(window.last_seen)>OVER_MAX_GAP_MS||Number(window.last_seen)>now)
+    return {execution:'Awaiting score verification; live observation delayed'};
+  const timing=overTiming(window,window.initial_state,window.contract,now);
+  if(timing.stage==='invalid')return {execution:'Awaiting score verification; timer update unavailable'};
+  const first=['first_wait','first_external'].includes(timing.stage);
+  return {execution:first?'Waiting for first external check':'First external check passed; waiting for paired checks',
+    verification_wait:{stage:first?'first':'paired',due_at:first?Number(window.initial_at)+OVER_EXTERNAL_DELAY_MS:now+(timing.remainingMs||0)}};
+}
 export function sameOverReading(first,second,market){
   const a=overSignal(first,market),b=overSignal(second,market);
   if(!a||!b||a.scored!==b.scored||a.strike!==b.strike)return false;
