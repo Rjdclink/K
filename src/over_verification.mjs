@@ -10,7 +10,6 @@ export const OVER_CONFIRM_DELAY_MS=180000;
 export const OVER_SOCCER_CONFIRM_DELAY_MS=150000;
 export const OVER_VARIABLE_CONFIRM_DELAY_MS=210000;
 export const OVER_FRESH_MS=10000;
-export const OVER_MAX_GAP_MS=90000;
 export const overContractKey=sportsContractKey;
 export function freshOverObservation(game,now=Date.now()){
   return Boolean(game&&game.verifiedLive&&game.scoreKnown&&game.scoreConsistent&&game.feedId===game.id&&game.periodConsistent&&
