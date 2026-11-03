@@ -227,7 +227,7 @@ export function scoreAgreement(game,bySource,market,{minimumOverValue,onOverValu
   }
   return agrees>=1;
 }
-export function playerStatAgreement(summary,player){
+export function playerStatValue(summary,player,{participated=false}={}){
   const matches=(summary?.boxscore?.players||[]).flatMap(team=>(team.statistics||[]).flatMap(group=>{
     const yardType={PASSYDS:'passing',RUSHYDS:'rushing',RECYDS:'receiving'}[player.metric];
     if(yardType&&!String(group.name||group.displayName||'').toLowerCase().includes(yardType))return [];
@@ -235,14 +235,38 @@ export function playerStatAgreement(summary,player){
     const headers=group.names||group.labels;
     const index=headers?.findIndex(name=>name===label);
     if(!Number.isInteger(index)||index<0)return [];
-    return (group.athletes||[]).filter(a=>clean(a.athlete?.displayName)===clean(player.name)&&!a.didNotPlay).map(a=>{
+    return (group.athletes||[]).filter(a=>clean(a.athlete?.displayName)===clean(player.name)&&
+      !a.didNotPlay&&(!participated||Number(a.stats?.[headers?.indexOf(player.metric==='RECYDS'?'TGTS':'CAR')])>0)).map(a=>{
       const at=label=>headers?.indexOf(label);
       const read=label=>{const n=at(label);return n<0?NaN:score(String(a.stats?.[n]||'').split('-')[0])};
       return player.metric==='PRA'?read('PTS')+read('REB')+read('AST'):read(label);
     });
   }));
   // An absent player or statistic is unavailable, not a contrary reading.
-  return matches.length===1&&Number.isInteger(matches[0])?externalValueQualifies(matches[0],player.value,player.line):null;
+  return matches.length===1&&Number.isInteger(matches[0])?matches[0]:null;
+}
+export function playerStatAgreement(summary,player){
+  const value=playerStatValue(summary,player);
+  return value===null?null:externalValueQualifies(value,player.value,player.line);
+}
+// NO requires the exact independently observed zero; the over comparison
+// accepts larger values and cannot be reused for this decision.
+export async function verifyIndependentYardageZero(game,milestone,player,{fetcher=fetch}={}){
+  if(!['NFL','CFB'].includes(game?.sport)||game.period!==3)return false;
+  const feed=game.sport==='NFL'?'football/nfl':'football/college-football';
+  const start=Date.parse(milestone?.start_date||'');
+  if(!Number.isFinite(start))return false;
+  const read=async url=>{const response=await fetcher(url,{signal:AbortSignal.timeout(7000)});if(!response.ok)throw Error('ESPN unavailable');return response.json()};
+  try{
+    const fixtures=(await Promise.all(dateCandidates(start).map(day=>
+      read(`https://site.api.espn.com/apis/site/v2/sports/${feed}/scoreboard?dates=${day}&limit=500${game.sport==='CFB'?'&groups=80':''}`))))
+      .flatMap(data=>espnMatches(data,game,milestone));
+    if(!fixtures.length||fixtures.some(match=>!match.live||!match.clockOk||match.period!==3))return false;
+    const ids=[...new Set(fixtures.map(match=>match.eventId))];
+    if(ids.length!==1)return false;
+    const summary=await read(`https://site.api.espn.com/apis/site/v2/sports/${feed}/summary?event=${encodeURIComponent(ids[0])}`);
+    return playerStatValue(summary,player,{participated:true})===0;
+  }catch{return false}
 }
 // FOX supplies a player statistic only when ESPN cannot verify this fixture
 // or stat. Parse the named player table, not a recap or similarly named rival.

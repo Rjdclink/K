@@ -72,3 +72,24 @@ export function completedTrade(entry,fills,settlement){
   return {occurredAt:occurredAt.toISOString(),profitCents:Math.round((saleRevenue+payout-buyCost)*100),outcome:settled?'settled':'closed'};
 }
 
+export function completedNoTrade(entry,fills,settlement){
+  if(entry?.strategy!=='no'||!entry.order_id||!time(entry.created_at)||
+    !settlement||!time(settlement.settled_time)||!Number.isFinite(numeric(settlement.revenue)))return null;
+  const purchases=fills.filter(fill=>fill.order_id===entry.order_id&&
+    (fill.outcome_side==='no'||fill.side==='no')&&
+    (fill.ticker||fill.market_ticker)===entry.market_ticker);
+  if(!purchases.length)return null;
+  let count=0,cost=0;
+  for(const fill of purchases){
+    const quantity=numeric(fill.count_fp),noPrice=numeric(fill.no_price_dollars);
+    const yesPrice=numeric(fill.yes_price_dollars),fee=numeric(fill.fee_cost);
+    const price=Number.isFinite(noPrice)?noPrice:1-yesPrice;
+    if(!Number.isFinite(quantity)||quantity<=0||!Number.isFinite(price)||price<=0||price>=1||
+      !Number.isFinite(fee)||fee<0)return null;
+    count+=quantity;cost+=quantity*price+fee;
+  }
+  if(Math.abs(count-numeric(entry.fill_count))>.011||numeric(settlement.no_count_fp)+.011<count)return null;
+  return {occurredAt:time(settlement.settled_time).toISOString(),
+    profitCents:Math.round(numeric(settlement.revenue)-cost*100),outcome:'settled'};
+}
+

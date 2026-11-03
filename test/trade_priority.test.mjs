@@ -16,7 +16,8 @@ function ranked(balance){
 }
 test('scarce cash favors the larger net profit; ample cash retains entry priority',()=>{
  assert.deepEqual(ranked(1700),['OVER','LEAD']);
- assert.deepEqual(ranked(1500),['LEAD','OVER']);
+ assert.deepEqual(ranked(1500),['OVER','LEAD']);
+ assert.deepEqual(ranked(700),['LEAD','OVER']);
 });
 test('cash-limited combo quotes favor net profit over leg count',()=>{
  const section=source.slice(source.indexOf('const offerCashLimited='),source.indexOf('for(const {q,terms,plan,fees} of offers)'));
