@@ -97,7 +97,7 @@ export function espnMatches(data,game,milestone){
   if(!Array.isArray(data?.events))return [];
   return data.events.flatMap(e=>{
     const c=e.competitions?.[0],home=c?.competitors?.find(t=>t.homeAway==='home'),away=c?.competitors?.find(t=>t.homeAway==='away');
-    const locationAliases=game.sport==='CFB'||/lacrosse/.test(game.type);
+    const locationAliases=['CFB','NCAAB','NCAAW'].includes(game.sport)||/lacrosse/.test(game.type);
     if(!home||!away||!sameFixture(game,milestone,teamAliases(home.team,false,locationAliases),teamAliases(away.team,false,locationAliases),e.date))return [];
     const status=c.status||e.status;
     const periods=(home.linescores||[]).map((part,i)=>({number:i+1,home:score(part.value),away:score(away.linescores?.[i]?.value)}));
@@ -292,7 +292,7 @@ async function verifyExistingOver(game,milestone,{fetcher=fetch,cache,market,sou
     const foxBase=`https://api.foxsports.com/bifrost/v1/${feed}`;
     const foxQuery=`apikey=${FOX_KEY}&api-version=1.1`;
     let requests;
-    if(source==='ESPN')requests=dates.map(day=>`https://site.api.espn.com/apis/site/v2/sports/${feed}/scoreboard?dates=${day}&limit=500`);
+    if(source==='ESPN')requests=dates.map(day=>`https://site.api.espn.com/apis/site/v2/sports/${feed}/scoreboard?dates=${day}&limit=500${['NCAAB','NCAAW'].includes(game.sport)?'&groups=50':''}`);
     else if(feed==='nfl'||feed==='cfb'){
       // Football score segments are season/week IDs, never calendar dates.
       // Discover the provider's current segment instead of guessing its week.

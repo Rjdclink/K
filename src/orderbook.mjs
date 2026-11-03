@@ -1,3 +1,32 @@
+import {randomUUID} from 'node:crypto';
+
+// Share the empty-book cooldown across broad scans, fast checks and instances.
+// A positive summary bypasses this gate; executable depth is still checked at entry.
+export function createMissingAskProbe(query){
+  let ready;
+  return async (tickers,read)=>{
+    const unique=[...new Set(tickers.filter(Boolean))];if(!unique.length)return new Map();
+    ready??=query(`CREATE TABLE IF NOT EXISTS missing_ask_probes (
+      market_ticker text PRIMARY KEY, token uuid NOT NULL, next_probe_at timestamptz NOT NULL)`)
+      .catch(error=>{ready=null;throw error});
+    await ready;
+    const token=randomUUID();
+    const {rows}=await query(`INSERT INTO missing_ask_probes(market_ticker,token,next_probe_at)
+      SELECT ticker,$2::uuid,clock_timestamp()+interval '10 seconds' FROM unnest($1::text[]) AS ticker ORDER BY ticker
+      ON CONFLICT(market_ticker) DO UPDATE SET token=EXCLUDED.token,next_probe_at=EXCLUDED.next_probe_at
+      WHERE missing_ask_probes.next_probe_at<=clock_timestamp() RETURNING market_ticker`,[unique,token]);
+    const claimed=rows.map(row=>row.market_ticker);if(!claimed.length)return new Map();
+    let quotes;
+    try{return quotes=await read(claimed)}
+    finally{
+      const empty=claimed.filter(ticker=>quotes?.get(ticker)===null);
+      await query(`UPDATE missing_ask_probes SET next_probe_at=clock_timestamp()+
+        CASE WHEN market_ticker=ANY($2::text[]) THEN interval '10 seconds' ELSE interval '0 seconds' END
+        WHERE token=$1::uuid AND market_ticker=ANY($3::text[])`,[token,empty,claimed]);
+    }
+  };
+}
+
 // Kalshi exposes YES offers as resting NO bids at complementary prices.
 export function yesDepthAtAsk(orderbook,ask,size){
   const price=Number(ask),advertised=Number(size);
@@ -36,7 +65,7 @@ export async function bestAsksForTickers(tickers,fetchBatch,fetchOne,onError=()=
       try{found.set(ticker,await fetchOne(ticker))}
       catch(error){onError(ticker,error);found.set(ticker,null)}
     }));
-    return group.map(ticker=>[ticker,bestYesAsk(found.get(ticker)?.orderbook_fp)]);
+    return group.map(ticker=>[ticker,found.get(ticker)?.orderbook_fp?bestYesAsk(found.get(ticker).orderbook_fp):undefined]);
   }));
   return new Map(results.flat());
 }

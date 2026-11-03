@@ -23,7 +23,7 @@ import { manifest, worker } from './pwa.mjs';
 import { vapidIdentity, validateSubscription, deliverPush } from './push.mjs';
 import { favorableSettlement } from './settlements.mjs';
 import { authorized, checkCredentials, sessionCookie, loginPage } from './dashboard_auth.mjs';
-import { discoverCurrentMilestones, scanMilestones, eligibleForMarkets, prioritizeMarketGames, linkedEventTickers, winnerEventTickers, readyOverTickets, gameTimeLabel, storedClockSeconds, mapBatches } from './discovery.mjs';
+import { refreshDiscovery, scanMilestones, eligibleForMarkets, prioritizeMarketGames, linkedEventTickers, winnerEventTickers, readyOverTickets, gameTimeLabel, storedClockSeconds, mapBatches } from './discovery.mjs';
 import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOverDecision, verifySportradarOver, verifyIndependentTableTennisLeadDecision, verifyIndependentTableTennisMatch } from './score_verification.mjs';
 import { verificationStatus } from './verification_status.mjs';
@@ -35,7 +35,7 @@ import { weatherContract } from './weather.mjs';
 import { sellQuote,cashoutQuote } from './sell.mjs';
 import {takerFeeSpec,manualPositionQuote,cashoutEstimate} from './manual_position.mjs';
 import { manualComboQuote } from './combo_manual.mjs';
-import { yesDepthAtAsk, bestYesAsk, bestAsksForTickers } from './orderbook.mjs';
+import { yesDepthAtAsk, bestYesAsk, bestAsksForTickers, createMissingAskProbe } from './orderbook.mjs';
 import { filledOrderGateCount } from './entry_floor.mjs';
 
 const API='https://external-api.kalshi.com/trade-api/v2';
@@ -57,6 +57,7 @@ const ensureManualSales=()=>manualSalesReady??=(async()=>{
   await pool.query('ALTER TABLE manual_sales ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now()');
 })().catch(e=>{manualSalesReady=null;throw e});
 const executionAudit=createExecutionAudit((...args)=>pool.query(...args));
+const probeMissingAsks=createMissingAskProbe((...args)=>pool.query(...args));
 const recordDecision=decision=>executionAudit(decision).catch(e=>console.warn('Execution audit deferred:',e.message));
 const fillComboQueue=createFillComboQueue((fill,options)=>withApiPriority('normal',()=>checkCurrentHeldCombinations(fill,options)),
   {onError:(error,fill)=>console.warn('Post-fill combo check deferred:',fill?.market_ticker||'held positions',error.message)});
@@ -890,6 +891,7 @@ async function withEntryProfitFloor({ticker,count,price,fees,strategy,fraction,b
 async function milestones(){
   await pool.query(`CREATE TABLE IF NOT EXISTS sports_discovery_cache (
     id integer PRIMARY KEY, milestones jsonb NOT NULL, discovered_at timestamptz NOT NULL)`);
+  await pool.query('ALTER TABLE sports_discovery_cache ADD COLUMN IF NOT EXISTS full_discovered_at timestamptz');
   const {rows:[cached]}=await pool.query(`SELECT milestones FROM sports_discovery_cache
     WHERE id=1 AND discovered_at>now()-interval '60 seconds'`);
   if(cached)return cached.milestones;
@@ -906,9 +908,10 @@ async function milestones(){
     const {rows:[current]}=await client.query(`SELECT milestones FROM sports_discovery_cache
       WHERE id=1 AND discovered_at>now()-interval '60 seconds'`);
     if(current){await client.query('COMMIT');return current.milestones}
-    const started=Date.now(),found=await discoverCurrentMilestones(kalshi);
-    await client.query(`INSERT INTO sports_discovery_cache(id,milestones,discovered_at) VALUES(1,$1,clock_timestamp())
-      ON CONFLICT(id) DO UPDATE SET milestones=EXCLUDED.milestones,discovered_at=EXCLUDED.discovered_at`,[JSON.stringify(found)]);
+    const {rows:[previous]}=await client.query('SELECT milestones,full_discovered_at FROM sports_discovery_cache WHERE id=1');
+    const started=Date.now(),catalog=await refreshDiscovery(kalshi,previous),found=catalog.milestones;
+    await client.query(`INSERT INTO sports_discovery_cache(id,milestones,discovered_at,full_discovered_at) VALUES(1,$1,clock_timestamp(),$2)
+      ON CONFLICT(id) DO UPDATE SET milestones=EXCLUDED.milestones,discovered_at=EXCLUDED.discovered_at,full_discovered_at=EXCLUDED.full_discovered_at`,[JSON.stringify(found),catalog.full_discovered_at]);
     await client.query('COMMIT');
     console.info('Sports discovery:',JSON.stringify({milestones:found.length,elapsedMs:Date.now()-started}));
     return found;
@@ -990,16 +993,15 @@ async function reportVerifiedGate(game,ticker,reason,clearAsk=false){
       g.signals @> jsonb_build_array(jsonb_build_object('ticker',$2::text))`,
   [game.id,ticker,reason,game.home,game.away,clearAsk]);
 }
-const askProbe=new Map();
-async function recoverSummaryAsk(market,{fresh=false}={}){
+async function recoverSummaryAsk(market){
   if(hasAsk(market))return market;
-  const cached=fresh?null:askProbe.get(market.ticker);
-  if(cached&&Date.now()-cached.at<10000)return cached.quote?{...market,...cached.quote}:market;
   try{
-    const {orderbook_fp}=await kalshi('/markets/'+encodeURIComponent(market.ticker)+'/orderbook');
-    const best=bestYesAsk(orderbook_fp);
+    const quotes=await probeMissingAsks([market.ticker],async()=>{
+      const {orderbook_fp}=await kalshi('/markets/'+encodeURIComponent(market.ticker)+'/orderbook');
+      return new Map([[market.ticker,orderbook_fp?bestYesAsk(orderbook_fp):undefined]]);
+    });
+    const best=quotes.get(market.ticker);
     const quote=best?{yes_ask_dollars:best.price.toFixed(4),yes_ask_size_fp:best.size.toFixed(2)}:null;
-    askProbe.set(market.ticker,{at:Date.now(),quote});
     return quote?{...market,...quote}:market;
   }catch(e){console.warn('Ask depth probe unavailable:',market.ticker,e.message);return market}
 }
@@ -2314,11 +2316,11 @@ async function scan(cachedMilestones,discoveryCount){
     }
     const missing=[...allCandidates,...upgradeCandidates].filter(c=>!hasAsk(c.market));
     if(missing.length){
-      const quotes=await bestAsksForTickers(missing.map(c=>c.market.ticker),async tickers=>{
+      const quotes=await probeMissingAsks(missing.map(c=>c.market.ticker),tickers=>bestAsksForTickers(tickers,async tickers=>{
         const q=new URLSearchParams();tickers.forEach(ticker=>q.append('tickers',ticker));
         return (await kalshi('/markets/orderbooks?'+q)).orderbooks;
       },async ticker=>({ticker,orderbook_fp:(await kalshi('/markets/'+encodeURIComponent(ticker)+'/orderbook')).orderbook_fp}),
-      (ticker,error)=>console.warn('Ask depth probe unavailable:',ticker,error.message));
+      (ticker,error)=>console.warn('Ask depth probe unavailable:',ticker,error.message)));
       for(const c of missing){const quote=quotes.get(c.market.ticker);
         if(quote)c.market={...c.market,yes_ask_dollars:quote.price.toFixed(4),yes_ask_size_fp:quote.size.toFixed(2)};
       }
@@ -2355,7 +2357,8 @@ async function scan(cachedMilestones,discoveryCount){
         FROM (VALUES ${signalValues}) AS v(id,signals) WHERE g.id=v.id`,batch.flatMap(row=>[row[0],row[14]]));
     }
     // Make the live score and clock visible before slower order preflights.
-    await pool.query(`UPDATE scan_status SET last_scan=$1,scanned=$2,signals=$3,discovered=$4 WHERE id=1`,[scanStarted,scanned,signals,discoveryCount]);
+    await pool.query(`UPDATE scan_status SET last_scan=$1,scanned=$2,signals=$3,
+      discovered=COALESCE((SELECT jsonb_array_length(milestones) FROM sports_discovery_cache WHERE id=1),$4) WHERE id=1`,[scanStarted,scanned,signals,discoveryCount]);
     // Verify held fallbacks and process singles before waiting for maker RFQs.
     const estimate=c=>{const price=Number(c.market.yes_ask_dollars),fees=feeReserve(c.event,c.market),count=hasAsk(c.market)&&!filled.has(signalKey(c))?executableCount(c,singleSpendableCash(balance),bankroll):0;
       return {count,profit:netSettlementProfitCents(count,price,fees),cost:count?estimatedCostCents(count,price,fees):0};};
@@ -2769,7 +2772,7 @@ async function settlementAlerts(since){
   return rows;
 }
 async function handleRequest(req){const url=new URL(req.url);
-  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'espn-lacrosse-20261102',verification:{primary:'ESPN',fallback:'Sportradar',espnRetries:0,sportradarConfigured:Boolean(process.env.SPORTRADAR_API_KEY)}});
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'scanner-repairs-20261102',verification:{primary:'ESPN',fallback:'Sportradar',espnRetries:0,sportradarConfigured:Boolean(process.env.SPORTRADAR_API_KEY)}});
   if(req.method==='GET'&&url.pathname==='/manifest.webmanifest')return response(manifest,'application/manifest+json');
   if(req.method==='GET'&&url.pathname==='/sw.js')return new Response(worker,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','service-worker-allowed':'/','x-content-type-options':'nosniff'}});
   if(req.method==='GET'&&/^\/icon-(192|512)\.png$/.test(url.pathname))return response(Buffer.from(icons[Number(url.pathname.match(/\d+/)[0])],'base64'),'image/png');
