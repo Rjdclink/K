@@ -23,7 +23,7 @@ import { manifest, worker } from './pwa.mjs';
 import { vapidIdentity, validateSubscription, deliverPush } from './push.mjs';
 import { favorableSettlement } from './settlements.mjs';
 import { authorized, checkCredentials, sessionCookie, loginPage } from './dashboard_auth.mjs';
-import { refreshDiscovery, scanMilestones, eligibleForMarkets, prioritizeMarketGames, linkedEventTickers, winnerEventTickers, readyOverTickets, gameTimeLabel, storedClockSeconds, mapBatches } from './discovery.mjs';
+import { refreshDiscovery, scanMilestones, eligibleForMarkets, prioritizeMarketGames, linkedEventTickers, winnerEventTickers, readyOverTickets, prioritizeReadyOverTickets, gameTimeLabel, storedClockSeconds, mapBatches } from './discovery.mjs';
 import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOverDecision, verifySportradarOver, verifyIndependentTableTennisLeadDecision, verifyIndependentTableTennisMatch } from './score_verification.mjs';
 import { verificationStatus, completedOverWait, verificationWindowStatus } from './verification_status.mjs';
@@ -2034,7 +2034,6 @@ async function watchLeadWindows(until){
 // independently confirmed score, live orderbook, cash and the final buy gate.
 async function watchReadyOverTickets(until){
   if(!live())return;
-  let rotation=0;
   await ensureLeadWatch();
   while(Date.now()<until){
     const started=Date.now();
@@ -2046,8 +2045,9 @@ async function watchReadyOverTickets(until){
           AND g.signals @> '[{"strategy":"over"}]'::jsonb
         ORDER BY g.scanned_at DESC LIMIT 60`);
       const allTickets=readyOverTickets(rows,Infinity);
-      const tickets=Array.from({length:Math.min(12,allTickets.length)},(_,i)=>allTickets[(rotation+i)%allTickets.length]);
-      rotation+=tickets.length;
+      const {rows:windows}=allTickets.length?await pool.query(`SELECT market_ticker,last_seen FROM over_verification_windows
+        WHERE market_ticker=ANY($1::text[]) AND last_seen>$2`,[allTickets.map(t=>t.signal.ticker),Date.now()-OVER_MAX_GAP_MS]):{rows:[]};
+      const tickets=prioritizeReadyOverTickets(allTickets,windows);
       for(const {milestone,signal:ticket} of tickets){
         if(Date.now()>=until)break;
         let stage='fresh_score',outcome='skipped',detail=null;
