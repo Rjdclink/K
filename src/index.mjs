@@ -14,7 +14,7 @@ import { page } from './ui.mjs';
 import { historyPage } from './history_ui.mjs';
 import { completedTrade, completedNoTrade, manualSaleFill, reconcileManualSaleFills, settlementLookupCandidates } from './history.mjs';
 import { ensureExitLedger, recordExitFill } from './exit_ledger.mjs';
-import { gameState, overSignal, PLAYER_PROP_MAX_FRACTION, BASKETBALL_COUNT_PROP_MAX_FRACTION, BASKETBALL_WINNER_ENTRY_SECONDS, playerOverSpec, playerPropEarlyWindow, confirmedOver, fallbackScoringUnits, confirmedExternalLead, leadSignal, proBasketballLeadRules, basketballCloseoutEntry, basketballCloseoutMinimum, nbaSingleReadLead, kalshiSingleReadLead, confirmedSoccerWinnerClock, confirmedDrawClock, soccerWinnerWindowOpen, leadWatchReason, additionalLeadSignal, cricketLeadSignal, drawSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback } from './strategy.mjs';
+import { gameState, overSignal, PLAYER_PROP_MAX_FRACTION, BASKETBALL_COUNT_PROP_MAX_FRACTION, BASKETBALL_WINNER_ENTRY_SECONDS, playerOverSpec, playerPropEarlyWindow, confirmedOver, fallbackScoringUnits, confirmedExternalLead, leadSignal, proBasketballLeadRules, basketballCloseoutEntry, basketballCloseoutMinimum, nbaSingleReadLead, kalshiSingleReadLead, confirmedSoccerWinnerClock, confirmedDrawClock, soccerWinnerWindowOpen, leadWatchReason, additionalLeadSignal, cricketLeadSignal, drawSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback, teamScorePosition } from './strategy.mjs';
 import { reviewMiss } from './ai.mjs';
 import { kalshiSignature } from './auth.mjs';
 import { marketShard, shardCash, transferPlan, comboShardBudget, awaitShardCash } from './funding.mjs';
@@ -23,7 +23,7 @@ import { manifest, worker } from './pwa.mjs';
 import { vapidIdentity, validateSubscription, deliverPush } from './push.mjs';
 import { favorableSettlement } from './settlements.mjs';
 import { authorized, checkCredentials, sessionCookie, loginPage } from './dashboard_auth.mjs';
-import { refreshDiscovery, scanMilestones, eligibleForMarkets, prioritizeMarketGames, linkedEventTickers, playerPropEntryClosed, entryEventTickers, winnerEventTickers, readyOverTickets, prioritizeReadyOverTickets, gameTimeLabel, storedClockSeconds, mapBatches } from './discovery.mjs';
+import { refreshDiscovery, scanMilestones, eligibleForMarkets, internationalBasketball, prioritizeMarketGames, linkedEventTickers, playerPropEntryClosed, entryEventTickers, winnerEventTickers, readyOverTickets, prioritizeReadyOverTickets, gameTimeLabel, storedClockSeconds, mapBatches } from './discovery.mjs';
 import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOverDecision, verifySportradarOver, verifyIndependentTableTennisLeadDecision, verifyIndependentTableTennisMatch } from './score_verification.mjs';
 import { verificationStatus, completedOverWait, verificationWindowStatus } from './verification_status.mjs';
@@ -1110,6 +1110,7 @@ async function reconcileFundingTransfers(){
     if(match){await pool.query(`UPDATE funding_transfers SET status='complete',transfer_id=$2,updated_at=now() WHERE id=$1`,[row.id,match.transfer_id]);await invalidateBalance()}}
 }
 async function submit(signal,game,event,market,balance,bankroll,budgetCents=Infinity,availableCents=bankroll,cashCents=balance){
+  if(internationalBasketball(game))return false;
   balance=Math.min(balance,singleSpendableCash(cashCents));
   if(signal.strategy==='over'&&!timedOverEntryValid(game,market))return false;
   if(signal.strategy==='lead'&&(!Number.isFinite(game.observedAt)||Date.now()-game.observedAt>30000))return false;
@@ -1799,6 +1800,8 @@ async function exitComebacks(games,events,positions){
     const combo=Array.isArray(original.combo_legs)&&original.combo_legs.length>=2;
     const leadPosition=original.strategy==='lead'&&!/TOTAL/i.test(position.ticker);
     const leadExit=leadPosition&&!combo;
+    if(combo&&original.combo_legs.some(leg=>leg.strategy==='lead'&&byGame.get(leg.game_id)?.verifiedLive&&
+      teamScorePosition(byGame.get(leg.game_id),markets.get(leg.market_ticker))===0))continue;
     const reversed=leadExit&&state?.verifiedLive&&nested&&comeback(state,nested,strategy);
     try{
       const correctionLegs=[];
@@ -1820,6 +1823,7 @@ async function exitComebacks(games,events,positions){
       }
       const market=(await kalshi('/markets/'+encodeURIComponent(position.ticker))).market;
       if(!market||!['active','open'].includes(market.status))continue;
+      if(leadExit&&state?.verifiedLive&&teamScorePosition(state,market)===0)continue;
       const book=(await kalshi('/markets/'+encodeURIComponent(position.ticker)+'/orderbook')).orderbook_fp;
       const heldCount=Number(position.position_fp??position.position);
       const sale=sellQuote(book,heldCount,market.fractional_trading_enabled===false);
@@ -1960,7 +1964,7 @@ async function watchLeadWindows(until){
         }
         for await(const latest of scorePasses()){
         const possible=watching.map(milestone=>({milestone,state:gameState(milestone,latest.get(milestone.id))}))
-          .filter(g=>leadWatchReason(g.state))
+          .filter(g=>eligibleForMarkets(g.state)&&leadWatchReason(g.state))
           .sort((a,b)=>(a.state.remainingSeconds||Infinity)-(b.state.remainingSeconds||Infinity));
         const eventTickers=[...new Set(possible.flatMap(g=>winnerEventTickers(g.milestone)))];
         const events=eventTickers.length?await marketMap(eventTickers):new Map();
@@ -2080,6 +2084,7 @@ async function watchReadyOverTickets(until){
           const raw=useCached?cached:await liveMilestone(milestone.id);
           if(!raw)continue;
           if(!useCached)raw._observed_at=new Date().toISOString();state=gameState(milestone,raw);
+          if(!eligibleForMarkets(state))continue;
           if(!entryEventTickers(milestone,state).some(t=>ticket.ticker.startsWith(t+'-')))continue;
           const current=(await kalshi('/markets/'+encodeURIComponent(ticket.ticker))).market;
           const eventTicker=current?.event_ticker;
@@ -2466,7 +2471,7 @@ async function scan(cachedMilestones,discoveryCount){
       }
       snapshotCandidates.set(state.id,candidates);
       snapshotRows.set(state.id,snapshotRow({milestone,state},liveMap,scanStarted));
-      snapshotRows.get(state.id).leadWatch=leadWatchReason(state);
+      snapshotRows.get(state.id).leadWatch=eligibleForMarkets(state)?leadWatchReason(state):null;
     }
     const missing=[...allCandidates,...upgradeCandidates].filter(c=>!hasAsk(c.market));
     if(missing.length){

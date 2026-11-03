@@ -16,6 +16,13 @@ test('bounded parallel live batches cover every milestone without losing result 
   assert.deepEqual(results.flat(),ids);
   assert.equal(peak,12);
 });
+test('international basketball is excluded from new market scanning',()=>{
+  const live={verifiedLive:true,scoreKnown:true,type:'basketball_game'};
+  for(const sport of ['China CBA','EuroLeague','International Basketball'])
+    assert.equal(eligibleForMarkets({...live,sport}),false,sport);
+  for(const sport of ['NBA','WNBA','NCAAB','NCAAW'])
+    assert.equal(eligibleForMarkets({...live,sport}),true,sport);
+});
 
 test('fast over queue reuses only executable over tickets awaiting independent verification from the last scan',()=>{
   const rows=[{milestone:{id:'a'},signals:[
@@ -200,7 +207,7 @@ test('unsupported feeds keep the scan active but do not fetch markets',()=>{
   const board=(type)=>gameState({id:type,type,title:'Away at Home'},{details:{status:'live',home_score:9,away_score:3}});
   assert.equal(eligibleForMarkets(board('esports_match')),false);
   assert.equal(eligibleForMarkets(board('cricket_match')),false);
-  assert.equal(eligibleForMarkets(board('basketball_game')),true);
+  assert.equal(eligibleForMarkets(board('basketball_game')),false,'unidentified basketball leagues cannot bypass the international block');
   assert.equal(sportName({type:'esports_soccer_game'}),'eSoccer');
   assert.equal(sportName({type:'football_game',details:{league:'NCAAFB'}}),'CFB');
   assert.equal(sportName({type:'basketball_game',details:{league:'NCAAW'}}),'NCAAW');

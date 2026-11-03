@@ -4,6 +4,12 @@ import {VERIFY_DWELL_MS,COMBO_RFQ_PLANS,COMBO_CASH_RESERVE_CENTS,singleSpendable
 test('singles no longer reserve seven dollars for combos',()=>{
  assert.equal(COMBO_CASH_RESERVE_CENTS,0);assert.equal(singleSpendableCash(1249),1249);assert.equal(singleSpendableCash(700),700);assert.equal(singleSpendableCash(63),63);
 });
+test('held international basketball positions cannot become new combo legs',()=>{
+ const row={market_ticker:'M',event_ticker:'E',fill_count:'2',strategy:'lead'};
+ const market={ticker:'M',event_ticker:'E',status:'active'};
+ assert.equal(heldComboLeg(row,market,{sport_family:'basketball_game',sport:'China CBA'}),null);
+ assert.ok(heldComboLeg(row,market,{sport_family:'basketball_game',sport:'NBA'}));
+});
 test('held verified lead add-ons share the combo ceiling with automated orders',()=>{
  const leads=[{strategy:'lead',kalshiOnly:false},{strategy:'lead',kalshiOnly:true,externallyVerified:true}];
  assert.equal(comboHeldFraction(leads),.35);
