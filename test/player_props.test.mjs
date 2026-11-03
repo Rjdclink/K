@@ -8,21 +8,32 @@ import {playerStatAgreement} from '../src/score_verification.mjs';
 import {remainingVerifiedOverCents} from '../src/upgrades.mjs';
 import {orderSize,estimatedCostCents} from '../src/strategy.mjs';
 
-test('unit-count cushions and add-ons cannot raise a player prop above twenty-five percent',()=>{
+test('basketball count props and add-ons stay within ten percent of bankroll',()=>{
   const now=Date.now(),milestone={id:'g',type:'basketball_game',details:{league:'NBA'}};
   const game=gameState(milestone,{milestone_id:'g',_observed_at:new Date(now).toISOString(),details:{status:'live',home_score:30,away_score:20,period:1,clock:'08:00',player_stats:{p:{rebounds:7}}}});
   const market={ticker:'KXNBAREB-TEST-P',event_ticker:'KXNBAREB-TEST',status:'active',floor_strike:5.5,
     custom_strike:{basketball_player:'p'},yes_sub_title:'Pat: 6+',title:'Pat: 6+ rebounds',yes_ask_dollars:'.95'};
-  assert.equal(overSignal(game,market)?.fraction,.25);
-  assert.equal(cushionedOverSignal(game,market)?.fraction,.25);
+  assert.equal(overSignal(game,market)?.fraction,.10);
+  assert.equal(cushionedOverSignal(game,market)?.fraction,.10);
   game.verificationId='verified';rememberIndependentEntry(game,market,'verified',now);game.overVerification={route:'seller_cushion',contractKey:overContractKey(game,market),sellerAt:now};
   const fraction=verifiedOverFraction({strategy:'over',fraction:.40},game,market);
-  assert.equal(fraction,.25);
-  const position={position_fp:'15',market_exposure_dollars:'14.00',fees_paid_dollars:'.25'};
+  assert.equal(fraction,.10);
+  const position={position_fp:'5',market_exposure_dollars:'4.00',fees_paid_dollars:'.25'};
   const budget=remainingVerifiedOverCents(position,10000,fraction);
   const count=orderSize(10000,.95,1000,fraction,1,10000,budget,2);
-  assert.ok(count>0);assert.ok(estimatedCostCents(count,.95,2)+1425<=2500);
-  assert.equal(remainingVerifiedOverCents({...position,market_exposure_dollars:'25.00'},10000,fraction),0);
+  assert.ok(count>0);assert.ok(estimatedCostCents(count,.95,2)+425<=1000);
+  assert.equal(remainingVerifiedOverCents({...position,market_exposure_dollars:'10.00'},10000,fraction),0);
+});
+
+test('basketball count metrics share the cap; points and combined totals retain twenty-five percent',()=>{
+  const game={type:'basketball_game',sport:'NBA',verifiedLive:true,scoreKnown:true,scoreConsistent:true,
+    home:30,away:20,period:1,remainingSeconds:480,playerStats:{p:{rebounds:7,assists:7,steals:7,blocks:7,three_points_made:7,points:20}}};
+  for(const metric of ['REB','AST','STL','BLK','3PT','PTS','PRA']){
+    const market={ticker:`KXNBA${metric}-TEST-P`,event_ticker:`KXNBA${metric}-TEST`,status:'active',floor_strike:5.5,
+      custom_strike:{basketball_player:'p'},yes_sub_title:'Pat: 6+',title:'Pat: 6+'};
+    assert.equal(overSignal(game,market)?.fraction,['PTS','PRA'].includes(metric)?.25:.10,metric);
+    assert.equal(verifiedOverFraction(overSignal(game,market),game,market),['PTS','PRA'].includes(metric)?.15:.10,metric);
+  }
 });
 test('player props stop with fewer than ten minutes of regulation remaining',()=>{
   const m={id:'g',type:'basketball_game',details:{league:'NBA'}},market={event_ticker:'KXNBAPTS-TEST',status:'active',floor_strike:1.5,custom_strike:{basketball_player:'p'},yes_sub_title:'Pat: 2+',title:'Pat: 2+ points',yes_ask_dollars:'.95'};

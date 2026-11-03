@@ -331,6 +331,10 @@ export function playerPropEarlyWindow(game){
     Number.isFinite(seconds)&&seconds>=0&&seconds<=timing[1]&&(timing[0]-period)*timing[1]+seconds>=600);
 }
 export const PLAYER_PROP_MAX_FRACTION=.25;
+export const BASKETBALL_COUNT_PROP_MAX_FRACTION=.10;
+export const playerPropMaxFraction=(game,market)=>
+  /basketball/.test(game?.type||'')&&['REB','AST','STL','BLK','3PT'].includes(playerOverSpec(game,market)?.metric)?
+    BASKETBALL_COUNT_PROP_MAX_FRACTION:PLAYER_PROP_MAX_FRACTION;
 export const variableValuePlayerMetric=metric=>['PASSYDS','RUSHYDS','RECYDS','PTS','PRA','RBI'].includes(metric);
 export function overCushionUnits(game,market){
   const player=playerOverSpec(game,market);
@@ -394,7 +398,7 @@ export function overSignal(game, market) {
   const robust=gameTotal&&!teamTotal&&!player&&!segment&&Number.isInteger(lastPlay)&&lastPlay>0&&scored-lastPlay>strike;
   const cushionUnits=player?overCushionUnits(game,market):null;
   const cushionedPlayer=Number.isInteger(cushionUnits)&&scored-cushionUnits>strike;
-  return {strategy:'over', reason:`${scored} ${player?.metric||'scored'}${team?` by ${team}`:''}; line ${strike} already passed${segment?`; segment ${segment[1]}`:''}${cushionedPlayer?`; still crossed after removing ${cushionUnits} player-stat unit${cushionUnits===1?'':'s'}`:''}${robust?`; still crossed if the latest ${lastPlay}-unit scoring play is removed`:''}`, fraction:player?PLAYER_PROP_MAX_FRACTION:robust?.40:.15,scored,strike};
+  return {strategy:'over', reason:`${scored} ${player?.metric||'scored'}${team?` by ${team}`:''}; line ${strike} already passed${segment?`; segment ${segment[1]}`:''}${cushionedPlayer?`; still crossed after removing ${cushionUnits} player-stat unit${cushionUnits===1?'':'s'}`:''}${robust?`; still crossed if the latest ${lastPlay}-unit scoring play is removed`:''}`, fraction:player?playerPropMaxFraction(game,market):robust?.40:.15,scored,strike};
 }
 // A Kalshi-only check cannot establish which scoring event was last. Remove
 // the largest ordinary single scoring play for that sport from the displayed
@@ -421,7 +425,7 @@ export function cushionedOverSignal(game,market){
   if(!Number.isInteger(units)||signal.scored-units<=signal.strike)return null;
   const series=String(market.event_ticker||'').split('-')[0];
   const wholeGame=/TOTAL$/.test(series)&&!/TEAMTOTAL$|[1-9](?:Q|P|H|INNING)(?:TEAM)?TOTAL$/.test(series);
-  return {...signal,fraction:player?PLAYER_PROP_MAX_FRACTION:wholeGame?.40:signal.fraction,
+  return {...signal,fraction:player?playerPropMaxFraction(game,market):wholeGame?.40:signal.fraction,
     reason:`${signal.reason}; still over after removing ${units} ${player?'player-stat':'score'} unit${units===1?'':'s'}`};
 }
 // Yardage props have no safe fixed one-play bound and retain the ordinary path.
