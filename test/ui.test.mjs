@@ -13,7 +13,7 @@ test('only the final 20 seconds count down from the seller-backed verification d
   const context=vm.createContext({Date:Clock,document,window:{addEventListener(){}},navigator:{},
     localStorage:{getItem(){return null}},fetch:()=>new Promise(()=>{}),AbortSignal,setInterval(){}});
   vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],context);
-  const signal={ticker:'OVER',title:'Player over',execution:'Waiting for first external check (20s; minimum 20s)',
+  const signal={ticker:'OVER',title:'Player over',ask:'.96',ask_size:'8',execution:'Waiting for first external check (20s; minimum 20s)',
     verification_wait:{dueAt:now+180000,updatedAt:now}};
   const card=vm.runInContext('item',context)({title:'Game',sport:'NBA',home:3,away:2,signals:[signal]});
   const detail=card.children.at(-1);elements.push(detail);
@@ -25,11 +25,15 @@ test('only the final 20 seconds count down from the seller-backed verification d
   now+=1000;vm.runInContext('paintCountdowns()',context);assert.match(detail.textContent,/Verification: 20s remaining/);
   now+=1000;vm.runInContext('paintCountdowns()',context);assert.match(detail.textContent,/Verification: 19s remaining/);
   now+=19000;vm.runInContext('paintCountdowns()',context);assert.match(detail.textContent,/Verification due; awaiting fresh checks/);
-  now+=11000;vm.runInContext('paintCountdowns()',context);assert.match(detail.textContent,/Verification last checked 32s ago; recheck pending/);
+  now+=11000;vm.runInContext('paintCountdowns()',context);assert.match(detail.textContent,/Verification due; awaiting fresh checks/);
   const final={...signal,execution:'First external check passed; waiting for paired checks (210s remaining)',
     verification_wait:{dueAt:now+210000,updatedAt:now}};
   assert.match(vm.runInContext('verificationExecution',context)(final,now+1000),/First external check passed; verification in progress/);
+  final.verification_wait.updatedAt=now+190000;
   assert.match(vm.runInContext('verificationExecution',context)(final,now+190000),/Verification: 20s remaining/);
+  final.verification_wait.updatedAt=now;
+  assert.match(vm.runInContext('verificationExecution',context)(final,now+190000),/Verification: 20s remaining · market recheck pending/);
+  assert.match(vm.runInContext('verificationExecution',context)({...final,ask_size:'0'},now+190000),/No ask liquidity · Verification: 20s remaining/);
 });
 
 test('table-tennis scanner cards remove old countdown wording while retaining the set and score',()=>{
