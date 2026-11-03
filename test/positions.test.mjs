@@ -1,6 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {estimatedSaleProfitCents,halfPotentialProfitExitEligible,oneAndHalfExitEligible,profitTargetAllowed,overCorrectionAffects,correctionExitTargets} from '../src/positions.mjs';
+import {estimatedSaleProfitCents,halfPotentialProfitExitEligible,oneAndHalfExitEligible,profitTargetAllowed,overCorrectionAffects,correctionExitTargets,untrackedOpenPositions} from '../src/positions.mjs';
+
+test('open Kalshi positions without a local fill record remain visible on the correct side',()=>{
+  const rows=untrackedOpenPositions([
+    {ticker:'TRACKED',position_fp:'4.00',market_exposure_dollars:'3.80',fees_paid_dollars:'0.02'},
+    {ticker:'YES',position_fp:'10.18',market_exposure_dollars:'9.9764',fees_paid_dollars:'0.014'},
+    {ticker:'NO',position_fp:'-2.36',market_exposure_dollars:'1.8408',fees_paid_dollars:'0.0284'},
+    {ticker:'UNKNOWN',position_fp:'1.00'},
+    {ticker:'CLOSED',position_fp:'0.00',market_exposure_dollars:'0'}
+  ],new Set(['TRACKED']),[{id:'game',title:'Home at Away',sport:'NBA',signals:[{ticker:'YES',title:'Player: 8+ rebounds'}]}]);
+  assert.deepEqual(rows.map(r=>[r.market_ticker,r.side,r.fill_count]),[
+    ['YES','YES',10.18],['NO','NO',2.36],['UNKNOWN','YES',1]]);
+  assert.equal(rows[0].market_title,'Player: 8+ rebounds');
+  assert.equal(rows[0].allocated_cents,1000);
+  assert.equal(rows[0].potential_profit_cents,18);
+  assert.equal(rows[1].allocated_cents,188);
+  assert.equal(rows[1].potential_profit_cents,48);
+  assert.equal(rows[2].allocated_cents,null);
+  assert.equal(rows[2].potential_profit_cents,null);
+});
 
 test('1.5 times exit compares net proceeds with the full proportional cost',()=>{
   const held={position_fp:'20',market_exposure_dollars:'10.00',fees_paid_dollars:'0.20'};
