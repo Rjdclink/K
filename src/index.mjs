@@ -1964,7 +1964,7 @@ async function watchLeadWindows(until){
         const possible=watching.map(milestone=>({milestone,state:gameState(milestone,latest.get(milestone.id))}))
           .filter(g=>leadWatchReason(g.state))
           .sort((a,b)=>entryWindowDistance(a.state)-entryWindowDistance(b.state)||
-            (a.state.remainingSeconds||Infinity)-(b.state.remainingSeconds||Infinity));
+            (a.state.remainingSeconds||Infinity)-(b.state.remainingSeconds||Infinity)).slice(0,12);
         const eventTickers=[...new Set(possible.flatMap(g=>winnerEventTickers(g.milestone)))];
         const events=eventTickers.length?await marketMap(eventTickers):new Map();
         const scoreboardCache=new Map();
@@ -2407,12 +2407,19 @@ async function scan(cachedMilestones,discoveryCount){
     // Prepare every entry independently of liquidity, cash and entry timing.
     const preparationOrder=new Map(marketGames.map((g,i)=>[g.milestone.id,i]));
     preparationCandidates.sort((a,b)=>preparationOrder.get(a.state.id)-preparationOrder.get(b.state.id));
-    const preparationJob=live()?mapBatches(preparationCandidates,8,async c=>{
+    const preparationBatch=preparationCandidates.slice(0,4);
+    const remainingPreparation=preparationCandidates.slice(4);
+    for(let i=0;i<Math.min(4,remainingPreparation.length);i++)
+      preparationBatch.push(remainingPreparation[(Math.floor(Date.now()/60000)*4+i)%remainingPreparation.length]);
+    const preparationJob=live()?mapBatches(preparationBatch,4,async c=>{
       try{await prepareIndependentEntry({...c.state},c.milestone,{market:c.market,event:c.event,cache:scoreboardCache,allowUnavailable:true})}
       catch(e){console.warn('Entry preparation deferred:',c.market.ticker,e.message)}
     }):Promise.resolve();
     const overPreflights=new Map(),overReady=new Map(),overs=live()?
-      [...opportunities,...upgradeCandidates].filter(c=>c.signal.strategy==='over'):[];
+      [...opportunities,...upgradeCandidates].filter(c=>c.signal.strategy==='over'&&hasAsk(c.market)):[];
+    const noAskOvers=live()?opportunities.filter(c=>c.signal.strategy==='over'&&!hasAsk(c.market)):[];
+    for(let i=0;i<Math.min(8,noAskOvers.length);i++)
+      overs.push(noAskOvers[(Math.floor(Date.now()/60000)*8+i)%noAskOvers.length]);
     for(const c of overs)overReady.set(signalKey(c),new Promise(resolve=>{c.preflightDone=resolve}));
     let cursor=0;
     const workersDone=Promise.all(Array.from({length:Math.min(20,overs.length)},async()=>{
