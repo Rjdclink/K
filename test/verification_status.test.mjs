@@ -19,10 +19,12 @@ test('a completed second external check supersedes only its own pending wait',()
 });
 test('dashboard uses the durable window stage instead of an older wait message',()=>{
   const now=200000,signal={verification_wait:{dueAt:100000,updatedAt:100000}};
-  const window={last_seen:now-3000,first_external_at:150000};
-  const waiting=verificationWindowStatus(signal,window,{stage:'final_wait',remainingMs:37000},now);
+  const window={initial_at:100000,last_seen:now-3000,first_external_at:150000};
+  const waiting=verificationWindowStatus(signal,window,{stage:'final_wait',remainingMs:37000,minimumMs:137000},now);
   assert.match(waiting.execution,/First external check passed.*37s remaining/);
   assert.deepEqual(waiting.wait,{dueAt:now+37000,updatedAt:now-3000});
+  const first=verificationWindowStatus(signal,window,{stage:'first_wait',remainingMs:20000,minimumMs:137000},now);
+  assert.deepEqual(first.wait,{dueAt:now+37000,updatedAt:now-3000});
   assert.match(verificationWindowStatus(signal,window,{stage:'paired'},now).execution,/Second external check due/);
   assert.match(verificationWindowStatus(signal,{...window,last_seen:now-90001},{stage:'final_wait',remainingMs:1},now).execution,/expired/);
 });
