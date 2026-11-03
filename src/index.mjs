@@ -26,7 +26,7 @@ import { authorized, checkCredentials, sessionCookie, loginPage } from './dashbo
 import { refreshDiscovery, scanMilestones, eligibleForMarkets, prioritizeMarketGames, linkedEventTickers, winnerEventTickers, readyOverTickets, gameTimeLabel, storedClockSeconds, mapBatches } from './discovery.mjs';
 import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOverDecision, verifySportradarOver, verifyIndependentTableTennisLeadDecision, verifyIndependentTableTennisMatch } from './score_verification.mjs';
-import { verificationStatus, completedOverWait } from './verification_status.mjs';
+import { verificationStatus, completedOverWait, verificationWindowStatus } from './verification_status.mjs';
 import { COMBO_ATTEMPT_MS, VERIFY_DWELL_MS, COMBO_RFQ_PLANS, singleSpendableCash, comboAllocation, comboLegAllocation, comboHeldFraction, comboAllowedCents, comboMinimumCents, comboMeetsMinimum, comboRfqTargetCents, remainingVerifiedComboCents, availableComboFills, comboPairDiagnostics, comboExclusionKey, exchangeComboExclusion, comboLegs, filledComboWindow, heldComboLeg, quoteForYes, collectionsForEvents, selectedComboMarkets, liveComboMarket, missingQuoteFill, comboFillPages } from './combos.mjs';
 import { selectedTeamName, selectedTeamSide } from './selected_team.mjs';
 import { estimatedSaleProfitCents, halfPotentialProfitExitEligible, oneAndHalfExitEligible, profitTargetAllowed, overCorrectionAffects, correctionExitTargets } from './positions.mjs';
@@ -2041,7 +2041,7 @@ async function watchReadyOverTickets(until){
     try{
       const {rows}=await pool.query(`SELECT w.milestone,w.live_score,g.signals FROM game_snapshots g
         JOIN lead_watch_milestones w ON w.game_id=g.id
-        WHERE g.status='live' AND g.scanned_at>now()-interval '4 minutes'
+        WHERE g.status='live' AND GREATEST(g.score_observed_at,g.scanned_at)>now()-interval '4 minutes'
           AND w.updated_at>now()-interval '4 minutes'
           AND g.signals @> '[{"strategy":"over"}]'::jsonb
         ORDER BY g.scanned_at DESC LIMIT 60`);
@@ -2698,6 +2698,23 @@ async function state(){
         signal.execution=verificationStatus(result);
         signal.verification_checked_at=result.created_at;
       }
+    }
+  }
+  const waitTickers=[...new Set(snap.rows.flatMap(g=>(g.signals||[]).filter(s=>s.verification_wait).map(s=>s.ticker)))];
+  if(waitTickers.length){
+    const {rows}=await pool.query(`SELECT market_ticker,game_id,initial_at,last_seen,first_external_at,first_external_id,contract,initial_state
+      FROM over_verification_windows WHERE market_ticker=ANY($1::text[])`,[waitTickers]);
+    const windows=new Map(rows.map(row=>[row.market_ticker,row]));
+    const now=Date.now();
+    for(const game of snap.rows)for(const signal of game.signals||[]){
+      if(!signal.verification_wait)continue;
+      const row=windows.get(signal.ticker),window=row?.game_id===game.id?row:null;
+      let timing=null;
+      if(window)try{timing=overTiming(window,window.initial_state,window.contract,now)}catch{}
+      const progress=verificationWindowStatus(signal,window,timing,now);
+      signal.execution=progress.execution;
+      if(progress.wait)signal.verification_wait=progress.wait;
+      else delete signal.verification_wait;
     }
   }
   for(const game of snap.rows){
