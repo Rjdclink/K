@@ -8,7 +8,7 @@ export function sameSportsContract(a,b){
 export const OVER_EXTERNAL_DELAY_MS=20000;
 export const OVER_CONFIRM_DELAY_MS=180000;
 export const OVER_SOCCER_CONFIRM_DELAY_MS=150000;
-export const OVER_VARIABLE_CONFIRM_DELAY_MS=240000;
+export const OVER_VARIABLE_CONFIRM_DELAY_MS=210000;
 export const OVER_FRESH_MS=10000;
 export const OVER_MAX_GAP_MS=90000;
 export const overContractKey=sportsContractKey;
