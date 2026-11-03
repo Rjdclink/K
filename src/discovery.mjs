@@ -1,8 +1,7 @@
 // Only fetch event families used by the two entry strategies and comeback exits.
 // The exchange remains authoritative: a guessed ticker is ignored unless an
 // open event and its market are actually returned by Kalshi.
-import { cricketOneInningsFormat, cfbLeadApproaching, basketballLeadProfile, basketballCloseoutMinimum,
-  CFB_EARLY_MINIMUM,CFB_EARLY_WINDOW_SECONDS,CFB_MIDDLE_MINIMUM,CFB_MIDDLE_WINDOW_SECONDS,CFB_LEAD_MINIMUM,CFB_LEAD_WINDOW_SECONDS } from './strategy.mjs';
+import { cricketOneInningsFormat, cfbLeadApproaching, basketballLeadProfile } from './strategy.mjs';
 const supportedType=type=>/basketball|baseball|football|hockey|soccer|tennis|golf|handball|rugby|lacrosse|volleyball|darts/.test(String(type||'').toLowerCase());
 
 export async function mapBatches(items,limit,task){
@@ -99,34 +98,6 @@ export function nearEntryPhase(game){
   // Clock-free sports and unfamiliar formats remain on the frequent pass.
   return true;
 }
-// Scheduling estimate only. The existing strategy functions still authorize
-// entry using the real clock, score, possession and exact market contract.
-export function entryWindowDistance(game){
-  const type=String(game?.type||''),margin=Math.abs(game?.homeUnits-game?.awayUnits);
-  let seconds=game?.remainingSeconds,period,tiers;
-  if(/basketball/.test(type)){
-    const profile=basketballLeadProfile(game);if(!profile)return Infinity;
-    period=profile.period;tiers=[...profile.tiers];
-    const closeout=basketballCloseoutMinimum(game);if(closeout!==null)tiers.push([closeout,105]);
-  }else if(/football/.test(type)){
-    period=4;tiers=game.sport==='CFB'?[[CFB_EARLY_MINIMUM,CFB_EARLY_WINDOW_SECONDS],
-      [CFB_MIDDLE_MINIMUM,CFB_MIDDLE_WINDOW_SECONDS],[CFB_LEAD_MINIMUM,CFB_LEAD_WINDOW_SECONDS]]:[[11,450],[8,120]];
-  }else if(/hockey/.test(type)){period=3;tiers=[[3,405],[2,225]]}
-  else if(/soccer/.test(type)){
-    if(game.soccerExtraTime)return Infinity;
-    period=2;seconds=Number.isFinite(game.matchRemainingSeconds)?game.matchRemainingSeconds:
-      Number.isFinite(game.soccerMinute)&&game.soccerMinute<90?(90-game.soccerMinute)*60:NaN;
-    tiers=margin===0?[[0,50]]:[[3,900],[2,210]];
-  }else if(/rugby|handball|lacrosse/.test(type)){
-    period=/lacrosse/.test(type)?4:2;tiers=/rugby/.test(type)?[[15,180]]:/handball/.test(type)?[[11,1800],[5,180]]:[[4,900]];
-    if(!/rugby/.test(type)&&game.period===period-1&&margin>=(/handball/.test(type)?13:6)&&Number.isFinite(seconds)&&seconds>=0)
-      return Math.max(0,seconds-60);
-  }else return nearEntryPhase(game)?0:Infinity;
-  if(game.period!==period||!Number.isFinite(seconds)||seconds<=0||!Number.isFinite(margin))return Infinity;
-  if(margin===0&&!/soccer/.test(type))return Math.max(0,seconds-45);
-  const limits=tiers.filter(([lead])=>margin>=lead).map(([,limit])=>limit);
-  return limits.length?Math.max(0,seconds-Math.max(...limits)):Infinity;
-}
 export function prioritizeMarketGames(games,{signaledIds=new Set(),heldIds=new Set(),cycle=Math.floor(Date.now()/60000),lowBudget=12}={}){
   const urgent=[],early=[];
   for(const game of games){
@@ -135,16 +106,14 @@ export function prioritizeMarketGames(games,{signaledIds=new Set(),heldIds=new S
   }
   const selected=[];
   for(let i=0;i<Math.min(lowBudget,early.length);i++)selected.push(early[(cycle*lowBudget+i)%early.length]);
-  const priority=g=>signaledIds.has(g.milestone.id)||heldIds.has(g.milestone.id)?0:1;
-  urgent.sort((a,b)=>priority(a)-priority(b)||entryWindowDistance(a.state)-entryWindowDistance(b.state));
   return [...urgent,...selected];
 }
 
 export function readyOverTickets(rows,limit=12){
   return rows.flatMap(({milestone,signals})=>(signals||[])
     .filter(signal=>signal.strategy==='over'&&
-      (/^(?:Awaiting score verification|Waiting for first external check|First external check passed; waiting for paired checks|External score matched|No ask liquidity|No executable ask quantity|Live ask check|Score verified; no live YES ask)/.test(signal.execution||''))&&
-      signal.ticker)
+      (/^(?:Awaiting score verification|Waiting for first external check|First external check passed; waiting for paired checks|External score matched)/.test(signal.execution||''))&&
+      signal.ticker&&Number(signal.ask)>0&&Number(signal.ask)<1&&Number(signal.ask_size)>0)
     .map(signal=>({milestone,signal}))).slice(0,limit);
 }
 

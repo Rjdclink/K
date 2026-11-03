@@ -5,8 +5,7 @@ import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
 import {gameState,overSignal,confirmedOver} from '../src/strategy.mjs';
 import {verifyExternalOverExposure} from '../src/over_exposure.mjs';
-import {readyOverTickets} from '../src/discovery.mjs';
-import {sameSportsContract,overContractKey,freshOverObservation,freshOverState,overTiming,overWaitStatus,overCushion,sameOverReading,timedOverEntryValid,OVER_FRESH_MS,OVER_MAX_GAP_MS} from '../src/over_verification.mjs';
+import {sameSportsContract,overContractKey,freshOverObservation,freshOverState,overTiming,overCushion,sameOverReading,timedOverEntryValid,OVER_FRESH_MS,OVER_MAX_GAP_MS} from '../src/over_verification.mjs';
 const start=Date.parse('2026-11-01T12:00:00Z');
 const milestone={id:'game',type:'basketball_game',title:'Boston at New York',details:{league:'NBA'}};
 const market={ticker:'KXNBATOTAL-TEST-T139',event_ticker:'KXNBATOTAL-TEST',status:'active',floor_strike:139.5,title:'Over 139.5 total points',rules_primary:'Combined total points scored in the full game',strike_type:'greater',yes_ask_dollars:'.95',yes_ask_size_fp:'100'};
@@ -18,32 +17,6 @@ test('fast and scan paths reject a changed contract while allowing a new ask',()
 const liveState=(m,raw)=>({...gameState(m,raw),verifiedLive:true});
 const state=(at,home=70,away=70)=>liveState(milestone,{milestone_id:'game',_observed_at:new Date(at).toISOString(),details:{status:'live',home_score:home,away_score:away,quarter:3,time_remaining:'5:00',last_updated_ts:at/1000}});
 const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
-test('dashboard uses the durable crossing deadline and never equates expiry with a passed check',()=>{
- const window={initial_at:start,last_seen:start+15000,first_external_at:null,initial_state:state(start),contract:market};
- const first=overWaitStatus(window,start+15000);
- assert.equal(first.verification_wait.due_at,start+20000);
- assert.equal(overWaitStatus({...window,last_seen:start+75000},start+75000).verification_wait.due_at,start+20000);
- const checked={...window,last_seen:start+80000,first_external_at:start+76000,first_external_id:'external'};
- assert.equal(overWaitStatus(checked,start+80000).verification_wait.due_at,start+180000);
- assert.equal(overWaitStatus({...checked,last_seen:start+181000},start+181000).execution,'First external check passed; waiting for paired checks');
- assert.equal(overWaitStatus(checked,start+180001).verification_wait,undefined);
- assert.match(overWaitStatus(checked,start+180001).execution,/observation delayed/);
- assert.equal(overWaitStatus(null,start+80000).execution,'Awaiting score verification');
-});
-test('fast over watcher shares fresh game and event reads, but refreshes an expired score',async()=>{
- let now=start,scoreReads=0,eventReads=0,checks=0;
- class Clock extends Date{constructor(...args){super(...(args.length?args:[now]))}static now(){return now}}
- const markets=Array.from({length:4},(_,i)=>({...market,ticker:market.ticker+'-'+i}));
- const rows=[{milestone,signals:markets.map(m=>({ticker:m.ticker,strategy:'over',execution:'Waiting for first external check (5s; minimum 20s)'}))}];
- const ctx=vm.createContext({Date:Clock,console,OVER_FRESH_MS,readyOverTickets,live:()=>true,ensureLeadWatch:async()=>{},
-  pool:{query:async()=>({rows})},liveMilestone:async()=>{scoreReads++;return {milestone_id:'game'}},gameState:()=>({id:'game'}),
-  kalshi:async path=>({market:markets.find(m=>path.endsWith(m.ticker))}),linkedEventTickers:()=>[market.event_ticker],
-  marketMap:async()=>{eventReads++;return new Map([[market.event_ticker,{category:'Sports',markets}]])},overSignal:()=>true,
-  confirmedIndependentOver:async()=>{checks++;now+=checks===2?10000:1;return null},recordDecision:async()=>{}});
- vm.runInContext(source.slice(source.indexOf('async function watchReadyOverTickets('),source.indexOf('async function nws(')),ctx);
- await ctx.watchReadyOverTickets(start+10003);
- assert.equal(checks,4);assert.equal(scoreReads,2);assert.equal(eventReads,1);
-});
 const runtime=source.slice(source.indexOf('let overWindowsReady;'),source.indexOf('async function auditSingleReadNbaLead('));
 function harness({home=70,away=70,seller=true,decisions=[]}={}){
  let time=start,window=null,ids=0,externalCount=0,kalshiCount=0;const events=[],proofs=[];
@@ -68,7 +41,7 @@ function harness({home=70,away=70,seller=true,decisions=[]}={}){
   }},reportVerifiedGate:async(g,t,message)=>events.push(['progress',message]),kalshi:async()=>({market}),recoverSummaryAsk:async m=>m,hasAsk:()=>seller,executableQuote:async m=>seller?m:null,
   auditedOver:async(g,m,opts)=>{assert.equal(opts.cache,undefined);events.push(['external',time]);externalCount++;const decision=decisions.length?decisions.shift():true;if(decision===true){g.verificationId='external-'+externalCount;rememberIndependentEntry(g,opts.market,g.verificationId,time)}return decision},
   liveMilestone:async(id,opts={})=>{kalshiCount++;events.push(['kalshi-dispatch',time]);opts.onDispatch?.();if(opts.onDispatch)assert.equal(events.at(-1)[0],'external');time+=2;return {milestone_id:'game',details:{status:'live',home_score:home,away_score:away,quarter:3,time_remaining:'5:00',last_updated_ts:time/1000}}}
- });context.prepareIndependentEntry=context.auditedOver;vm.runInContext(runtime,context);
+ });vm.runInContext(runtime,context);
  return {events,proofs,context,get window(){return window},get externalCount(){return externalCount},get kalshiCount(){return kalshiCount},run:async(ms)=>{if(ms!==undefined)time=start+ms;return context.confirmedIndependentOver(state(time-1,home,away),milestone,market)},setScore:(h,a)=>{home=h;away=a},setSeller:v=>{seller=v}};
 }
 test('uncushioned over waits 20 seconds for external check one and 3:00 for the simultaneous final pair',async()=>{
@@ -88,10 +61,10 @@ test('a cushioned over needs independent external confirmation before entry',asy
  assert.equal(timedOverEntryValid(verified,market,start+10001),false);
  assert.equal(timedOverEntryValid(verified,{...market,floor_strike:138.5},start+3),false);
 });
-test('preparation starts without a seller; a gap or changed contract starts a new clock',async()=>{
- const noSeller=harness({home:75,seller:false});assert.equal(await noSeller.run(0),null);assert.equal(noSeller.externalCount,1);
- const h=harness({seller:false});await h.run(0);assert.equal(h.window.initial_at,start);assert.equal(h.externalCount,0);
- h.setSeller(true);await h.run(10000);assert.equal(h.window.initial_at,start);
+test('seller is required to start; a gap or changed contract starts a new clock',async()=>{
+ const noSeller=harness({home:75,seller:false});assert.equal(await noSeller.run(0),null);assert.equal(noSeller.externalCount,0);
+ const h=harness({seller:false});await h.run(0);assert.equal(h.window,null);assert.equal(h.externalCount,0);
+ h.setSeller(true);await h.run(10000);assert.equal(h.window.initial_at,start+10000);
  await h.run(100001);assert.equal(h.window.initial_at,start+100001);assert.equal(h.externalCount,0);
  h.window.contract_key='changed';await h.run(100002);assert.equal(h.window.initial_at,start+100002);
 });
@@ -106,23 +79,6 @@ test('missing and contradictory external readings block uncushioned entries',asy
   const h=harness({decisions:[decision]});await h.run(0);assert.equal(await h.run(20000),null);assert.equal(h.externalCount,1);assert.equal(h.proofs.length,0);if(decision===false)assert.equal(h.window,null);
   const final=harness({decisions:[true,decision]});await final.run(0);await final.run(20000);await final.run(80000);await final.run(140000);assert.equal(await final.run(180000),null);assert.equal(final.externalCount,2);assert.equal(final.proofs.length,0);if(decision===false)assert.equal(final.window,null);
  }
-});
-test('no seller does not delay either external check; a later seller uses the existing timer',async()=>{
- const h=harness({seller:false});
- await h.run(0);await h.run(20000);assert.equal(h.externalCount,1);
- await h.run(80000);await h.run(140000);
- assert.equal(await h.run(180000),null);assert.equal(h.externalCount,2);
- h.setSeller(true);const verified=await h.run(181000);
- assert.ok(verified);assert.equal(verified.overVerification.initialAt,start);
- assert.equal(verified.overVerification.firstExternalAt,start+20000);
- assert.equal(timedOverEntryValid(verified,market,start+181003),true);
-});
-test('an external contradiction while waiting for a seller resets the accumulated timer',async()=>{
- const h=harness({seller:false,decisions:[true,false]});
- await h.run(0);await h.run(20000);await h.run(80000);await h.run(140000);
- assert.equal(await h.run(180000),null);assert.equal(h.window,null);
- h.setSeller(true);assert.equal(await h.run(181000),null);
- assert.equal(h.window.initial_at,start+181000);assert.equal(h.window.first_external_id,null);
 });
 test('lost crossing clears the durable clock; increasing scores preserve it',async()=>{
  const h=harness();await h.run(0);await h.run(20000);h.setScore(72,70);await h.run(80000);assert.equal(h.window.initial_at,start);
