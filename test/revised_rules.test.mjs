@@ -52,12 +52,22 @@ test('basketball tiers include the stated lead and exclude the exact time bounda
    assert.match(leadWatchReason(state),/score and clock qualify/);
    assert.equal(nbaSingleReadLead({...state,updatedAt:now-1000},market,now),false);
  }
- assert.equal(signal('basketball_game','NBA',18,4,449,{possession_team_id:'away'}),null);
- assert.equal(signal('basketball_game','WNBA',11,4,359,{possession_team_id:'away'}),null);
+ for(const league of ['NBA','WNBA']){
+   const margin=league==='NBA'?18:11,seconds=league==='NBA'?449:359;
+   for(const possession of ['home','away',null]){
+     const {state,market}=team('basketball_game',league,margin,4,seconds,{possession_team_id:possession});
+     assert.ok(leadSignal(state,market));
+     assert.match(leadWatchReason(state),/score and clock qualify; checking winner market and ask/);
+   }
+ }
  const first=team('basketball_game','NCAAB',16,2,70,{possession_team_id:'home'});
  const second=team('basketball_game','NCAAB',16,2,60,{possession_team_id:'away'});
  first.state.observedAt=now-12000;
  assert.equal(kalshiOnlyLead(first.state,second.state,first.market),true);
+ const nbaFirst=team('basketball_game','NBA',18,4,200,{possession_team_id:'home'});
+ const nbaSecond=team('basketball_game','NBA',18,4,190,{possession_team_id:'away'});
+ nbaFirst.state.observedAt=now-12000;
+ assert.equal(kalshiOnlyLead(nbaFirst.state,nbaSecond.state,nbaFirst.market),true);
 });
 
 test('revised hockey and inning-based baseball winners reject superseded thresholds',()=>{

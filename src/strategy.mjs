@@ -35,8 +35,8 @@ export function soccerOverWaitMs(firstSeen,now=Date.now()){
 export function soccerOverStable(firstSeen,now=Date.now()){return soccerOverWaitMs(firstSeen,now)===0;}
 const N = v => v === null || v === undefined || v === '' ? NaN : Number(v);
 export const BASKETBALL_LEAD_RULES=Object.freeze({
-  NBA:{period:4,possession:true,tiers:[[18,450],[12,390],[9,105]]},
-  WNBA:{period:4,possession:true,tiers:[[11,360],[10,105]]},
+  NBA:{period:4,possession:false,tiers:[[18,450],[12,390],[9,105]]},
+  WNBA:{period:4,possession:false,tiers:[[11,360],[10,105]]},
   college:{period:2,possession:false,tiers:[[16,300],[10,270]]},
   collegeWomen:{period:4,possession:false,tiers:[[16,300],[10,270]]},
   international:{period:4,possession:false,tiers:[[16,300],[10,270]]}
