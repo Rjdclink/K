@@ -16,8 +16,8 @@ export function eligibleForMarkets(game){return game?.verifiedLive && game.score
   (supportedType(game.type)||game.type==='cricket_match'&&(cricketOneInningsFormat(game.competition)||game.cricket?.innings===4)||
     game.type==='esports_match'&&['eSoccer','eBasketball'].includes(game.sport)&&game.esportsPeriodsValid)}
 
-export async function discoverCurrentMilestones(get,now=Date.now()){
-  const cutoff=now+3600000,min=new Date(now-7*86400000).toISOString();
+export async function discoverCurrentMilestones(get,now=Date.now(),lookbackMs=7*86400000){
+  const cutoff=now+3600000,min=new Date(now-lookbackMs).toISOString();
   const finished=m=>{
     const status=String(m.details?.status||'').trim().toLowerCase();
     return /^(?:final|finished|completed|closed|ended|event closed|match complete)(?:\b|$)/.test(status)&&
@@ -41,6 +41,17 @@ export async function discoverCurrentMilestones(get,now=Date.now()){
     return found;
   }));
   return [...new Map(categories.flat().map(m=>[m.id,m])).values()];
+}
+
+export async function refreshDiscovery(get,previous,now=Date.now()){
+  const fullAt=Date.parse(previous?.full_discovered_at||'');
+  const full=!Array.isArray(previous?.milestones)||!Number.isFinite(fullAt)||now-fullAt>=15*60000;
+  const found=await discoverCurrentMilestones(get,now,full?7*86400000:8*3600000);
+  // Keep long-running events and refresh their scores independently. The
+  // periodic full pass also finds late-published or rescheduled older games.
+  const retained=full?[]:previous.milestones.filter(m=>Date.parse(m.start_date||'')<now-8*3600000);
+  return {milestones:[...new Map([...retained,...found].map(m=>[m.id,m])).values()],
+    full_discovered_at:full?new Date(now).toISOString():previous.full_discovered_at};
 }
 
 // Kalshi discovery includes older, still-open milestones that have no live

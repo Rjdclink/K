@@ -1,9 +1,10 @@
 // Server-only fallback. Credentials never appear in a URL or returned evidence.
 const number=v=>v===null||v===undefined||v===''?NaN:Number(v);
 const person=name=>String(name||'').includes(',')?String(name).split(',').reverse().map(s=>s.trim()).join(' '):name;
-const aliases=t=>[t?.name,t?.alias,t?.abbreviation,`${t?.alias||t?.abbreviation||''} ${t?.name||''}`,`${t?.market||''} ${t?.name||''}`,person(t?.name)];
+const aliases=t=>[t?.name,t?.market,t?.alias,t?.abbreviation,`${t?.alias||t?.abbreviation||''} ${t?.name||''}`,`${t?.market||''} ${t?.name||''}`,person(t?.name)];
 const clean=s=>String(person(s)||'').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]/g,'');
 const nextRequest=new Map();
+const collegeHierarchy=new Map();
 export async function sportradarJson(url,{fetcher=fetch,apiKey=process.env.SPORTRADAR_API_KEY,minInterval=1100}={}){
   const product=new URL(url).pathname.split('/')[1],now=Date.now(),slot=Math.max(now,nextRequest.get(product)||0);
   if(slot-now>2200)throw Error('rate limit busy');
@@ -12,7 +13,7 @@ export async function sportradarJson(url,{fetcher=fetch,apiKey=process.env.SPORT
   const response=await fetcher(url,{headers:{accept:'application/json','x-api-key':apiKey},signal:AbortSignal.timeout(4000)});
   if(!response.ok)throw Error(`HTTP ${response.status}`);
   const age=Number(response.headers?.get('age')||0);
-  if(!url.endsWith('/schedule.json')&&age>10)throw Error('stale response');
+  if(!url.endsWith('/schedule.json')&&!url.endsWith('/league/hierarchy.json')&&age>10)throw Error('stale response');
   return response.json();
 }
 export function sportradarProduct(game){
@@ -63,7 +64,7 @@ export function sportradarPlayerValue(reading,player){
   const values=keys.map(k=>number(s[k]??(k==='rebounds'?s.total_rebounds:k==='three_points_made'?s.three_pointers_made:undefined)));
   return values.every(n=>Number.isInteger(n)&&n>=0)?values.reduce((a,b)=>a+b,0):null;
 }
-export async function loadSportradar(game,milestone,{fetcher=fetch,apiKey=process.env.SPORTRADAR_API_KEY,accessLevel=process.env.SPORTRADAR_ACCESS_LEVEL||'trial',matchFixture,unavailableReasons=[],market,minInterval}={}){
+export async function loadSportradar(game,milestone,{fetcher=fetch,apiKey=process.env.SPORTRADAR_API_KEY,accessLevel=process.env.SPORTRADAR_ACCESS_LEVEL||'trial',matchFixture,unavailableReasons=[],market,minInterval,hierarchyCache=collegeHierarchy}={}){
   const product=sportradarProduct(game);
   if(!apiKey||!product){unavailableReasons.push(`Sportradar: ${!apiKey?'key not configured':'no verified adapter for this sport'}`);return null;}
   if(!['trial','production'].includes(accessLevel))return null;
@@ -124,7 +125,21 @@ export async function loadSportradar(game,milestone,{fetcher=fetch,apiKey=proces
       path=`/games/${date.replaceAll('-','/')}/schedule.json`;
     }
     const schedule=await read(path),games=schedule.games||schedule.week?.games||schedule.weeks?.flatMap(w=>w.games||[])||[];
-    const matches=games.filter(g=>matchFixture(aliases(g.home),aliases(g.away),g.scheduled));
+    let identities=new Map(),matches=games.filter(g=>matchFixture(aliases(g.home),aliases(g.away),g.scheduled));
+    if(!matches.length&&['NCAAB','NCAAW','CFB'].includes(game.sport)){
+      let cached=hierarchyCache.get(base);
+      if(!cached||Date.now()-cached.at>6*3600000){
+        cached={at:Date.now(),value:read('/league/hierarchy.json')};hierarchyCache.set(base,cached);
+        cached.value.catch(()=>{if(hierarchyCache.get(base)===cached)hierarchyCache.delete(base)});
+      }
+      const visit=value=>{if(Array.isArray(value))value.forEach(visit);else if(value&&typeof value==='object'){
+        if(value.id&&value.market&&value.name)identities.set(value.id,value);
+        Object.values(value).forEach(visit);
+      }};
+      visit(await cached.value);
+      const named=t=>[...aliases(t),...aliases(identities.get(t?.id))];
+      matches=games.filter(g=>matchFixture(named(g.home),named(g.away),g.scheduled));
+    }
     if(matches.length!==1)return matches.length>1?{ambiguous:true}:null;
     const id=matches[0].id;
     if(!/^[a-f0-9-]{36}$/i.test(id))return null;
@@ -132,6 +147,8 @@ export async function loadSportradar(game,milestone,{fetcher=fetch,apiKey=proces
     const detail=await read(`/games/${id}/${suffix}.json`);
     if(detail.id!==id)return null;
     const reading=domesticReading(detail);
+    if(reading){reading.homeAliases.push(...aliases(identities.get((detail.home||detail.summary?.home)?.id)));
+      reading.awayAliases.push(...aliases(identities.get((detail.away||detail.summary?.away)?.id)));}
     return reading?[reading]:null;
   }catch(error){unavailableReasons.push(`Sportradar: ${error.name==='TimeoutError'?'timeout':/^HTTP \d+$/.test(error.message)?error.message:'request failed'}`);return null;}
 }
