@@ -5,18 +5,22 @@ import {page} from '../src/ui.mjs';
 
 test('verification countdowns advance between dashboard polls and show pending after their deadlines',()=>{
  let now=100000;const timers=[];
- const element=()=>({children:[],style:{},classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){},append(...items){this.children.push(...items)}});
+ // Real HTML elements expose a read-only namespace prefix, normally null.
+ const element=()=>Object.defineProperty({children:[],style:{},classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){},append(...items){this.children.push(...items)}},'prefix',{get:()=>null});
  const document={getElementById:element,querySelectorAll:selector=>selector==='.verification-timer'?timers:[],createElement:element};
  class Clock extends Date{static now(){return now}}
  const ctx=vm.createContext({Date:Clock,document,window:{addEventListener(){}},navigator:{},localStorage:{getItem(){return null}},fetch:()=>new Promise(()=>{}),AbortSignal,setInterval(){}});
  vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],ctx);
  const render=vm.runInContext('item',ctx),prop=vm.runInContext('propItem',ctx),paint=vm.runInContext('paintCountdowns',ctx),format=vm.runInContext('verificationText',ctx);
- const first={ticker:'PROP',title:'Player: 1+ steals',strategy:'over',execution:'Last market result: Waiting for first external check',verification_wait:{stage:'first',due_at:105000}};
+ const first={ticker:'PROP',title:'Player: 1+ steals',strategy:'over',ask:'.99',ask_size:'10',execution:'Last market result: Waiting for first external check',verification_wait:{stage:'first',due_at:105000}};
  const game={title:'Game',signals:[first]};
  timers.push(render(game).children.at(-1),prop(game,first).children.at(-1));
+ assert.ok(timers[0].textContent.startsWith('Player: 1+ steals · 99¢ ask · Last market result:'));
+ assert.ok(timers[1].textContent.startsWith('99.00¢ ask · 10 available · Last market result:'));
  assert.ok(timers.every(el=>el.textContent.includes('(5s; minimum 20s)')));
  now+=3000;paint();assert.ok(timers.every(el=>el.textContent.includes('(2s; minimum 20s)')));
  now+=90000;paint();assert.ok(timers.every(el=>el.textContent.includes('First external check pending; minimum wait elapsed')));
+ assert.ok(timers.every(el=>!el.textContent.includes('null')&&el.textContent.includes('99')));
  assert.ok(timers.every(el=>!el.textContent.includes('passed')));
  const paired={execution:'First external check passed; waiting for paired checks',verification_wait:{stage:'paired',due_at:now+1000}};
  assert.match(format(paired),/1s remaining/);now+=2000;
