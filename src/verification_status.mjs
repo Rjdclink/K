@@ -10,3 +10,8 @@ export function verificationStatus(record){
     return 'External score or match state disagrees with Kalshi';
   return 'Score verification did not pass';
 }
+export function completedOverWait(signal,record){
+  const updated=Number(signal?.verification_wait?.updatedAt),checked=Date.parse(record?.created_at||'');
+  return Boolean(signal?.verification_wait&&record?.passed&&record.mode==='independent_timed_over'&&
+    Number.isFinite(updated)&&Number.isFinite(checked)&&checked>updated);
+}
