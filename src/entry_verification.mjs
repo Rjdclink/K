@@ -17,7 +17,8 @@ export function independentEntryValid(game,market,now=Date.now()){
 export function assertExternalPurchase(path,method,body,entries,now=Date.now()){
   const route=path.split('?')[0];
   const single=method==='POST'&&/^\/portfolio\/(?:events\/)?orders(?:\/batched)?$/.test(route)&&
-    (body?.side==='bid'||body?.action==='buy'||body?.orders?.some(order=>order.side==='bid'||order.action==='buy'));
+    (body?.side==='bid'||body?.side==='ask'&&body.reduce_only!==true||body?.action==='buy'||
+      body?.orders?.some(order=>order.side==='bid'||order.side==='ask'&&order.reduce_only!==true||order.action==='buy'));
   const rfq=['PUT','POST'].includes(method)&&/^\/communications\/.*\/(?:accept|confirm)$/.test(route);
   if(!single&&!rfq)return;
   if(!Array.isArray(entries)||!entries.length||entries.some(entry=>!independentEntryValid(entry.game,entry.market,now))||

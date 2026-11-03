@@ -30,9 +30,11 @@ test('confirmed immediate fills notify after ledger persistence; zero fills neve
     if(filled){assert.equal(h.events[0][0],'ledger');assert.deepEqual(h.events.at(-1),['notify','fill-id','NEW'])}
   }
 });
-test('new and retried singles preserve the combo cash floor',async()=>{
- for(const recovery of [false,true])assert.equal(await harness({recovery,retry:recovery,balance:1600}).run(),false);
- assert.equal(await harness({balance:1700}).run(),true);
+test('new and retried singles can use cash previously held for combos',async()=>{
+ for(const recovery of [false,true]){
+   assert.equal(await harness({recovery,retry:recovery,balance:949}).run(),false);
+   assert.equal(await harness({recovery,retry:recovery,balance:1600}).run(),true);
+ }
 });
 test('both recovered existing fills and confirmed retry fills notify the combo checker',async()=>{
   for(const retry of [false,true]){
