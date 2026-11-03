@@ -14,10 +14,12 @@ const market=line=>({ticker:`KXNFLRECYDS-GAME-${line}`,event_ticker:'KXNFLRECYDS
   result:'not_determined',floor_strike:line-.5,custom_strike:{football_player:id},
   yes_sub_title:`Chig Okonkwo: ${line}+`,rules_primary:`Resolves Yes if Chig Okonkwo records ${line}+ receiving yards in the game.`});
 
-test('only zero-yard Q3 binary 100+ yardage thresholds qualify',()=>{
+test('only zero-yard third-period-or-later binary 100+ yardage thresholds qualify',()=>{
   assert.equal(thirdQuarterYardageNo(game,market(100))?.line,99.5);
   assert.equal(thirdQuarterYardageNo(game,market(90)),null);
-  assert.equal(thirdQuarterYardageNo({...game,period:4},market(100)),null);
+  assert.equal(thirdQuarterYardageNo({...game,period:4},market(100))?.line,99.5);
+  assert.equal(thirdQuarterYardageNo({...game,period:5},market(100))?.line,99.5);
+  assert.equal(thirdQuarterYardageNo({...game,period:2},market(100)),null);
   assert.equal(thirdQuarterYardageNo({...game,playerStats:{[id]:{receiving_yards:1}}},market(100)),null);
   assert.equal(thirdQuarterYardageNo(game,{...market(100),event_ticker:'KXNFLRECYDSPROT-GAME'}),null);
   assert.equal(thirdQuarterYardageNo(game,{...market(100),rules_primary:'Each yard increases payout as a ladder'}),null);
@@ -44,6 +46,19 @@ test('external zero requires the exact Q3 fixture and at least one target or car
   const run=(box,source=board)=>verifyIndependentYardageZero(game,fixture.milestone,
     {name:'Chig Okonkwo',metric:'RECYDS',value:0,line:99.5},{fetcher:async url=>({ok:true,json:async()=>url.includes('summary?')?box:source})});
   assert.equal(await run(summary(1)),true);
+  const fourth=structuredClone(board);
+  for(const event of fourth.events){event.status.period=4;
+    for(const c of event.competitions)c.status.period=4;}
+  assert.equal(await verifyIndependentYardageZero({...game,period:4},fixture.milestone,
+    {name:'Chig Okonkwo',metric:'RECYDS'},
+    {fetcher:async url=>({ok:true,json:async()=>url.includes('summary?')?summary(1):fourth})}),true);
+  const overtime=structuredClone(fourth);
+  for(const event of overtime.events){event.status.period=5;
+    for(const c of event.competitions)c.status.period=5;}
+  assert.equal(await verifyIndependentYardageZero({...game,period:5},fixture.milestone,
+    {name:'Chig Okonkwo',metric:'RECYDS'},
+    {fetcher:async url=>({ok:true,json:async()=>url.includes('summary?')?summary(1):overtime})}),true);
+  assert.equal(await run(summary(1),fourth),false);
   assert.equal(await run(summary(0)),false);
   assert.equal(await run({boxscore:{players:[]}}),false);
   assert.equal(await run(summary(1),{events:[]}),false);

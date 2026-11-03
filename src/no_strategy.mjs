@@ -4,7 +4,7 @@ import {playerOverSpec} from './strategy.mjs';
 // have different payouts, and short count props can turn on one play.
 export function thirdQuarterYardageNo(game,market){
   if(!game?.verifiedLive||game.feedId!==game.id||!game.periodConsistent||
-    game.period!==3||!Number.isFinite(game.observedAt)||Date.now()-game.observedAt>30000||
+    !Number.isInteger(game.period)||game.period<3||!Number.isFinite(game.observedAt)||Date.now()-game.observedAt>30000||
     !['NFL','CFB'].includes(game.sport)||!['active','open'].includes(market?.status)||
     market?.result&&!['','not_determined'].includes(String(market.result))||
     /prot|ladder|escalator|slingshot/i.test(String(market?.event_ticker||'')+' '+String(market?.rules_primary||'')))return null;
