@@ -219,10 +219,10 @@ test('ESPN player statistic takes precedence over a delayed FOX box score',async
   assert.equal(await verifyIndependentOver(state,milestone,{market,fetcher:async url=>url.includes('/event/106594/data')?{ok:false,status:503}:{ok:true,json:async()=>url.includes('/summary?')?summary:url.includes('espn.com')?board:foxBoard}}),true);
 });
 test('FOX is queried only when ESPN is unavailable, never as a veto of confirmed ESPN stats',async()=>{
-  const state=gameState(m,{details:{status:'live',home_score:85,away_score:96,quarter:4,clock:'09:47',player_stats:{p:{steals:2}}}});
+  const state=gameState(m,{details:{status:'live',home_score:85,away_score:96,quarter:4,clock:'09:47',player_stats:{p:{steals:3}}}});
   const market={event_ticker:'KXNBASTL-DATE',status:'active',yes_sub_title:'Ty Jerome: 2+ steals',custom_strike:{basketball_player:'p'},floor_strike:1.5};
   const board=espn(85,96,{id:'espn-game',status:{type:{state:'in'},period:4,displayClock:'09:47'}});
-  const summary={boxscore:{players:[{statistics:[{names:['STL'],athletes:[{athlete:{displayName:'Ty Jerome'},stats:['2']}]}]}]}};
+  const summary={boxscore:{players:[{statistics:[{names:['STL'],athletes:[{athlete:{displayName:'Ty Jerome'},stats:['3']}]}]}]}};
   const delayed=fox(83,91,{statusLine:'END 3RD'});
   const urls=[];
   const read=foxBoard=>async url=>{

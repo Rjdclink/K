@@ -29,11 +29,11 @@ test('period evidence must independently clear its own line; whole-game scores c
   assert.equal(scoreAgreement(g,[[{...reading,periods:[{number:1,home:23,away:20}]}]],market),false);
   assert.equal(scoreAgreement(g,[[{...reading,periods:[]}]],market),false);
 });
-test('named player equality, higher readings, and lower-but-still-crossed readings qualify without weakening player identity',()=>{
+test('named player readings require an external one-stat cushion and exact identity',()=>{
   const summary=value=>({boxscore:{players:[{statistics:[{names:['REB'],athletes:[{athlete:{displayName:'Exact Player'},stats:[String(value)]}]}]}]}});
   const player={name:'Exact Player',metric:'REB',value:8,line:5.5};
-  for(const n of [6,8,9])assert.equal(playerStatAgreement(summary(n),player),true);
-  assert.equal(playerStatAgreement(summary(5),player),false);
+  for(const n of [7,8,9])assert.equal(playerStatAgreement(summary(n),player),true);
+  for(const n of [5,6])assert.equal(playerStatAgreement(summary(n),player),false);
   assert.equal(playerStatAgreement(summary(9),{...player,name:'Wrong Player'}),null);
 });
 test('draw evidence remains a tie even when both scores have advanced',()=>{

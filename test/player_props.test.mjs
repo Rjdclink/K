@@ -15,7 +15,7 @@ test('basketball count props and add-ons stay within ten percent of bankroll',()
     custom_strike:{basketball_player:'p'},yes_sub_title:'Pat: 6+',title:'Pat: 6+ rebounds',yes_ask_dollars:'.95'};
   assert.equal(overSignal(game,market)?.fraction,.10);
   assert.equal(cushionedOverSignal(game,market)?.fraction,.10);
-  game.verificationId='verified';rememberIndependentEntry(game,market,'verified',now);game.overVerification={route:'seller_cushion',contractKey:overContractKey(game,market),sellerAt:now};
+  game.verificationId='verified';rememberIndependentEntry(game,market,'verified',now);game.overVerification={route:'cushion',contractKey:overContractKey(game,market),initialAt:now-110000,firstExternalAt:now-90000,firstExternalId:'first',pairedAt:now,pairedExternalId:'second'};
   const fraction=verifiedOverFraction({strategy:'over',fraction:.40},game,market);
   assert.equal(fraction,.10);
   const position={position_fp:'5',market_exposure_dollars:'4.00',fees_paid_dollars:'.25'};
@@ -25,19 +25,19 @@ test('basketball count props and add-ons stay within ten percent of bankroll',()
   assert.equal(remainingVerifiedOverCents({...position,market_exposure_dollars:'10.00'},10000,fraction),0);
 });
 
-test('basketball count metrics share the cap; points and combined totals retain twenty-five percent',()=>{
+test('basketball count metrics share the cap; variable points and combined totals have no YES signal',()=>{
   const game={type:'basketball_game',sport:'NBA',verifiedLive:true,scoreKnown:true,scoreConsistent:true,
     home:30,away:20,period:1,remainingSeconds:480,playerStats:{p:{rebounds:7,assists:7,steals:7,blocks:7,three_points_made:7,points:20}}};
   for(const metric of ['REB','AST','STL','BLK','3PT','PTS','PRA']){
     const market={ticker:`KXNBA${metric}-TEST-P`,event_ticker:`KXNBA${metric}-TEST`,status:'active',floor_strike:5.5,
       custom_strike:{basketball_player:'p'},yes_sub_title:'Pat: 6+',title:'Pat: 6+'};
-    assert.equal(overSignal(game,market)?.fraction,['PTS','PRA'].includes(metric)?.25:.10,metric);
-    assert.equal(verifiedOverFraction(overSignal(game,market),game,market),['PTS','PRA'].includes(metric)?.15:.10,metric);
+    assert.equal(overSignal(game,market)?.fraction,['PTS','PRA'].includes(metric)?undefined:.10,metric);
+    if(!['PTS','PRA'].includes(metric))assert.equal(verifiedOverFraction(overSignal(game,market),game,market),.10,metric);
   }
 });
 test('player props stop with fewer than ten minutes of regulation remaining',()=>{
-  const m={id:'g',type:'basketball_game',details:{league:'NBA'}},market={event_ticker:'KXNBAPTS-TEST',status:'active',floor_strike:1.5,custom_strike:{basketball_player:'p'},yes_sub_title:'Pat: 2+',title:'Pat: 2+ points',yes_ask_dollars:'.95'};
-  const state=(period,clock)=>gameState(m,{details:{status:'live',home_score:50,away_score:40,period,clock,player_stats:{p:{points:3}}}});
+  const m={id:'g',type:'basketball_game',details:{league:'NBA'}},market={event_ticker:'KXNBAREB-TEST',status:'active',floor_strike:1.5,custom_strike:{basketball_player:'p'},yes_sub_title:'Pat: 2+',title:'Pat: 2+ rebounds',yes_ask_dollars:'.95'};
+  const state=(period,clock)=>gameState(m,{details:{status:'live',home_score:50,away_score:40,period,clock,player_stats:{p:{rebounds:3}}}});
   assert.equal(playerPropEarlyWindow(state(4,'10:00')),true);assert.equal(overSignal(state(4,'10:00'),market)?.strategy,'over');
   assert.equal(playerPropEarlyWindow(state(4,'09:59')),false);assert.equal(overSignal(state(4,'09:59'),market),null);
   assert.equal(playerPropEarlyWindow(state(3,'00:01')),true);
@@ -52,26 +52,24 @@ test('scoreless hockey can still have an early crossed shots prop',()=>{
   assert.equal(overSignal(game,market)?.strategy,'over');
 });
 
-test('variable-value points require timed checks and retain a twenty-five percent cap',()=>{
+test('variable-value points cannot enter YES even with a large margin or elapsed checks',()=>{
   const game=gameState({id:'g',type:'basketball_game',details:{league:'NBA'}},{details:{status:'live',home_score:3,away_score:0,period:1,clock:'08:00',player_stats:{p:{points:3}}}});
   const market={event_ticker:'KXNBAPTS-TEST',status:'active',floor_strike:1.5,custom_strike:{basketball_player:'p'},yes_sub_title:'Pat: 2+',title:'Pat: 2+ points',yes_ask_dollars:'.95'};
-  assert.equal(overSignal(game,market)?.fraction,.25);assert.equal(overCushion(game,market),null);assert.equal(cushionedOverSignal(game,market),null);
+  assert.equal(overSignal(game,market),null);assert.equal(overCushion(game,market),null);assert.equal(cushionedOverSignal(game,market),null);
   const comfortable={...game,playerStats:{p:{points:6}}};
-  assert.equal(overSignal(comfortable,market)?.fraction,.25);assert.equal(overCushion(comfortable,market),null);assert.equal(cushionedOverSignal(comfortable,market),null);
+  assert.equal(overSignal(comfortable,market),null);assert.equal(overCushion(comfortable,market),null);assert.equal(cushionedOverSignal(comfortable,market),null);
   const now=Date.now(),window={initial_at:now-180000,first_external_at:now-160000,first_external_id:'first'};
-  assert.equal(overTiming(window,comfortable,market,now).stage,'final_wait');
-  assert.equal(overTiming({...window,initial_at:now-209999,first_external_at:now-189999},comfortable,market,now).stage,'final_wait');
-  assert.equal(overTiming({...window,initial_at:now-210000,first_external_at:now-190000},comfortable,market,now).stage,'paired');
+  assert.equal(overTiming(window,comfortable,market,now).stage,'invalid');
 });
-test('receiving yards wait three minutes thirty seconds and cap at twenty-five percent',()=>{
+test('receiving yards remain available to NO parsing but cannot authorize YES',()=>{
   const now=Date.now(),game=gameState({id:'g',type:'football_game',details:{league:'NFL'}},{milestone_id:'g',_observed_at:new Date(now).toISOString(),details:{status:'live',home_score:14,away_score:3,period:3,clock:'01:13',player_stats:{p:{receiving_yards:21}}}});
   const market={ticker:'KXNFLRECYDS-TEST-P',event_ticker:'KXNFLRECYDS-TEST',status:'active',floor_strike:14.5,custom_strike:{football_player:'p'},yes_sub_title:'Ryan Flournoy: 15+',title:'Ryan Flournoy: 15+ receiving yards',yes_ask_dollars:'.99'};
-  assert.equal(overSignal(game,market)?.fraction,.25);assert.equal(overCushion(game,market),null);
+  assert.equal(playerOverSpec(game,market)?.metric,'RECYDS');assert.equal(overSignal(game,market),null);assert.equal(overCushion(game,market),null);
   const window={initial_at:now-180000,first_external_at:now-160000,first_external_id:'first'};
-  assert.equal(overTiming(window,game,market,now).stage,'final_wait');assert.equal(overTiming({...window,initial_at:now-210000,first_external_at:now-190000},game,market,now).stage,'paired');
+  assert.equal(overTiming(window,game,market,now).stage,'invalid');
   game.verificationId='final';rememberIndependentEntry(game,market,'final',now);game.overVerification={route:'elapsed',contractKey:overContractKey(game,market),initialAt:now-181000,firstExternalAt:now-160000,firstExternalId:'first',pairedAt:now-100,pairedExternalId:'second'};
   assert.equal(timedOverEntryValid(game,market),false);game.overVerification.initialAt=now-211000;game.overVerification.firstExternalAt=now-190000;
-  assert.equal(timedOverEntryValid(game,market),true);assert.equal(verifiedOverFraction(overSignal(game,market),game,market),.25);
+  assert.equal(timedOverEntryValid(game,market),false);
   game.overVerification={route:'seller_cushion',contractKey:overContractKey(game,market),sellerAt:now};
   assert.equal(timedOverEntryValid(game,market),false);
 });
@@ -88,5 +86,5 @@ test('non-basketball player overs use an exact linked player statistic and exter
   assert.equal(overSignal({...game,soccerMinute:80.1},market),null);
   assert.equal(overSignal({...game,playerStats:null},market),null);
   assert.equal(playerStatAgreement({boxscore:{players:[{statistics:[{name:'scoring',names:['G'],athletes:[{athlete:{displayName:'John Doe'},stats:['3']}]}]}]}},player),true);
-  assert.equal(playerStatAgreement({boxscore:{players:[{statistics:[{name:'scoring',names:['G'],athletes:[{athlete:{displayName:'John Doe'},stats:['2']}]}]}]}},player),true);
+  assert.equal(playerStatAgreement({boxscore:{players:[{statistics:[{name:'scoring',names:['G'],athletes:[{athlete:{displayName:'John Doe'},stats:['2']}]}]}]}},player),false);
 });

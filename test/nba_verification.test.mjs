@@ -8,8 +8,8 @@ const market={event_ticker:'KXNBAREB-X',yes_sub_title:'Matas Buzelis: 6+',floor_
 const fixture={gameId:id,gameTimeUTC:start,gameStatus:2,homeTeam:{teamCity:'Chicago',teamName:'Bulls',teamTricode:'CHI',score:127,periods:[{period:1,score:33}],players:[{name:'Matas Buzelis',statistics:{reboundsTotal:6}}]},awayTeam:{teamCity:'New York',teamName:'Knicks',teamTricode:'NYK',score:133,periods:[{period:1,score:34}],players:[]}};
 test('NBA exact fixture and player stats distinguish agreement, disagreement and unavailable',()=>{
  assert.equal(nbaFixtures({scoreboard:{games:[fixture]}},game,milestone).length,1);
- assert.equal(nbaAgreement({game:fixture},game,milestone,market,id),true);
- assert.equal(nbaAgreement({game:fixture},{...game,playerStats:{p:{rebounds:8}}},milestone,market,id),true,'the external named statistic remains over the line');
+ assert.equal(nbaAgreement({game:fixture},game,milestone,market,id),false,'one removable rebound would lose the line');
+ assert.equal(nbaAgreement({game:fixture},{...game,playerStats:{p:{rebounds:8}}},milestone,market,id),false,'the external statistic must have a cushion too');
  const higher=structuredClone(fixture);higher.homeTeam.players[0].statistics.reboundsTotal=7;
  assert.equal(nbaAgreement({game:higher},game,milestone,market,id),true);
  const corrected=structuredClone(fixture);corrected.homeTeam.players[0].statistics.reboundsTotal=5;
@@ -27,18 +27,18 @@ test('NBA game and period overs compare their respective scores',()=>{
 });
 test('NBA official data governs when available and ESPN is used when NBA is unavailable',async()=>{
  const espn={events:[{id:'espn',date:start,competitions:[{status:{type:{state:'in'}},competitors:[{homeAway:'home',score:127,team:{abbreviation:'CHI',name:'Bulls'}},{homeAway:'away',score:133,team:{abbreviation:'NYK',name:'Knicks'}}]}]}]};
- const summary={boxscore:{players:[{statistics:[{names:['REB'],athletes:[{athlete:{displayName:'Matas Buzelis'},stats:['6']}]}]}]}};
+ const summary={boxscore:{players:[{statistics:[{names:['REB'],athletes:[{athlete:{displayName:'Matas Buzelis'},stats:['7']}]}]}]}};
  const run=async(value,espnOk=true)=>verifyIndependentOver(game,milestone,{market,fetcher:async url=>{
   if(url.includes('cdn.nba.com')&&value===null)throw Error('403');
   const official=structuredClone(fixture);official.homeTeam.players[0].statistics.reboundsTotal=value;
   const data=url.includes('todaysScoreboard')?{scoreboard:{games:[fixture]}}:url.includes('boxscore_')?{game:official}:url.includes('/summary?')?summary:url.includes('espn.com')?(espnOk?espn:{}):{};
   return {ok:true,json:async()=>data};
  }});
- assert.equal(await run(6),true);
+ assert.equal(await run(6),false);
  assert.equal(await run(7),true);
  assert.equal(await run(5),false);
  assert.equal(await run(null),true);
- assert.equal(await run(6,false),true);
+ assert.equal(await run(6,false),false);
  assert.equal(await run(null,false),false);
 });
 test('CBS supplies a player statistic only when NBA and preferred scoreboards are unavailable',async()=>{
@@ -48,7 +48,7 @@ test('CBS supplies a player statistic only when NBA and preferred scoreboards ar
    if(url.includes('cdn.nba.com')||url.includes('espn.com')||url.includes('foxsports.com')||url.includes('yahoo.com'))throw Error('unavailable');
    return {ok:true,text:async()=>html.replace('<td>6</td>',`<td>${value}</td>`)};
  }});
- assert.equal(await run(6),true);
+ assert.equal(await run(6),false);
  assert.equal(await run(7),true);
  assert.equal(await run(5),false);
 });
@@ -56,9 +56,9 @@ test('NBA fallback tries CBS, then Yahoo, then FOX without querying lower-ranked
  const cbsUrl='https://www.cbssports.com/nba/gametracker/boxscore/NBA_20261028_NY@CHI/';
  const cbs=cbsUrl+'<table class="stats-table"><tr><td>PLAYER</td><td>REB</td></tr><tr><td><a href="/nba/players/123/matas-buzelis/">Matas Buzelis</a></td><td>6</td></tr></table>';
  const yahooUrl='https://sports.yahoo.com/nba/new-york-knicks-chicago-bulls-2026102804/';
- const yahooGame={gameId:'nba.g.2026102804',startTime:start,playerStats:{homeTables:[{tableStats:[{player:{displayName:'Matas Buzelis',playerGameStats0:[{stats:[{statId:'TOTAL_REBOUNDS',value:'6'}]}]}}]}]}};
+ const yahooGame={gameId:'nba.g.2026102804',startTime:start,playerStats:{homeTables:[{tableStats:[{player:{displayName:'Matas Buzelis',playerGameStats0:[{stats:[{statId:'TOTAL_REBOUNDS',value:'7'}]}]}}]}]}};
  const yahoo='self.__next_f.push([1,'+JSON.stringify('aa:'+JSON.stringify(yahooGame)+'\n')+'])';
- const run=async(cbsAvailable,yahooAvailable,cbsValue=6)=>{
+ const run=async(cbsAvailable,yahooAvailable,cbsValue=7)=>{
   const urls=[];
   const result=await verifyIndependentOver(game,milestone,{market,fetcher:async url=>{
    urls.push(url);

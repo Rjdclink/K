@@ -29,14 +29,14 @@ test('football uses inclusive score/time cutoffs and ignores possession',()=>{
 });
 
 test('basketball tiers include the stated lead and exclude the exact time boundary',()=>{
- const categories=[['NBA',4,[[18,450],[12,390],[9,105]]],['WNBA',4,[[11,360],[10,105]]],
+ const categories=[['NBA',4,[[18,450],[12,390]]],['WNBA',4,[[11,360],[7,105]]],
    ['NCAAB',2,[[16,300],[10,270]]],['NCAAW',4,[[16,300],[10,270]]],
    ...['China CBA','Italy Serie A','LNB Elite','Japan B League'].map(s=>[s,4,[[16,300],[10,270]]])];
  for(const [league,period,tiers] of categories)for(const [points,seconds] of tiers){
    const entrySeconds=Math.min(seconds,270);
    assert.ok(signal('basketball_game',league,points,period,entrySeconds-1),`${league} +${points} under ${entrySeconds}`);
    assert.ok(signal('basketball_game',league,points+1,period,entrySeconds-1));
-   if(seconds<=270)assert.equal(Boolean(signal('basketball_game',league,points-1,period,entrySeconds-1)),league==='NBA'&&seconds===105,'the new under-1:45 route may qualify below the older tier');
+   if(seconds<=270)assert.equal(Boolean(signal('basketball_game',league,points-1,period,entrySeconds-1)),false);
    assert.equal(signal('basketball_game',league,points,period,seconds),null);
    assert.equal(signal('basketball_game',league,points,period-1,entrySeconds-1),null);
  }
@@ -45,9 +45,9 @@ test('basketball tiers include the stated lead and exclude the exact time bounda
    assert.ok(signal('basketball_game',league,margin,period,269),`${league} under 4:30`);
  }
  for(const league of ['NBA','WNBA','NCAAB','NCAAW','China CBA','Italy Serie A']){
-   const period=league==='NCAAB'?2:4,minimum=league==='NBA'?9:10;
+   const period=league==='NCAAB'?2:4,minimum=league==='NBA'?6:league==='WNBA'?7:10;
    assert.ok(signal('basketball_game',league,minimum,period,104),`${league} under 1:45`);
-   assert.equal(Boolean(signal('basketball_game',league,minimum-1,period,104)),league!=='WNBA');
+   assert.equal(Boolean(signal('basketball_game',league,minimum-1,period,104)),!['NBA','WNBA'].includes(league));
    if(league==='NBA'||league==='WNBA')assert.equal(signal('basketball_game',league,minimum,period,105),null);
  }
  for(const league of ['NCAAB','NCAAW','China CBA','Italy Serie A']){

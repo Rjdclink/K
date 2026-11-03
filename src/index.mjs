@@ -14,7 +14,7 @@ import { page } from './ui.mjs';
 import { historyPage } from './history_ui.mjs';
 import { completedTrade, completedNoTrade, manualSaleFill, reconcileManualSaleFills, settlementLookupCandidates } from './history.mjs';
 import { ensureExitLedger, recordExitFill } from './exit_ledger.mjs';
-import { gameState, overSignal, PLAYER_PROP_MAX_FRACTION, BASKETBALL_COUNT_PROP_MAX_FRACTION, BASKETBALL_WINNER_ENTRY_SECONDS, playerOverSpec, playerPropEarlyWindow, confirmedOver, fallbackScoringUnits, confirmedExternalLead, leadSignal, proBasketballLeadRules, basketballCloseoutEntry, nbaSingleReadLead, kalshiSingleReadLead, confirmedSoccerWinnerClock, confirmedDrawClock, soccerWinnerWindowOpen, leadWatchReason, additionalLeadSignal, cricketLeadSignal, drawSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback } from './strategy.mjs';
+import { gameState, overSignal, PLAYER_PROP_MAX_FRACTION, BASKETBALL_COUNT_PROP_MAX_FRACTION, BASKETBALL_WINNER_ENTRY_SECONDS, playerOverSpec, playerPropEarlyWindow, confirmedOver, fallbackScoringUnits, confirmedExternalLead, leadSignal, proBasketballLeadRules, basketballCloseoutEntry, basketballCloseoutMinimum, nbaSingleReadLead, kalshiSingleReadLead, confirmedSoccerWinnerClock, confirmedDrawClock, soccerWinnerWindowOpen, leadWatchReason, additionalLeadSignal, cricketLeadSignal, drawSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback } from './strategy.mjs';
 import { reviewMiss } from './ai.mjs';
 import { kalshiSignature } from './auth.mjs';
 import { marketShard, shardCash, transferPlan, comboShardBudget, awaitShardCash } from './funding.mjs';
@@ -304,10 +304,14 @@ async function pairedOverRead(first,milestone,market,decorate=state=>state){
 }
 async function confirmedIndependentOver(first,milestone,market,{decorate=state=>state}={}){
   await ensureOverWindows();
+  if(playerOverSpec(first,market)&&overCushion(first,market)===null){
+    await pool.query('DELETE FROM over_verification_windows WHERE market_ticker=$1 AND game_id=$2',[market.ticker,first.id]);
+    return null;
+  }
   const {rows:[prior]}=await pool.query('SELECT * FROM over_verification_windows WHERE market_ticker=$1',[market.ticker]);
   if(prior&&prior.game_id===first.id&&prior.contract_key===overContractKey(first,market)&&freshOverState(first,market)){
     const pending=overTiming(prior,first,market);
-    if(['first_wait','final_wait'].includes(pending.stage)&&overCushion(first,market)===null){
+    if(['first_wait','final_wait'].includes(pending.stage)&&(playerOverSpec(first,market)||overCushion(first,market)===null)){
       await pool.query('UPDATE over_verification_windows SET last_seen=GREATEST(last_seen,$3) WHERE market_ticker=$1 AND generation=$2',
         [market.ticker,prior.generation,Date.now()]);
       await overProgress(first,market,pending,prior.initial_at);return null;
@@ -329,7 +333,7 @@ async function confirmedIndependentOver(first,milestone,market,{decorate=state=>
     return null;
   }
   const now=Date.now(),key=overContractKey(first,seller);
-  if(overCushion(first,seller)!==null){
+  if(overCushion(first,seller)!==null&&!playerOverSpec(first,seller)){
     const id=randomUUID(),proof={route:'seller_cushion',contractKey:key,sellerAt:now,cushionUnits:overCushion(first,seller)};
     await auditTable();await pool.query('INSERT INTO verification_records(id,market_ticker,passed,evidence) VALUES($1,$2,false,$3)',
       [id,seller.ticker,JSON.stringify({mode:'seller_backed_cushioned_over_preflight',game:first,timing:proof})]);
@@ -1931,6 +1935,7 @@ async function watchCorrectedOvers(until){
 async function watchLeadWindows(until){
   if(!live())return;
   await ensureLeadWatch();
+  const preflightAt=new Map();
   while(Date.now()<until){
     const started=Date.now();
     try{
@@ -1972,7 +1977,19 @@ async function watchLeadWindows(until){
             try{
               const ruleMarket={...market,yes_ask_dollars:undefined};
               if(!leadSignal(first,ruleMarket)&&!drawSignal(first,ruleMarket)&&
-                !earlyLeadSignal(first,ruleMarket)&&!additionalLeadSignal(first,ruleMarket))continue;
+                !earlyLeadSignal(first,ruleMarket)&&!additionalLeadSignal(first,ruleMarket)){
+                const minimum=first.sport==='WNBA'?7:basketballCloseoutMinimum(first);
+                const leader=first.homeUnits>first.awayUnits?first.homeTeamId:first.awayTeamId;
+                if(minimum!==null&&minimum!==undefined&&first.period===(first.sport==='NCAAB'?2:4)&&
+                  first.remainingSeconds>=105&&first.remainingSeconds<180&&
+                  Math.abs(first.homeUnits-first.awayUnits)>=minimum&&leader&&
+                  market.custom_strike?.basketball_team===leader&&['active','open'].includes(market.status)&&
+                  Date.now()-(preflightAt.get(market.ticker)||0)>=20000){
+                  preflightAt.set(market.ticker,Date.now());decision.stage='preentry_external';
+                  await auditedOver(first,milestone,{market,allowUnavailable:true});
+                }
+                continue;
+              }
               decision.stage='ask_liquidity';
               const offered=await recoverSummaryAsk(market,{fresh:true});
               decision.market=offered||market;

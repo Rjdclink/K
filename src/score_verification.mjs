@@ -1,4 +1,4 @@
-import {externalValueQualifies,externalScoresQualify} from './external_values.mjs';
+import {playerValueQualifies,externalScoresQualify} from './external_values.mjs';
 import { alternateCheck } from './alternate_scores.mjs';
 import { teamAbbreviationVariants } from './team_identity.mjs';
 import { loadSportradar, sportradarPlayerValue } from './sportradar.mjs';
@@ -247,7 +247,7 @@ export function playerStatValue(summary,player,{participated=false}={}){
 }
 export function playerStatAgreement(summary,player){
   const value=playerStatValue(summary,player);
-  return value===null?null:externalValueQualifies(value,player.value,player.line);
+  return value===null?null:playerValueQualifies(value,player);
 }
 // NO requires the exact independently observed zero; the over comparison
 // accepts larger values and cannot be reused for this decision.
@@ -371,7 +371,7 @@ async function verifyExistingOver(game,milestone,{fetcher=fetch,cache,market,sou
       const box=await read(`https://api.foxsports.com/bifrost/v1/${feed}/event/${matched.eventId}/data?apikey=${FOX_KEY}&api-version=1.1`);
       const value=foxPlayerStat(box,player,matched.eventId);
       if(value===null)unavailableReasons.push(`${source}: ${player.name} ${player.metric} statistic unavailable`);
-      return value===null?null:externalValueQualifies(value,player.value,player.line);
+      return value===null?null:playerValueQualifies(value,player);
     }catch(error){unavailableReasons.push(`${source}: ${error.message}`);return null}
   };
   return source==='ESPN'?check('ESPN',espn):source==='FOX'?check('FOX Sports',fox):null;
@@ -393,7 +393,7 @@ export function nbaAgreement(data,game,milestone,market,eventId,{minimumOverValu
     const stats=players[0].statistics||{};
     const keys=player.metric==='PRA'?['points','reboundsTotal','assists']:[{PTS:'points',REB:'reboundsTotal',AST:'assists','3PT':'threePointersMade',STL:'steals',BLK:'blocks'}[player.metric]];
     const values=keys.map(k=>score(stats[k]));
-    return values.every(n=>Number.isInteger(n)&&n>=0)?externalValueQualifies(values.reduce((a,b)=>a+b,0),player.value,player.line):null;
+    return values.every(n=>Number.isInteger(n)&&n>=0)?playerValueQualifies(values.reduce((a,b)=>a+b,0),player):null;
   }
   const home=score(g.homeTeam?.score),away=score(g.awayTeam?.score);
   if(!Number.isInteger(home)||!Number.isInteger(away))return null;
@@ -469,7 +469,7 @@ export async function verifySportradarOver(game,milestone,options={}){
   const values=[];
   if(!scoreAgreement(game,[[m]],market,{minimumOverValue,onOverValue:value=>values.push(value)}))return false;
   const player=playerOverSpec(game,market);
-  if(player){const value=sportradarPlayerValue(m,player);return value===null?null:externalValueQualifies(value,player.value,player.line);}
+  if(player){const value=sportradarPlayerValue(m,player);return value===null?null:playerValueQualifies(value,player);}
   const series=String(market?.event_ticker||'').split('-')[0];
   if(/soccer/.test(game.type)&&/TOTAL$/.test(series)&&!/TEAMTOTAL$|[1-9](?:Q|P|H|INNING)TOTAL$/.test(series)&&
     (!(m.documentedGoals>Number(market.floor_strike))||minimumOverValue!==undefined&&m.documentedGoals<minimumOverValue))return false;

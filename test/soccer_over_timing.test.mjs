@@ -25,11 +25,15 @@ const contracts=[market,
     title:'John Doe: 2+ goals',yes_sub_title:'John Doe: 2+',rules_primary:'John Doe goals',
     custom_strike:{soccer_player:'p1'}}];
 
-test('soccer game, team, period and player overs pair at 2:30, never earlier',()=>{
+test('soccer game, team and period overs pair at 2:30; an uncushioned player cannot enter',()=>{
   for(const type of ['soccer_match','soccer_tournament_multi_leg'])for(const contract of contracts){
     const game=state(type);
     assert.ok(overSignal(game,contract),contract.ticker);
     assert.equal(overCushion(game,contract),null,contract.ticker);
+    if(contract.ticker==='PLAYER'){
+      assert.equal(overTiming(window,game,contract,start+150000).stage,'invalid');
+      continue;
+    }
     assert.equal(overTiming({...window,first_external_at:null},game,contract,start+19999).stage,'first_wait');
     assert.equal(overTiming({...window,first_external_at:null},game,contract,start+20000).stage,'first_external');
     assert.deepEqual(overTiming(window,game,contract,start+149999),{stage:'final_wait',remainingMs:1,minimumMs:150000});
