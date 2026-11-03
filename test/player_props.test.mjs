@@ -48,16 +48,18 @@ test('variable-value points require timed checks and retain a twenty-five percen
   const comfortable={...game,playerStats:{p:{points:6}}};
   assert.equal(overSignal(comfortable,market)?.fraction,.25);assert.equal(overCushion(comfortable,market),null);assert.equal(cushionedOverSignal(comfortable,market),null);
   const now=Date.now(),window={initial_at:now-180000,first_external_at:now-160000,first_external_id:'first'};
-  assert.equal(overTiming(window,comfortable,market,now).stage,'final_wait');assert.equal(overTiming({...window,initial_at:now-240000,first_external_at:now-220000},comfortable,market,now).stage,'paired');
+  assert.equal(overTiming(window,comfortable,market,now).stage,'final_wait');
+  assert.equal(overTiming({...window,initial_at:now-209999,first_external_at:now-189999},comfortable,market,now).stage,'final_wait');
+  assert.equal(overTiming({...window,initial_at:now-210000,first_external_at:now-190000},comfortable,market,now).stage,'paired');
 });
-test('receiving yards wait four minutes and cap at twenty-five percent',()=>{
+test('receiving yards wait three minutes thirty seconds and cap at twenty-five percent',()=>{
   const now=Date.now(),game=gameState({id:'g',type:'football_game',details:{league:'NFL'}},{milestone_id:'g',_observed_at:new Date(now).toISOString(),details:{status:'live',home_score:14,away_score:3,period:3,clock:'01:13',player_stats:{p:{receiving_yards:21}}}});
   const market={ticker:'KXNFLRECYDS-TEST-P',event_ticker:'KXNFLRECYDS-TEST',status:'active',floor_strike:14.5,custom_strike:{football_player:'p'},yes_sub_title:'Ryan Flournoy: 15+',title:'Ryan Flournoy: 15+ receiving yards',yes_ask_dollars:'.99'};
   assert.equal(overSignal(game,market)?.fraction,.25);assert.equal(overCushion(game,market),null);
   const window={initial_at:now-180000,first_external_at:now-160000,first_external_id:'first'};
-  assert.equal(overTiming(window,game,market,now).stage,'final_wait');assert.equal(overTiming({...window,initial_at:now-240000,first_external_at:now-220000},game,market,now).stage,'paired');
+  assert.equal(overTiming(window,game,market,now).stage,'final_wait');assert.equal(overTiming({...window,initial_at:now-210000,first_external_at:now-190000},game,market,now).stage,'paired');
   game.verificationId='final';rememberIndependentEntry(game,market,'final',now);game.overVerification={route:'elapsed',contractKey:overContractKey(game,market),initialAt:now-181000,firstExternalAt:now-160000,firstExternalId:'first',pairedAt:now-100,pairedExternalId:'second'};
-  assert.equal(timedOverEntryValid(game,market),false);game.overVerification.initialAt=now-241000;game.overVerification.firstExternalAt=now-220000;
+  assert.equal(timedOverEntryValid(game,market),false);game.overVerification.initialAt=now-211000;game.overVerification.firstExternalAt=now-190000;
   assert.equal(timedOverEntryValid(game,market),true);assert.equal(verifiedOverFraction(overSignal(game,market),game,market),.25);
   game.overVerification={route:'seller_cushion',contractKey:overContractKey(game,market),sellerAt:now};
   assert.equal(timedOverEntryValid(game,market),false);
