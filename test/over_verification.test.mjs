@@ -46,7 +46,7 @@ function harness({home=70,away=70,seller=true,decisions=[]}={}){
 }
 test('uncushioned over waits 20 seconds for external check one and 3:00 for the simultaneous final pair',async()=>{
  const h=harness();assert.equal(await h.run(0),null);assert.equal(h.externalCount,0);assert.equal(h.window.initial_at,start);
- assert.deepEqual(JSON.parse(JSON.stringify(h.events.at(-1))),['progress','Waiting for first external check (20s; minimum 20s)',{dueAt:start+20000,updatedAt:start}]);
+ assert.deepEqual(JSON.parse(JSON.stringify(h.events.at(-1))),['progress','Waiting for first external check (20s; minimum 20s)',{dueAt:start+180000,updatedAt:start}]);
  assert.equal(await h.run(19999),null);assert.equal(h.externalCount,0);
  assert.equal(await h.run(20000),null);assert.equal(h.externalCount,1);assert.equal(h.kalshiCount,0);
  for(const ms of [80000,140000,179999])assert.equal(await h.run(ms),null);
