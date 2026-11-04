@@ -50,6 +50,13 @@ test('the football line is at least twelve above the combined score regardless o
   assert.ok(collegeFootballTotalNo(state(2,'1:58',{possession_team_id:'unknown',side_team_id:'unknown',yardline:16}),half));
   assert.equal(collegeFootballTotalNo(first,{...half,status:'closed'}),null);
 });
+test('Kalshi full-game and first-half title formats retain the exact No threshold',()=>{
+  const full=market(false,25.5),half=market(true,25.5);
+  assert.ok(collegeFootballTotalNo(state(4),{...full,title:'Full Game: Over 25.5 points scored',yes_sub_title:'Over 25.5 points'}));
+  assert.ok(collegeFootballTotalNo(state(2),{...half,title:'Over 25.5 1H points scored',yes_sub_title:'Over 25.5 points'}));
+  assert.equal(collegeFootballTotalNo(state(4),{...full,title:'Full Game: Over 24.5 points scored',yes_sub_title:'Over 24.5 points'}),null);
+  assert.equal(collegeFootballTotalNo(state(4),{...full,title:'Full Game: Over 24.5 points scored',yes_sub_title:'Over 25.5 points'}),null);
+});
 test('the independent check requires exact ESPN score and matching period and clock',()=>{
   const game=state(2),half=market(true);
   const situation={possession:'1',downDistanceText:'2nd & 12 at OHIO 16'};
@@ -75,6 +82,11 @@ test('college basketball NO uses distinct half and game contracts, thirty-point 
     const half=contract(true),full=contract(false);
     assert.equal(collegeBasketballTotalNo(stateAt(halfPeriod,'3:59'),half)?.period,'first_half');
     assert.equal(collegeBasketballTotalNo(stateAt(gamePeriod,'3:59'),full)?.period,'full_game');
+    assert.ok(collegeBasketballTotalNo(stateAt(gamePeriod,'3:59'),{
+      ...full,title:'Full Game: Over 80.5 points scored',yes_sub_title:'Over 80.5 points',
+      rules_primary:'If over 80.5 total points are scored in the Away vs Home college basketball game, then the market resolves to Yes.'}));
+    assert.ok(collegeBasketballTotalNo(stateAt(halfPeriod,'3:59'),{
+      ...half,title:'1st Half: Over 80.5 points scored',yes_sub_title:'Over 80.5 points'}));
     assert.equal(collegeBasketballTotalNo(stateAt(halfPeriod,'4:00'),half),null);
     assert.ok(collegeBasketballTotalNo(stateAt(halfPeriod,'4:30'),half,{beforeWindow:true}));
     assert.equal(collegeBasketballTotalNo(stateAt(halfPeriod,'3:59'),contract(true,79.5)),null);

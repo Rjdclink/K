@@ -1,5 +1,15 @@
 import {playerOverSpec} from './strategy.mjs';
 
+// Kalshi's event market title may say "Full Game: Over ..." or include "1H";
+// the outcome subtitle carries the exact binary threshold when available.
+const totalLine=market=>{
+  const read=text=>Number(String(text||'')
+    .match(/^(?:(?:Full Game|1st Half):\s*)?Over\s+(\d+(?:\.\d+)?)\s+(?:1H\s+)?points\b/i)?.[1]);
+  const subtitle=read(market.yes_sub_title),title=read(market.title);
+  if(market.yes_sub_title&&market.title&&(!Number.isFinite(subtitle)||!Number.isFinite(title)||subtitle!==title))return NaN;
+  return market.yes_sub_title?subtitle:title;
+};
+
 // Fixed binary yardage thresholds only. Scalar ladders and protected markets
 // have different payouts, and short count props can turn on one play.
 export function thirdQuarterYardageNo(game,market){
@@ -26,9 +36,8 @@ export function collegeFootballTotalNo(game,market,{beforeWindow=false}={}){
     market.result&&!['','not_determined'].includes(String(market.result)))return null;
   const firstHalf=game.period===2,series=String(market.event_ticker||'').split('-')[0];
   if(series!==(firstHalf?'KXNCAAF1HTOTAL':'KXNCAAFTOTAL')||
-    !/^Over\s+(\d+(?:\.\d+)?)\s+points\b/i.test(String(market.title||market.yes_sub_title||''))||
     market.strike_type&&!['greater','greater_than'].includes(market.strike_type))return null;
-  const line=Number(market.floor_strike),displayed=Number(String(market.title||market.yes_sub_title).match(/^Over\s+(\d+(?:\.\d+)?)\s+points\b/i)?.[1]);
+  const line=Number(market.floor_strike),displayed=totalLine(market);
   const rules=String(market.rules_primary||'');
   if(!Number.isFinite(line)||line!==displayed||line-(game.home+game.away)<12||
     !/collectively score more than|combined total points scored/i.test(rules)||
@@ -50,7 +59,7 @@ export function collegeBasketballTotalNo(game,market,{beforeWindow=false}={}){
   const prefix=game.sport==='NCAAB'?'KXNCAAMB':'KXNCAAWB';
   if(String(market.event_ticker||'').split('-')[0]!==prefix+(firstHalf?'1HTOTAL':'TOTAL')||
     market.strike_type&&!['greater','greater_than'].includes(market.strike_type))return null;
-  const displayed=Number(String(market.title||market.yes_sub_title||'').match(/^Over\s+(\d+(?:\.\d+)?)\s+points\b/i)?.[1]);
+  const displayed=totalLine(market);
   const line=Number(market.floor_strike),rules=String(market.rules_primary||'');
   if(!Number.isFinite(line)||line!==displayed||line-(game.home+game.away)<30||
     !/over\s+\d+(?:\.\d+)?\s+total points are scored/i.test(rules)||
