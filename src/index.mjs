@@ -452,15 +452,11 @@ async function preflightNearOver(game,milestone,market){
         THEN over_verification_windows.first_external_id ELSE NULL END,
       last_seen=GREATEST(over_verification_windows.last_seen,EXCLUDED.last_seen)
     RETURNING *`,[seller.ticker,game.id,key,randomUUID(),now,JSON.stringify(seller),JSON.stringify(game)]);
-  if(window.first_external_at!=null||now-Number(window.initial_at)<20000)return;
-  const requestedAt=Date.now(),decision=await auditedOver(game,milestone,{market:seller,allowUnavailable:true});
-  if(decision!==true){
-    if(decision===false)await pool.query('DELETE FROM over_verification_windows WHERE market_ticker=$1 AND generation=$2',[seller.ticker,window.generation]);
-    return;
-  }
-  await pool.query(`UPDATE over_verification_windows SET first_external_at=COALESCE(first_external_at,$3),
-    first_external_id=COALESCE(first_external_id,$4) WHERE market_ticker=$1 AND generation=$2`,
-    [seller.ticker,window.generation,requestedAt,game.verificationId]);
+  // This score is still below the selected over line. Preserve the seller-backed
+  // start time, but wait for a crossed score before asking the outcome verifier
+  // to establish that the over is true. A correct pre-cross score is not a
+  // contradiction and must not reset the window every twenty seconds.
+  return window;
 }
 async function resetLostOverWindow(game,market){
   if(!freshOverObservation(game)||overSignal(game,market))return false;
@@ -3378,13 +3374,14 @@ async function state(){
   const comboScores=new Map(comboGameIds.length?(await pool.query(`SELECT id,home,away,status,
     COALESCE(score_observed_at,scanned_at) AS observed_at FROM game_snapshots WHERE id=ANY($1::text[])`,[comboGameIds])).rows.map(g=>[g.id,g]):[]);
   const awaiting=[...new Set(snap.rows.flatMap(g=>(g.signals||[]).filter(s=>s.execution==='Awaiting score verification'||s.verification_wait).map(s=>s.ticker)))];
+  const checked=new Map();
   if(awaiting.length){
     const {rows}=await pool.query(`SELECT DISTINCT ON (market_ticker) market_ticker,passed,created_at,evidence->>'mode' AS mode,
       evidence->>'independentUnavailable' AS independent_unavailable,
       evidence->'game'->>'verificationIssue' AS verification_issue
       FROM verification_records WHERE market_ticker=ANY($1) AND created_at>now()-interval '5 minutes'
       ORDER BY market_ticker,created_at DESC`,[awaiting]);
-    const checked=new Map(rows.map(r=>[r.market_ticker,r]));
+    for(const row of rows)checked.set(row.market_ticker,row);
     for(const game of snap.rows)for(const signal of game.signals||[]){
       const result=checked.get(signal.ticker);
       if(completedOverWait(signal,result)){
@@ -3409,7 +3406,7 @@ async function state(){
       if(signal.execution==='Both external checks passed; ask, cash and profit still required')continue;
       let timing=null;
       if(window)try{timing=overTiming(window,window.initial_state,window.contract,now)}catch{}
-      const progress=verificationWindowStatus(signal.verification_wait?signal:{...signal,verification_wait:{}},window,timing,now);
+      const progress=verificationWindowStatus(signal.verification_wait?signal:{...signal,verification_wait:{}},window,timing,now,checked.get(signal.ticker));
       if(!progress)continue;
       signal.execution=progress.execution;
       if(progress.wait)signal.verification_wait=progress.wait;
