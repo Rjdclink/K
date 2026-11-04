@@ -32,39 +32,41 @@ export async function scanCryptoHits({kalshi,readIndex,getWindow,saveWindow,clea
       }
     }
   }
-  onCandidates?.(candidates);
   const feeds=new Map();
+  const active=[];
   candidates.sort((a,b)=>Number(a.market.yes_ask_dollars)-Number(b.market.yes_ask_dollars));
   for(const item of candidates){
     const {contract,market}=item;
+    let window;
+    try{window=await getWindow(market.ticker)}catch{stats.errors++;continue}
     if(!feeds.has(contract.index)){
       try{feeds.set(contract.index,await readIndex(contract.index))}
       catch{feeds.set(contract.index,null);stats.errors++}
     }
-    const observation=qualifyingCryptoMinute(contract,feeds.get(contract.index),now());
+    const observation=qualifyingCryptoMinute(contract,feeds.get(contract.index),now(),window?.first?.minute??null);
     if(!observation){stats.sourceUnavailable++;await clearWindow?.(market.ticker);continue}
     stats.qualified++;
     try{
-      const window=await getWindow(market.ticker);
       const first=window?.first,second=window?.second;
       if(!first||first.contractKey!==observation.contractKey||first.minute!==observation.minute||
         first.fingerprint!==observation.fingerprint||observation.checkedAt-first.checkedAt>2*60_000){
-        await saveWindow(market.ticker,{first:observation});stats.firstChecks++;continue;
+        await saveWindow(market.ticker,{first:observation});stats.firstChecks++;active.push(item);continue;
       }
       if(!second){
-        if(observation.checkedAt-first.checkedAt<15_000)continue;
+        if(observation.checkedAt-first.checkedAt<15_000){active.push(item);continue}
         if(!pairedCryptoProof(first,observation,observation.checkedAt)){
-          await saveWindow(market.ticker,{first:observation});stats.firstChecks++;continue;
+          await saveWindow(market.ticker,{first:observation});stats.firstChecks++;active.push(item);continue;
         }
-        await saveWindow(market.ticker,{first,second:observation});stats.secondChecks++;continue;
+        await saveWindow(market.ticker,{first,second:observation});stats.secondChecks++;active.push(item);continue;
       }
-      if(observation.checkedAt-second.checkedAt<20_000)continue;
+      if(observation.checkedAt-second.checkedAt<20_000){active.push(item);continue}
       if(!tripleCryptoProof(first,second,observation,observation.checkedAt)){
-        await saveWindow(market.ticker,{first:observation});stats.firstChecks++;continue;
+        await saveWindow(market.ticker,{first:observation});stats.firstChecks++;active.push(item);continue;
       }
       stats.thirdChecks++;
       await onVerified({...item,first,second,third:observation});
     }catch{stats.errors++}
   }
+  onCandidates?.(active);
   return stats;
 }

@@ -24,8 +24,8 @@ pending attempts. A stale third check blocks entry. Once the market is closed,
 the scanner cannot place a new order even if the benchmark later confirms it.
 
 Schedule `POST /crypto/tick` as a separate once-per-minute Neon function
-trigger. A single invocation surveys the catalog once and rechecks known
-contracts approximately every five seconds until the next minute; this allows
-the 15- and 20-second windows without surveying all series repeatedly.
-Automatic entries require `CRYPTO_HIT_TRADING=true` in the running function.
-Keep it unset during the first live CF entitlement and source-format check.
+trigger. A single invocation surveys the catalog once and rechecks only
+contracts with a qualifying benchmark minute approximately every five seconds
+for up to 45 seconds, including across a clock-minute boundary. All three
+reads stay pinned to the same complete minute. Automatic entries are enabled
+when live trading is on; set `CRYPTO_HIT_TRADING=false` to pause this route.

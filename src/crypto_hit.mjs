@@ -31,7 +31,7 @@ export function cryptoHitContract(event,market,series){
       market.open_time,market.expected_expiration_time,market.close_time,index,threshold,method])};
 }
 
-export function qualifyingCryptoMinute(contract,raw,now=Date.now()){
+export function qualifyingCryptoMinute(contract,raw,now=Date.now(),targetMinute=null){
   const values=raw?.data?.payload;
   if(!contract||!Array.isArray(values)||values.length>30_000)return null;
   const minutes=new Map();
@@ -39,6 +39,7 @@ export function qualifyingCryptoMinute(contract,raw,now=Date.now()){
     const time=Number(point?.time),price=Number(point?.value);
     if(!Number.isSafeInteger(time)||!Number.isFinite(price)||price<=0||point.repeatOfPreviousValue===true)continue;
     const start=Math.floor(time/60_000)*60_000;
+    if(targetMinute!==null&&start!==targetMinute)continue;
     if(start<contract.open||start+60_000>contract.end||start+60_000>now||
       now-(start+60_000)>5*60_000)continue;
     const slot=Math.floor((time-start)/1000),minute=minutes.get(start)||new Map();

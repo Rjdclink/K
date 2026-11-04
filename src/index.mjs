@@ -2436,7 +2436,7 @@ async function cryptoCommittedCents(positions,excludeId=null){
   return {heldCents,pendingCents};
 }
 async function executeVerifiedCrypto(item){
-  if(!live()||process.env.CRYPTO_HIT_TRADING!=='true'||
+  if(!live()||process.env.CRYPTO_HIT_TRADING==='false'||
     !tripleCryptoProof(item.first,item.second,item.third))return;
   const {event,market,series,contract}=item;
   const [current,latestEvent]=await Promise.all([
@@ -2533,10 +2533,12 @@ async function scanOfficialCrypto(){
     const publish=()=>pool.query(`INSERT INTO crypto_scan_status(id,checked_at,stats) VALUES(1,now(),$1)
       ON CONFLICT(id) DO UPDATE SET checked_at=now(),stats=EXCLUDED.stats`,[JSON.stringify(stats)]);
     await publish();
-    const until=Math.min(Date.now()+40_000,(Math.floor(Date.now()/60_000)+1)*60_000-1500);
+    // The first complete minute may arrive near a clock boundary. Keep the
+    // same verification window alive for 15 + 20 seconds across that boundary.
+    const until=Date.now()+45_000;
     while(tracked.length&&Date.now()+5000<until){
       await new Promise(resolve=>setTimeout(resolve,5000));
-      const fast=await scanCryptoHits({...options,tracked});
+      const fast=await scanCryptoHits({...options,tracked,onCandidates:items=>{tracked=items}});
       stats.firstChecks+=fast.firstChecks;stats.secondChecks+=fast.secondChecks;
       stats.thirdChecks+=fast.thirdChecks;stats.errors+=fast.errors;stats.sourceUnavailable=fast.sourceUnavailable;
       await publish();
@@ -3465,7 +3467,7 @@ async function state(){
   const comboIssue=comboIssues.find(issue=>!(issue.status==='insufficient_cash'&&Number(balance?.balance)>=100)&&issue.leg_tickers.length>=2&&
     issue.leg_tickers.every(ticker=>open.has(ticker)))||null;
   if(comboIssue)comboIssue.leg_names=comboIssue.leg_tickers.map(ticker=>orders.find(o=>o.market_ticker===ticker)?.game_title||ticker);
-  return {live:live(),exitOnly:exitOnly(),credentials:configured(),aiConfigured:Boolean(process.env.ANTHROPIC_API_KEY),balance,balanceStale,balanceAsOf,accountError,positionsError,positionsStale:Boolean(positions&&positionsError),games:snap.rows,scan:stats.rows[0],weather:{disabled:true,series:0,eligible:0},crypto:{entryEnabled:process.env.CRYPTO_HIT_TRADING==='true',...(cryptoStatus.rows[0]||{})},mentions:{configured:Boolean(process.env.MENTION_OFFICIAL_SOURCES),...(mentionStatus.rows[0]||{})},comboIssue,orders};
+  return {live:live(),exitOnly:exitOnly(),credentials:configured(),aiConfigured:Boolean(process.env.ANTHROPIC_API_KEY),balance,balanceStale,balanceAsOf,accountError,positionsError,positionsStale:Boolean(positions&&positionsError),games:snap.rows,scan:stats.rows[0],weather:{disabled:true,series:0,eligible:0},crypto:{entryEnabled:process.env.CRYPTO_HIT_TRADING!=='false',...(cryptoStatus.rows[0]||{})},mentions:{configured:Boolean(process.env.MENTION_OFFICIAL_SOURCES),...(mentionStatus.rows[0]||{})},comboIssue,orders};
 }
 async function settlementAlerts(since){
   const {rows}=await pool.query(`SELECT id,ticker,profit_cents,settled_time,created_at FROM settlement_alerts WHERE id>$1 AND created_at>now()-interval '2 days' ORDER BY id LIMIT 50`,[since]);

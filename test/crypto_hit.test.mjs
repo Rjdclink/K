@@ -37,6 +37,15 @@ test('three separate reads agree after 15 then 20 seconds; changed data resets p
   assert.equal(tripleCryptoProof(first,second,{...third,checkedAt:second.checkedAt+19_999}),false);
   assert.equal(tripleCryptoProof(first,second,{...third,fingerprint:'amended'}),false);
 });
+test('a newer qualifying minute cannot reset an in-progress three-read proof',()=>{
+  const contract=cryptoHitContract(event,market,series);
+  const newer=ticks().data.payload.map(point=>({...point,time:point.time+60_000}));
+  const feed={data:{payload:[...ticks().data.payload,...newer]}};
+  const first=qualifyingCryptoMinute(contract,ticks(),minute+60_000);
+  const second=qualifyingCryptoMinute(contract,feed,first.checkedAt+61_000,first.minute);
+  assert.equal(second.minute,first.minute);
+  assert.equal(qualifyingCryptoMinute(contract,feed,first.checkedAt+61_000).minute,minute+60_000);
+});
 test('scanner starts proof, waits 15 then 20 seconds and does not resurvey on fast checks',async()=>{
   let at=minute+60_000,window=null,tracked,orders=0,calls=[];
   const options={now:()=>at,kalshi:async path=>{calls.push(path);
