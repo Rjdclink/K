@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
-import {gameState,overSignal,confirmedOver,playerOverSpec} from '../src/strategy.mjs';
+import {gameState,overSignal,confirmedOver,playerOverSpec,fallbackScoringUnits} from '../src/strategy.mjs';
 import {verifyExternalOverExposure} from '../src/over_exposure.mjs';
 import {sameSportsContract,overContractKey,freshOverObservation,freshOverState,overTiming,overCushion,sameOverReading,timedOverEntryValid,OVER_FRESH_MS} from '../src/over_verification.mjs';
 const start=Date.parse('2026-11-01T12:00:00Z');
@@ -22,7 +22,7 @@ function harness({home=70,away=70,seller=true,decisions=[]}={}){
  let time=start,window=null,ids=0,externalCount=0,kalshiCount=0;const events=[],proofs=[];
  class Clock extends Date{constructor(...args){super(...(args.length?args:[time]))}static now(){return time}}
  const context=vm.createContext({Date:Clock,Number,JSON,Math,Promise,console,
-  overContractKey,overCushion,playerOverSpec,freshOverObservation:g=>freshOverObservation(g,time),freshOverState:(g,m)=>freshOverState(g,m,time),overTiming:(w,g,m,at=time)=>overTiming(w,g,m,at),sameOverReading,timedOverEntryValid:(g,m)=>timedOverEntryValid(g,m,time),OVER_FRESH_MS,
+  overContractKey,overCushion,playerOverSpec,fallbackScoringUnits,freshOverObservation:g=>freshOverObservation(g,time),freshOverState:(g,m)=>freshOverState(g,m,time),overTiming:(w,g,m,at=time)=>overTiming(w,g,m,at),sameOverReading,timedOverEntryValid:(g,m)=>timedOverEntryValid(g,m,time),OVER_FRESH_MS,
   verifyExternalOverExposure,rememberIndependentEntry,gameState:liveState,confirmedOver,overSignal,randomUUID:()=>`id-${++ids}`,auditTable:async()=>{},
   pool:{query:async(sql,args=[])=>{
    if(sql.startsWith('CREATE'))return {rows:[],rowCount:0};
@@ -42,7 +42,7 @@ function harness({home=70,away=70,seller=true,decisions=[]}={}){
   auditedOver:async(g,m,opts)=>{assert.equal(opts.cache,undefined);events.push(['external',time]);externalCount++;const decision=decisions.length?decisions.shift():true;if(decision===true){g.verificationId='external-'+externalCount;rememberIndependentEntry(g,opts.market,g.verificationId,time)}return decision},
   liveMilestone:async(id,opts={})=>{kalshiCount++;events.push(['kalshi-dispatch',time]);opts.onDispatch?.();if(opts.onDispatch)assert.equal(events.at(-1)[0],'external');time+=2;return {milestone_id:'game',details:{status:'live',home_score:home,away_score:away,quarter:3,time_remaining:'5:00',last_updated_ts:time/1000}}}
  });vm.runInContext(runtime,context);
- return {events,proofs,context,get window(){return window},get externalCount(){return externalCount},get kalshiCount(){return kalshiCount},run:async(ms)=>{if(ms!==undefined)time=start+ms;return context.confirmedIndependentOver(state(time-1,home,away),milestone,market)},setScore:(h,a)=>{home=h;away=a},setSeller:v=>{seller=v}};
+ return {events,proofs,context,get window(){return window},get externalCount(){return externalCount},get kalshiCount(){return kalshiCount},run:async(ms)=>{if(ms!==undefined)time=start+ms;return context.confirmedIndependentOver(state(time-1,home,away),milestone,market)},setTime:ms=>{time=start+ms},setScore:(h,a)=>{home=h;away=a},setSeller:v=>{seller=v}};
 }
 test('uncushioned over waits 20 seconds for external check one and 3:00 for the simultaneous final pair',async()=>{
  const h=harness();assert.equal(await h.run(0),null);assert.equal(h.externalCount,0);assert.equal(h.window.initial_at,start);
@@ -54,6 +54,23 @@ test('uncushioned over waits 20 seconds for external check one and 3:00 for the 
  assert.equal(verified.overVerification.route,'elapsed');assert.equal(verified.overVerification.initialAt,start);assert.equal(verified.overVerification.pairedAt,start+180000);
  assert.deepEqual(h.events.filter(e=>['kalshi-dispatch','external'].includes(e[0])).slice(-2),[['kalshi-dispatch',start+180000],['external',start+180000]]);
  assert.equal(h.proofs.at(-1).mode,'independent_timed_over');assert.equal(timedOverEntryValid(verified,market,start+180003),true);assert.equal(timedOverEntryValid(verified,market,start+190001),false);
+});
+test('a cheap nearby total starts external verification before crossing and enters only after a fresh final check',async()=>{
+ const h=harness({home:69,away:70});const cheap={...market,yes_ask_dollars:'.68'};
+ assert.equal(overSignal(state(start,69,70),cheap),null);
+ assert.ok(overSignal(state(start,69,70),cheap,{allowUncrossed:true}));
+ assert.ok(overSignal(state(start,70,70),cheap));
+ await h.context.preflightNearOver(state(start,69,70),milestone,cheap);
+ assert.equal(h.window.initial_at,start);assert.equal(h.externalCount,0);
+ h.setTime(20000);
+ await h.context.preflightNearOver(state(start+20000,69,70),milestone,cheap);
+ assert.equal(h.externalCount,1);
+ h.setScore(70,70);
+ await h.context.pruneOverWindows([{state:state(start+180000,70,70)}]);
+ assert.equal(h.window.initial_at,start);
+ const ready=await h.run(180000);
+ assert.ok(ready);assert.equal(h.externalCount,2);
+ assert.equal(ready.overVerification.firstExternalAt,start+20000);
 });
 test('a cushioned over needs independent external confirmation before entry',async()=>{
  const h=harness({home:75});const verified=await h.run(0);assert.ok(verified);assert.equal(h.externalCount,1);assert.equal(h.kalshiCount,0);assert.equal(h.window,null);

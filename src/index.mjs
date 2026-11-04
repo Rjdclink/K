@@ -402,18 +402,65 @@ async function confirmedIndependentOver(first,milestone,market,{decorate=state=>
   const valid=await pool.query('SELECT 1 FROM over_verification_windows WHERE market_ticker=$1 AND generation=$2',[seller.ticker,window.generation]);
   return valid.rowCount&&timedOverEntryValid(pair.state,seller)?pair.state:null;
 }
+// Start the timed external checks while a live whole-game total is still one
+// ordinary scoring play from crossing. A pre-cross check never authorizes entry.
+async function preflightNearOver(game,milestone,market){
+  const series=String(market.event_ticker||'').split('-')[0];
+  const signal=overSignal(game,market,{allowUncrossed:true}),units=fallbackScoringUnits(game);
+  if(!/TOTAL$/.test(series)||/TEAMTOTAL$|[1-9](?:Q|P|H|INNING)(?:TEAM)?TOTAL$/.test(series)||
+    !signal||playerOverSpec(game,market)||!Number.isInteger(units)||
+    signal.scored>signal.strike||signal.strike-signal.scored>=units||!freshOverObservation(game))return;
+  await ensureOverWindows();
+  const current=(await kalshi('/markets/'+encodeURIComponent(market.ticker))).market;
+  if(!current||overContractKey(game,current)!==overContractKey(game,market))return;
+  const quoted=await recoverSummaryAsk(current,{fresh:true});
+  const seller=quoted&&hasAsk(quoted)?await executableQuote(quoted):null;
+  if(!seller)return;
+  const now=Date.now(),key=overContractKey(game,seller);
+  const {rows:[window]}=await pool.query(`INSERT INTO over_verification_windows
+    (market_ticker,game_id,contract_key,generation,initial_at,last_seen,contract,initial_state)
+    VALUES($1,$2,$3,$4,$5,$5,$6,$7)
+    ON CONFLICT(market_ticker) DO UPDATE SET
+      game_id=EXCLUDED.game_id,contract_key=EXCLUDED.contract_key,contract=EXCLUDED.contract,
+      generation=CASE WHEN over_verification_windows.game_id=EXCLUDED.game_id AND over_verification_windows.contract_key=EXCLUDED.contract_key
+        THEN over_verification_windows.generation ELSE EXCLUDED.generation END,
+      initial_at=CASE WHEN over_verification_windows.game_id=EXCLUDED.game_id AND over_verification_windows.contract_key=EXCLUDED.contract_key
+        THEN over_verification_windows.initial_at ELSE EXCLUDED.initial_at END,
+      initial_state=CASE WHEN over_verification_windows.game_id=EXCLUDED.game_id AND over_verification_windows.contract_key=EXCLUDED.contract_key
+        THEN over_verification_windows.initial_state ELSE EXCLUDED.initial_state END,
+      first_external_at=CASE WHEN over_verification_windows.game_id=EXCLUDED.game_id AND over_verification_windows.contract_key=EXCLUDED.contract_key
+        THEN over_verification_windows.first_external_at ELSE NULL END,
+      first_external_id=CASE WHEN over_verification_windows.game_id=EXCLUDED.game_id AND over_verification_windows.contract_key=EXCLUDED.contract_key
+        THEN over_verification_windows.first_external_id ELSE NULL END,
+      last_seen=GREATEST(over_verification_windows.last_seen,EXCLUDED.last_seen)
+    RETURNING *`,[seller.ticker,game.id,key,randomUUID(),now,JSON.stringify(seller),JSON.stringify(game)]);
+  if(window.first_external_at!=null||now-Number(window.initial_at)<20000)return;
+  const requestedAt=Date.now(),decision=await auditedOver(game,milestone,{market:seller,allowUnavailable:true});
+  if(decision!==true){
+    if(decision===false)await pool.query('DELETE FROM over_verification_windows WHERE market_ticker=$1 AND generation=$2',[seller.ticker,window.generation]);
+    return;
+  }
+  await pool.query(`UPDATE over_verification_windows SET first_external_at=COALESCE(first_external_at,$3),
+    first_external_id=COALESCE(first_external_id,$4) WHERE market_ticker=$1 AND generation=$2`,
+    [seller.ticker,window.generation,requestedAt,game.verificationId]);
+}
 async function resetLostOverWindow(game,market){
   if(!freshOverObservation(game)||overSignal(game,market))return false;
   await ensureOverWindows();
+  const {rows:[window]}=await pool.query('SELECT * FROM over_verification_windows WHERE market_ticker=$1',[market.ticker]);
+  if(window&&!overSignal(window.initial_state,window.contract)&&
+    overSignal(game,market,{allowUncrossed:true}))return false;
   await pool.query('DELETE FROM over_verification_windows WHERE market_ticker=$1 AND game_id=$2',[market.ticker,game.id]);
   return true;
 }
 async function pruneOverWindows(games){
   await ensureOverWindows();
   const states=new Map(games.map(g=>[g.state.id,g.state]));
-  const {rows}=await pool.query('SELECT market_ticker,game_id,contract,generation FROM over_verification_windows WHERE game_id=ANY($1::text[])',[[...states.keys()]]);
+  const {rows}=await pool.query('SELECT market_ticker,game_id,contract,generation,initial_state FROM over_verification_windows WHERE game_id=ANY($1::text[])',[[...states.keys()]]);
   for(const w of rows){const state=states.get(w.game_id);
-    if(freshOverObservation(state)&&!overSignal(state,w.contract))await pool.query('DELETE FROM over_verification_windows WHERE market_ticker=$1 AND generation=$2',[w.market_ticker,w.generation]);
+    if(freshOverObservation(state)&&!overSignal(state,w.contract)&&
+      (overSignal(w.initial_state,w.contract)||!overSignal(state,w.contract,{allowUncrossed:true})))
+      await pool.query('DELETE FROM over_verification_windows WHERE market_ticker=$1 AND generation=$2',[w.market_ticker,w.generation]);
   }
 }
 async function auditSingleReadNbaLead(game,market,milestone){
@@ -2392,16 +2439,29 @@ async function scan(cachedMilestones,discoveryCount){
     for(const game of marketGames){const latest=currentLive.get(game.milestone.id);
       if(latest)game.state=gameState(game.milestone,latest)}
     const crossingRows=[];
+    const nearOvers=[];
     for(const {milestone,state} of marketGames){
       if(!state.verifiedLive||!state.scoreConsistent)continue;
+      const nearby=[];
       for(const ticker of entryEventTickers(milestone,state))for(const market of events.get(ticker)?.markets||[]){
         if(market.event_ticker!==ticker||!market.ticker||!['active','open'].includes(market.status))continue;
+        const series=String(market.event_ticker||'').split('-')[0],units=fallbackScoringUnits(state);
+        if(/TOTAL$/.test(series)&&!/TEAMTOTAL$|[1-9](?:Q|P|H|INNING)(?:TEAM)?TOTAL$/.test(series)&&
+          !playerOverSpec(state,market)&&Number.isInteger(units)&&hasAsk(market)){
+          const signal=overSignal(state,market,{allowUncrossed:true});
+          if(signal&&signal.scored<=signal.strike&&signal.strike-signal.scored<units)
+            nearby.push({state,milestone,market});
+        }
         const player=playerOverSpec(state,market);
         if(player&&player.value>Number(market.floor_strike))
           crossingRows.push({ticker:market.ticker,game_id:state.id,value:player.value,
             title:market.title||market.yes_sub_title||market.ticker,entryWindowOpen:playerPropEarlyWindow(state)});
       }
+      nearby.sort((a,b)=>Number(a.market.yes_ask_dollars)-Number(b.market.yes_ask_dollars));
+      if(nearby.length)nearOvers.push(nearby[0]);
     }
+    const nearOverJob=live()?Promise.all(nearOvers.slice(0,20).map(c=>preflightNearOver(c.state,c.milestone,c.market)
+      .catch(e=>console.warn('Early over verification deferred:',c.market.ticker,e.message)))):Promise.resolve();
     const propWindows=new Map();
     for(let i=0;i<crossingRows.length;i+=100){
       const batch=crossingRows.slice(i,i+100);
@@ -2522,12 +2582,13 @@ async function scan(cachedMilestones,discoveryCount){
     const estimate=c=>{const price=Number(c.market.yes_ask_dollars),fees=feeReserve(c.event,c.market),count=hasAsk(c.market)&&!filled.has(signalKey(c))?executableCount(c,singleSpendableCash(balance),bankroll):0;
       return {count,profit:netSettlementProfitCents(count,price,fees),cost:count?estimatedCostCents(count,price,fees):0};};
     const estimates=new Map(opportunities.map(c=>[c,estimate(c)]));
-    const cashLimited=[...estimates.values()].reduce((sum,x)=>sum+x.cost,0)>singleSpendableCash(balance);
     opportunities.sort((a,b)=>{
       const executable=c=>estimates.get(c).count>0;
       if(executable(a)!==executable(b))return executable(a)?-1:1;
-      if(cashLimited&&executable(a)&&executable(b)&&estimates.get(a).profit!==estimates.get(b).profit)
-        return estimates.get(b).profit-estimates.get(a).profit;
+      if(executable(a)&&executable(b)){
+        const cheaper=Number(a.market.yes_ask_dollars)-Number(b.market.yes_ask_dollars);
+        if(cheaper)return cheaper;
+      }
       if(a.signal.strategy!==b.signal.strategy)return a.signal.strategy==='over'?-1:1;
       const earlyProp=c=>playerOverSpec(c.state,c.market)&&playerPropEarlyWindow(c.state)?1-(Number.isFinite(c.state.progress)?c.state.progress:.5):0;
       if(earlyProp(a)!==earlyProp(b))return earlyProp(b)-earlyProp(a);
@@ -2552,6 +2613,7 @@ async function scan(cachedMilestones,discoveryCount){
         finally{c.preflightDone()}
       }
     }));
+    await nearOverJob;
     const heldLeads=upgradeCandidates.filter(c=>c.signal.strategy==='lead');
     const leadReady=new Map(heldLeads.map(c=>[signalKey(c),new Promise(resolve=>{c.leadDone=resolve})]));
     let leadCursor=0;

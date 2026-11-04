@@ -341,7 +341,7 @@ export function overCushionUnits(game,market){
   const player=playerOverSpec(game,market);
   return player?variableValuePlayerMetric(player.metric)?null:1:fallbackScoringUnits(game);
 }
-export function overSignal(game, market) {
+export function overSignal(game, market, {allowUncrossed=false}={}) {
   const player=playerOverSpec(game,market);
   if(player&&variableValuePlayerMetric(player.metric))return null;
   if (!game.verifiedLive || !game.scoreKnown || !game.scoreConsistent || Math.min(game.home,game.away)<0 || !player&&game.home+game.away<=0 || market.status!=='active' && market.status!=='open') return null;
@@ -358,9 +358,6 @@ export function overSignal(game, market) {
   if(Object.keys(market.custom_strike||{}).some(k=>/_player$/.test(k))&&!player)return null;
   if(!teamTotal&&!gameTotal&&!player&&!tennisTotal)return null;
   if (game.soccerExtraTime || /soccer/.test(game.type) && !Number.isFinite(game.soccerMinute)) return null;
-  // A nearly free YES after an apparently crossed line means the feed and
-  // contract disagree. Never treat this as a guaranteed arbitrage.
-  if (Number.isFinite(Number(market.yes_ask_dollars)) && market.yes_ask_dollars!=null && Number(market.yes_ask_dollars)>0 && Number(market.yes_ask_dollars)<0.8) return null;
   if (market.result && !['','not_determined'].includes(String(market.result))) return null;
   const text = `${market.title||''} ${market.yes_sub_title||''} ${market.rules_primary||''}`;
   const segment=series.match(/([1-9])(?:Q|P|H|INNING)(?:TEAM)?TOTAL$/);
@@ -391,7 +388,7 @@ export function overSignal(game, market) {
     team=home?game.homeName:game.awayName;
     if(!team||!norm(market.title).includes(norm(team)))return null;
   }
-  if (!Number.isFinite(strike) || strike<0 || !Number.isFinite(scored) || scored<=strike) return null;
+  if (!Number.isFinite(strike) || strike<0 || !Number.isFinite(scored) || scored<=strike&&!allowUncrossed) return null;
   // Player props stop when fewer than ten regulation minutes remain; the
   // shared over verifier requires a removable cushion and two external reads.
   // Only an independently verified, complete play list identifies the last
@@ -400,7 +397,7 @@ export function overSignal(game, market) {
   const robust=gameTotal&&!teamTotal&&!player&&!segment&&Number.isInteger(lastPlay)&&lastPlay>0&&scored-lastPlay>strike;
   const cushionUnits=player?overCushionUnits(game,market):null;
   const cushionedPlayer=Number.isInteger(cushionUnits)&&scored-cushionUnits>strike;
-  return {strategy:'over', reason:`${scored} ${player?.metric||'scored'}${team?` by ${team}`:''}; line ${strike} already passed${segment?`; segment ${segment[1]}`:''}${cushionedPlayer?`; still crossed after removing ${cushionUnits} player-stat unit${cushionUnits===1?'':'s'}`:''}${robust?`; still crossed if the latest ${lastPlay}-unit scoring play is removed`:''}`, fraction:player?playerPropMaxFraction(game,market):robust?.40:.15,scored,strike};
+  return {strategy:'over', reason:`${scored} ${player?.metric||'scored'}${team?` by ${team}`:''}; line ${strike} ${scored>strike?'already passed':'not yet crossed'}${segment?`; segment ${segment[1]}`:''}${cushionedPlayer?`; still crossed after removing ${cushionUnits} player-stat unit${cushionUnits===1?'':'s'}`:''}${robust?`; still crossed if the latest ${lastPlay}-unit scoring play is removed`:''}`, fraction:player?playerPropMaxFraction(game,market):robust?.40:.15,scored,strike};
 }
 // A Kalshi-only check cannot establish which scoring event was last. Remove
 // the largest ordinary single scoring play for that sport from the displayed
@@ -710,9 +707,6 @@ export function soccerLeadClock(game,limit){
 export function leadSignal(game, market) {
   if(game.soccerExtraTime)return null;
   if(!/basketball|baseball|football|hockey|soccer/.test(game.type)||/esports|table_tennis/.test(game.type))return null;
-  // A low YES ask in the final minutes conflicts with an apparently commanding
-  // lead and often signals a stale or incorrectly mapped live game clock.
-  if(market.yes_ask_dollars!=null&&Number.isFinite(Number(market.yes_ask_dollars))&&Number(market.yes_ask_dollars)<0.8)return null;
   const basketball=/basketball/.test(game.type);
   const football=/football/.test(game.type);
   const hockey=/hockey/.test(game.type);

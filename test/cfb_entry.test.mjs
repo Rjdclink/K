@@ -26,7 +26,7 @@ test('CFB has no sub-eleven-point exception, even in the final second',()=>{
   assert.equal(leadSignal(state(89,21,'away',{period:3}),market),null);
   assert.equal(leadSignal(state(89,21),{...market,status:'closed'}),null);
   assert.equal(leadSignal(state(89,21),{...market,custom_strike:{football_team:'beta'}}),null);
-  assert.equal(leadSignal(state(89,21),{...market,yes_ask_dollars:'.79'}),null);
+  assert.ok(leadSignal(state(89,21),{...market,yes_ask_dollars:'.79'}));
 });
 test('CFB possession changes do not veto two qualifying fallback reads; all other verification stays',()=>{
   const first=state(102,21,'home',{observed:at-12000}),second=state(89,21,'away');

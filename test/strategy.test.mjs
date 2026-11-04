@@ -329,7 +329,7 @@ test('scanner refuses unsupported score formats and delayed live data',()=>{
 test('late lead requires verified live score, leader identity, and progress',()=>{
   const market={status:'active',title:'Will New York win?',yes_sub_title:'New York wins'};
   assert.ok(leadSignal(gameState(milestone,live(140,30)),market));
-  assert.equal(leadSignal(gameState(milestone,live(140,30)),{...market,yes_ask_dollars:'0.41'}),null);
+  assert.ok(leadSignal(gameState(milestone,live(140,30)),{...market,yes_ask_dollars:'0.41'}));
   assert.equal(leadSignal(gameState(milestone,live(140,30,2)),market),null);
   assert.equal(leadSignal(gameState(milestone,{details:{...live(140,30).details,live_data_delayed:true}}),market),null);
   assert.equal(leadSignal(gameState(milestone,live(140,30)),{...market,title:'Will Boston win?',yes_sub_title:'Boston wins'}),null);
