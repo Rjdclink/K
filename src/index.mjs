@@ -2,7 +2,7 @@ import {parallelBasketballVerification,assertBasketballVerification} from './bas
 import {verifyExternalOverExposure,assertOverExposure} from './over_exposure.mjs';
 import {rememberIndependentEntry,independentEntryValid,assertExternalPurchase} from './entry_verification.mjs';
 import {createComboPlanner} from './combo_planner.mjs';
-import { sameSportsContract, overContractKey, freshOverObservation, freshOverState, overCushion, overTiming, sameOverReading, timedOverEntryValid, OVER_FRESH_MS } from './over_verification.mjs';
+import { sameSportsContract, overContractKey, freshOverObservation, freshOverState, overCushion, overTiming, sameOverReading, timedOverEntryValid, OVER_FRESH_MS, OVER_EXTERNAL_DELAY_MS } from './over_verification.mjs';
 import { golfSignal, verifyGolfDecision, verifySportradarGolf } from './golf.mjs';
 import { randomUUID } from 'node:crypto';
 import { apiPriority, withApiPriority, createPriorityGate } from './api_priority.mjs';
@@ -281,7 +281,7 @@ async function overProgress(game,market,timing,initialAt){
   const message=timing.stage==='first_wait'?`Waiting for first external check (${seconds}s; minimum 20s)`:
     timing.stage==='final_wait'?`First external check passed; waiting for paired checks (${seconds}s remaining)`:
     'Awaiting score verification';
-  await reportVerifiedGate(game,market.ticker,message,false,{dueAt:Number(initialAt)+timing.minimumMs,updatedAt:now});
+  await reportVerifiedGate(game,market.ticker,message,false,{dueAt:Number(initialAt)+(timing.stage==='first_wait'?OVER_EXTERNAL_DELAY_MS:timing.minimumMs),updatedAt:now});
 }
 async function pairedOverRead(first,milestone,market,decorate=state=>state){
   // Start the external request at actual Kalshi HTTP dispatch, after its shared
@@ -2111,9 +2111,10 @@ async function watchReadyOverTickets(until){
     try{
       const {rows}=await pool.query(`SELECT w.milestone,w.live_score,g.signals FROM game_snapshots g
         JOIN lead_watch_milestones w ON w.game_id=g.id
-        LEFT JOIN (SELECT DISTINCT game_id FROM over_verification_windows) active ON active.game_id=g.id
-        WHERE g.status='live' AND (active.game_id IS NOT NULL OR
-          (GREATEST(g.score_observed_at,g.scanned_at)>now()-interval '4 minutes' AND w.updated_at>now()-interval '4 minutes'))
+        LEFT JOIN (SELECT DISTINCT game_id FROM over_verification_windows
+          WHERE last_seen>(extract(epoch from now())-600)*1000) active ON active.game_id=g.id
+        WHERE g.status='live' AND g.score_observed_at>now()-interval '4 minutes' AND
+          (active.game_id IS NOT NULL OR w.updated_at>now()-interval '4 minutes')
           AND g.signals @> '[{"strategy":"over"}]'::jsonb
         ORDER BY (active.game_id IS NOT NULL) DESC,g.scanned_at DESC LIMIT 60`);
       const tickers=[...new Set(rows.flatMap(row=>(row.signals||[]).filter(s=>s.strategy==='over'&&s.ticker).map(s=>s.ticker)))];
@@ -2688,16 +2689,20 @@ async function scan(cachedMilestones,discoveryCount){
     // ask liquidity appears after an earlier unfilled window.
     const aged=await pool.query(`DELETE FROM candidate_windows WHERE first_seen<now()-interval '10 minutes' RETURNING market_ticker,strategy`);
     opportunities.push(...allCandidates);signals=opportunities.length;
+    const checkedIds=new Set(marketGames.map(game=>game.milestone.id));
     const snapshots=[...snapshotRows.values()];
     for(let i=0;i<snapshots.length;i+=100){
       const batch=snapshots.slice(i,i+100);
       const values=batch.map((_,row)=>'('+Array.from({length:18},(_,field)=>'$'+(row*18+field+1)).join(',')+')').join(',');
-      await pool.query(`INSERT INTO game_snapshots(id,title,sport,sport_family,home,away,status,progress,period,time_left,clock_seconds,clock_label,clock_observed_at,scanned_at,signals,possession_side,home_team_id,away_team_id) VALUES ${values} ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,sport=EXCLUDED.sport,sport_family=EXCLUDED.sport_family,home=EXCLUDED.home,away=EXCLUDED.away,status=EXCLUDED.status,progress=EXCLUDED.progress,period=EXCLUDED.period,time_left=EXCLUDED.time_left,clock_seconds=EXCLUDED.clock_seconds,clock_label=EXCLUDED.clock_label,clock_observed_at=CASE WHEN game_snapshots.clock_seconds IS NOT DISTINCT FROM EXCLUDED.clock_seconds AND game_snapshots.period=EXCLUDED.period AND game_snapshots.status=EXCLUDED.status AND game_snapshots.clock_label=EXCLUDED.clock_label THEN game_snapshots.clock_observed_at ELSE EXCLUDED.clock_observed_at END,scanned_at=EXCLUDED.scanned_at,signals=EXCLUDED.signals,possession_side=EXCLUDED.possession_side,home_team_id=EXCLUDED.home_team_id,away_team_id=EXCLUDED.away_team_id WHERE game_snapshots.status IS DISTINCT FROM 'live' OR EXCLUDED.status IS DISTINCT FROM 'live' OR game_snapshots.period IS DISTINCT FROM EXCLUDED.period OR game_snapshots.clock_seconds IS NULL OR EXCLUDED.clock_seconds IS NULL OR EXCLUDED.clock_seconds<=game_snapshots.clock_seconds`,batch.flat());
+      await pool.query(`INSERT INTO game_snapshots(id,title,sport,sport_family,home,away,status,progress,period,time_left,clock_seconds,clock_label,clock_observed_at,scanned_at,signals,possession_side,home_team_id,away_team_id) VALUES ${values} ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,sport=EXCLUDED.sport,sport_family=EXCLUDED.sport_family,home=EXCLUDED.home,away=EXCLUDED.away,status=EXCLUDED.status,progress=EXCLUDED.progress,period=EXCLUDED.period,time_left=EXCLUDED.time_left,clock_seconds=EXCLUDED.clock_seconds,clock_label=EXCLUDED.clock_label,clock_observed_at=CASE WHEN game_snapshots.clock_seconds IS NOT DISTINCT FROM EXCLUDED.clock_seconds AND game_snapshots.period=EXCLUDED.period AND game_snapshots.status=EXCLUDED.status AND game_snapshots.clock_label=EXCLUDED.clock_label THEN game_snapshots.clock_observed_at ELSE EXCLUDED.clock_observed_at END,scanned_at=game_snapshots.scanned_at,signals=game_snapshots.signals,possession_side=EXCLUDED.possession_side,home_team_id=EXCLUDED.home_team_id,away_team_id=EXCLUDED.away_team_id WHERE game_snapshots.status IS DISTINCT FROM 'live' OR EXCLUDED.status IS DISTINCT FROM 'live' OR game_snapshots.period IS DISTINCT FROM EXCLUDED.period OR game_snapshots.clock_seconds IS NULL OR EXCLUDED.clock_seconds IS NULL OR EXCLUDED.clock_seconds<=game_snapshots.clock_seconds`,batch.flat());
       // A concurrent clock refresh may be newer than the scan's clock. Keep
-      // that clock, but always publish this scan's signal set and its own age.
-      const signalValues=batch.map((_,row)=>`($${row*2+1},$${row*2+2})`).join(',');
-      await pool.query(`UPDATE game_snapshots AS g SET signals=v.signals::jsonb,scanned_at=clock_timestamp()
-        FROM (VALUES ${signalValues}) AS v(id,signals) WHERE g.id=v.id`,batch.flatMap(row=>[row[0],row[14]]));
+      // that clock; publish a fresh signal set only for checked markets.
+      const checked=batch.filter(row=>checkedIds.has(row[0]));
+      if(checked.length){
+        const signalValues=checked.map((_,row)=>`($${row*2+1},$${row*2+2})`).join(',');
+        await pool.query(`UPDATE game_snapshots AS g SET signals=v.signals::jsonb,scanned_at=clock_timestamp()
+          FROM (VALUES ${signalValues}) AS v(id,signals) WHERE g.id=v.id`,checked.flatMap(row=>[row[0],row[14]]));
+      }
     }
     // Make the live score and clock visible before slower order preflights.
     await pool.query(`UPDATE scan_status SET last_scan=$1,scanned=$2,signals=$3,

@@ -57,11 +57,18 @@ function sameTeam(expected,aliases,sport){
   const variants=teamAbbreviationVariants(expected,sport).map(clean);
   // Kalshi NHL milestones often use only a city, while ESPN/FOX append the
   // franchise. Map explicitly to avoid matching two clubs from one city.
-  const hockey={Carolina:'Carolina Hurricanes',Columbus:'Columbus Blue Jackets',Dallas:'Dallas Stars',Montreal:'Montreal Canadiens',
-    Minnesota:'Minnesota Wild','New York I':'New York Islanders','New York R':'New York Rangers',Pittsburgh:'Pittsburgh Penguins',
-    Utah:'Utah Mammoth','St. Louis':'St Louis Blues',Boston:'Boston Bruins','Tampa Bay':'Tampa Bay Lightning',Winnipeg:'Winnipeg Jets'};
+  const hockey={Anaheim:'Anaheim Ducks',Boston:'Boston Bruins',Buffalo:'Buffalo Sabres',Calgary:'Calgary Flames',
+    Carolina:'Carolina Hurricanes',Chicago:'Chicago Blackhawks',Colorado:'Colorado Avalanche',
+    Columbus:'Columbus Blue Jackets',Dallas:'Dallas Stars',Detroit:'Detroit Red Wings',Edmonton:'Edmonton Oilers',
+    Florida:'Florida Panthers','Los Angeles':'Los Angeles Kings',Minnesota:'Minnesota Wild',
+    Montreal:'Montreal Canadiens',Nashville:'Nashville Predators','New Jersey':'New Jersey Devils',
+    'New York I':'New York Islanders','New York R':'New York Rangers',Ottawa:'Ottawa Senators',
+    Philadelphia:'Philadelphia Flyers',Pittsburgh:'Pittsburgh Penguins','San Jose':'San Jose Sharks',
+    Seattle:'Seattle Kraken','St. Louis':'St Louis Blues','Tampa Bay':'Tampa Bay Lightning',
+    Toronto:'Toronto Maple Leafs',Utah:'Utah Mammoth',Vancouver:'Vancouver Canucks',
+    Vegas:'Vegas Golden Knights',Washington:'Washington Capitals',Winnipeg:'Winnipeg Jets'};
   const soccer={'Atletico Mineiro':'Atletico MG','Al Ahli Saudi':'Al Ahli','GA Eagles':'Go Ahead Eagles'};
-  const franchise=hockey[expected]?clean(hockey[expected]):soccer[expected]?clean(soccer[expected]):null;
+  const franchise=sport==='NHL'&&hockey[expected]?clean(hockey[expected]):soccer[expected]?clean(soccer[expected]):null;
   const clubName=name=>clean(String(name||'').replace(/^(?:AC|FC|CF|SC|AFC)\s+/i,'').replace(/\s+(?:AC|FC|CF|SC|AFC)$/i,''));
   const stripped=clubName(expected);
   const shortCode=variants.length>1&&/^[A-Za-z]{2}$/.test(String(expected||''));

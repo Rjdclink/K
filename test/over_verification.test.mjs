@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
 import {gameState,overSignal,confirmedOver,playerOverSpec,fallbackScoringUnits} from '../src/strategy.mjs';
 import {verifyExternalOverExposure} from '../src/over_exposure.mjs';
-import {sameSportsContract,overContractKey,freshOverObservation,freshOverState,overTiming,overCushion,sameOverReading,timedOverEntryValid,OVER_FRESH_MS} from '../src/over_verification.mjs';
+import {sameSportsContract,overContractKey,freshOverObservation,freshOverState,overTiming,overCushion,sameOverReading,timedOverEntryValid,OVER_FRESH_MS,OVER_EXTERNAL_DELAY_MS} from '../src/over_verification.mjs';
 const start=Date.parse('2026-11-01T12:00:00Z');
 const milestone={id:'game',type:'basketball_game',title:'Boston at New York',details:{league:'NBA'}};
 const market={ticker:'KXNBATOTAL-TEST-T139',event_ticker:'KXNBATOTAL-TEST',status:'active',floor_strike:139.5,title:'Over 139.5 total points',rules_primary:'Combined total points scored in the full game',strike_type:'greater',yes_ask_dollars:'.95',yes_ask_size_fp:'100'};
@@ -23,7 +23,7 @@ function harness({home=70,away=70,seller=true,decisions=[]}={}){
  class Clock extends Date{constructor(...args){super(...(args.length?args:[time]))}static now(){return time}}
  const context=vm.createContext({Date:Clock,Number,JSON,Math,Promise,console,
   overContractKey,overCushion,playerOverSpec,fallbackScoringUnits,freshOverObservation:g=>freshOverObservation(g,time),freshOverState:(g,m)=>freshOverState(g,m,time),overTiming:(w,g,m,at=time)=>overTiming(w,g,m,at),sameOverReading,timedOverEntryValid:(g,m)=>timedOverEntryValid(g,m,time),OVER_FRESH_MS,
-  verifyExternalOverExposure,rememberIndependentEntry,gameState:liveState,confirmedOver,overSignal,randomUUID:()=>`id-${++ids}`,auditTable:async()=>{},
+  OVER_EXTERNAL_DELAY_MS,verifyExternalOverExposure,rememberIndependentEntry,gameState:liveState,confirmedOver,overSignal,randomUUID:()=>`id-${++ids}`,auditTable:async()=>{},
   pool:{query:async(sql,args=[])=>{
    if(sql.startsWith('CREATE'))return {rows:[],rowCount:0};
    if(sql.startsWith('INSERT INTO over_verification_windows')){
@@ -46,7 +46,7 @@ function harness({home=70,away=70,seller=true,decisions=[]}={}){
 }
 test('uncushioned over waits 20 seconds for external check one and 3:00 for the simultaneous final pair',async()=>{
  const h=harness();assert.equal(await h.run(0),null);assert.equal(h.externalCount,0);assert.equal(h.window.initial_at,start);
- assert.deepEqual(JSON.parse(JSON.stringify(h.events.at(-1))),['progress','Waiting for first external check (20s; minimum 20s)',{dueAt:start+180000,updatedAt:start}]);
+ assert.deepEqual(JSON.parse(JSON.stringify(h.events.at(-1))),['progress','Waiting for first external check (20s; minimum 20s)',{dueAt:start+20000,updatedAt:start}]);
  assert.equal(await h.run(19999),null);assert.equal(h.externalCount,0);
  assert.equal(await h.run(20000),null);assert.equal(h.externalCount,1);assert.equal(h.kalshiCount,0);
  for(const ms of [80000,140000,179999])assert.equal(await h.run(ms),null);

@@ -96,7 +96,7 @@ test('provider abbreviations match across sports without accepting the wrong tea
 });
 test('NHL city labels match the exact franchise but not a same-city rival',()=>{
   const milestone={...m,title:'New York I at Minnesota'};
-  const state={...game,homeName:'Minnesota',awayName:'New York I'};
+  const state={...game,sport:'NHL',type:'hockey_game',homeName:'Minnesota',awayName:'New York I'};
   const fixture=espn(24,20,{competitions:[{competitors:[
     {homeAway:'home',score:'24',team:{displayName:'Minnesota Wild',abbreviation:'MIN',name:'Wild'}},
     {homeAway:'away',score:'20',team:{displayName:'New York Islanders',abbreviation:'NYI',name:'Islanders'}}]}]});

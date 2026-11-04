@@ -1,3 +1,5 @@
+import {OVER_EXTERNAL_DELAY_MS} from './over_verification.mjs';
+
 export function verificationStatus(record){
   if(record.passed&&record.mode==='seller_backed_cushioned_over')return 'Cushioned over; live seller checked; final quote pending';
   if(record.passed&&record.mode==='independent_timed_over')return 'Both external checks and paired Kalshi check passed; final quote pending';
@@ -24,7 +26,7 @@ export function verificationWindowStatus(signal,window,timing,now=Date.now()){
     const seconds=Math.ceil(timing.remainingMs/1000);
     return {execution:timing.stage==='first_wait'?`Waiting for first external check (${seconds}s; minimum 20s)`:
       `First external check passed; waiting for paired checks (${seconds}s remaining)`,
-      wait:{dueAt:Number(window.initial_at)+timing.minimumMs,updatedAt:seen}};
+      wait:{dueAt:Number(window.initial_at)+(timing.stage==='first_wait'?OVER_EXTERNAL_DELAY_MS:timing.minimumMs),updatedAt:seen}};
   }
   if(timing?.stage==='first_external')return {execution:'First external check due; awaiting fresh verification'};
   if(timing?.stage==='paired')return {execution:'Second external check due; awaiting fresh verification'};

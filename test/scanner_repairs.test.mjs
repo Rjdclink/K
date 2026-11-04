@@ -15,6 +15,20 @@ const teams=[{homeAway:'home',score:'60',team:{id:'154',location:'Wake Forest',n
 const board={events:[{id:'401906102',date:start,competitions:[{competitors:teams,status:{period:4,displayClock:'1:41',type:{state:'in'}}}]}]};
 const reply=data=>({ok:true,status:200,headers:new Headers(),json:async()=>data});
 
+test('city-only NHL milestones match exact franchises without accepting another club',()=>{
+  const game={sport:'NHL',type:'hockey_game',homeName:'Vancouver',awayName:'Anaheim'};
+  const milestone={title:'Anaheim at Vancouver',start_date:'2026-11-04T02:00:00Z'};
+  const fixture=(home,away)=>({events:[{id:'nhl-1',date:milestone.start_date,competitions:[{
+    competitors:[{homeAway:'home',team:{displayName:home},score:'5'},
+      {homeAway:'away',team:{displayName:away},score:'4'}],
+    status:{period:3,displayClock:'1:57',type:{state:'in'}}}]}]});
+  assert.equal(espnMatches(fixture('Vancouver Canucks','Anaheim Ducks'),game,milestone).length,1);
+  assert.equal(espnMatches(fixture('Vegas Golden Knights','Anaheim Ducks'),game,milestone).length,0);
+  assert.equal(espnMatches(fixture('Vancouver Canucks','Los Angeles Kings'),game,milestone).length,0);
+  assert.equal(espnMatches(fixture('Vancouver Canucks','Anaheim Ducks'),game,
+    {...milestone,start_date:'2026-11-03T20:00:00Z'}).length,0);
+});
+
 test('college ESPN queries include the full group and tolerate the observed school alias',async()=>{
   const calls=[];
   assert.equal(await verifyIndependentOverDecision({...game},milestone,{market,sportradarApiKey:'test-only',fetcher:async url=>{

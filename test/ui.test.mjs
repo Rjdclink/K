@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {page} from '../src/ui.mjs';
 
-test('only the final 20 seconds count down from the seller-backed verification deadline',()=>{
+test('each external verification stage counts down without refreshing a stale market quote',()=>{
   let now=Date.now();
   class Clock extends Date{static now(){return now}}
   const elements=[];
@@ -14,26 +14,22 @@ test('only the final 20 seconds count down from the seller-backed verification d
     localStorage:{getItem(){return null}},fetch:()=>new Promise(()=>{}),AbortSignal,setInterval(){}});
   vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],context);
   const signal={ticker:'OVER',title:'Player over',ask:'.96',ask_size:'8',execution:'Waiting for first external check (20s; minimum 20s)',
-    verification_wait:{dueAt:now+180000,updatedAt:now}};
+    verification_wait:{dueAt:now+20000,updatedAt:now}};
   const card=vm.runInContext('item',context)({title:'Game',sport:'NBA',home:3,away:2,signals:[signal]});
   const detail=card.children.at(-1);elements.push(detail);
-  assert.match(detail.textContent,/Verification in progress/);
-  assert.doesNotMatch(detail.textContent,/20s/);
-  now+=1000;vm.runInContext('paintCountdowns()',context);assert.doesNotMatch(detail.textContent,/179s/);
-  now+=158000;signal.verification_wait.updatedAt=now;
-  vm.runInContext('paintCountdowns()',context);assert.doesNotMatch(detail.textContent,/21s/);
-  now+=1000;vm.runInContext('paintCountdowns()',context);assert.match(detail.textContent,/Verification: 20s remaining/);
-  now+=1000;vm.runInContext('paintCountdowns()',context);assert.match(detail.textContent,/Verification: 19s remaining/);
-  now+=19000;vm.runInContext('paintCountdowns()',context);assert.match(detail.textContent,/Verification due; awaiting fresh checks/);
-  now+=11000;vm.runInContext('paintCountdowns()',context);assert.match(detail.textContent,/Verification due; awaiting fresh checks/);
+  assert.match(detail.textContent,/First external check in 20s/);
+  now+=1000;vm.runInContext('paintCountdowns()',context);assert.match(detail.textContent,/First external check in 19s/);
+  now+=20000;vm.runInContext('paintCountdowns()',context);assert.match(detail.textContent,/Verification due; awaiting fresh checks/);
+  now+=11000;vm.runInContext('paintCountdowns()',context);assert.match(detail.textContent,/market recheck pending/);
   const final={...signal,execution:'First external check passed; waiting for paired checks (210s remaining)',
     verification_wait:{dueAt:now+210000,updatedAt:now}};
-  assert.match(vm.runInContext('verificationExecution',context)(final,now+1000),/First external check passed; verification in progress/);
+  assert.match(vm.runInContext('verificationExecution',context)(final,now+1000),/Paired external checks in 209s/);
   final.verification_wait.updatedAt=now+190000;
-  assert.match(vm.runInContext('verificationExecution',context)(final,now+190000),/Verification: 20s remaining/);
+  assert.match(vm.runInContext('verificationExecution',context)(final,now+190000),/Paired external checks in 20s/);
   final.verification_wait.updatedAt=now;
-  assert.match(vm.runInContext('verificationExecution',context)(final,now+190000),/Verification: 20s remaining · market recheck pending/);
-  assert.match(vm.runInContext('verificationExecution',context)({...final,ask_size:'0'},now+190000),/No ask liquidity · Verification: 20s remaining/);
+  assert.match(vm.runInContext('verificationExecution',context)(final,now+190000),/Paired external checks in 20s · market recheck pending/);
+  assert.match(vm.runInContext('verificationExecution',context)({...final,ask_size:'0'},now+190000),/No ask liquidity · Paired external checks in 20s/);
+  assert.match(vm.runInContext('verificationExecution',context)({...final,execution:'Last market result: '+final.execution},now+190000),/Paired external checks in 20s/);
 });
 
 test('table-tennis scanner cards remove old countdown wording while retaining the set and score',()=>{
