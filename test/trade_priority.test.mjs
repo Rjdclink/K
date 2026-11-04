@@ -14,9 +14,9 @@ function ranked(balance){
   playerOverSpec:()=>null,playerPropEarlyWindow:()=>false,tieRefundPreference:()=>false});
  vm.runInContext(ranking,context);return opportunities.map(c=>c.market.ticker);
 }
-test('scarce cash favors the larger net profit; ample cash retains entry priority',()=>{
- assert.deepEqual(ranked(1700),['OVER','LEAD']);
- assert.deepEqual(ranked(1500),['OVER','LEAD']);
+test('eligible lower asks take priority even when cash is scarce',()=>{
+ assert.deepEqual(ranked(1700),['LEAD','OVER']);
+ assert.deepEqual(ranked(1500),['LEAD','OVER']);
  assert.deepEqual(ranked(700),['LEAD','OVER']);
 });
 test('cash-limited combo quotes favor net profit over leg count',()=>{

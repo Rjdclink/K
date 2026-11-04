@@ -93,7 +93,7 @@ test('three-goal hockey winners target at least fifteen percent of bankroll',()=
  assert.equal(minimumThreeGoalSpend(state,winner,market,10001),1501,'the minimum rounds upward to a whole cent');
  assert.equal(directLeadFraction(state,winner,market),.20);
  assert.equal(finalLeadFraction(state,state,winner,false,market),.20);
- assert.equal(minimumThreeGoalSpend(state,winner,{...market,yes_ask_dollars:'.50'},10000),Infinity);
+ assert.equal(minimumThreeGoalSpend(state,winner,{...market,yes_ask_dollars:'.50'},10000),1500);
 });
 test('three-goal soccer winner has the same floor; two-goal and draw do not',()=>{
  const {state,market}=team('soccer_match','Soccer',3,2,0,{half:'2nd',time:"85'",match_remaining_seconds:299,clock:''}),winner=leadSignal(state,market);
