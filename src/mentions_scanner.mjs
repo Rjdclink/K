@@ -62,24 +62,28 @@ export async function scanMentionMarkets({kalshi,sources,readTranscript,getWindo
       stats.markets++;
       if(stats.sample.length<8)stats.sample.push({ticker:market.ticker,event:event.event_ticker,
         day:mentionTickerDay(event.event_ticker),yes:market.yes_ask_dollars,no:market.no_ask_dollars});
-      for(const side of ['yes','no'])if(mentionEntryPrice(market[side+'_ask_dollars'])){
-        candidates.push({event,market,series,contract,side});stats.priced++;
+      for(const side of ['yes','no']){
+        candidates.push({event,market,series,contract,side});
+        if(mentionEntryPrice(market[side+'_ask_dollars']))stats.priced++;
       }
     }
     if(!candidates.length)continue;
-    candidates.sort((a,b)=>Number(a.market[a.side+'_ask_dollars'])-Number(b.market[b.side+'_ask_dollars']));
+    const price=c=>mentionEntryPrice(c.market[c.side+'_ask_dollars'])?
+      Number(c.market[c.side+'_ask_dollars']):Infinity;
+    candidates.sort((a,b)=>price(a)-price(b));
+    const priced=candidates.filter(c=>price(c)<Infinity).length;
     const descriptor=sources.get(event.event_ticker);
     const scheduled=mentionTickerDay(event.event_ticker);
-    if(descriptor&&scheduled&&scheduled!==descriptor.eventDate){stats.sourceUnavailable+=candidates.length;continue}
+    if(descriptor&&scheduled&&scheduled!==descriptor.eventDate){stats.sourceUnavailable+=priced;continue}
     if(!descriptor||descriptor.eventDate!==mentionDay(now(),descriptor.timezone||'America/New_York')){
-      stats.sourceUnavailable+=candidates.length;continue;
+      stats.sourceUnavailable+=priced;continue;
     }
     const timed=candidates.filter(candidate=>mentionEventTime(event,candidate.market,descriptor));
-    stats.sourceUnavailable+=candidates.length-timed.length;
+    stats.sourceUnavailable+=priced-timed.filter(c=>price(c)<Infinity).length;
     if(!timed.length)continue;
     let transcript;
     try{transcript=await readTranscript(descriptor)}catch{stats.errors++;continue}
-    if(!transcript){stats.sourceUnavailable+=timed.length;continue}
+    if(!transcript){stats.sourceUnavailable+=timed.filter(c=>price(c)<Infinity).length;continue}
     for(const candidate of timed){
       const observation=mentionObservation(candidate.contract,transcript,{now:now(),side:candidate.side});
       if(!observation)continue;
@@ -95,6 +99,7 @@ export async function scanMentionMarkets({kalshi,sources,readTranscript,getWindo
           }
           continue;
         }
+        if(!mentionEntryPrice(candidate.market[candidate.side+'_ask_dollars']))continue;
         stats.pairedChecks++;
         await onVerified({...candidate,first,second:observation,transcript});
       }catch{stats.errors++}

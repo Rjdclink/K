@@ -51,7 +51,11 @@ published official transcript; it cannot be mapped until one appears. If a
 publisher never posts an official transcript, the event remains blocked.
 The registry cannot promise coverage merely because Kalshi lists a market.
 
-The first fetched transcript is persisted per market and side. A second direct
+The first fetched transcript is persisted per market and side even when its
+current ask is above $0.40. If that ask falls to $0.40 or less while the
+same proof window remains valid, the next direct read can complete the
+45-second pair without starting a new timer. An order still requires the
+qualifying ask at both final market and order-book checks. A second direct
 fetch at least 45 seconds later must have the same source, contract, event
 date, event start, and transcript hash. Changed text restarts the window.
 The final order path rechecks the actual Kalshi market, order book, current

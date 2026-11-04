@@ -155,6 +155,21 @@ test('verified entry attempts run from the lowest qualifying ask first',async()=
   await scanMentionMarkets(options);time+=45_000;await scanMentionMarkets(options);
   assert.deepEqual(ordered,[cheap.ticker,expensive.ticker]);
 });
+test('transcript proof starts before a quote falls to 40 cents',async()=>{
+  let time=at,ask='0.5500';const windows=new Map(),attempts=[];
+  const options={sources:new Map([[event.event_ticker,{eventTicker:event.event_ticker,eventDate:'2026-11-04',
+    timezone:'America/New_York',scheduledAt:event.strike_date}]]),now:()=>time,maxSeries:0,
+    kalshi:async path=>path.startsWith('/series')?{series:[series]}:{events:[{...event,
+      markets:[{...market('Veterans'),yes_ask_dollars:ask,no_ask_dollars:'0.6000'}]}]},
+    readTranscript:async()=>source('Veterans'),getWindow:async(ticker,side)=>windows.get(ticker+side),
+    saveWindow:async proof=>{windows.set(proof.ticker+proof.side,proof)},
+    onVerified:async item=>attempts.push(item)};
+  const first=await scanMentionMarkets(options);
+  assert.equal(first.priced,0);assert.equal(first.firstChecks,1);assert.equal(attempts.length,0);
+  time+=45_000;ask='0.4000';
+  const second=await scanMentionMarkets(options);
+  assert.equal(second.pairedChecks,1);assert.equal(attempts.length,1);
+});
 test('source subject and dated ticker must match the exact contract event',()=>{
   const c=mentionContract(event,market('Baconator'),series);
   assert.equal(mentionObservation(c,source('Baconator',{subject:'a different speaker'}),{now:at,side:'yes'}),null);
