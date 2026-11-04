@@ -6,6 +6,7 @@ import {rememberIndependentEntry,independentEntryValid,assertExternalPurchase} f
 import {timedOverEntryValid,overContractKey} from '../src/over_verification.mjs';
 import {gameState} from '../src/strategy.mjs';
 import {verifyIndependentOverDecision} from '../src/score_verification.mjs';
+import {assertScannerTradeDisabled} from '../src/scanner_trade_gate.mjs';
 const now=Date.now(),game={id:'g',verificationId:'external'},market={ticker:'OVER',event_ticker:'TOTAL',rules_primary:'Exact rules'};
 test('an internal passed record or a large cushion never substitutes for independent proof',()=>{
   assert.equal(independentEntryValid(game,market,now),false);
@@ -37,13 +38,17 @@ test('Rafaela over 0.5 cannot qualify from Kalshi 1-1 when independent evidence 
 });
 test('the actual API transport rejects unverified initial purchases and quote acceptances before HTTP dispatch',async()=>{
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8'),sent=[];
-  const context=vm.createContext({assertExternalPurchase,AbortSignal,API:'https://test.invalid',
+  const context=vm.createContext({assertExternalPurchase,assertScannerTradeDisabled,AbortSignal,API:'https://test.invalid',
     kalshiRateLimit:async()=>{},fetch:async(url,options)=>{sent.push([url,options]);return {ok:true,status:200,json:async()=>({})}}});
   vm.runInContext(source.slice(source.indexOf('async function kalshi('),source.indexOf('// The balance endpoint')),context);
   await assert.rejects(context.kalshi('/portfolio/events/orders',{method:'POST',body:{ticker:'OVER',side:'bid'}}),{code:'LOCAL_EXTERNAL_VERIFICATION_REQUIRED'});
   await assert.rejects(context.kalshi('/communications/rfqs/R/quotes/Q/confirm',{method:'PUT',body:{}}));
   assert.equal(sent.length,0);
   const g={...game};rememberIndependentEntry(g,market,'external',Date.now());
+  for(const type of ['mentions','crypto'])await assert.rejects(
+    context.kalshi('/portfolio/events/orders',{method:'POST',body:{ticker:'OVER',side:'bid'},
+      entryVerifications:[{game:{...g,type},market}]}),{code:'LOCAL_SCANNER_TRADING_DISABLED'});
+  assert.equal(sent.length,0,'a scanner order never reaches HTTP transport');
   await context.kalshi('/portfolio/events/orders',{method:'POST',body:{ticker:'OVER',side:'bid'},entryVerifications:[{game:g,market}]});
   assert.equal(sent.length,1,'a genuinely verified purchase can reach the transport');
 });
