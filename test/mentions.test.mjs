@@ -32,6 +32,13 @@ test('a plural strike does not accept its singular form; distinct occurrences me
 test('earnings call language using “is said by” is a mention contract',()=>{
   assert.ok(mentionContract(event,market('Frosty','Resolves Yes if Frosty is said by any company representative during the live earnings call. Plural or possessive forms count.'),series));
 });
+test('live Kalshi If ... then resolves Yes wording remains discoverable',()=>{
+  const live={...market('Tariff'),yes_sub_title:'Tariff',
+    rules_primary:"If Tariff is said by any The Wendy's Company representative (including the operator of the call) during the next The Wendy's Company live earnings call or official broadcast (including the Q+A), then the market resolves to Yes."};
+  const parsed=mentionContract(event,live,series);
+  assert.equal(parsed?.subject,"any the wendy's company representative (including the operator of the call)");
+  assert.equal(mentionContract(event,{...live,rules_primary:live.rules_primary.replace('resolves to Yes','resolves to No')},series),null);
+});
 test('news broadcast wording and a word containing “Times” are parsed without a false frequency threshold',()=>{
   const news=market('Iran / Iranian (3+ times)',
     'Resolves Yes if any host or reporter says Iran / Iranian (3+ times) as part of ABC World News Tonight originally scheduled for November 4, 2026. Plural forms count.');
@@ -45,7 +52,7 @@ test('slash alternatives count without double-counting overlapping matches or wo
   const c=mentionContract(event,market('Doge / Dogecoin (2+ times)'),series);
   assert.equal(countMentionOccurrences('Dogecoin, Doge, dogecoinage',c),2);
 });
-test('same-day evidence, finished NO events, and two checks at least 45 seconds apart',()=>{
+test('same-day evidence, finished NO events, and two checks at least 50 seconds apart',()=>{
   const contract=mentionContract(event,market('Iran (2+ times)'),series);
   assert.equal(mentionDay(at),'2026-11-04');
   assert.equal(mentionTickerDay('KXWENDYSMEM-26NOV05'),'2026-11-05');
@@ -54,15 +61,15 @@ test('same-day evidence, finished NO events, and two checks at least 45 seconds 
   assert.equal(mentionObservation(contract,source('No word here',{noCoverageConfirmed:false}),{now:at,side:'no'}),null);
   const first=mentionObservation(contract,source('No word here'),{now:at,side:'no'});
   const early=mentionObservation(contract,source('No word here'),{now:at+44_999,side:'no'});
-  const second=mentionObservation(contract,source('No word here'),{now:at+45_000,side:'no'});
+  const second=mentionObservation(contract,source('No word here'),{now:at+50_000,side:'no'});
   assert.equal(pairedMentionProof(first,early,at+44_999),false);
-  assert.equal(pairedMentionProof(first,second,at+45_000),true);
-  assert.equal(pairedMentionProof(first,{...second,contentHash:'revised'},at+45_000),false);
+  assert.equal(pairedMentionProof(first,second,at+50_000),true);
+  assert.equal(pairedMentionProof(first,{...second,contentHash:'revised'},at+50_000),false);
   assert.equal(mentionObservation(contract,source('No word here',{endedAt:'2026-11-04T19:00:00Z'}),{now:at,side:'no'}),null);
 });
-test('40 cents is inclusive and the aggregate bankroll budget deducts held and pending costs',()=>{
-  assert.equal(mentionEntryPrice('0.4000'),true);
-  assert.equal(mentionEntryPrice('0.4001'),false);
+test('65 cents is inclusive and the aggregate bankroll budget deducts held and pending costs',()=>{
+  assert.equal(mentionEntryPrice('0.6500'),true);
+  assert.equal(mentionEntryPrice('0.6501'),false);
   assert.equal(mentionEntryPrice('0'),false);
   assert.equal(remainingMentionCents(10000,900,150),450);
   assert.equal(remainingMentionCents(10000,1500,1),0);
@@ -104,7 +111,7 @@ test('search discovers only a unique official transcript with verified event and
 });
 test('scanner prioritizes mapped same-day events and skips unavailable transcripts without waiting',async()=>{
   const missingTicker='KXTESTMENTION-26NOV04-MISSING';
-  const missing={...event,event_ticker:missingTicker,markets:[{...market('Iran'),ticker:missingTicker+'-IRAN',event_ticker:missingTicker,no_ask_dollars:'0.60'}]};
+  const missing={...event,event_ticker:missingTicker,markets:[{...market('Iran'),ticker:missingTicker+'-IRAN',event_ticker:missingTicker,no_ask_dollars:'0.70'}]};
   const available={...event,markets:[market('Veterans (2+ times)')]};
   const mapping=new Map([[available.event_ticker,{eventTicker:available.event_ticker,eventDate:'2026-11-04',timezone:'America/New_York',scheduledAt:event.strike_date}],
     [missing.event_ticker,{eventTicker:missing.event_ticker,eventDate:'2026-11-04',timezone:'America/New_York',scheduledAt:event.strike_date}]]);
@@ -121,9 +128,13 @@ test('scanner prioritizes mapped same-day events and skips unavailable transcrip
   assert.equal(first.sourceUnavailable,1);
   assert.equal(first.firstChecks,1);
   assert.equal(orders.length,0);
-  time+=45_000;
+  time+=50_000;
   const second=await scanMentionMarkets(options);
   assert.equal(second.pairedChecks,1);
+  assert.equal(orders.length,0);
+  time+=30_000;
+  const third=await scanMentionMarkets(options);
+  assert.equal(third.thirdChecks,1);
   assert.equal(orders.length,1);
   assert.equal(orders[0].side,'yes');
 });
@@ -152,23 +163,26 @@ test('verified entry attempts run from the lowest qualifying ask first',async()=
     getWindow:async(ticker,side)=>windows.get(ticker+side),
     saveWindow:async proof=>{windows.set(proof.ticker+proof.side,proof)},
     onVerified:async item=>{ordered.push(item.market.ticker)}};
-  await scanMentionMarkets(options);time+=45_000;await scanMentionMarkets(options);
+  await scanMentionMarkets(options);time+=50_000;await scanMentionMarkets(options);
+  time+=30_000;await scanMentionMarkets(options);
   assert.deepEqual(ordered,[cheap.ticker,expensive.ticker]);
 });
-test('transcript proof starts before a quote falls to 40 cents',async()=>{
-  let time=at,ask='0.5500';const windows=new Map(),attempts=[];
+test('transcript proof starts before a quote falls to 65 cents',async()=>{
+  let time=at,ask='0.7500';const windows=new Map(),attempts=[];
   const options={sources:new Map([[event.event_ticker,{eventTicker:event.event_ticker,eventDate:'2026-11-04',
     timezone:'America/New_York',scheduledAt:event.strike_date}]]),now:()=>time,maxSeries:0,
     kalshi:async path=>path.startsWith('/series')?{series:[series]}:{events:[{...event,
-      markets:[{...market('Veterans'),yes_ask_dollars:ask,no_ask_dollars:'0.6000'}]}]},
+      markets:[{...market('Veterans'),yes_ask_dollars:ask,no_ask_dollars:'0.7000'}]}]},
     readTranscript:async()=>source('Veterans'),getWindow:async(ticker,side)=>windows.get(ticker+side),
     saveWindow:async proof=>{windows.set(proof.ticker+proof.side,proof)},
     onVerified:async item=>attempts.push(item)};
   const first=await scanMentionMarkets(options);
   assert.equal(first.priced,0);assert.equal(first.firstChecks,1);assert.equal(attempts.length,0);
-  time+=45_000;ask='0.4000';
+  time+=50_000;ask='0.6500';
   const second=await scanMentionMarkets(options);
-  assert.equal(second.pairedChecks,1);assert.equal(attempts.length,1);
+  assert.equal(second.pairedChecks,1);assert.equal(attempts.length,0);
+  time+=30_000;const third=await scanMentionMarkets(options);
+  assert.equal(third.thirdChecks,1);assert.equal(attempts.length,1);
 });
 test('mapped-only fast passes reuse the catalog and avoid a broad series survey',async()=>{
   let calls=[];
@@ -180,6 +194,23 @@ test('mapped-only fast passes reuse the catalog and avoid a broad series survey'
   assert.equal(stats.surveyed.length,0);
   assert.equal(stats.firstChecks,1);
   assert.equal(calls.some(path=>path.startsWith('/series?')),false);
+});
+test('full catalog checks event dates first and fetches market details only for today',async()=>{
+  const futureTicker='KXTESTMENTION-26NOV05',calls=[];
+  const stats=await scanMentionMarkets({sources:new Map(),maxSeries:2,now:()=>at,
+    kalshi:async path=>{calls.push(path);
+      if(path.startsWith('/series?'))return {series:[series,{...series,ticker:'FUTURE'}]};
+      if(path.includes('series_ticker=FUTURE'))return {events:[{event_ticker:futureTicker,series_ticker:'FUTURE'}]};
+      if(path.includes('series_ticker='))return {events:[{event_ticker:event.event_ticker,series_ticker:series.ticker}]};
+      return {events:[{...event,markets:[market('Veterans')]}]};},
+    readTranscript:async()=>assert.fail('unmapped transcript'),getWindow:async()=>null,
+    saveWindow:async()=>{},onVerified:async()=>assert.fail('unmapped order')});
+  assert.equal(stats.surveyed.length,2);
+  assert.equal(stats.todayEvents,1);
+  assert.equal(stats.scheduledLater,1);
+  assert.equal(stats.markets,1);
+  assert.equal(calls.filter(path=>path.includes('with_nested_markets=true')).length,1);
+  assert.equal(calls.some(path=>path.includes('tickers='+futureTicker)),false);
 });
 test('source subject and dated ticker must match the exact contract event',()=>{
   const c=mentionContract(event,market('Baconator'),series);

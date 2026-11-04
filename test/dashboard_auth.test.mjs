@@ -39,7 +39,9 @@ test('dashboard includes alerts in its existing refresh while the alert endpoint
     if(sql.includes('SET clock_refresh_at='))return {rows:[]};
     if(sql.includes('CREATE TABLE IF NOT EXISTS combo_diagnostics'))return {rows:[]};
     if(sql.includes('CREATE TABLE IF NOT EXISTS mention_'))return {rows:[]};
+    if(sql.includes('CREATE TABLE IF NOT EXISTS crypto_'))return {rows:[]};
     if(sql.includes('FROM mention_scan_status'))return {rows:[]};
+    if(sql.includes('FROM crypto_scan_status'))return {rows:[]};
     if(sql.includes('FROM combo_diagnostics'))return {rows:[]};
     if(sql.includes('FROM over_verification_windows WHERE game_id=ANY'))return {rows:[]};
     if(/FROM game_snapshots\s+WHERE/.test(sql))return {rows:[structuredClone(delayedGame)]};

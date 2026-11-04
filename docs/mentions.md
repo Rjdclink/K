@@ -2,15 +2,16 @@
 
 The scheduled Kalshi event, not the market's opening time or the viewer's local
 clock, determines the transcript day. The scanner discovers open Mentions
-series in rotating batches (48 per minute, including the 12 most recently
-updated; a 465-series catalog is covered within 13 passes). Known future
-mapped events get a calendar check only
-until their scheduled day. It tracks future dated contracts, checks YES and
-NO asks at or below $0.40, and skips unavailable transcripts immediately.
+series in bounded parallel batches across the full catalog on each completed
+pass. This may take several minutes at the shared Kalshi read limit. The
+catalog pass reads event dates first and fetches nested market details only
+for events dated today in Eastern time. Known future mapped events get a
+calendar check only until their scheduled day. It tracks future dated contracts, checks YES and
+NO asks at or below $0.65, and skips unavailable transcripts immediately.
 Available mapped events and their contracts are attempted from the lowest
-qualifying ask upward. The dashboard shows Bankroll first, then a separate
-Mentions card above Games found with per-pass coverage, asks, deferred events,
-and checks.
+qualifying ask upward. The dashboard shows Bankroll first, then Crypto,
+Mentions, and Games found. The Mentions card displays per-pass coverage, asks,
+deferred events, and checks.
 
 An event can trade only after an exact official transcript is mapped. Set
 `MENTION_OFFICIAL_SOURCES` to a JSON array of event-specific descriptors. A
@@ -63,12 +64,13 @@ Neon function deployments; the same key must be set in the function's own
 environment before this path can be exercised live.
 
 The first fetched transcript is persisted per market and side even when its
-current ask is above $0.40. If that ask falls to $0.40 or less while the
-same proof window remains valid, the next direct read can complete the
-45-second pair without starting a new timer. An order still requires the
-qualifying ask at both final market and order-book checks. A second direct
-fetch at least 45 seconds later must have the same source, contract, event
-date, event start, and transcript hash. Changed text restarts the window.
+current ask is above $0.65. If that ask falls to $0.65 or less while the
+same proof window remains valid, the checks continue without starting a new
+timer. An order still requires the qualifying ask at both final market and
+order-book checks. A second direct fetch at least 50 seconds after the first
+and a third at least 30 seconds after the second must have the same source,
+contract, event date, event start, and transcript hash. Changed text restarts
+the window.
 The final order path rechecks the actual Kalshi market, order book, current
 event day, proof freshness, account balance, fees, and total open and pending
 mention commitments. It uses a fill-or-kill order and never exceeds 15% of
@@ -77,10 +79,10 @@ still runs, but no mention orders can be submitted.
 
 Schedule a separate Neon function trigger for `POST /mentions/tick` once per
 minute. This keeps broad mention discovery out of the live sports `/tick`
-request. On the event day after the scheduled start, the same invocation
-rechecks mapped events approximately every five seconds until the next minute;
+request. On the event day, the same invocation rechecks mapped events
+approximately every five seconds while the full catalog survey is running;
 the broad catalog is fetched and surveyed only once. The first successful
-direct read starts the 45-second proof window, including when the ask is above
-40 cents. Function start and source publication delays mean detection cannot
+direct read starts the proof window, including when the ask is above
+65 cents. Function start and source publication delays mean detection cannot
 be guaranteed at the literal publication instant. A database lock prevents
 overlapping mention passes.

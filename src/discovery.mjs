@@ -2,6 +2,8 @@
 // The exchange remains authoritative: a guessed ticker is ignored unless an
 // open event and its market are actually returned by Kalshi.
 import { cricketOneInningsFormat, cfbLeadApproaching, basketballLeadProfile } from './strategy.mjs';
+const esports=milestone=>[milestone?.type,milestone?.sport,milestone?.category,
+  milestone?.details?.league].some(value=>/esports|^e(?:soccer|basketball)$/i.test(String(value||'')));
 const supportedType=type=>/basketball|baseball|football|hockey|soccer|tennis|golf|handball|rugby|lacrosse|volleyball|darts/.test(String(type||'').toLowerCase());
 
 export async function mapBatches(items,limit,task){
@@ -14,9 +16,9 @@ export async function mapBatches(items,limit,task){
 
 export const internationalBasketball=game=>/basketball/.test(String(game?.type||''))&&
   !['NBA','WNBA','NCAAB','NCAAW'].includes(game?.sport);
-export function eligibleForMarkets(game){return game?.verifiedLive && game.scoreKnown && !internationalBasketball(game) &&
-  (supportedType(game.type)||game.type==='cricket_match'&&(cricketOneInningsFormat(game.competition)||game.cricket?.innings===4)||
-    game.type==='esports_match'&&['eSoccer','eBasketball'].includes(game.sport)&&game.esportsPeriodsValid)}
+export function eligibleForMarkets(game){return game?.verifiedLive && game.scoreKnown && !esports(game) && !internationalBasketball(game) &&
+  (supportedType(game.type)||game.type==='cricket_match'&&
+    (cricketOneInningsFormat(game.competition)||game.cricket?.innings===4))}
 
 export async function discoverCurrentMilestones(get,now=Date.now(),lookbackMs=7*86400000){
   const cutoff=now+3600000,min=new Date(now-lookbackMs).toISOString();
@@ -25,24 +27,21 @@ export async function discoverCurrentMilestones(get,now=Date.now(),lookbackMs=7*
     return /^(?:final|finished|completed|closed|ended|event closed|match complete)(?:\b|$)/.test(status)&&
       Date.parse(m.start_date||'')<now-2*3600000;
   };
-  const categories=await Promise.all(['Sports','Esports'].map(async category=>{
-    const found=[],seen=new Set();let cursor='';
-    for(;;){
-      const query=new URLSearchParams({category,limit:'500',minimum_start_date:min});
-      if(cursor)query.set('cursor',cursor);
-      const response=await get('/milestones?'+query),page=response.milestones||[];
-      found.push(...page.filter(m=>m.id&&!finished(m)&&Date.parse(m.start_date||'')<cutoff&&
-        (!m.end_date||Date.parse(m.end_date)>now-36*3600000||
-          /^(?:live|inprogress|in_progress|playing)$/.test(String(m.details?.status||'').toLowerCase()))));
-      // Kalshi lists milestones in start-date order. The next page of an
-      // entirely future page cannot contain a game that is live now.
-      if(!response.cursor||page.length&&page.every(m=>Date.parse(m.start_date||'')>=cutoff))break;
-      if(seen.has(response.cursor)||!page.length)throw Error(`${category} milestone pagination did not advance`);
-      seen.add(response.cursor);cursor=response.cursor;
-    }
-    return found;
-  }));
-  return [...new Map(categories.flat().map(m=>[m.id,m])).values()];
+  const category='Sports',found=[],seen=new Set();let cursor='';
+  for(;;){
+    const query=new URLSearchParams({category,limit:'500',minimum_start_date:min});
+    if(cursor)query.set('cursor',cursor);
+    const response=await get('/milestones?'+query),page=response.milestones||[];
+    found.push(...page.filter(m=>m.id&&!esports(m)&&!finished(m)&&Date.parse(m.start_date||'')<cutoff&&
+      (!m.end_date||Date.parse(m.end_date)>now-36*3600000||
+        /^(?:live|inprogress|in_progress|playing)$/.test(String(m.details?.status||'').toLowerCase()))));
+    // Kalshi lists milestones in start-date order. The next page of an
+    // entirely future page cannot contain a game that is live now.
+    if(!response.cursor||page.length&&page.every(m=>Date.parse(m.start_date||'')>=cutoff))break;
+    if(seen.has(response.cursor)||!page.length)throw Error(`${category} milestone pagination did not advance`);
+    seen.add(response.cursor);cursor=response.cursor;
+  }
+  return found;
 }
 
 export async function refreshDiscovery(get,previous,now=Date.now()){
@@ -51,7 +50,7 @@ export async function refreshDiscovery(get,previous,now=Date.now()){
   const found=await discoverCurrentMilestones(get,now,full?7*86400000:8*3600000);
   // Keep long-running events and refresh their scores independently. The
   // periodic full pass also finds late-published or rescheduled older games.
-  const retained=full?[]:previous.milestones.filter(m=>Date.parse(m.start_date||'')<now-8*3600000);
+  const retained=full?[]:previous.milestones.filter(m=>!esports(m)&&Date.parse(m.start_date||'')<now-8*3600000);
   return {milestones:[...new Map([...retained,...found].map(m=>[m.id,m])).values()],
     full_discovered_at:full?new Date(now).toISOString():previous.full_discovered_at};
 }
@@ -63,6 +62,7 @@ export async function refreshDiscovery(get,previous,now=Date.now()){
 // "live" after their scores stopped updating, so that flag alone is unsafe.
 export function scanMilestones(milestones,recentLiveIds=new Set(),now=Date.now()){
   return milestones.filter(m=>{
+    if(esports(m))return false;
     const started=Date.parse(m.start_date||'');
     return recentLiveIds.has(m.id)||
       /golf|cricket/.test(String(m.type||''))||!Number.isFinite(started)||started>=now-8*3600000;
