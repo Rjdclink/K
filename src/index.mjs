@@ -40,6 +40,9 @@ import { filledOrderGateCount } from './entry_floor.mjs';
 import {thirdQuarterYardageNo,collegeFootballTotalNo,collegeBasketballTotalNo,highestYardageNos,bestNoAsk,noDepthAtAsk} from './no_strategy.mjs';
 import {verifyIndependentCollegeTotalNo} from './college_total_no.mjs';
 import {verifyIndependentYardageZero} from './score_verification.mjs';
+import {mentionContract,mentionDay,mentionEventTime,mentionEntryPrice,pairedMentionProof,remainingMentionCents} from './mentions.mjs';
+import {officialMentionSources,fetchOfficialMentionTranscript} from './mentions_source.mjs';
+import {scanMentionMarkets} from './mentions_scanner.mjs';
 
 const API='https://external-api.kalshi.com/trade-api/v2';
 const pool = new pg.Pool({connectionString:process.env.DATABASE_URL, max:4, idleTimeoutMillis:15000});
@@ -2229,6 +2232,133 @@ async function executeVerifiedWeather(verified){
     break;
   }
 }
+let mentionTablesReady;
+function ensureMentionTables(){return mentionTablesReady??=(async()=>{
+  await pool.query(`CREATE TABLE IF NOT EXISTS mention_verification_windows (
+    market_ticker text NOT NULL, side text NOT NULL, observation jsonb NOT NULL,
+    updated_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(market_ticker,side))`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS mention_scan_status (
+    id integer PRIMARY KEY, checked_at timestamptz NOT NULL, stats jsonb NOT NULL)`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS mention_commitments (
+    order_id uuid PRIMARY KEY, cost_cents integer NOT NULL CHECK(cost_cents>0),
+    created_at timestamptz NOT NULL DEFAULT now())`);
+})().catch(error=>{mentionTablesReady=null;throw error})}
+async function mentionCommittedCents(positions,excludeId=null){
+  const {rows}=await pool.query(`SELECT a.id,a.market_ticker,a.status,a.fill_count,a.updated_at,c.cost_cents
+    FROM trade_attempts a LEFT JOIN mention_commitments c ON c.order_id=a.id
+    WHERE a.strategy IN ('mention_yes','mention_no') AND
+    (status='filled' OR status IN ('reserved','check_order','retrying'))`);
+  const managed=new Set(rows.map(row=>row.market_ticker));
+  const held=(positions.market_positions||[]).filter(position=>managed.has(position.ticker)&&
+    Number(position.position_fp??position.position??0)!==0);
+  if(held.some(position=>position.market_exposure_dollars==null||position.fees_paid_dollars==null||
+    !Number.isFinite(Number(position.market_exposure_dollars))||!Number.isFinite(Number(position.fees_paid_dollars))))return null;
+  const heldCents=held.reduce((sum,position)=>sum+Math.ceil(100*Number(position.market_exposure_dollars))+
+    Math.ceil(100*Number(position.fees_paid_dollars)),0);
+  const visible=new Set(held.map(position=>position.ticker));
+  let pending=0;
+  for(const row of rows){
+    if(row.id===excludeId||visible.has(row.market_ticker))continue;
+    if(row.status==='filled'&&Date.now()-Date.parse(row.updated_at)>5*60_000)continue;
+    if(!Number.isInteger(row.cost_cents)||row.cost_cents<=0)return null;
+    pending+=row.cost_cents;
+  }
+  return {heldCents,pendingCents:pending};
+}
+async function executeVerifiedMention(item){
+  if(!live()||!pairedMentionProof(item.first,item.second)||
+    item.second.eventDate!==mentionDay(Date.now(),item.transcript.timezone))return;
+  const {event,market,series,side,contract}=item;
+  const [current,latestEvent]=await Promise.all([
+    kalshi('/markets/'+encodeURIComponent(market.ticker)).then(result=>result.market),
+    kalshi('/events/'+encodeURIComponent(event.event_ticker)).then(result=>result.event)]);
+  const currentContract=mentionContract(latestEvent,current,series);
+  if(!currentContract||currentContract.key!==contract.key||
+    !mentionEventTime(latestEvent,current,item.transcript)||!mentionEntryPrice(current[side+'_ask_dollars']))return;
+  const active=await pool.query(`SELECT 1 FROM trade_attempts WHERE market_ticker=$1 AND
+    status IN ('filled','reserved','check_order','retrying','combo_pending') LIMIT 1`,[market.ticker]);
+  if(active.rowCount)return;
+  const positions=await allOpenPositions({strict:true});
+  if(positions.market_positions?.some(position=>position.ticker===market.ticker&&
+    Number(position.position_fp??position.position??0)!==0))return;
+  const exposure=await mentionCommittedCents(positions);
+  if(!exposure)return;
+  const account=await accountBalance({fresh:true}),bankroll=Number(account.balance)+Number(account.portfolio_value);
+  const budget=remainingMentionCents(bankroll,exposure.heldCents,exposure.pendingCents);
+  const local=shardCash(account,marketShard(event,current));
+  if(!budget||local===null||local<=0)return;
+  const {orderbook_fp}=await kalshi('/markets/'+encodeURIComponent(current.ticker)+'/orderbook');
+  const ask=side==='yes'?bestYesAsk(orderbook_fp):bestNoAsk(orderbook_fp);
+  if(!ask||!mentionEntryPrice(ask.price)||ask.size<minimumCount(current))return;
+  const fee=feeReserve(event,current),spendable=Math.min(singleSpendableCash(account.balance),local);
+  const raw=orderSize(spendable,ask.price,ask.size,.15,.40,bankroll,budget,fee);
+  const count=current.fractional_trading_enabled===false?Math.floor(raw):raw;
+  if(count<minimumCount(current)||estimatedCostCents(count,ask.price,fee)>budget||
+    netSettlementProfitCents(count,ask.price,fee)<minimumProfitCents('mention',bankroll))return;
+  await auditTable();
+  const verificationId=randomUUID(),game={id:'mention:'+event.event_ticker,sport:'Mentions',type:'mentions',verificationId};
+  await pool.query(`INSERT INTO verification_records(id,market_ticker,passed,evidence) VALUES($1,$2,true,$3)`,
+    [verificationId,current.ticker,JSON.stringify({mode:'official_mention_'+side,contract,
+      first:item.first,second:item.second,sourceUrl:item.transcript.url,
+      executable:{price:ask.price,size:ask.size,count,feeReserve:fee}})]);
+  await pool.query(`INSERT INTO game_snapshots(id,title,sport,sport_family,status,scanned_at,signals)
+    VALUES($1,$2,'Mentions','mentions','inactive',now(),'[]')
+    ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title`,[game.id,event.title]);
+  const signal={strategy:'mention_'+side,fraction:.15,reason:`${side.toUpperCase()} ${current.yes_sub_title}; ${item.second.count} distinct mentions in official same-day transcript`};
+  const id=await reserve(signal,game,event,current,count,ask.price,Number(account.balance));
+  if(!id)return;
+  await pool.query('INSERT INTO mention_commitments(order_id,cost_cents) VALUES($1,$2)',
+    [id,estimatedCostCents(count,ask.price,fee)]);
+  rememberIndependentEntry(game,current,verificationId,Date.now());
+  try{
+    const result=await withEntryProfitFloor({ticker:current.ticker,count,price:ask.price,fees:fee,
+      strategy:signal.strategy,fraction:.15,bankroll,game,market:current},async()=>{
+      if(!pairedMentionProof(item.first,item.second)||item.second.eventDate!==mentionDay(Date.now(),item.transcript.timezone))return null;
+      const fresh=await accountBalance({fresh:true}),total=Number(fresh.balance)+Number(fresh.portfolio_value);
+      const latestExposure=await mentionCommittedCents(await allOpenPositions({strict:true}),id);
+      if(!latestExposure||estimatedCostCents(count,ask.price,fee)>
+        remainingMentionCents(total,latestExposure.heldCents,latestExposure.pendingCents))return null;
+      const quote=(await kalshi('/markets/'+encodeURIComponent(current.ticker))).market;
+      const finalEvent=(await kalshi('/events/'+encodeURIComponent(event.event_ticker))).event;
+      if(mentionContract(finalEvent,quote,series)?.key!==contract.key||
+        !mentionEventTime(finalEvent,quote,item.transcript)||!mentionEntryPrice(quote[side+'_ask_dollars']))return null;
+      const {orderbook_fp:book}=await kalshi('/markets/'+encodeURIComponent(current.ticker)+'/orderbook');
+      const finalAsk=side==='yes'?bestYesAsk(book):bestNoAsk(book);
+      if(!finalAsk||finalAsk.price>ask.price||!mentionEntryPrice(finalAsk.price)||finalAsk.size<count)return null;
+      return kalshi('/portfolio/events/orders',{method:'POST',auth:true,entryVerifications:[{game,market:current}],
+        beforeDispatch:()=>{if(!pairedMentionProof(item.first,item.second)||
+          item.second.eventDate!==mentionDay(Date.now(),item.transcript.timezone))
+          throw Object.assign(Error('Mention proof expired'),{code:'LOCAL_EXTERNAL_VERIFICATION_REQUIRED'})},
+        body:{ticker:current.ticker,client_order_id:id,side:side==='yes'?'bid':'ask',count:count.toFixed(2),
+          price:(side==='yes'?ask.price:1-ask.price).toFixed(4),time_in_force:'fill_or_kill',
+          self_trade_prevention_type:'taker_at_cross',post_only:false,reduce_only:false}});
+    });
+    const filled=Number(result?.fill_count_fp??result?.fill_count??result?.order?.fill_count_fp??0);
+    await pool.query(`UPDATE trade_attempts SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE id=$1`,
+      [id,filled>0?'filled':'unfilled',result?.order_id||result?.order?.order_id||null,filled]);
+    if(filled>0)await invalidateBalance();
+  }catch(error){
+    const terminal=error.code==='LOCAL_EXTERNAL_VERIFICATION_REQUIRED'||/^Kalshi (400|401|403|404|409|422) /.test(String(error.message));
+    await pool.query('UPDATE trade_attempts SET status=$2,error=$3,updated_at=now() WHERE id=$1',
+      [id,terminal?'unfilled':'check_order',String(error.message).slice(0,250)]);
+    console.warn('Mention order deferred:',current.ticker,error.message);
+  }
+}
+async function scanOfficialMentions(){
+  const sources=officialMentionSources();
+  await ensureMentionTables();
+  const stats=await scanMentionMarkets({kalshi,sources,maxSeries:4,
+    readTranscript:source=>fetchOfficialMentionTranscript(source,{hosts:String(process.env.MENTION_OFFICIAL_HOSTS||'').split(',').map(x=>x.trim().toLowerCase()).filter(Boolean)}),
+    getWindow:async(ticker,side)=>(await pool.query(`SELECT observation FROM mention_verification_windows
+      WHERE market_ticker=$1 AND side=$2`,[ticker,side])).rows[0]?.observation,
+    saveWindow:async observation=>pool.query(`INSERT INTO mention_verification_windows(market_ticker,side,observation)
+      VALUES($1,$2,$3) ON CONFLICT(market_ticker,side) DO UPDATE SET observation=EXCLUDED.observation,updated_at=now()`,
+      [observation.ticker,observation.side,JSON.stringify(observation)]),
+    onVerified:executeVerifiedMention});
+  await pool.query(`INSERT INTO mention_scan_status(id,checked_at,stats) VALUES(1,now(),$1)
+    ON CONFLICT(id) DO UPDATE SET checked_at=now(),stats=EXCLUDED.stats`,[JSON.stringify(stats)]);
+  await pool.query(`DELETE FROM mention_verification_windows WHERE updated_at<now()-interval '2 days'`);
+}
 function snapshotRow({milestone,state},liveMap,scanStarted){
   const baseball=/baseball/.test(state.type),tennis=/tennis/.test(state.type),soccer=/soccer/.test(state.type);
   const timeLeft=gameTimeLabel(state);
@@ -3006,10 +3136,11 @@ let recentDashboardPositions=null;
 const dashboardDeadline=ms=>new Promise(resolve=>setTimeout(()=>resolve(null),ms));
 async function state(){
   await ensureScoreTime();
+  await ensureMentionTables();
   await pool.query(`CREATE TABLE IF NOT EXISTS combo_diagnostics (id bigserial PRIMARY KEY,
     checked_at timestamptz NOT NULL DEFAULT now(),leg_tickers jsonb NOT NULL,
     collection_ticker text,status text NOT NULL,detail text)`);
-  const [snap,stats,attempts]=await Promise.all([
+  const [snap,stats,attempts,mentionStatus]=await Promise.all([
   pool.query(`SELECT id,title,sport,home,away,possession_side,status,time_left,scanned_at,score_observed_at,signals FROM game_snapshots
     WHERE status IN ('live','inprogress','started') AND GREATEST(score_observed_at,scanned_at)>now()-interval '15 minutes'
     ORDER BY jsonb_array_length(signals) DESC,title`),
@@ -3021,6 +3152,7 @@ async function state(){
       WHERE a.sport ILIKE '%tennis%' AND v.market_ticker=a.market_ticker AND v.passed=true AND v.created_at<=a.created_at
       ORDER BY v.created_at DESC LIMIT 1) verified ON true
     WHERE a.status='filled' ORDER BY a.created_at DESC`),
+  pool.query('SELECT checked_at,stats FROM mention_scan_status WHERE id=1'),
 ]);
   const comboGameIds=[...new Set(attempts.rows.flatMap(o=>Array.isArray(o.combo_legs)?o.combo_legs.map(l=>l.game_id).filter(Boolean):[]))];
   const comboScores=new Map(comboGameIds.length?(await pool.query(`SELECT id,home,away,status,
@@ -3118,14 +3250,14 @@ async function state(){
   const {rows:comboIssues}=await pool.query(`SELECT checked_at,leg_tickers,status,detail FROM combo_diagnostics
     WHERE status IN ('no_compatible_collection','no_executable_quote','insufficient_cash') AND checked_at>now()-interval '10 minutes'
     ORDER BY checked_at DESC LIMIT 20`);
-  const managed=positions?attempts.rows.filter(o=>o.strategy==='no'?negative.has(o.market_ticker):positive.has(o.market_ticker)).map(o=>{
+  const managed=positions?attempts.rows.filter(o=>['no','mention_no'].includes(o.strategy)?negative.has(o.market_ticker):positive.has(o.market_ticker)).map(o=>{
     const position=(positions.market_positions||[]).find(p=>p.ticker===o.market_ticker);
     const count=Math.abs(Number(position?.position_fp||0));
     const exposure=Number(position?.market_exposure_dollars),fees=Number(position?.fees_paid_dollars);
     const actual=position?.market_exposure_dollars!=null&&position?.fees_paid_dollars!=null&&
       Number.isFinite(exposure)&&Number.isFinite(fees);
     const allocated=actual?Math.ceil(exposure*100)+Math.ceil(fees*100):Math.ceil(count*Number(o.limit_price)*100);
-    return {...o,...(o.strategy==='no'?{external_position:true,managed_no:true,side:'NO',market_title:String(o.reason||o.market_ticker).replace(/^NO /,'')}:{}),
+    return {...o,...(['no','mention_no'].includes(o.strategy)?{external_position:true,managed_no:true,side:'NO',market_title:String(o.reason||o.market_ticker).replace(/^NO /,'')}:{}),
       combo_legs:Array.isArray(o.combo_legs)?o.combo_legs.map(l=>({...l,score:comboScores.get(l.game_id)||null})):o.combo_legs,position,fill_count:count,allocated_cents:allocated,
       potential_profit_cents:actual?Math.floor(count*100-allocated):netSettlementProfitCents(count,Number(o.limit_price),2)};
   }):[];
@@ -3145,14 +3277,14 @@ async function state(){
   const comboIssue=comboIssues.find(issue=>!(issue.status==='insufficient_cash'&&Number(balance?.balance)>=100)&&issue.leg_tickers.length>=2&&
     issue.leg_tickers.every(ticker=>open.has(ticker)))||null;
   if(comboIssue)comboIssue.leg_names=comboIssue.leg_tickers.map(ticker=>orders.find(o=>o.market_ticker===ticker)?.game_title||ticker);
-  return {live:live(),exitOnly:exitOnly(),credentials:configured(),aiConfigured:Boolean(process.env.AI_API_KEY),balance,balanceStale,balanceAsOf,accountError,positionsError,positionsStale:Boolean(positions&&positionsError),games:snap.rows,scan:stats.rows[0],weather:{disabled:true,series:0,eligible:0},comboIssue,orders};
+  return {live:live(),exitOnly:exitOnly(),credentials:configured(),aiConfigured:Boolean(process.env.AI_API_KEY),balance,balanceStale,balanceAsOf,accountError,positionsError,positionsStale:Boolean(positions&&positionsError),games:snap.rows,scan:stats.rows[0],weather:{disabled:true,series:0,eligible:0},mentions:{configured:Boolean(process.env.MENTION_OFFICIAL_SOURCES),...(mentionStatus.rows[0]||{})},comboIssue,orders};
 }
 async function settlementAlerts(since){
   const {rows}=await pool.query(`SELECT id,ticker,profit_cents,settled_time,created_at FROM settlement_alerts WHERE id>$1 AND created_at>now()-interval '2 days' ORDER BY id LIMIT 50`,[since]);
   return rows;
 }
 async function handleRequest(req){const url=new URL(req.url);
-  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'scanner-repairs-20261102',verification:{primary:'ESPN',fallback:'Sportradar',espnRetries:0,sportradarConfigured:Boolean(process.env.SPORTRADAR_API_KEY)}});
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),mentionsConfigured:Boolean(process.env.MENTION_OFFICIAL_SOURCES),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'scanner-repairs-20261102',verification:{primary:'ESPN',fallback:'Sportradar',espnRetries:0,sportradarConfigured:Boolean(process.env.SPORTRADAR_API_KEY)}});
   if(req.method==='GET'&&url.pathname==='/manifest.webmanifest')return response(manifest,'application/manifest+json');
   if(req.method==='GET'&&url.pathname==='/sw.js')return new Response(worker,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','service-worker-allowed':'/','x-content-type-options':'nosniff'}});
   if(req.method==='GET'&&/^\/icon-(192|512)\.png$/.test(url.pathname))return response(Buffer.from(icons[Number(url.pathname.match(/\d+/)[0])],'base64'),'image/png');
@@ -3174,6 +3306,7 @@ async function handleRequest(req){const url=new URL(req.url);
     const correctionJob=withApiPriority('live',()=>watchCorrectedOvers(until)).catch(e=>console.error('Fast correction watcher failed:',e));
     const leadWatchJob=withApiPriority('live',()=>watchLeadWindows(until)).catch(e=>console.error('Fast lead watcher failed:',e));
     const readyOverJob=withApiPriority('live',()=>watchReadyOverTickets(until)).catch(e=>console.error('Fast over ticket watcher failed:',e));
+    const mentionJob=withApiPriority('background',()=>scanOfficialMentions()).catch(e=>console.warn('Mention scan deferred:',e.message));
     try{
       while(Date.now()<until){
         if(discovered&&!discoveryApplied&&(cycles>0||!cached.length)){
@@ -3187,7 +3320,7 @@ async function handleRequest(req){const url=new URL(req.url);
         await new Promise(resolve=>setTimeout(resolve,pause));
       }
     }finally{
-      await Promise.all([correctionJob,leadWatchJob,readyOverJob,discoveryJob]);
+      await Promise.all([correctionJob,leadWatchJob,readyOverJob,discoveryJob,mentionJob]);
       if(discoveryError)console.warn('Sports discovery deferred:',discoveryError.message);
     }
     const {next,...summary}=last;return json({...summary,cycles});
