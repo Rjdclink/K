@@ -38,3 +38,7 @@ event day, proof freshness, account balance, fees, and total open and pending
 mention commitments. It uses a fill-or-kill order and never exceeds 15% of
 the current bankroll including fees. If there is no source mapping, discovery
 still runs, but no mention orders can be submitted.
+
+Schedule a separate Neon function trigger for `POST /mentions/tick` once per
+minute. This keeps broad mention discovery out of the live sports `/tick`
+request. A database lock prevents overlapping mention passes.

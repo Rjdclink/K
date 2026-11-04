@@ -2347,7 +2347,12 @@ async function executeVerifiedMention(item){
 async function scanOfficialMentions(){
   const sources=officialMentionSources();
   await ensureMentionTables();
-  const stats=await scanMentionMarkets({kalshi,sources,maxSeries:4,
+  const client=await pool.connect();
+  try{
+  await client.query('BEGIN');
+  const {rows:[lock]}=await client.query('SELECT pg_try_advisory_xact_lock(83027548) AS acquired');
+  if(!lock.acquired)return {skipped:'mention scan in progress'};
+  const stats=await scanMentionMarkets({kalshi,sources,maxSeries:24,
     readTranscript:source=>fetchOfficialMentionTranscript(source,{hosts:String(process.env.MENTION_OFFICIAL_HOSTS||'').split(',').map(x=>x.trim().toLowerCase()).filter(Boolean)}),
     getWindow:async(ticker,side)=>(await pool.query(`SELECT observation FROM mention_verification_windows
       WHERE market_ticker=$1 AND side=$2`,[ticker,side])).rows[0]?.observation,
@@ -2358,6 +2363,8 @@ async function scanOfficialMentions(){
   await pool.query(`INSERT INTO mention_scan_status(id,checked_at,stats) VALUES(1,now(),$1)
     ON CONFLICT(id) DO UPDATE SET checked_at=now(),stats=EXCLUDED.stats`,[JSON.stringify(stats)]);
   await pool.query(`DELETE FROM mention_verification_windows WHERE updated_at<now()-interval '2 days'`);
+  return stats;
+  }finally{await client.query('ROLLBACK').catch(()=>{});client.release()}
 }
 function snapshotRow({milestone,state},liveMap,scanStarted){
   const baseball=/baseball/.test(state.type),tennis=/tennis/.test(state.type),soccer=/soccer/.test(state.type);
@@ -3288,6 +3295,10 @@ async function handleRequest(req){const url=new URL(req.url);
   if(req.method==='GET'&&url.pathname==='/manifest.webmanifest')return response(manifest,'application/manifest+json');
   if(req.method==='GET'&&url.pathname==='/sw.js')return new Response(worker,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','service-worker-allowed':'/','x-content-type-options':'nosniff'}});
   if(req.method==='GET'&&/^\/icon-(192|512)\.png$/.test(url.pathname))return response(Buffer.from(icons[Number(url.pathname.match(/\d+/)[0])],'base64'),'image/png');
+  if(req.method==='POST'&&url.pathname==='/mentions/tick'){
+    if(!req.headers.get('x-neon-trigger-invocation-id'))return json({error:'Forbidden'},403);
+    return json(await withApiPriority('background',()=>scanOfficialMentions()));
+  }
   if(req.method==='POST'&&url.pathname==='/tick'){
     if(!req.headers.get('x-neon-trigger-invocation-id'))return json({error:'Forbidden'},403);
     // Neon cron has minute resolution. Short invocations keep the three-second loop alive
@@ -3306,7 +3317,6 @@ async function handleRequest(req){const url=new URL(req.url);
     const correctionJob=withApiPriority('live',()=>watchCorrectedOvers(until)).catch(e=>console.error('Fast correction watcher failed:',e));
     const leadWatchJob=withApiPriority('live',()=>watchLeadWindows(until)).catch(e=>console.error('Fast lead watcher failed:',e));
     const readyOverJob=withApiPriority('live',()=>watchReadyOverTickets(until)).catch(e=>console.error('Fast over ticket watcher failed:',e));
-    const mentionJob=withApiPriority('background',()=>scanOfficialMentions()).catch(e=>console.warn('Mention scan deferred:',e.message));
     try{
       while(Date.now()<until){
         if(discovered&&!discoveryApplied&&(cycles>0||!cached.length)){
@@ -3320,7 +3330,7 @@ async function handleRequest(req){const url=new URL(req.url);
         await new Promise(resolve=>setTimeout(resolve,pause));
       }
     }finally{
-      await Promise.all([correctionJob,leadWatchJob,readyOverJob,discoveryJob,mentionJob]);
+      await Promise.all([correctionJob,leadWatchJob,readyOverJob,discoveryJob]);
       if(discoveryError)console.warn('Sports discovery deferred:',discoveryError.message);
     }
     const {next,...summary}=last;return json({...summary,cycles});

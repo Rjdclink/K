@@ -5,7 +5,7 @@ import {mentionContract,mentionDay,mentionTickerDay,mentionEventTime,mentionEntr
 export async function scanMentionMarkets({kalshi,sources,readTranscript,getWindow,saveWindow,onVerified,
   now=()=>Date.now(),cycle=Math.floor(now()/60_000),maxSeries=12}={}){
   const stats={series:0,events:0,markets:0,priced:0,scheduledLater:0,sourceUnavailable:0,
-    firstChecks:0,pairedChecks:0,errors:0,sample:[]};
+    firstChecks:0,pairedChecks:0,errors:0,sample:[],surveyed:[]};
   const catalog=(await kalshi('/series?category=Mentions')).series||[];
   stats.series=catalog.length;
   // Known future events need only a date comparison until their event day.
@@ -22,9 +22,16 @@ export async function scanMentionMarkets({kalshi,sources,readTranscript,getWindo
   }
   // Survey the rotating remainder for visibility. Configured sources always
   // take priority and are never displaced by a large unmapped universe.
-  const ordered=[...catalog].sort((a,b)=>a.ticker.localeCompare(b.ticker));
-  for(let i=0;i<Math.min(maxSeries,ordered.length);i++){
-    const series=ordered[(cycle*maxSeries+i)%ordered.length];
+  const ordered=[...catalog].sort((a,b)=>
+    (Date.parse(b.last_updated_ts||'')||0)-(Date.parse(a.last_updated_ts||'')||0)||
+    a.ticker.localeCompare(b.ticker));
+  const recent=ordered.slice(0,Math.min(12,Math.ceil(maxSeries/2)));
+  const rotating=ordered.slice(recent.length);
+  const selection=[...recent];
+  for(let i=0;i<Math.min(maxSeries-recent.length,rotating.length);i++)
+    selection.push(rotating[(cycle*(maxSeries-recent.length)+i)%rotating.length]);
+  stats.surveyed=selection.map(series=>series.ticker);
+  for(const series of selection){
     try{
       const query=new URLSearchParams({series_ticker:series.ticker,status:'open',limit:'200',with_nested_markets:'true'});
       for(const event of (await kalshi('/events?'+query)).events||[])events.set(event.event_ticker,event);
