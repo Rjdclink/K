@@ -74,7 +74,8 @@ export function scanMilestones(milestones,recentLiveIds=new Set(),now=Date.now()
 // games with a recent signal, and games with a held position needing exits.
 export function nearEntryPhase(game){
   const type=String(game?.type||''),period=Number(game?.period),seconds=Number(game?.remainingSeconds);
-  if(/football/.test(type))return game.sport==='CFB'?cfbLeadApproaching(game):period>=4&&seconds>=0&&seconds<=480;
+  if(/football/.test(type))return game.sport==='CFB'?
+    cfbLeadApproaching(game)||[2,4].includes(period)&&seconds>=0&&seconds<=180:period>=4&&seconds>=0&&seconds<=480;
   if(/basketball/.test(type)){
     const profile=basketballLeadProfile(game);
     return Boolean(profile)&&period>=profile.period&&seconds>=0&&seconds<=profile.tiers[0][1]+90;
