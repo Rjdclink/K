@@ -170,6 +170,17 @@ test('transcript proof starts before a quote falls to 40 cents',async()=>{
   const second=await scanMentionMarkets(options);
   assert.equal(second.pairedChecks,1);assert.equal(attempts.length,1);
 });
+test('mapped-only fast passes reuse the catalog and avoid a broad series survey',async()=>{
+  let calls=[];
+  const stats=await scanMentionMarkets({sources:new Map([[event.event_ticker,{eventTicker:event.event_ticker,
+    eventDate:'2026-11-04',timezone:'America/New_York',scheduledAt:event.strike_date}]]),
+    seriesCatalog:[series],maxSeries:0,now:()=>at,
+    kalshi:async path=>{calls.push(path);return {events:[{...event,markets:[market('Veterans')]}]}},
+    readTranscript:async()=>source('Veterans'),getWindow:async()=>null,saveWindow:async()=>{},onVerified:async()=>{}});
+  assert.equal(stats.surveyed.length,0);
+  assert.equal(stats.firstChecks,1);
+  assert.equal(calls.some(path=>path.startsWith('/series?')),false);
+});
 test('source subject and dated ticker must match the exact contract event',()=>{
   const c=mentionContract(event,market('Baconator'),series);
   assert.equal(mentionObservation(c,source('Baconator',{subject:'a different speaker'}),{now:at,side:'yes'}),null);

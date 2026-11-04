@@ -2361,16 +2361,31 @@ async function scanOfficialMentions(){
   await client.query('BEGIN');
   const {rows:[lock]}=await client.query('SELECT pg_try_advisory_xact_lock(83027548) AS acquired');
   if(!lock.acquired)return {skipped:'mention scan in progress'};
-  const stats=await scanMentionMarkets({kalshi,sources,maxSeries:48,
+  const seriesCatalog=(await kalshi('/series?category=Mentions')).series||[];
+  const options={kalshi,sources,seriesCatalog,
     readTranscript:source=>fetchOfficialMentionTranscript(source,{hosts:String(process.env.MENTION_OFFICIAL_HOSTS||'').split(',').map(x=>x.trim().toLowerCase()).filter(Boolean)}),
     getWindow:async(ticker,side)=>(await pool.query(`SELECT observation FROM mention_verification_windows
       WHERE market_ticker=$1 AND side=$2`,[ticker,side])).rows[0]?.observation,
     saveWindow:async observation=>pool.query(`INSERT INTO mention_verification_windows(market_ticker,side,observation)
       VALUES($1,$2,$3) ON CONFLICT(market_ticker,side) DO UPDATE SET observation=EXCLUDED.observation,updated_at=now()`,
       [observation.ticker,observation.side,JSON.stringify(observation)]),
-    onVerified:executeVerifiedMention});
-  await pool.query(`INSERT INTO mention_scan_status(id,checked_at,stats) VALUES(1,now(),$1)
+    onVerified:executeVerifiedMention};
+  const stats=await scanMentionMarkets({...options,maxSeries:48});
+  const publish=()=>pool.query(`INSERT INTO mention_scan_status(id,checked_at,stats) VALUES(1,now(),$1)
     ON CONFLICT(id) DO UPDATE SET checked_at=now(),stats=EXCLUDED.stats`,[JSON.stringify(stats)]);
+  await publish();
+  const active=[...sources.values()].some(source=>source.eventDate===mentionDay(Date.now(),source.timezone||'America/New_York')&&
+    Date.now()>=Date.parse(source.scheduledAt||''));
+  const until=Math.min(Date.now()+50_000,(Math.floor(Date.now()/60_000)+1)*60_000-1500);
+  stats.mappedPolls=0;
+  while(active&&Date.now()+5000<until){
+    await new Promise(resolve=>setTimeout(resolve,5000));
+    const fast=await scanMentionMarkets({...options,maxSeries:0});
+    stats.mappedPolls++;
+    stats.firstChecks+=fast.firstChecks;stats.pairedChecks+=fast.pairedChecks;stats.errors+=fast.errors;
+    stats.sourceUnavailable=fast.sourceUnavailable;
+    await publish();
+  }
   await pool.query(`DELETE FROM mention_verification_windows WHERE updated_at<now()-interval '2 days'`);
   return stats;
   }finally{await client.query('ROLLBACK').catch(()=>{});client.release()}

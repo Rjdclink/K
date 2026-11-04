@@ -3,10 +3,10 @@ import {mentionContract,mentionDay,mentionTickerDay,mentionEventTime,mentionEntr
 // Every pass is bounded. A missing transcript never holds the rest of the
 // catalog behind a retry or a 45-second sleep; the next tick resumes windows.
 export async function scanMentionMarkets({kalshi,sources,readTranscript,getWindow,saveWindow,onVerified,
-  now=()=>Date.now(),cycle=Math.floor(now()/60_000),maxSeries=48}={}){
+  now=()=>Date.now(),cycle=Math.floor(now()/60_000),maxSeries=48,seriesCatalog}={}){
   const stats={series:0,events:0,markets:0,priced:0,scheduledLater:0,sourceUnavailable:0,
     firstChecks:0,pairedChecks:0,errors:0,sample:[],surveyed:[]};
-  const catalog=(await kalshi('/series?category=Mentions')).series||[];
+  const catalog=seriesCatalog||(await kalshi('/series?category=Mentions')).series||[];
   stats.series=catalog.length;
   // Known future events need only a date comparison until their event day.
   // Do not refetch their event, quote, or transcript on every minute tick.

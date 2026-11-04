@@ -8,8 +8,9 @@ mapped events get a calendar check only
 until their scheduled day. It tracks future dated contracts, checks YES and
 NO asks at or below $0.40, and skips unavailable transcripts immediately.
 Available mapped events and their contracts are attempted from the lowest
-qualifying ask upward. The dashboard shows a separate Mentions card above
-Games found with per-pass coverage, asks, deferred events, and checks.
+qualifying ask upward. The dashboard shows Bankroll first, then a separate
+Mentions card above Games found with per-pass coverage, asks, deferred events,
+and checks.
 
 An event can trade only after an exact official transcript is mapped. Set
 `MENTION_OFFICIAL_SOURCES` to a JSON array of event-specific descriptors. A
@@ -76,4 +77,10 @@ still runs, but no mention orders can be submitted.
 
 Schedule a separate Neon function trigger for `POST /mentions/tick` once per
 minute. This keeps broad mention discovery out of the live sports `/tick`
-request. A database lock prevents overlapping mention passes.
+request. On the event day after the scheduled start, the same invocation
+rechecks mapped events approximately every five seconds until the next minute;
+the broad catalog is fetched and surveyed only once. The first successful
+direct read starts the 45-second proof window, including when the ask is above
+40 cents. Function start and source publication delays mean detection cannot
+be guaranteed at the literal publication instant. A database lock prevents
+overlapping mention passes.
