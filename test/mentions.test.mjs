@@ -4,14 +4,18 @@ import {mentionContract,mentionDay,mentionTickerDay,mentionEventTime,countMentio
   mentionEntryPrice,remainingMentionCents} from '../src/mentions.mjs';
 import {scanMentionMarkets} from '../src/mentions_scanner.mjs';
 import {fetchOfficialMentionTranscript} from '../src/mentions_source.mjs';
+import {mentionRuleSources,boundMentionSource} from '../src/mentions_rules_source.mjs';
 
+const ruleSourceUrl='https://www.whitehouse.gov/briefings/';
 const event={event_ticker:'KXTESTMENTION-26NOV04',series_ticker:'KXTESTMENTION',
-  title:'What will the speaker say today?',strike_date:'2026-11-04T17:30:00Z'};
+  title:'What will the speaker say today?',strike_date:'2026-11-04T17:30:00Z',
+  settlement_sources:[{name:'Official remarks',url:ruleSourceUrl}]};
 const series={ticker:'KXTESTMENTION',categories:['Mentions']};
 const market=(target,rule=`Resolves Yes if the Speaker says ${target} during the remarks. The exact word or a plural or possessive form counts.`)=>({
   ticker:'KXTESTMENTION-26NOV04-STRIKE',event_ticker:event.event_ticker,status:'active',yes_sub_title:target,
   rules_primary:rule,close_time:'2026-11-05T05:00:00Z',yes_ask_dollars:'0.4000',no_ask_dollars:'0.3999'});
 const at=Date.parse('2026-11-04T18:00:00Z');
+const binding={ruleSourceUrl};
 const source=(text,extra={})=>({id:'official',url:'https://www.whitehouse.gov/briefings/transcript',official:true,
   eventDate:'2026-11-04',eventTicker:event.event_ticker,timezone:'America/New_York',
   scheduledAt:'2026-11-04T17:30:00Z',
@@ -74,6 +78,12 @@ test('65 cents is inclusive and the aggregate bankroll budget deducts held and p
   assert.equal(remainingMentionCents(10000,900,150),450);
   assert.equal(remainingMentionCents(10000,1500,1),0);
 });
+test('mention source binding follows the exact publisher named by Kalshi rules',()=>{
+  assert.deepEqual(mentionRuleSources(event),[{name:'Official remarks',url:ruleSourceUrl}]);
+  assert.equal(boundMentionSource(event,binding),true);
+  assert.equal(boundMentionSource(event,{ruleSourceUrl:'https://other.example/remarks'}),false);
+  assert.equal(boundMentionSource({...event,settlement_sources:[]},binding),false);
+});
 test('official transcript extraction requires exact markers and rejects an unapproved host',async()=>{
   const descriptor={eventTicker:event.event_ticker,eventDate:'2026-11-04',url:'https://www.whitehouse.gov/remarks/test',
     timezone:'America/New_York',scheduledAt:'2026-11-04T17:30:00Z',
@@ -113,8 +123,8 @@ test('scanner prioritizes mapped same-day events and skips unavailable transcrip
   const missingTicker='KXTESTMENTION-26NOV04-MISSING';
   const missing={...event,event_ticker:missingTicker,markets:[{...market('Iran'),ticker:missingTicker+'-IRAN',event_ticker:missingTicker,no_ask_dollars:'0.70'}]};
   const available={...event,markets:[market('Veterans (2+ times)')]};
-  const mapping=new Map([[available.event_ticker,{eventTicker:available.event_ticker,eventDate:'2026-11-04',timezone:'America/New_York',scheduledAt:event.strike_date}],
-    [missing.event_ticker,{eventTicker:missing.event_ticker,eventDate:'2026-11-04',timezone:'America/New_York',scheduledAt:event.strike_date}]]);
+  const mapping=new Map([[available.event_ticker,{...binding,eventTicker:available.event_ticker,eventDate:'2026-11-04',timezone:'America/New_York',scheduledAt:event.strike_date}],
+    [missing.event_ticker,{...binding,eventTicker:missing.event_ticker,eventDate:'2026-11-04',timezone:'America/New_York',scheduledAt:event.strike_date}]]);
   const windows=new Map(),orders=[],calls=[];
   let time=at;
   const options={sources:mapping,now:()=>time,cycle:0,maxSeries:0,
@@ -156,7 +166,7 @@ test('verified entry attempts run from the lowest qualifying ask first',async()=
   const expensive={...market('Veterans'),ticker:event.event_ticker+'-HIGH',yes_ask_dollars:'0.3900',no_ask_dollars:'0.6000'};
   const cheap={...market('Veterans'),ticker:event.event_ticker+'-LOW',yes_ask_dollars:'0.1200',no_ask_dollars:'0.6000'};
   const windows=new Map(),ordered=[];let time=at;
-  const options={sources:new Map([[event.event_ticker,{eventTicker:event.event_ticker,eventDate:'2026-11-04',
+  const options={sources:new Map([[event.event_ticker,{...binding,eventTicker:event.event_ticker,eventDate:'2026-11-04',
     timezone:'America/New_York',scheduledAt:event.strike_date}]]),now:()=>time,maxSeries:0,
     kalshi:async path=>path.startsWith('/series')?{series:[series]}:{events:[{...event,markets:[expensive,cheap]}]},
     readTranscript:async()=>source('Veterans'),
@@ -169,7 +179,7 @@ test('verified entry attempts run from the lowest qualifying ask first',async()=
 });
 test('transcript proof starts before a quote falls to 65 cents',async()=>{
   let time=at,ask='0.7500';const windows=new Map(),attempts=[];
-  const options={sources:new Map([[event.event_ticker,{eventTicker:event.event_ticker,eventDate:'2026-11-04',
+  const options={sources:new Map([[event.event_ticker,{...binding,eventTicker:event.event_ticker,eventDate:'2026-11-04',
     timezone:'America/New_York',scheduledAt:event.strike_date}]]),now:()=>time,maxSeries:0,
     kalshi:async path=>path.startsWith('/series')?{series:[series]}:{events:[{...event,
       markets:[{...market('Veterans'),yes_ask_dollars:ask,no_ask_dollars:'0.7000'}]}]},
@@ -186,7 +196,7 @@ test('transcript proof starts before a quote falls to 65 cents',async()=>{
 });
 test('mapped-only fast passes reuse the catalog and avoid a broad series survey',async()=>{
   let calls=[];
-  const stats=await scanMentionMarkets({sources:new Map([[event.event_ticker,{eventTicker:event.event_ticker,
+  const stats=await scanMentionMarkets({sources:new Map([[event.event_ticker,{...binding,eventTicker:event.event_ticker,
     eventDate:'2026-11-04',timezone:'America/New_York',scheduledAt:event.strike_date}]]),
     seriesCatalog:[series],maxSeries:0,now:()=>at,
     kalshi:async path=>{calls.push(path);return {events:[{...event,markets:[market('Veterans')]}]}},

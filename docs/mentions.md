@@ -16,18 +16,27 @@ qualifying ask upward. The dashboard shows Bankroll first, then Crypto,
 Mentions, and Games found. The Mentions card displays per-pass coverage, asks,
 deferred events, and checks.
 
-An event can trade only after an exact official transcript is mapped. Set
+The scanner reads the event's `settlement_sources` supplied with Kalshi's
+contract rules and reports the named publisher URLs for today's events. A
+source binding must match that exact URL; an AI lead or a search result cannot
+replace the publisher named by the rules. The URL can be a webcast or events
+listing and does not itself prove the spoken words.
+
+An event can trade only after an exact official transcript is bound to that
+rule source. Set
 `MENTION_OFFICIAL_SOURCES` to a JSON array of event-specific descriptors. A
-descriptor requires `eventTicker`, `eventDate` (`YYYY-MM-DD`), `timezone` (IANA),
+descriptor requires `eventTicker`, `ruleSourceUrl` (the exact Kalshi
+`settlement_sources` URL), `eventDate` (`YYYY-MM-DD`), `timezone` (IANA),
 `scheduledAt` (ISO instant), `url` (the actual official transcript page),
 `subject` (the speaker criterion in `rules_primary`), `eventMarker`,
 `dateMarker` (an unambiguous date printed by the source), `speakerMarker` or
 `speakerMarkers`, and `segments` with exact `start` and `end` markers that
 isolate qualifying spoken words. Use `contractTimeMarker` if Kalshi's event
 does not provide a matching `strike_date`. The marker must appear in the
-event title or market rules. For a corporate issuer's official transcript
-host, add the exact hostname to `MENTION_OFFICIAL_HOSTS` as a comma-separated
-list. Government `.gov` hosts are accepted by default. Redirects are rejected.
+event title or market rules. The host named by Kalshi's rule source and
+government `.gov` hosts are accepted. For a linked transcript on another
+publisher host explicitly named in the rules, add the exact hostname to
+`MENTION_OFFICIAL_HOSTS` as a comma-separated list. Redirects are rejected.
 For a call whose transcript URL is not yet published, use `discoveryUrl` for
 the issuer's event page and `linkText` for the exact transcript link instead
 of `url`. The scanner checks that page on each pass, follows only one matching

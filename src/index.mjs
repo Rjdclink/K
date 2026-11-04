@@ -2369,7 +2369,9 @@ async function scanOfficialMentions(){
   const scheduled=previous?.seriesSchedule||{};
   const due=dueMentionSeries(seriesCatalog,scheduled);
   const options={kalshi,sources,seriesCatalog,
-    readTranscript:source=>fetchOfficialMentionTranscript(source,{hosts:String(process.env.MENTION_OFFICIAL_HOSTS||'').split(',').map(x=>x.trim().toLowerCase()).filter(Boolean)}),
+    readTranscript:source=>fetchOfficialMentionTranscript(source,{hosts:[
+      new URL(source.ruleSourceUrl).hostname.toLowerCase(),
+      ...String(process.env.MENTION_OFFICIAL_HOSTS||'').split(',').map(x=>x.trim().toLowerCase()).filter(Boolean)]}),
     getWindow:async(ticker,side)=>(await pool.query(`SELECT observation FROM mention_verification_windows
       WHERE market_ticker=$1 AND side=$2`,[ticker,side])).rows[0]?.observation,
     saveWindow:async observation=>pool.query(`INSERT INTO mention_verification_windows(market_ticker,side,observation)

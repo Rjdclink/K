@@ -1,11 +1,12 @@
 import {mentionContract,mentionDay,mentionTickerDay,mentionEventTime,mentionEntryPrice,mentionObservation,pairedMentionProof,tripleMentionProof} from './mentions.mjs';
+import {mentionRuleSources,boundMentionSource} from './mentions_rules_source.mjs';
 
 // Every pass is bounded. A missing transcript never holds the rest of the
 // catalog behind a retry or a timed sleep; the next tick resumes windows.
 export async function scanMentionMarkets({kalshi,sources,readTranscript,getWindow,saveWindow,clearWindow,onVerified,
   now=()=>Date.now(),cycle=Math.floor(now()/60_000),maxSeries=48,seriesCatalog}={}){
   const stats={series:0,events:0,markets:0,contracts:0,todayEvents:0,todayMarkets:0,
-    priced:0,scheduledLater:0,sourceUnavailable:0,todayTickers:[],
+    priced:0,scheduledLater:0,sourceUnavailable:0,todayTickers:[],ruleSources:[],
     firstChecks:0,pairedChecks:0,thirdChecks:0,errors:0,sample:[],surveyed:[],seriesSchedule:{}};
   const catalog=seriesCatalog||(await kalshi('/series?category=Mentions')).series||[];
   stats.series=catalog.length;
@@ -75,7 +76,8 @@ export async function scanMentionMarkets({kalshi,sources,readTranscript,getWindo
     }
     stats.events++;
     const today=mentionTickerDay(event.event_ticker)===mentionDay(now(),sources.get(event.event_ticker)?.timezone||'America/New_York');
-    if(today){stats.todayEvents++;stats.todayTickers.push(event.event_ticker)}
+    if(today){stats.todayEvents++;stats.todayTickers.push(event.event_ticker);
+      stats.ruleSources.push({eventTicker:event.event_ticker,sources:mentionRuleSources(event)})}
     const series=bySeries.get(event.series_ticker);
     const candidates=[];
     for(const market of event.markets||[]){
@@ -99,7 +101,8 @@ export async function scanMentionMarkets({kalshi,sources,readTranscript,getWindo
     const descriptor=sources.get(event.event_ticker);
     const scheduled=mentionTickerDay(event.event_ticker);
     if(descriptor&&scheduled&&scheduled!==descriptor.eventDate){stats.sourceUnavailable+=priced;continue}
-    if(!descriptor||descriptor.eventDate!==mentionDay(now(),descriptor.timezone||'America/New_York')){
+    if(!boundMentionSource(event,descriptor)||
+      descriptor.eventDate!==mentionDay(now(),descriptor.timezone||'America/New_York')){
       stats.sourceUnavailable+=priced;continue;
     }
     const timed=candidates.filter(candidate=>mentionEventTime(event,candidate.market,descriptor));
