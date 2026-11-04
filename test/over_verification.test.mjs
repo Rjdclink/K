@@ -64,13 +64,14 @@ test('a cheap nearby total starts external verification before crossing and ente
  assert.equal(h.window.initial_at,start);assert.equal(h.externalCount,0);
  h.setTime(20000);
  await h.context.preflightNearOver(state(start+20000,69,70),milestone,cheap);
- assert.equal(h.externalCount,1);
+ assert.equal(h.externalCount,0,'a pre-cross score cannot verify an over or reset the seller-backed clock');
+ assert.equal(h.window.initial_at,start);
  h.setScore(70,70);
  await h.context.pruneOverWindows([{state:state(start+180000,70,70)}]);
  assert.equal(h.window.initial_at,start);
  const ready=await h.run(180000);
  assert.ok(ready);assert.equal(h.externalCount,2);
- assert.equal(ready.overVerification.firstExternalAt,start+20000);
+ assert.equal(ready.overVerification.firstExternalAt,start+180000);
 });
 test('a cushioned over needs independent external confirmation before entry',async()=>{
  const h=harness({home:75});const verified=await h.run(0);assert.ok(verified);assert.equal(h.externalCount,1);assert.equal(h.kalshiCount,0);assert.equal(h.window,null);
