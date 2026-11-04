@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {cryptoHitContract,qualifyingCryptoMinute,pairedCryptoProof,tripleCryptoProof} from '../src/crypto_hit.mjs';
+import {cryptoHitContract,cryptoMinuteResult,qualifyingCryptoMinute,pairedCryptoProof,tripleCryptoProof} from '../src/crypto_hit.mjs';
 import {scanCryptoHits} from '../src/crypto_scanner.mjs';
 
 const start=Date.parse('2026-11-04T12:00:00Z'),minute=start+60_000;
@@ -27,6 +27,9 @@ test('requires a complete finalized minute and strict CF trimmed average',()=>{
   assert.equal(qualifyingCryptoMinute(contract,ticks(80001),now)?.average,80001);
   assert.equal(qualifyingCryptoMinute(contract,{data:{payload:[...ticks().data.payload,{time:minute,value:'80001'}]}},now),null);
   assert.equal(qualifyingCryptoMinute(contract,{data:{payload:ticks().data.payload.map((x,i)=>i===1?{...x,repeatOfPreviousValue:true}:x)}},now),null);
+  assert.equal(cryptoMinuteResult(contract,ticks(80000),now).reason,'not_crossed');
+  assert.equal(cryptoMinuteResult(contract,{data:{payload:ticks().data.payload.slice(1)}},now).reason,'incomplete_minute');
+  assert.equal(cryptoMinuteResult(contract,null,now).reason,'missing_feed');
 });
 test('three separate reads agree after 15 then 20 seconds; changed data resets proof',()=>{
   const contract=cryptoHitContract(event,market,series),first=qualifyingCryptoMinute(contract,ticks(),minute+60_000);

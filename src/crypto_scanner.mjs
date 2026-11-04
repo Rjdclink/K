@@ -1,9 +1,10 @@
-import {cryptoHitContract,qualifyingCryptoMinute,pairedCryptoProof,tripleCryptoProof} from './crypto_hit.mjs';
+import {cryptoHitContract,cryptoMinuteResult,pairedCryptoProof,tripleCryptoProof} from './crypto_hit.mjs';
 
 export async function scanCryptoHits({kalshi,readIndex,getWindow,saveWindow,clearWindow,onVerified,
-  now=()=>Date.now(),maxSeries=80,tracked,onCandidates}={}){
+  now=()=>Date.now(),maxSeries=80,tracked,onCandidates,onCatalog}={}){
   const stats={series:0,surveyed:0,events:0,markets:0,qualified:0,firstChecks:0,
-    secondChecks:0,thirdChecks:0,errors:0,sourceUnavailable:0,sample:[]};
+    secondChecks:0,thirdChecks:0,errors:0,sourceUnavailable:0,notCrossed:0,
+    incompleteMinute:0,entryReasons:{},sample:[]};
   const catalog=tracked?[]:(await kalshi('/series?category=Crypto')).series||[];
   const relevant=catalog.filter(s=>s.category==='Crypto'&&
     /(?:above|below|high|low|hit|touch|minimum|maximum)/i.test(s.title||'')&&
@@ -32,6 +33,7 @@ export async function scanCryptoHits({kalshi,readIndex,getWindow,saveWindow,clea
       }
     }
   }
+  if(!tracked)onCatalog?.(candidates,stats.series);
   const feeds=new Map();
   const active=[];
   candidates.sort((a,b)=>Number(a.market.yes_ask_dollars)-Number(b.market.yes_ask_dollars));
@@ -43,8 +45,14 @@ export async function scanCryptoHits({kalshi,readIndex,getWindow,saveWindow,clea
       try{feeds.set(contract.index,await readIndex(contract.index))}
       catch{feeds.set(contract.index,null);stats.errors++}
     }
-    const observation=qualifyingCryptoMinute(contract,feeds.get(contract.index),now(),window?.first?.minute??null);
-    if(!observation){stats.sourceUnavailable++;await clearWindow?.(market.ticker);continue}
+    const result=cryptoMinuteResult(contract,feeds.get(contract.index),now(),window?.first?.minute??null);
+    const observation=result.observation;
+    if(!observation){
+      if(result.reason==='not_crossed')stats.notCrossed++;
+      else if(result.reason==='incomplete_minute')stats.incompleteMinute++;
+      else stats.sourceUnavailable++;
+      await clearWindow?.(market.ticker);continue;
+    }
     stats.qualified++;
     try{
       const first=window?.first,second=window?.second;
@@ -64,7 +72,8 @@ export async function scanCryptoHits({kalshi,readIndex,getWindow,saveWindow,clea
         await saveWindow(market.ticker,{first:observation});stats.firstChecks++;active.push(item);continue;
       }
       stats.thirdChecks++;
-      await onVerified({...item,first,second,third:observation});
+      const reason=await onVerified({...item,first,second,third:observation});
+      if(reason)stats.entryReasons[reason]=(stats.entryReasons[reason]||0)+1;
     }catch{stats.errors++}
   }
   onCandidates?.(active);

@@ -95,6 +95,19 @@ test('weather card reports a paused scan without stale candidate counts',async()
   assert.equal(elements.get('weatherSeries').textContent,'Paused');
   assert.equal(elements.get('weatherEligible').textContent,'—');
 });
+test('paused crypto card does not display stale verification counts',()=>{
+  const elements=new Map();
+  const document={getElementById:id=>{if(!elements.has(id))elements.set(id,{textContent:'',
+    classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){},
+    replaceChildren(){}});return elements.get(id)},querySelectorAll:()=>[],createElement:()=>({})};
+  const context=vm.createContext({document,window:{addEventListener(){}},navigator:{},
+    localStorage:{getItem(){return null}},fetch:()=>new Promise(()=>{}),AbortSignal,setInterval(){}});
+  vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],context);
+  vm.runInContext('renderCrypto',context)({disabled:true,stats:{thirdChecks:8,markets:62}});
+  assert.equal(elements.get('cryptoStatus').textContent,'Crypto scanner paused');
+  assert.equal(elements.get('cryptoChecks').textContent,'—');
+  assert.equal(elements.get('cryptoSamples').textContent,'No crypto scans or entries are running.');
+});
 
 test('deferred football cards retain their last check time without claiming a current market scan',()=>{
   assert.match(page,/Market last checked/);

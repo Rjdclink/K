@@ -101,6 +101,24 @@ test('official transcript extraction requires exact markers and rejects an unapp
   const absent=async()=>({ok:true,headers:new Headers({'content-type':'text/html'}),text:async()=>'<p>Not published</p>'});
   assert.equal(await fetchOfficialMentionTranscript(discovery,{fetcher:absent}),null);
 });
+test('publisher event listing can bind a unique official caption file with speaker cues',async()=>{
+  const descriptor={eventTicker:event.event_ticker,eventDate:'2026-11-04',timezone:'America/New_York',
+    scheduledAt:event.strike_date,subject:'the Speaker',eventMarker:'Today remarks',
+    dateMarker:'November 4, 2026',eventTimeMarker:'12:30 PM ET',
+    speakerMarker:'Speaker:',segments:[{start:'Speaker:',end:'END REMARKS'}],
+    discoveryUrl:ruleSourceUrl,linkText:'Official captions'};
+  const fetcher=async address=>({ok:true,headers:new Headers({'content-type':
+    address.pathname==='/briefings/'?'text/html':'text/vtt'}),text:async()=>
+    address.pathname==='/briefings/'?
+      '<h1>Today remarks</h1>November 4, 2026 at 12:30 PM ET <a href="/briefings/captions.vtt">Official captions</a>':
+      'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nSpeaker: Veterans\n\n00:00:04.000 --> 00:00:05.000\nEND REMARKS'});
+  const result=await fetchOfficialMentionTranscript(descriptor,{fetcher});
+  assert.equal(result.text,'Veterans');
+  assert.equal(result.url,'https://www.whitehouse.gov/briefings/captions.vtt');
+  assert.equal(result.complete,false);
+  assert.equal(result.eventTimeConfirmed,true);
+  assert.equal(await fetchOfficialMentionTranscript({...descriptor,eventTimeMarker:'2:30 PM ET'},{fetcher}),null);
+});
 test('search discovers only a unique official transcript with verified event and speaker text',async()=>{
   const descriptor={eventTicker:event.event_ticker,eventDate:'2026-11-04',timezone:'America/New_York',
     scheduledAt:event.strike_date,subject:'the Speaker',speakerMarker:'Speaker:',
@@ -147,6 +165,23 @@ test('scanner prioritizes mapped same-day events and skips unavailable transcrip
   assert.equal(third.thirdChecks,1);
   assert.equal(orders.length,1);
   assert.equal(orders[0].side,'yes');
+});
+test('unmapped today event can start a check only after a rule-bound source resolves',async()=>{
+  const windows=new Map(),candidates={...event,markets:[market('Veterans')]};
+  const descriptor={...binding,eventTicker:event.event_ticker,eventDate:'2026-11-04',
+    timezone:'America/New_York',scheduledAt:event.strike_date};
+  let resolved=0;
+  const stats=await scanMentionMarkets({sources:new Map(),seriesCatalog:[series],now:()=>at,
+    maxSeries:1,kalshi:async path=>path.includes('with_nested_markets=true')?
+      {events:[candidates]}:{events:[{...event,markets:[]}]},
+    resolveSource:async()=>{resolved++;return descriptor},
+    readTranscript:async()=>source('Veterans'),
+    getWindow:async(ticker,side)=>windows.get(ticker+side),
+    saveWindow:async observation=>windows.set(observation.ticker+observation.side,observation),
+    onVerified:async()=>assert.fail('single check cannot enter')});
+  assert.equal(resolved,1);
+  assert.equal(stats.firstChecks,1);
+  assert.equal(windows.size,1);
 });
 test('a market open today for tomorrow’s call is tracked but cannot use today’s transcript',async()=>{
   const futureTicker='KXTESTMENTION-26NOV05';
@@ -228,7 +263,7 @@ test('source subject and dated ticker must match the exact contract event',()=>{
   assert.equal(mentionTickerDay('KXTESTMENTION-26NOV05'),'2026-11-05');
 });
 test('the contract’s scheduled broadcast instant controls the event day across time zones',()=>{
-  const news={...event,strike_date:'2026-11-05T23:30:00Z'};
+  const news={...event,event_ticker:'KXTESTMENTION-26NOV05',strike_date:'2026-11-05T23:30:00Z'};
   const descriptor={eventDate:'2026-11-05',timezone:'America/New_York',scheduledAt:'2026-11-05T23:30:00Z'};
   assert.equal(mentionEventTime(news,market('Iran'),descriptor),true);
   assert.equal(mentionDay(descriptor.scheduledAt,'America/Chicago'),'2026-11-05');
@@ -237,6 +272,7 @@ test('the contract’s scheduled broadcast instant controls the event day across
   const expiration={...news,strike_date:'2026-12-01T05:00:00Z',title:'November 5 at 6:30 PM ET broadcast'};
   assert.equal(mentionEventTime(expiration,market('Iran'),{...descriptor,contractTimeMarker:'November 5 at 6:30 PM ET'}),true);
   assert.equal(mentionEventTime(expiration,market('Iran'),descriptor),false);
+  assert.equal(mentionEventTime(expiration,market('Iran'),descriptor,{official:true,eventTimeConfirmed:true}),true);
 });
 test('bounded rotating discovery eventually surveys every unmapped series',async()=>{
   const catalog=Array.from({length:465},(_,i)=>({ticker:'KXMENTION'+String(i).padStart(3,'0'),category:'Mentions'}));

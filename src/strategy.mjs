@@ -52,6 +52,18 @@ export function basketballEntryTier(game){
   if(!profile||game.period!==profile.period||!Number.isFinite(seconds)||seconds<=0||seconds>=BASKETBALL_WINNER_ENTRY_SECONDS)return null;
   return basketballCloseoutEntry(game)?[basketballCloseoutMinimum(game),105]:profile.tiers.filter(([,limit])=>seconds<limit).at(-1)||null;
 }
+// Warm the independent scoreboard only for a plausible first-tier winner.
+// This never counts as purchase proof; the live entry path verifies again.
+export function basketballEarlyPreflight(game,market){
+  const profile=basketballLeadProfile(game),[points,limit]=profile?.tiers?.[0]||[];
+  const seconds=game?.remainingSeconds,margin=Math.abs(game?.homeUnits-game?.awayUnits);
+  const leader=game?.homeUnits>game?.awayUnits?game?.homeTeamId:game?.awayTeamId;
+  return Boolean(game?.verifiedLive&&game?.scoreConsistent&&game?.periodConsistent&&
+    game?.period===profile?.period&&Number.isFinite(seconds)&&seconds>=limit&&
+    seconds<=Math.min(limit+90,360)&&Number.isFinite(margin)&&margin>=points-2&&
+    leader&&market?.custom_strike?.basketball_team===leader&&
+    ['active','open'].includes(market.status));
+}
 // The late NBA route also covers stronger leads; other earlier tiers remain.
 export function basketballCloseoutMinimum(game){
   return basketballLeadProfile(game)&&game.sport!=='WNBA'?['NCAAB','NCAAW'].includes(game.sport)?12:7:null;

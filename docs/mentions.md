@@ -23,7 +23,13 @@ replace the publisher named by the rules. The URL can be a webcast or events
 listing and does not itself prove the spoken words.
 
 An event can trade only after an exact official transcript is bound to that
-rule source. Set
+rule source. On the event day, Claude Haiku may propose an exact caption or
+transcript URL on the rule-named publisher host, or a unique link on its events
+page. A proposal is cached and never counts as evidence: the scanner independently
+fetches the publisher document and checks its date, time, speakers, and text
+before three separate reads. The locator makes at most three AI requests per
+scan and caches unavailable proposals for five minutes. A webcast without a
+readable caption or transcript stays blocked. To bind a source explicitly, set
 `MENTION_OFFICIAL_SOURCES` to a JSON array of event-specific descriptors. A
 descriptor requires `eventTicker`, `ruleSourceUrl` (the exact Kalshi
 `settlement_sources` URL), `eventDate` (`YYYY-MM-DD`), `timezone` (IANA),
@@ -86,8 +92,8 @@ the window.
 The final order path rechecks the actual Kalshi market, order book, current
 event day, proof freshness, account balance, fees, and total open and pending
 mention commitments. It uses a fill-or-kill order and never exceeds 15% of
-the current bankroll including fees. If there is no source mapping, discovery
-still runs, but no mention orders can be submitted.
+the current bankroll including fees. If there is no verified source binding,
+discovery still runs, but no mention orders can be submitted.
 
 Schedule a separate Neon function trigger for `POST /mentions/tick` once per
 minute. This keeps broad mention discovery out of the live sports `/tick`

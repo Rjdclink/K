@@ -26,7 +26,7 @@ export function mentionTickerDay(ticker){
   const date=new Date(Date.UTC(2000+Number(match[1]),month,Number(match[3])));
   return date.getUTCMonth()===month&&date.getUTCDate()===Number(match[3])?date.toISOString().slice(0,10):null;
 }
-export function mentionEventTime(event,market,descriptor){
+export function mentionEventTime(event,market,descriptor,source){
   const start=Date.parse(descriptor?.scheduledAt||''),zone=descriptor?.timezone;
   if(!Number.isFinite(start)||!zone||mentionDay(start,zone)!==descriptor.eventDate)return false;
   const listed=Date.parse(event?.strike_date||'');
@@ -34,7 +34,9 @@ export function mentionEventTime(event,market,descriptor){
   // The strike date may be the contract's final expiration rather than the
   // broadcast time. An exact event-specific marker can establish the latter.
   return Number.isFinite(listed)&&Math.abs(listed-start)<=60_000||
-    Boolean(descriptor.contractTimeMarker&&text.includes(descriptor.contractTimeMarker));
+    Boolean(descriptor.contractTimeMarker&&text.includes(descriptor.contractTimeMarker))||
+    Boolean(source?.official&&source.eventTimeConfirmed&&
+      mentionTickerDay(event?.event_ticker)===descriptor.eventDate);
 }
 
 export function mentionContract(event,market,series){

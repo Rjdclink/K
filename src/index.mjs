@@ -14,7 +14,7 @@ import { page } from './ui.mjs';
 import { historyPage } from './history_ui.mjs';
 import { completedTrade, completedNoTrade, manualSaleFill, reconcileManualSaleFills, settlementLookupCandidates } from './history.mjs';
 import { ensureExitLedger, recordExitFill } from './exit_ledger.mjs';
-import { gameState, overSignal, PLAYER_PROP_MAX_FRACTION, BASKETBALL_COUNT_PROP_MAX_FRACTION, BASKETBALL_WINNER_ENTRY_SECONDS, playerOverSpec, playerPropEarlyWindow, confirmedOver, fallbackScoringUnits, confirmedExternalLead, leadSignal, proBasketballLeadRules, basketballCloseoutEntry, basketballCloseoutMinimum, nbaSingleReadLead, kalshiSingleReadLead, confirmedSoccerWinnerClock, confirmedDrawClock, soccerWinnerWindowOpen, leadWatchReason, additionalLeadSignal, cricketLeadSignal, drawSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback, teamScorePosition } from './strategy.mjs';
+import { gameState, overSignal, PLAYER_PROP_MAX_FRACTION, BASKETBALL_COUNT_PROP_MAX_FRACTION, BASKETBALL_WINNER_ENTRY_SECONDS, playerOverSpec, playerPropEarlyWindow, confirmedOver, fallbackScoringUnits, confirmedExternalLead, leadSignal, proBasketballLeadRules, basketballCloseoutEntry, basketballCloseoutMinimum, basketballEarlyPreflight, nbaSingleReadLead, kalshiSingleReadLead, confirmedSoccerWinnerClock, confirmedDrawClock, soccerWinnerWindowOpen, leadWatchReason, additionalLeadSignal, cricketLeadSignal, drawSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, minimumProfitCents, netSettlementProfitCents, profitableCount, comeback, teamScorePosition } from './strategy.mjs';
 import { reviewMiss,reviewExternalAmbiguity } from './ai.mjs';
 import { kalshiSignature } from './auth.mjs';
 import { marketShard, shardCash, transferPlan, comboShardBudget, awaitShardCash } from './funding.mjs';
@@ -44,8 +44,10 @@ import {mentionContract,mentionDay,mentionEventTime,mentionEntryPrice,pairedMent
 import {officialMentionSources,fetchOfficialMentionTranscript} from './mentions_source.mjs';
 import {scanMentionMarkets} from './mentions_scanner.mjs';
 import {dueMentionSeries} from './mentions_schedule.mjs';
+import {cachedMentionBinding,proposeMentionBinding} from './mentions_locator.mjs';
 import {cryptoHitContract,tripleCryptoProof} from './crypto_hit.mjs';
 import {scanCryptoHits} from './crypto_scanner.mjs';
+const CRYPTO_SCAN_ENABLED=false;
 
 const API='https://external-api.kalshi.com/trade-api/v2';
 const pool = new pg.Pool({connectionString:process.env.DATABASE_URL, max:4, idleTimeoutMillis:15000});
@@ -2047,10 +2049,10 @@ async function watchLeadWindows(until){
                 !earlyLeadSignal(first,ruleMarket)&&!additionalLeadSignal(first,ruleMarket)){
                 const minimum=first.sport==='WNBA'?7:basketballCloseoutMinimum(first);
                 const leader=first.homeUnits>first.awayUnits?first.homeTeamId:first.awayTeamId;
-                if(minimum!==null&&minimum!==undefined&&first.period===(first.sport==='NCAAB'?2:4)&&
+                if((basketballEarlyPreflight(first,market)||minimum!==null&&minimum!==undefined&&first.period===(first.sport==='NCAAB'?2:4)&&
                   first.remainingSeconds>=105&&first.remainingSeconds<180&&
                   Math.abs(first.homeUnits-first.awayUnits)>=minimum&&leader&&
-                  market.custom_strike?.basketball_team===leader&&['active','open'].includes(market.status)&&
+                  market.custom_strike?.basketball_team===leader&&['active','open'].includes(market.status))&&
                   Date.now()-(preflightAt.get(market.ticker)||0)>=20000){
                   preflightAt.set(market.ticker,Date.now());decision.stage='preentry_external';
                   await auditedOver(first,milestone,{market,allowUnavailable:true});
@@ -2254,6 +2256,8 @@ function ensureMentionTables(){return mentionTablesReady??=(async()=>{
   await pool.query(`CREATE TABLE IF NOT EXISTS mention_commitments (
     order_id uuid PRIMARY KEY, cost_cents integer NOT NULL CHECK(cost_cents>0),
     created_at timestamptz NOT NULL DEFAULT now())`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS mention_source_proposals (
+    event_ticker text PRIMARY KEY,checked_at timestamptz NOT NULL,descriptor jsonb)`);
 })().catch(error=>{mentionTablesReady=null;throw error})}
 async function mentionCommittedCents(positions,excludeId=null){
   const {rows}=await pool.query(`SELECT a.id,a.market_ticker,a.status,a.fill_count,a.updated_at,c.cost_cents
@@ -2359,6 +2363,10 @@ async function executeVerifiedMention(item){
 async function scanOfficialMentions(){
   const sources=officialMentionSources();
   await ensureMentionTables();
+  const {rows:proposals}=await pool.query(`SELECT event_ticker,descriptor
+    FROM mention_source_proposals WHERE descriptor IS NOT NULL AND checked_at>now()-interval '1 day'`);
+  for(const row of proposals)if(!sources.has(row.event_ticker)&&cachedMentionBinding(row))
+    sources.set(row.event_ticker,row.descriptor);
   const client=await pool.connect();
   try{
   await client.query('BEGIN');
@@ -2368,7 +2376,27 @@ async function scanOfficialMentions(){
   const previous=(await pool.query('SELECT stats FROM mention_scan_status WHERE id=1')).rows[0]?.stats;
   const scheduled=previous?.seriesSchedule||{};
   const due=dueMentionSeries(seriesCatalog,scheduled);
+  let locatorCalls=0,locatorErrors=0;
   const options={kalshi,sources,seriesCatalog,
+    resolveSource:async(event,contract)=>{
+      const {rows:[cached]}=await pool.query(`SELECT checked_at,descriptor FROM mention_source_proposals
+        WHERE event_ticker=$1`,[event.event_ticker]);
+      const bound=cachedMentionBinding(cached);
+      if(bound)return bound;
+      if(cached&&Date.now()-Date.parse(cached.checked_at)<5*60_000)return null;
+      if(locatorCalls>=3)return null;
+      locatorCalls++;
+      let descriptor=null;
+      try{descriptor=await proposeMentionBinding(event,contract,{forceSearch:true})}
+      catch(error){locatorErrors++;console.warn('Mention source locator deferred:',event.event_ticker,
+        String(error.message).slice(0,150))}
+      await pool.query(`INSERT INTO mention_source_proposals(event_ticker,checked_at,descriptor)
+        VALUES($1,now(),$2) ON CONFLICT(event_ticker) DO UPDATE
+        SET checked_at=now(),descriptor=EXCLUDED.descriptor`,
+        [event.event_ticker,descriptor?JSON.stringify(descriptor):null]);
+      if(descriptor)sources.set(event.event_ticker,descriptor);
+      return descriptor;
+    },
     readTranscript:source=>fetchOfficialMentionTranscript(source,{hosts:[
       new URL(source.ruleSourceUrl).hostname.toLowerCase(),
       ...String(process.env.MENTION_OFFICIAL_HOSTS||'').split(',').map(x=>x.trim().toLowerCase()).filter(Boolean)]}),
@@ -2394,6 +2422,9 @@ async function scanOfficialMentions(){
   const stats=await broad;
   if(broadError)throw broadError;
   stats.series=seriesCatalog.length;
+  stats.locatorCalls=locatorCalls;
+  stats.locatorErrors=locatorErrors;
+  stats.boundSources=sources.size;
   stats.seriesSchedule={...scheduled,...stats.seriesSchedule};
   stats.scheduledLater=Object.values(stats.seriesSchedule).reduce((sum,item)=>sum+(item.future||0),0);
   for(const key of Object.keys(checks))stats[key]=(stats[key]||0)+checks[key];
@@ -2413,6 +2444,10 @@ function ensureCryptoTables(){return cryptoTablesReady??=(async()=>{
   await pool.query(`CREATE TABLE IF NOT EXISTS crypto_commitments (
     order_id uuid PRIMARY KEY,cost_cents integer NOT NULL CHECK(cost_cents>0),
     created_at timestamptz NOT NULL DEFAULT now())`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS crypto_scan_lease (
+    id integer PRIMARY KEY,owner uuid NOT NULL,expires_at timestamptz NOT NULL)`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS crypto_candidate_cache (
+    id integer PRIMARY KEY,checked_at timestamptz NOT NULL,series_count integer NOT NULL,items jsonb NOT NULL)`);
 })().catch(error=>{cryptoTablesReady=null;throw error})}
 async function cryptoCommittedCents(positions,excludeId=null){
   const {rows}=await pool.query(`SELECT a.id,a.market_ticker,a.status,a.updated_at,c.cost_cents
@@ -2436,34 +2471,35 @@ async function cryptoCommittedCents(positions,excludeId=null){
   return {heldCents,pendingCents};
 }
 async function executeVerifiedCrypto(item){
-  if(!live()||process.env.CRYPTO_HIT_TRADING==='false'||
-    !tripleCryptoProof(item.first,item.second,item.third))return;
+  if(!CRYPTO_SCAN_ENABLED||!live()||process.env.CRYPTO_HIT_TRADING==='false'||
+    !tripleCryptoProof(item.first,item.second,item.third))return 'entry_disabled_or_proof_expired';
   const {event,market,series,contract}=item;
   const [current,latestEvent]=await Promise.all([
     kalshi('/markets/'+encodeURIComponent(market.ticker)).then(result=>result.market),
     kalshi('/events/'+encodeURIComponent(event.event_ticker)).then(result=>result.event)]);
   if(cryptoHitContract(latestEvent,current,series)?.key!==contract.key||
-    Date.parse(current.close_time||'')<=Date.now())return;
+    Date.parse(current.close_time||'')<=Date.now())return 'contract_closed_or_changed';
   const active=await pool.query(`SELECT 1 FROM trade_attempts WHERE market_ticker=$1 AND
     status IN ('filled','reserved','check_order','retrying','combo_pending') LIMIT 1`,[market.ticker]);
-  if(active.rowCount)return;
+  if(active.rowCount)return 'existing_attempt';
   const positions=await allOpenPositions({strict:true});
   if(positions.market_positions?.some(position=>position.ticker===market.ticker&&
-    Number(position.position_fp??position.position??0)!==0))return;
+    Number(position.position_fp??position.position??0)!==0))return 'existing_position';
   const exposure=await cryptoCommittedCents(positions);
-  if(!exposure)return;
+  if(!exposure)return 'exposure_unavailable';
   const account=await accountBalance({fresh:true}),bankroll=Number(account.balance)+Number(account.portfolio_value);
   const budget=remainingMentionCents(bankroll,exposure.heldCents,exposure.pendingCents);
   const local=shardCash(account,marketShard(event,current));
-  if(!budget||local===null||local<=0)return;
+  if(!budget||local===null||local<=0)return 'budget_unavailable';
   const {orderbook_fp}=await kalshi('/markets/'+encodeURIComponent(current.ticker)+'/orderbook');
   const ask=bestYesAsk(orderbook_fp);
-  if(!ask||ask.price<=0||ask.price>=1||ask.size<minimumCount(current))return;
+  if(!ask||ask.price<=0||ask.price>=1||ask.size<minimumCount(current))return 'no_executable_ask';
   const fee=feeReserve(event,current),spendable=Math.min(singleSpendableCash(account.balance),local);
   const raw=orderSize(spendable,ask.price,ask.size,.15,1,bankroll,budget,fee);
   const count=current.fractional_trading_enabled===false?Math.floor(raw):raw;
-  if(count<minimumCount(current)||estimatedCostCents(count,ask.price,fee)>budget||
-    netSettlementProfitCents(count,ask.price,fee)<minimumProfitCents('crypto_hit_yes',bankroll))return;
+  if(count<minimumCount(current)||estimatedCostCents(count,ask.price,fee)>budget)return 'size_unavailable';
+  if(netSettlementProfitCents(count,ask.price,fee)<minimumProfitCents('crypto_hit_yes',bankroll))
+    return 'below_profit_floor';
   await auditTable();
   const verificationId=randomUUID(),game={id:'crypto:'+event.event_ticker,sport:'Crypto',type:'crypto',verificationId};
   await pool.query('INSERT INTO verification_records(id,market_ticker,passed,evidence) VALUES($1,$2,true,$3)',
@@ -2475,7 +2511,7 @@ async function executeVerifiedCrypto(item){
   const signal={strategy:'crypto_hit_yes',fraction:.15,
     reason:`CF ${contract.index} ${contract.method} minute ${new Date(item.third.minute).toISOString()} ${contract.direction} ${contract.threshold}; three matching reads`};
   const id=await reserve(signal,game,event,current,count,ask.price,Number(account.balance));
-  if(!id)return;
+  if(!id)return 'reservation_unavailable';
   await pool.query('INSERT INTO crypto_commitments(order_id,cost_cents) VALUES($1,$2)',
     [id,estimatedCostCents(count,ask.price,fee)]);
   rememberIndependentEntry(game,current,verificationId,Date.now());
@@ -2506,21 +2542,27 @@ async function executeVerifiedCrypto(item){
     await pool.query(`UPDATE trade_attempts SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE id=$1`,
       [id,filled>0?'filled':'unfilled',result?.order_id||result?.order?.order_id||null,filled]);
     if(filled>0)await invalidateBalance();
+    return filled>0?'filled':'unfilled';
   }catch(error){
     const terminal=error.code==='LOCAL_EXTERNAL_VERIFICATION_REQUIRED'||/^Kalshi (400|401|403|404|409|422) /.test(String(error.message));
     await pool.query('UPDATE trade_attempts SET status=$2,error=$3,updated_at=now() WHERE id=$1',
       [id,terminal?'unfilled':'check_order',String(error.message).slice(0,250)]);
     console.warn('Crypto order deferred:',current.ticker,error.message);
+    return 'order_deferred';
   }
 }
 async function scanOfficialCrypto(){
   await ensureCryptoTables();
-  const client=await pool.connect();
+  const owner=randomUUID(),started=Date.now();
+  const {rows:[lease]}=await pool.query(`INSERT INTO crypto_scan_lease(id,owner,expires_at)
+    VALUES(1,$1,now()+interval '90 seconds') ON CONFLICT(id) DO UPDATE
+    SET owner=EXCLUDED.owner,expires_at=EXCLUDED.expires_at
+    WHERE crypto_scan_lease.expires_at<now() RETURNING owner`,[owner]);
+  if(!lease)return {skipped:'crypto scan in progress'};
   try{
-    await client.query('BEGIN');
-    const {rows:[lock]}=await client.query('SELECT pg_try_advisory_xact_lock(83027549) AS acquired');
-    if(!lock.acquired)return {skipped:'crypto scan in progress'};
-    let tracked=[];
+    const {rows:[cache]}=await pool.query('SELECT checked_at,series_count,items FROM crypto_candidate_cache WHERE id=1');
+    const cached=cache&&Date.now()-Date.parse(cache.checked_at)<3*60_000;
+    let tracked=[],catalogItems=[],catalogSeries=0;
     const options={kalshi,readIndex:index=>kalshi('/cfbenchmarks/values?'+
       new URLSearchParams({id:index,maxResolution:'PER_SECOND'}),{auth:true}),
       getWindow:async ticker=>(await pool.query('SELECT observation FROM crypto_verification_windows WHERE market_ticker=$1',[ticker])).rows[0]?.observation,
@@ -2529,23 +2571,33 @@ async function scanOfficialCrypto(){
         [ticker,JSON.stringify(observation)]),
       clearWindow:async ticker=>pool.query('DELETE FROM crypto_verification_windows WHERE market_ticker=$1',[ticker]),
       onVerified:executeVerifiedCrypto};
-    const stats=await scanCryptoHits({...options,onCandidates:items=>{tracked=items}});
+    const stats=await scanCryptoHits({...options,...(cached?{tracked:cache.items}:{}),
+      onCatalog:(items,count)=>{catalogItems=items;catalogSeries=count},
+      onCandidates:items=>{tracked=items}});
+    if(cached){stats.series=cache.series_count;stats.surveyed=0;stats.markets=cache.items.length;
+      stats.sample=cache.items.slice(0,8).map(({market,contract})=>({ticker:market.ticker,
+        ask:market.yes_ask_dollars,index:contract.index,direction:contract.direction,threshold:contract.threshold}))}
+    else if(!stats.errors)await pool.query(`INSERT INTO crypto_candidate_cache(id,checked_at,series_count,items)
+      VALUES(1,now(),$1,$2) ON CONFLICT(id) DO UPDATE SET checked_at=now(),
+      series_count=EXCLUDED.series_count,items=EXCLUDED.items`,[catalogSeries,JSON.stringify(catalogItems)]);
     const publish=()=>pool.query(`INSERT INTO crypto_scan_status(id,checked_at,stats) VALUES(1,now(),$1)
       ON CONFLICT(id) DO UPDATE SET checked_at=now(),stats=EXCLUDED.stats`,[JSON.stringify(stats)]);
     await publish();
     // The first complete minute may arrive near a clock boundary. Keep the
     // same verification window alive for 15 + 20 seconds across that boundary.
-    const until=Date.now()+45_000;
+    const until=Math.min(Date.now()+45_000,started+50_000);
     while(tracked.length&&Date.now()+5000<until){
       await new Promise(resolve=>setTimeout(resolve,5000));
       const fast=await scanCryptoHits({...options,tracked,onCandidates:items=>{tracked=items}});
       stats.firstChecks+=fast.firstChecks;stats.secondChecks+=fast.secondChecks;
       stats.thirdChecks+=fast.thirdChecks;stats.errors+=fast.errors;stats.sourceUnavailable=fast.sourceUnavailable;
+      for(const [reason,count] of Object.entries(fast.entryReasons))
+        stats.entryReasons[reason]=(stats.entryReasons[reason]||0)+count;
       await publish();
     }
     await pool.query(`DELETE FROM crypto_verification_windows WHERE updated_at<now()-interval '1 day'`);
     return stats;
-  }finally{await client.query('ROLLBACK').catch(()=>{});client.release()}
+  }finally{await pool.query('DELETE FROM crypto_scan_lease WHERE id=1 AND owner=$1',[owner]).catch(()=>{})}
 }
 function snapshotRow({milestone,state},liveMap,scanStarted){
   const baseball=/baseball/.test(state.type),tennis=/tennis/.test(state.type),soccer=/soccer/.test(state.type);
@@ -3467,14 +3519,14 @@ async function state(){
   const comboIssue=comboIssues.find(issue=>!(issue.status==='insufficient_cash'&&Number(balance?.balance)>=100)&&issue.leg_tickers.length>=2&&
     issue.leg_tickers.every(ticker=>open.has(ticker)))||null;
   if(comboIssue)comboIssue.leg_names=comboIssue.leg_tickers.map(ticker=>orders.find(o=>o.market_ticker===ticker)?.game_title||ticker);
-  return {live:live(),exitOnly:exitOnly(),credentials:configured(),aiConfigured:Boolean(process.env.ANTHROPIC_API_KEY),balance,balanceStale,balanceAsOf,accountError,positionsError,positionsStale:Boolean(positions&&positionsError),games:snap.rows,scan:stats.rows[0],weather:{disabled:true,series:0,eligible:0},crypto:{entryEnabled:process.env.CRYPTO_HIT_TRADING!=='false',...(cryptoStatus.rows[0]||{})},mentions:{configured:Boolean(process.env.MENTION_OFFICIAL_SOURCES),...(mentionStatus.rows[0]||{})},comboIssue,orders};
+  return {live:live(),exitOnly:exitOnly(),credentials:configured(),aiConfigured:Boolean(process.env.ANTHROPIC_API_KEY),balance,balanceStale,balanceAsOf,accountError,positionsError,positionsStale:Boolean(positions&&positionsError),games:snap.rows,scan:stats.rows[0],weather:{disabled:true,series:0,eligible:0},crypto:{...(cryptoStatus.rows[0]||{}),disabled:!CRYPTO_SCAN_ENABLED,entryEnabled:CRYPTO_SCAN_ENABLED&&process.env.CRYPTO_HIT_TRADING!=='false'},mentions:{configured:Boolean(process.env.MENTION_OFFICIAL_SOURCES)||Number(mentionStatus.rows[0]?.stats?.boundSources)>0,locatorConfigured:Boolean(process.env.ANTHROPIC_API_KEY),...(mentionStatus.rows[0]||{})},comboIssue,orders};
 }
 async function settlementAlerts(since){
   const {rows}=await pool.query(`SELECT id,ticker,profit_cents,settled_time,created_at FROM settlement_alerts WHERE id>$1 AND created_at>now()-interval '2 days' ORDER BY id LIMIT 50`,[since]);
   return rows;
 }
 async function handleRequest(req){const url=new URL(req.url);
-  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),mentionsConfigured:Boolean(process.env.MENTION_OFFICIAL_SOURCES),claudeConfigured:Boolean(process.env.ANTHROPIC_API_KEY),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'scanner-repairs-20261102',verification:{primary:'ESPN',fallback:'Sportradar',espnRetries:0,sportradarConfigured:Boolean(process.env.SPORTRADAR_API_KEY)}});
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),mentionsConfigured:Boolean(process.env.MENTION_OFFICIAL_SOURCES),claudeConfigured:Boolean(process.env.ANTHROPIC_API_KEY),cryptoScannerEnabled:CRYPTO_SCAN_ENABLED,tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'mentions-source-20261104',verification:{primary:'ESPN',fallback:'Sportradar',espnRetries:0,sportradarConfigured:Boolean(process.env.SPORTRADAR_API_KEY)}});
   if(req.method==='GET'&&url.pathname==='/manifest.webmanifest')return response(manifest,'application/manifest+json');
   if(req.method==='GET'&&url.pathname==='/sw.js')return new Response(worker,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','service-worker-allowed':'/','x-content-type-options':'nosniff'}});
   if(req.method==='GET'&&/^\/icon-(192|512)\.png$/.test(url.pathname))return response(Buffer.from(icons[Number(url.pathname.match(/\d+/)[0])],'base64'),'image/png');
@@ -3484,6 +3536,7 @@ async function handleRequest(req){const url=new URL(req.url);
   }
   if(req.method==='POST'&&url.pathname==='/crypto/tick'){
     if(!req.headers.get('x-neon-trigger-invocation-id'))return json({error:'Forbidden'},403);
+    if(!CRYPTO_SCAN_ENABLED)return json({disabled:true});
     return json(await withApiPriority('background',()=>scanOfficialCrypto()));
   }
   if(req.method==='POST'&&url.pathname==='/tick'){

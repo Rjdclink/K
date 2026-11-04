@@ -1,5 +1,9 @@
 # Crypto hit entries
 
+Crypto scanning and entries are paused. The Neon `/crypto/tick` schedule is
+disabled, the endpoint returns a disabled status, and the order path has a
+separate code guard. The rules below document the dormant implementation.
+
 The Crypto card appears below Bankroll and above Mentions. The independent
 Crypto tick surveys open Crypto series whose titles suggest an above, below,
 high, low, hit, touch, minimum, or maximum outcome. It accepts only markets
@@ -23,9 +27,14 @@ filled-position profit floor, and a 15% aggregate crypto exposure cap including
 pending attempts. A stale third check blocks entry. Once the market is closed,
 the scanner cannot place a new order even if the benchmark later confirms it.
 
-Schedule `POST /crypto/tick` as a separate once-per-minute Neon function
+When reenabled, schedule `POST /crypto/tick` as a separate once-per-minute Neon function
 trigger. A single invocation surveys the catalog once and rechecks only
 contracts with a qualifying benchmark minute approximately every five seconds
 for up to 45 seconds, including across a clock-minute boundary. All three
 reads stay pinned to the same complete minute. Automatic entries are enabled
-when live trading is on; set `CRYPTO_HIT_TRADING=false` to pause this route.
+only after the scanner guard and schedule are deliberately restored.
+The full market catalog is reused for up to three minutes while every tick
+fetches fresh CF index values; the expiring scan lease prevents a timed-out
+invocation from holding all future checks. The card distinguishes rule-matched
+markets, crossed thresholds, incomplete minutes, unavailable feeds, and
+entry gates such as insufficient executable profit after fees.

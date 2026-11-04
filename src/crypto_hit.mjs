@@ -32,8 +32,13 @@ export function cryptoHitContract(event,market,series){
 }
 
 export function qualifyingCryptoMinute(contract,raw,now=Date.now(),targetMinute=null){
+  return cryptoMinuteResult(contract,raw,now,targetMinute).observation;
+}
+
+export function cryptoMinuteResult(contract,raw,now=Date.now(),targetMinute=null){
   const values=raw?.data?.payload;
-  if(!contract||!Array.isArray(values)||values.length>30_000)return null;
+  if(!contract||!Array.isArray(values)||values.length>30_000)
+    return {observation:null,reason:'missing_feed'};
   const minutes=new Map();
   for(const point of values){
     const time=Number(point?.time),price=Number(point?.value);
@@ -48,17 +53,19 @@ export function qualifyingCryptoMinute(contract,raw,now=Date.now(),targetMinute=
     if(minute.has(slot))minute.set(slot,null);else minute.set(slot,price);
     minutes.set(start,minute);
   }
+  let complete=false;
   for(const [start,minute] of [...minutes].sort((a,b)=>b[0]-a[0])){
     if(minute.size!==60||[...minute.values()].some(v=>v===null))continue;
+    complete=true;
     const sorted=[...minute.values()].sort((a,b)=>a-b);
     const kept=contract.method==='trim20'?sorted.slice(12,48):sorted;
     const average=kept.reduce((sum,value)=>sum+value,0)/kept.length;
     if(!(contract.direction==='above'?average>contract.threshold:average<contract.threshold))continue;
     const fingerprint=createHash('sha256').update(JSON.stringify([...minute.entries()].sort((a,b)=>a[0]-b[0]))).digest('hex');
-    return {ticker:contract.ticker,contractKey:contract.key,index:contract.index,minute:start,
-      method:contract.method,average,fingerprint,checkedAt:now};
+    return {observation:{ticker:contract.ticker,contractKey:contract.key,index:contract.index,minute:start,
+      method:contract.method,average,fingerprint,checkedAt:now}};
   }
-  return null;
+  return {observation:null,reason:complete?'not_crossed':minutes.size?'incomplete_minute':'no_recent_data'};
 }
 
 export function pairedCryptoProof(first,second,now=Date.now()){
