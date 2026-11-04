@@ -18,6 +18,7 @@ test('Vireonix prepares only public facts and Claude reviews rare ambiguity',asy
   assert.equal(calls[0].options.headers['x-api-key'],undefined);
   assert.equal(calls[1].options.headers['x-api-key'],'test-key');
   assert.equal(JSON.parse(calls[1].options.body).model,'claude-haiku-5-5');
+  assert.equal(JSON.parse(calls[1].options.body).output_config.format.type,'json_schema');
   assert.deepEqual(await reviewExternalAmbiguity('sports',facts,options),result);
   assert.equal(calls.length,2);
   assert.equal((await reviewExternalAmbiguity('mentions',{event:'other'},{env:{},fetcher})).available,false);
