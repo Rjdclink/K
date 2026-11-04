@@ -347,12 +347,6 @@ async function verifyExistingOver(game,milestone,{fetcher=fetch,cache,market,sou
     }
     if(matches.length>1)return false;
     if(!matches.length){
-      if(game.sport==='NHL'&&milestone.title==='Anaheim at Vancouver')console.info('NHL fixture diagnostic:',JSON.stringify({
-        source,start:milestone.start_date,home:game.homeName,away:game.awayName,
-        events:results.filter(r=>r.status==='fulfilled').flatMap(r=>source==='ESPN'?r.value.events||[]:
-          (r.value.sectionList||[]).flatMap(section=>section.events||[])).map(e=>source==='ESPN'?
-          {id:e.id,date:e.date,teams:e.competitions?.[0]?.competitors?.map(t=>[t.homeAway,t.team?.displayName,t.team?.abbreviation])}:
-          {date:e.eventTime,teams:[e.upperTeam?.longName,e.lowerTeam?.longName]}).slice(0,25)}));
       const errors=results.filter(r=>r.status==='rejected').map(r=>String(r.reason?.message||'request failed'));
       unavailableReasons.push(`${source}: ${errors.length===results.length?errors.join(', '):'no exact matching fixture'}`);
       return null;
