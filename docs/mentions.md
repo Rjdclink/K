@@ -2,8 +2,11 @@
 
 The scheduled Kalshi event, not the market's opening time or the viewer's local
 clock, determines the transcript day. The scanner discovers open Mentions
-series in bounded parallel batches across the full catalog on each completed
-pass. This may take several minutes at the shared Kalshi read limit. The
+series in bounded parallel batches across the full catalog on its first pass.
+The date survey is persisted; same-day series are refreshed on later passes,
+future-only series are rechecked on the next Eastern calendar day or when
+Kalshi reports a series update, and empty series are rechecked after 15
+minutes. The initial pass may take several minutes at the shared Kalshi read limit. The
 catalog pass reads event dates first and fetches nested market details only
 for events dated today in Eastern time. Known future mapped events get a
 calendar check only until their scheduled day. It tracks future dated contracts, checks YES and
@@ -80,8 +83,8 @@ still runs, but no mention orders can be submitted.
 Schedule a separate Neon function trigger for `POST /mentions/tick` once per
 minute. This keeps broad mention discovery out of the live sports `/tick`
 request. On the event day, the same invocation rechecks mapped events
-approximately every five seconds while the full catalog survey is running;
-the broad catalog is fetched and surveyed only once. The first successful
+approximately every five seconds while the date survey is running;
+the series catalog is fetched only once per invocation. The first successful
 direct read starts the proof window, including when the ask is above
 65 cents. Function start and source publication delays mean detection cannot
 be guaranteed at the literal publication instant. A database lock prevents

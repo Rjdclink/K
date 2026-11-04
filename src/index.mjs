@@ -43,6 +43,7 @@ import {verifyIndependentYardageZero} from './score_verification.mjs';
 import {mentionContract,mentionDay,mentionEventTime,mentionEntryPrice,pairedMentionProof,tripleMentionProof,remainingMentionCents} from './mentions.mjs';
 import {officialMentionSources,fetchOfficialMentionTranscript} from './mentions_source.mjs';
 import {scanMentionMarkets} from './mentions_scanner.mjs';
+import {dueMentionSeries} from './mentions_schedule.mjs';
 import {cryptoHitContract,tripleCryptoProof} from './crypto_hit.mjs';
 import {scanCryptoHits} from './crypto_scanner.mjs';
 
@@ -2364,6 +2365,9 @@ async function scanOfficialMentions(){
   const {rows:[lock]}=await client.query('SELECT pg_try_advisory_xact_lock(83027548) AS acquired');
   if(!lock.acquired)return {skipped:'mention scan in progress'};
   const seriesCatalog=(await kalshi('/series?category=Mentions')).series||[];
+  const previous=(await pool.query('SELECT stats FROM mention_scan_status WHERE id=1')).rows[0]?.stats;
+  const scheduled=previous?.seriesSchedule||{};
+  const due=dueMentionSeries(seriesCatalog,scheduled);
   const options={kalshi,sources,seriesCatalog,
     readTranscript:source=>fetchOfficialMentionTranscript(source,{hosts:String(process.env.MENTION_OFFICIAL_HOSTS||'').split(',').map(x=>x.trim().toLowerCase()).filter(Boolean)}),
     getWindow:async(ticker,side)=>(await pool.query(`SELECT observation FROM mention_verification_windows
@@ -2374,7 +2378,7 @@ async function scanOfficialMentions(){
     clearWindow:async(ticker,side)=>pool.query('DELETE FROM mention_verification_windows WHERE market_ticker=$1 AND side=$2',[ticker,side]),
     onVerified:executeVerifiedMention};
   let broadDone=false,broadError;
-  const broad=scanMentionMarkets({...options,sources:new Map(),maxSeries:seriesCatalog.length})
+  const broad=scanMentionMarkets({...options,sources:new Map(),seriesCatalog:due,maxSeries:due.length})
     .then(result=>{broadDone=true;return result},error=>{broadDone=true;broadError=error;return null});
   const active=[...sources.values()].some(source=>
     source.eventDate===mentionDay(Date.now(),source.timezone||'America/New_York'));
@@ -2387,6 +2391,9 @@ async function scanOfficialMentions(){
   }
   const stats=await broad;
   if(broadError)throw broadError;
+  stats.series=seriesCatalog.length;
+  stats.seriesSchedule={...scheduled,...stats.seriesSchedule};
+  stats.scheduledLater=Object.values(stats.seriesSchedule).reduce((sum,item)=>sum+(item.future||0),0);
   for(const key of Object.keys(checks))stats[key]=(stats[key]||0)+checks[key];
   const publish=()=>pool.query(`INSERT INTO mention_scan_status(id,checked_at,stats) VALUES(1,now(),$1)
     ON CONFLICT(id) DO UPDATE SET checked_at=now(),stats=EXCLUDED.stats`,[JSON.stringify(stats)]);

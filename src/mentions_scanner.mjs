@@ -5,8 +5,8 @@ import {mentionContract,mentionDay,mentionTickerDay,mentionEventTime,mentionEntr
 export async function scanMentionMarkets({kalshi,sources,readTranscript,getWindow,saveWindow,clearWindow,onVerified,
   now=()=>Date.now(),cycle=Math.floor(now()/60_000),maxSeries=48,seriesCatalog}={}){
   const stats={series:0,events:0,markets:0,contracts:0,todayEvents:0,todayMarkets:0,
-    priced:0,scheduledLater:0,sourceUnavailable:0,
-    firstChecks:0,pairedChecks:0,thirdChecks:0,errors:0,sample:[],surveyed:[]};
+    priced:0,scheduledLater:0,sourceUnavailable:0,todayTickers:[],
+    firstChecks:0,pairedChecks:0,thirdChecks:0,errors:0,sample:[],surveyed:[],seriesSchedule:{}};
   const catalog=seriesCatalog||(await kalshi('/series?category=Mentions')).series||[];
   stats.series=catalog.length;
   // Known future events need only a date comparison until their event day.
@@ -38,7 +38,12 @@ export async function scanMentionMarkets({kalshi,sources,readTranscript,getWindo
       const query=new URLSearchParams({series_ticker:series.ticker,status:'open',limit:'200',with_nested_markets:'false'});
       try{const result=await kalshi('/events?'+query);
         if(result.cursor){stats.errors++;return []}
-        return result.events||[]}
+        const group=result.events||[],today=mentionDay(now(),'America/New_York');
+        const days=group.map(event=>mentionTickerDay(event.event_ticker)).filter(Boolean);
+        stats.seriesSchedule[series.ticker]={updatedAt:series.last_updated_ts||null,
+          checkedAt:now(),today:days.includes(today),
+          future:days.filter(day=>day>today).length};
+        return group}
       catch{stats.errors++;return []}
     }));
     for(const group of batch)for(const event of group){
@@ -70,7 +75,7 @@ export async function scanMentionMarkets({kalshi,sources,readTranscript,getWindo
     }
     stats.events++;
     const today=mentionTickerDay(event.event_ticker)===mentionDay(now(),sources.get(event.event_ticker)?.timezone||'America/New_York');
-    if(today)stats.todayEvents++;
+    if(today){stats.todayEvents++;stats.todayTickers.push(event.event_ticker)}
     const series=bySeries.get(event.series_ticker);
     const candidates=[];
     for(const market of event.markets||[]){
