@@ -38,6 +38,8 @@ test('dashboard includes alerts in its existing refresh while the alert endpoint
     if(sql.includes('ALTER TABLE game_snapshots ADD COLUMN'))return {rows:[]};
     if(sql.includes('SET clock_refresh_at='))return {rows:[]};
     if(sql.includes('CREATE TABLE IF NOT EXISTS combo_diagnostics'))return {rows:[]};
+    if(sql.includes('CREATE TABLE IF NOT EXISTS mention_'))return {rows:[]};
+    if(sql.includes('FROM mention_scan_status'))return {rows:[]};
     if(sql.includes('FROM combo_diagnostics'))return {rows:[]};
     if(sql.includes('FROM over_verification_windows WHERE game_id=ANY'))return {rows:[]};
     if(/FROM game_snapshots\s+WHERE/.test(sql))return {rows:[structuredClone(delayedGame)]};
@@ -60,6 +62,7 @@ test('dashboard includes alerts in its existing refresh while the alert endpoint
     assert.ok(seen.some(item=>item.sql.includes("GREATEST(score_observed_at,scanned_at)>now()-interval '15 minutes'")));
     assert.equal(body.scan.scanned,0);
     assert.deepEqual(body.weather,{disabled:true,series:0,eligible:0});
+    assert.equal(body.mentions.configured,false);
     assert.equal(seen.some(item=>item.sql.includes('FROM weather_scan_status WHERE')),false);
     assert.equal(body.orders.length,0);
     assert.equal(seen.filter(item=>item.sql.includes('FROM settlement_alerts WHERE')).length,1);
