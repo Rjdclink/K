@@ -48,7 +48,10 @@ import {dueMentionSeries} from './mentions_schedule.mjs';
 import {cachedMentionBinding,proposeMentionBinding} from './mentions_locator.mjs';
 import {cryptoHitContract,tripleCryptoProof} from './crypto_hit.mjs';
 import {scanCryptoHits} from './crypto_scanner.mjs';
+import {assertScannerTradeDisabled} from './scanner_trade_gate.mjs';
 const CRYPTO_SCAN_ENABLED=false;
+const MENTIONS_TRADING_ENABLED=false;
+const CRYPTO_TRADING_ENABLED=false;
 
 const API='https://external-api.kalshi.com/trade-api/v2';
 const pool = new pg.Pool({connectionString:process.env.DATABASE_URL, max:4, idleTimeoutMillis:15000});
@@ -131,6 +134,7 @@ const kalshiBackoff=async(ms)=>{
 const retryDelay=(header,attempt)=>{const seconds=Number(header);const date=Date.parse(header||'');return Number.isFinite(seconds)&&seconds>=0?seconds*1000:Number.isFinite(date)?Math.max(0,date-Date.now()):500*2**attempt};
 async function kalshi(path,opts={}){
   const method=opts.method||'GET';const headers={'accept':'application/json'};
+  assertScannerTradeDisabled(path,method,opts.entryVerifications);
   if(opts.body)headers['content-type']='application/json';
   for(let attempt=0;;attempt++){
     opts.signal?.throwIfAborted();
@@ -2279,6 +2283,8 @@ async function mentionCommittedCents(positions,excludeId=null){
   return {heldCents,pendingCents:pending};
 }
 async function executeVerifiedMention(item){
+  // Keep evidence scanning available, but never create a Mentions reservation or order.
+  if(!MENTIONS_TRADING_ENABLED)return 'trading_disabled';
   if(!live()||!tripleMentionProof(item.first,item.second,item.third)||
     item.third.eventDate!==mentionDay(Date.now(),item.transcript.timezone))return;
   const {event,market,series,side,contract}=item;
@@ -2468,6 +2474,8 @@ async function cryptoCommittedCents(positions,excludeId=null){
   return {heldCents,pendingCents};
 }
 async function executeVerifiedCrypto(item){
+  // A second guard protects this path if the crypto scan is enabled later.
+  if(!CRYPTO_TRADING_ENABLED)return 'trading_disabled';
   if(!CRYPTO_SCAN_ENABLED||!live()||process.env.CRYPTO_HIT_TRADING==='false'||
     !tripleCryptoProof(item.first,item.second,item.third))return 'entry_disabled_or_proof_expired';
   const {event,market,series,contract}=item;
@@ -3501,7 +3509,7 @@ async function settlementAlerts(since){
   return rows;
 }
 async function handleRequest(req){const url=new URL(req.url);
-  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),mentionsConfigured:Boolean(process.env.MENTION_OFFICIAL_SOURCES),claudeConfigured:Boolean(process.env.ANTHROPIC_API_KEY),cryptoScannerEnabled:CRYPTO_SCAN_ENABLED,tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'clock-lifecycle-20261104',verification:{primary:'ESPN',fallback:'Sportradar',espnRetries:0,sportradarConfigured:Boolean(process.env.SPORTRADAR_API_KEY)}});
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),mentionsConfigured:Boolean(process.env.MENTION_OFFICIAL_SOURCES),claudeConfigured:Boolean(process.env.ANTHROPIC_API_KEY),cryptoScannerEnabled:CRYPTO_SCAN_ENABLED,mentionsTradingEnabled:MENTIONS_TRADING_ENABLED,cryptoTradingEnabled:CRYPTO_TRADING_ENABLED,tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'clock-lifecycle-20261104',verification:{primary:'ESPN',fallback:'Sportradar',espnRetries:0,sportradarConfigured:Boolean(process.env.SPORTRADAR_API_KEY)}});
   if(req.method==='GET'&&url.pathname==='/manifest.webmanifest')return response(manifest,'application/manifest+json');
   if(req.method==='GET'&&url.pathname==='/sw.js')return new Response(worker,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','service-worker-allowed':'/','x-content-type-options':'nosniff'}});
   if(req.method==='GET'&&/^\/icon-(192|512)\.png$/.test(url.pathname))return response(Buffer.from(icons[Number(url.pathname.match(/\d+/)[0])],'base64'),'image/png');
