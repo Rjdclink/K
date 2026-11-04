@@ -43,7 +43,7 @@ test('winner allocations are uniform after independent verification',()=>{
 });
 test('an independent scoreboard raises only late commanding winners with stronger margins',()=>{
  const base={verifiedLive:true,scoreKnown:true,scoreConsistent:true,periodConsistent:true,awayUnits:0,possessionSide:'home'};
- const tiers=[['basketball_game','NBA',4,90,0,20,30],['basketball_game','NCAAB',2,90,0,16,25],
+ const tiers=[['basketball_game','NBA',4,90,0,20,30],['basketball_game','NCAAB',2,90,0,18,25],
   ['hockey_match','NHL',3,90,0,5,7],['football_game','NFL',4,60,0,21,28],['soccer_match','Soccer',2,240,86,3,4]];
  for(const [type,sport,period,remainingSeconds,soccerMinute,low,high] of tiers){
   const g={...base,type,sport,period,remainingSeconds,soccerMinute,homeUnits:low};
@@ -125,7 +125,7 @@ test('strong Kalshi-only leads use 20% only after two stable reads and a score c
   check({...team,type:'hockey_match',sport:'NHL',period:3,home:6,homeUnits:6,away:1,awayUnits:1,remainingSeconds:80},market,.20);
   check({...team,type:'hockey_match',sport:'NHL',period:3,home:5,homeUnits:5,away:1,awayUnits:1,remainingSeconds:80},market,.15);
 });
-test('NBA +18 and +12 under 4:30 use single-read sizing',()=>{
+test('NBA +16 under 4:30 uses single-read sizing',()=>{
   const market={status:'active',event_ticker:'KXGAME-TEST',title:'Home wins',yes_sub_title:'Home',
     custom_strike:{basketball_team:'home'},yes_ask_dollars:'.95'};
   const g={...game('basketball_game'),sport:'NBA',period:4,remainingSeconds:269,home:120,away:100,

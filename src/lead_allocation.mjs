@@ -71,7 +71,7 @@ export function finalLeadFraction(first,second,signal,externallyVerified,market)
     const margin=Math.abs(second.homeUnits-second.awayUnits),seconds=second.remainingSeconds;
     if(!Number.isFinite(margin)||!Number.isFinite(seconds))return KALSHI_ONLY_FRACTION;
     if(lateCommandingLead(second,market))return .20;
-    if(margin<20)return .15; // The +9 and +12 NBA routes retain their lower allocation.
+    if(margin<20)return .15; // The +16 NBA route retains its lower allocation.
     return Math.min(.15,.05+(seconds<240||margin>=25?.05:0)+
       (seconds<120||margin>=30?.05:0));
   }

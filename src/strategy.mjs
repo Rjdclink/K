@@ -36,10 +36,10 @@ export function soccerOverStable(firstSeen,now=Date.now()){return soccerOverWait
 const N = v => v === null || v === undefined || v === '' ? NaN : Number(v);
 export const BASKETBALL_WINNER_ENTRY_SECONDS=270;
 export const BASKETBALL_LEAD_RULES=Object.freeze({
-  NBA:{period:4,possession:false,tiers:[[18,450],[12,390]]},
+  NBA:{period:4,possession:false,tiers:[[16,270],[7,105]]},
   WNBA:{period:4,possession:false,tiers:[[11,360],[7,105]]},
-  college:{period:2,possession:false,tiers:[[16,300],[10,270]]},
-  collegeWomen:{period:4,possession:false,tiers:[[16,300],[10,270]]},
+  college:{period:2,possession:false,tiers:[[18,270],[12,105]]},
+  collegeWomen:{period:4,possession:false,tiers:[[18,270],[12,105]]},
   international:{period:4,possession:false,tiers:[[16,300],[10,270]]}
 });
 export function basketballLeadProfile(game){
@@ -54,7 +54,7 @@ export function basketballEntryTier(game){
 }
 // The late NBA route also covers stronger leads; other earlier tiers remain.
 export function basketballCloseoutMinimum(game){
-  return basketballLeadProfile(game)&&game.sport!=='WNBA'?7:null;
+  return basketballLeadProfile(game)&&game.sport!=='WNBA'?['NCAAB','NCAAW'].includes(game.sport)?12:7:null;
 }
 export function basketballCloseoutEntry(game){
   const profile=basketballLeadProfile(game),minimum=basketballCloseoutMinimum(game),seconds=game?.remainingSeconds;
@@ -63,7 +63,8 @@ export function basketballCloseoutEntry(game){
     !Number.isFinite(game.homeUnits)||!Number.isFinite(game.awayUnits))return false;
   const margin=Math.abs(game.homeUnits-game.awayUnits),tier=profile.tiers.filter(([,limit])=>seconds<limit).at(-1);
   const prior=Boolean(tier&&margin>=tier[0]&&(!profile.possession||game.possessionSide===(game.homeUnits>game.awayUnits?'home':'away')));
-  return margin>=minimum&&(game.sport==='NBA'||!prior);
+  return margin>=minimum&&(game.sport==='NBA'||
+    (['NCAAB','NCAAW'].includes(game.sport)?margin<18:!prior));
 }
 // Kept as the NBA single-read/allocation selector for existing callers.
 export const proBasketballLeadRules=game=>game?.sport==='NBA'&&Boolean(basketballLeadProfile(game));
@@ -234,7 +235,7 @@ export function gameState(m, live) {
   const tennisData=tennis?{bestOf:Number.isInteger(N(m.details?.best_of))?N(m.details.best_of):itfDecidingThird?3:NaN,firstId:m.details?.first_competitor_id,secondId:m.details?.second_competitor_id,firstGames:N(one?.score),secondGames:N(two?.score),firstSets:N(d.competitor1_overall_score),secondSets:N(d.competitor2_overall_score),firstPoints:N(d.competitor1_current_round_score),secondPoints:N(d.competitor2_current_round_score),firstRound:one?.outcome,secondRound:two?.outcome,server:String(d.server||''),advantage:String(d.advantage||''),mainEvent:m.details?.main_game_event_ticker}:null;
   const tableTennisData=tableTennis?{bestOf:N(m.details?.best_of??d.best_of_sets),firstId:m.details?.first_competitor_id,secondId:m.details?.second_competitor_id,firstIsHome,firstSets:N(d.competitor1_overall_score),secondSets:N(d.competitor2_overall_score),setNumber:N(currentSet?.number),firstPoints:N(currentSet?.competitor1_score),secondPoints:N(currentSet?.competitor2_score)}:null;
   const tennisTotal=tennis?tennisGameTotal(d):NaN;
-  return {id:m.id, feedId:live?.milestone_id, observedAt:Date.parse(live?._observed_at||''), updatedAt:Number.isFinite(updated)?updated*1000:NaN, title:m.title, sport, competition:String(m.details?.league||''), tour:String(m.details?.tour||''), type:family, status, home, away, homeUnits, awayUnits, unit, period, periodScores, playerStats:d.player_stats||null, tennisTotal, cricket:cricketFinalInnings(m,d), mainEvent:m.details?.main_game_event_ticker||m.primary_event_tickers?.[0], tableTennis:tableTennisData, darts:darts?{format:String(d.game_format||m.details?.format||''),bestOf:N(d.best_of_legs),firstIsHome,firstId:m.details?.first_competitor_id,secondId:m.details?.second_competitor_id,firstLegs:N(d.competitor1_overall_score),secondLegs:N(d.competitor2_overall_score),firstRemaining:N(d.competitor1_remaining_points),secondRemaining:N(d.competitor2_remaining_points),nextThrow:String(d.next_throw_competitor_id||''),firstCheckout:d.competitor1_checkout_possible===true,secondCheckout:d.competitor2_checkout_possible===true,firstDouble:d.competitor1_on_double===true,secondDouble:d.competitor2_on_double===true}:null, volleyball:volleyball?{bestOf:N(d.best_of),homeSets:home,awaySets:away,current:periodScores.find(p=>p.number===period)}:null, setNumber:N(currentSet?.number), phase, esportsPeriodsValid, periodConsistent, scoreConsistent, clock, remainingSeconds, clockRunning, soccerMinute, soccerHalf:half, soccerExtraTime, soccerOvertime, matchRemainingSeconds, possessionSide, footballSituation:/football/.test(family)?{possessionTeamId:d.situation?.possession_team_id,sideTeamId:d.situation?.side_team_id,yardline:N(d.situation?.yardline)}:null, tennis:tennisData, inningHalf:baseball?(/bottom/i.test(String(d.inning_half||''))?2:/top/i.test(String(d.inning_half||''))?1:N(d.inning_half)):N(d.inning_half), outs:N(d.outs), progress, verifiedLive, scoreKnown:Number.isFinite(home)&&Number.isFinite(away), homeName:String(d.home_team?.name||d.home_team_name||d.home?.name||(versus.length===2?versus[0]:names.length===2?names[1]:'')), awayName:String(d.away_team?.name||d.away_team_name||d.away?.name||(versus.length===2?versus[1]:names.length===2?names[0]:'')),homeTeamId:m.details?.home_team_id||(/rugby/.test(family)?m.details?.home_competitor_id:null),awayTeamId:m.details?.away_team_id||(/rugby/.test(family)?m.details?.away_competitor_id:null),eventTickers:m.related_event_tickers||m.events||[]};
+  return {id:m.id, feedId:live?.milestone_id, observedAt:Date.parse(live?._observed_at||''), updatedAt:Number.isFinite(updated)?updated*1000:NaN, title:m.title, sport, competition:String(m.details?.league||''), tour:String(m.details?.tour||''), type:family, status, home, away, homeUnits, awayUnits, unit, period, periodScores, playerStats:d.player_stats||null, tennisTotal, cricket:cricketFinalInnings(m,d), mainEvent:m.details?.main_game_event_ticker||m.primary_event_tickers?.[0], tableTennis:tableTennisData, darts:darts?{format:String(d.game_format||m.details?.format||''),bestOf:N(d.best_of_legs),firstIsHome,firstId:m.details?.first_competitor_id,secondId:m.details?.second_competitor_id,firstLegs:N(d.competitor1_overall_score),secondLegs:N(d.competitor2_overall_score),firstRemaining:N(d.competitor1_remaining_points),secondRemaining:N(d.competitor2_remaining_points),nextThrow:String(d.next_throw_competitor_id||''),firstCheckout:d.competitor1_checkout_possible===true,secondCheckout:d.competitor2_checkout_possible===true,firstDouble:d.competitor1_on_double===true,secondDouble:d.competitor2_on_double===true}:null, volleyball:volleyball?{bestOf:N(d.best_of),homeSets:home,awaySets:away,current:periodScores.find(p=>p.number===period)}:null, setNumber:N(currentSet?.number), phase, esportsPeriodsValid, periodConsistent, scoreConsistent, clock, remainingSeconds, clockRunning, soccerMinute, soccerHalf:half, soccerExtraTime, soccerOvertime, matchRemainingSeconds, possessionSide, tennis:tennisData, inningHalf:baseball?(/bottom/i.test(String(d.inning_half||''))?2:/top/i.test(String(d.inning_half||''))?1:N(d.inning_half)):N(d.inning_half), outs:N(d.outs), progress, verifiedLive, scoreKnown:Number.isFinite(home)&&Number.isFinite(away), homeName:String(d.home_team?.name||d.home_team_name||d.home?.name||(versus.length===2?versus[0]:names.length===2?names[1]:'')), awayName:String(d.away_team?.name||d.away_team_name||d.away?.name||(versus.length===2?versus[1]:names.length===2?names[0]:'')),homeTeamId:m.details?.home_team_id||(/rugby/.test(family)?m.details?.home_competitor_id:null),awayTeamId:m.details?.away_team_id||(/rugby/.test(family)?m.details?.away_competitor_id:null),eventTickers:m.related_event_tickers||m.events||[]};
 }
 export function tennisGameTotal(details){
   const first=details?.competitor1_round_scores,second=details?.competitor2_round_scores;
@@ -757,7 +758,7 @@ export function leadFraction(game,margin,minimum){
   if(/soccer/.test(game.type)&&margin>=3)return .20;
   return .15;
 }
-// The NBA +18 and +12 Q4 routes use one Kalshi score inside the 4:30 window.
+// The NBA +16 Q4 route uses one recent score inside the 4:30 window.
 // This is an entry rule, not proof the lead is irreversible.
 export function nbaSingleReadLead(game,market,now=Date.now()){
   return proBasketballLeadRules(game)&&/basketball/.test(String(game.type||''))&&
@@ -767,8 +768,7 @@ export function nbaSingleReadLead(game,market,now=Date.now()){
     game.observedAt-game.updatedAt<=30000&&
     Number.isFinite(game.remainingSeconds)&&game.remainingSeconds>0&&game.remainingSeconds<BASKETBALL_WINNER_ENTRY_SECONDS&&
     Number.isFinite(game.homeUnits)&&Number.isFinite(game.awayUnits)&&
-    (game.remainingSeconds<390&&Math.abs(game.homeUnits-game.awayUnits)>=12||
-      Math.abs(game.homeUnits-game.awayUnits)>=18)&&Boolean(leadSignal(game,market));
+    Math.abs(game.homeUnits-game.awayUnits)>=16&&Boolean(leadSignal(game,market));
 }
 // A soccer entry needs one current Kalshi scoreboard observation and a live
 // seller on the exact qualifying outcome. The orderbook is checked by the

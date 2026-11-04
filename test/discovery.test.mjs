@@ -123,7 +123,10 @@ test('fast market checks start near each sport entry rather than at the start of
   assert.equal(nearEntryPhase({type:'football_game',sport:'CFB',period:4,remainingSeconds:421,homeUnits:37,awayUnits:20}),false);
   assert.equal(nearEntryPhase({type:'football_game',sport:'CFB',period:4,remainingSeconds:301,homeUnits:37,awayUnits:20}),true);
   assert.equal(nearEntryPhase({type:'basketball_game',sport:'NBA',period:4,remainingSeconds:660}),false);
-  assert.equal(nearEntryPhase({type:'basketball_game',sport:'NBA',period:4,remainingSeconds:500}),true);
+  assert.equal(nearEntryPhase({type:'basketball_game',sport:'NBA',period:4,remainingSeconds:500}),false);
+  assert.equal(nearEntryPhase({type:'basketball_game',sport:'NBA',period:4,remainingSeconds:359}),true);
+  assert.equal(nearEntryPhase({type:'basketball_game',sport:'NCAAB',period:1,remainingSeconds:290}),true);
+  assert.equal(nearEntryPhase({type:'basketball_game',sport:'NCAAW',period:2,remainingSeconds:290}),true);
   assert.equal(nearEntryPhase({type:'rugby_match',period:2,remainingSeconds:1900}),false);
   assert.equal(nearEntryPhase({type:'rugby_match',period:2,remainingSeconds:170}),true);
   assert.equal(nearEntryPhase({type:'soccer_game',period:2,soccerMinute:46,homeUnits:3,awayUnits:0}),true);

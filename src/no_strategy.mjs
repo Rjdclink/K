@@ -15,7 +15,7 @@ export function thirdQuarterYardageNo(game,market){
 }
 
 // These are distinct settlement periods: Q2 for a first-half total and Q4
-// for a full-game total. A numeric yardline alone does not identify the side.
+// for a full-game total. The nearest line still needs a 12-point gap.
 export function collegeFootballTotalNo(game,market,{beforeWindow=false}={}){
   if(game?.sport!=='CFB'||game.type!=='football_game'||!game.verifiedLive||
     !game.scoreKnown||!game.scoreConsistent||!game.periodConsistent||game.feedId!==game.id||
@@ -24,22 +24,39 @@ export function collegeFootballTotalNo(game,market,{beforeWindow=false}={}){
     game.remainingSeconds<=0||game.remainingSeconds>=(beforeWindow?180:120)||
     !['active','open'].includes(market?.status)||
     market.result&&!['','not_determined'].includes(String(market.result)))return null;
-  const situation=game.footballSituation;
-  if(!situation?.possessionTeamId||situation.possessionTeamId!==situation.sideTeamId||
-    ![game.homeTeamId,game.awayTeamId].includes(situation.possessionTeamId)||
-    !Number.isInteger(situation.yardline)||situation.yardline<0||situation.yardline>=50||
-    game.possessionSide!==(situation.possessionTeamId===game.homeTeamId?'home':'away'))return null;
   const firstHalf=game.period===2,series=String(market.event_ticker||'').split('-')[0];
   if(series!==(firstHalf?'KXNCAAF1HTOTAL':'KXNCAAFTOTAL')||
     !/^Over\s+(\d+(?:\.\d+)?)\s+points\b/i.test(String(market.title||market.yes_sub_title||''))||
     market.strike_type&&!['greater','greater_than'].includes(market.strike_type))return null;
   const line=Number(market.floor_strike),displayed=Number(String(market.title||market.yes_sub_title).match(/^Over\s+(\d+(?:\.\d+)?)\s+points\b/i)?.[1]);
   const rules=String(market.rules_primary||'');
-  if(!Number.isFinite(line)||line!==displayed||line-(game.home+game.away)<10||
+  if(!Number.isFinite(line)||line!==displayed||line-(game.home+game.away)<12||
     !/collectively score more than|combined total points scored/i.test(rules)||
     (firstHalf?!/1st half|first half/i.test(rules):/\b(?:1st|first|2nd|second)\s+half\b|quarter|team total/i.test(rules)))return null;
   return {strategy:'no',period:firstHalf?'first_half':'full_game',line,total:game.home+game.away,
-    reason:`CFB ${firstHalf?'first-half':'full-game'} NO over ${line}; ${game.home+game.away} scored, ${game.remainingSeconds}s left in Q${game.period}, possession at own ${situation.yardline}`};
+    reason:`CFB ${firstHalf?'first-half':'full-game'} NO over ${line}; ${game.home+game.away} scored, ${game.remainingSeconds}s left in Q${game.period}`};
+}
+
+export function collegeBasketballTotalNo(game,market,{beforeWindow=false}={}){
+  if(!['NCAAB','NCAAW'].includes(game?.sport)||game.type!=='basketball_game'||!game.verifiedLive||
+    !game.scoreKnown||!game.scoreConsistent||!game.periodConsistent||game.feedId!==game.id||
+    !Number.isFinite(game.observedAt)||Date.now()-game.observedAt>10000||
+    !Number.isFinite(game.remainingSeconds)||game.remainingSeconds<=0||
+    game.remainingSeconds>=(beforeWindow?300:240)||
+    !['active','open'].includes(market?.status)||
+    market.result&&!['','not_determined'].includes(String(market.result)))return null;
+  const firstHalf=game.period===(game.sport==='NCAAB'?1:2),fullGame=game.period===(game.sport==='NCAAB'?2:4);
+  if(!firstHalf&&!fullGame)return null;
+  const prefix=game.sport==='NCAAB'?'KXNCAAMB':'KXNCAAWB';
+  if(String(market.event_ticker||'').split('-')[0]!==prefix+(firstHalf?'1HTOTAL':'TOTAL')||
+    market.strike_type&&!['greater','greater_than'].includes(market.strike_type))return null;
+  const displayed=Number(String(market.title||market.yes_sub_title||'').match(/^Over\s+(\d+(?:\.\d+)?)\s+points\b/i)?.[1]);
+  const line=Number(market.floor_strike),rules=String(market.rules_primary||'');
+  if(!Number.isFinite(line)||line!==displayed||line-(game.home+game.away)<30||
+    !/over\s+\d+(?:\.\d+)?\s+total points are scored/i.test(rules)||
+    (firstHalf?!/1st half|first half/i.test(rules):/\b(?:1st|first|2nd|second)\s+half\b|quarter|team total/i.test(rules)))return null;
+  return {strategy:'no',period:firstHalf?'first_half':'full_game',line,total:game.home+game.away,
+    reason:`College basketball ${firstHalf?'first-half':'full-game'} NO over ${line}; ${game.home+game.away} scored, ${game.remainingSeconds}s left in ${game.sport==='NCAAB'?'half':'Q'}${game.period}`};
 }
 
 export function highestYardageNos(candidates){

@@ -75,10 +75,12 @@ export function scanMilestones(milestones,recentLiveIds=new Set(),now=Date.now()
 export function nearEntryPhase(game){
   const type=String(game?.type||''),period=Number(game?.period),seconds=Number(game?.remainingSeconds);
   if(/football/.test(type))return game.sport==='CFB'?
-    cfbLeadApproaching(game)||[2,4].includes(period)&&seconds>=0&&seconds<=180:period>=4&&seconds>=0&&seconds<=480;
+    cfbLeadApproaching(game)||[2,4].includes(period)&&seconds>=0&&seconds<=240:period>=4&&seconds>=0&&seconds<=480;
   if(/basketball/.test(type)){
     const profile=basketballLeadProfile(game);
-    return Boolean(profile)&&period>=profile.period&&seconds>=0&&seconds<=profile.tiers[0][1]+90;
+    return Boolean(profile)&&seconds>=0&&(
+      period>=profile.period&&seconds<=profile.tiers[0][1]+90||
+      ['NCAAB','NCAAW'].includes(game.sport)&&period===(game.sport==='NCAAB'?1:2)&&seconds<=360);
   }
   if(/hockey/.test(type))return period>=3&&seconds>=0&&seconds<=465;
   if(/soccer/.test(type))return period===2&&!game.soccerExtraTime&&
