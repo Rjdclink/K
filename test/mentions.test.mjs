@@ -84,6 +84,24 @@ test('official transcript extraction requires exact markers and rejects an unapp
   const absent=async()=>({ok:true,headers:new Headers({'content-type':'text/html'}),text:async()=>'<p>Not published</p>'});
   assert.equal(await fetchOfficialMentionTranscript(discovery,{fetcher:absent}),null);
 });
+test('search discovers only a unique official transcript with verified event and speaker text',async()=>{
+  const descriptor={eventTicker:event.event_ticker,eventDate:'2026-11-04',timezone:'America/New_York',
+    scheduledAt:event.strike_date,subject:'the Speaker',speakerMarker:'Speaker:',
+    eventMarker:'Today remarks',dateMarker:'November 4, 2026',
+    segments:[{start:'Speaker:',end:'END REMARKS'}],searchQuery:'Today remarks November 4 2026'};
+  const search=urls=>async()=>({ok:true,headers:new Headers({'content-type':'application/json'}),
+    text:async()=>JSON.stringify({web:{results:urls.map(url=>({url,description:'transcript snippet'}))}})});
+  const official='https://www.whitehouse.gov/remarks/test';
+  const fetcher=async()=>({ok:true,headers:new Headers({'content-type':'text/html'}),
+    text:async()=>'<article>November 4, 2026 Today remarks Speaker: Veterans END REMARKS</article>'});
+  const options={fetcher,searchFetcher:search(['https://other.example/transcript',official]),searchKey:'test-key'};
+  assert.equal((await fetchOfficialMentionTranscript(descriptor,options)).url,official);
+  assert.equal(await fetchOfficialMentionTranscript(descriptor,{...options,searchKey:undefined}),null);
+  assert.equal(await fetchOfficialMentionTranscript(descriptor,{...options,
+    searchFetcher:search([official,'https://www.whitehouse.gov/remarks/second'])}),null);
+  assert.equal(await fetchOfficialMentionTranscript(descriptor,{...options,fetcher:async()=>({ok:true,
+    headers:new Headers({'content-type':'text/html'}),text:async()=>'<p>November 3, 2026 Today remarks Speaker: Veterans END REMARKS</p>'})}),null);
+});
 test('scanner prioritizes mapped same-day events and skips unavailable transcripts without waiting',async()=>{
   const missingTicker='KXTESTMENTION-26NOV04-MISSING';
   const missing={...event,event_ticker:missingTicker,markets:[{...market('Iran'),ticker:missingTicker+'-IRAN',event_ticker:missingTicker,no_ask_dollars:'0.60'}]};
@@ -123,6 +141,20 @@ test('a market open today for tomorrow’s call is tracked but cannot use today�
   assert.equal(stats.scheduledLater,1);
   assert.equal(transcriptReads,0);
 });
+test('verified entry attempts run from the lowest qualifying ask first',async()=>{
+  const expensive={...market('Veterans'),ticker:event.event_ticker+'-HIGH',yes_ask_dollars:'0.3900',no_ask_dollars:'0.6000'};
+  const cheap={...market('Veterans'),ticker:event.event_ticker+'-LOW',yes_ask_dollars:'0.1200',no_ask_dollars:'0.6000'};
+  const windows=new Map(),ordered=[];let time=at;
+  const options={sources:new Map([[event.event_ticker,{eventTicker:event.event_ticker,eventDate:'2026-11-04',
+    timezone:'America/New_York',scheduledAt:event.strike_date}]]),now:()=>time,maxSeries:0,
+    kalshi:async path=>path.startsWith('/series')?{series:[series]}:{events:[{...event,markets:[expensive,cheap]}]},
+    readTranscript:async()=>source('Veterans'),
+    getWindow:async(ticker,side)=>windows.get(ticker+side),
+    saveWindow:async proof=>{windows.set(proof.ticker+proof.side,proof)},
+    onVerified:async item=>{ordered.push(item.market.ticker)}};
+  await scanMentionMarkets(options);time+=45_000;await scanMentionMarkets(options);
+  assert.deepEqual(ordered,[cheap.ticker,expensive.ticker]);
+});
 test('source subject and dated ticker must match the exact contract event',()=>{
   const c=mentionContract(event,market('Baconator'),series);
   assert.equal(mentionObservation(c,source('Baconator',{subject:'a different speaker'}),{now:at,side:'yes'}),null);
@@ -135,4 +167,20 @@ test('the contract’s scheduled broadcast instant controls the event day across
   assert.equal(mentionDay(descriptor.scheduledAt,'America/Chicago'),'2026-11-05');
   assert.equal(mentionEventTime(news,market('Iran'),{...descriptor,scheduledAt:'2026-11-05T22:30:00Z'}),false);
   assert.equal(mentionEventTime(news,market('Iran'),{...descriptor,eventDate:'2026-11-04'}),false);
+  const expiration={...news,strike_date:'2026-12-01T05:00:00Z',title:'November 5 at 6:30 PM ET broadcast'};
+  assert.equal(mentionEventTime(expiration,market('Iran'),{...descriptor,contractTimeMarker:'November 5 at 6:30 PM ET'}),true);
+  assert.equal(mentionEventTime(expiration,market('Iran'),descriptor),false);
+});
+test('bounded rotating discovery eventually surveys every unmapped series',async()=>{
+  const catalog=Array.from({length:465},(_,i)=>({ticker:'KXMENTION'+String(i).padStart(3,'0'),category:'Mentions'}));
+  const seen=new Set();
+  for(let cycle=0;cycle<13;cycle++){
+    const stats=await scanMentionMarkets({sources:new Map(),cycle,maxSeries:48,now:()=>at,
+      kalshi:async path=>path.startsWith('/series?')?{series:catalog}:{events:[]},
+      readTranscript:async()=>assert.fail('no event'),getWindow:async()=>null,
+      saveWindow:async()=>{},onVerified:async()=>assert.fail('no order')});
+    assert.equal(stats.surveyed.length,48);
+    for(const ticker of stats.surveyed)seen.add(ticker);
+  }
+  assert.equal(seen.size,465);
 });

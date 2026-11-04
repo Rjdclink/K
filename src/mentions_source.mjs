@@ -41,10 +41,12 @@ function oneSlice(text,start,end){
   return value?{value,begin,finish:finish+end.length}:null;
 }
 
-export async function fetchOfficialMentionTranscript(descriptor,{fetcher=fetch,hosts=[]}={}){
+export async function fetchOfficialMentionTranscript(descriptor,{fetcher=fetch,hosts=[],
+  searchFetcher=fetch,searchKey=process.env.MENTION_BRAVE_SEARCH_KEY}={}){
   let url=trustedUrl(descriptor?.url||descriptor?.discoveryUrl,hosts);
   const markers=descriptor?.speakerMarkers||[descriptor?.speakerMarker];
-  if(!url||!/^\d{4}-\d{2}-\d{2}$/.test(descriptor?.eventDate||'')||
+  if((descriptor?.url||descriptor?.discoveryUrl)&&!url||
+    !url&&!(descriptor?.searchQuery&&searchKey)||!/^\d{4}-\d{2}-\d{2}$/.test(descriptor?.eventDate||'')||
     !descriptor?.timezone||!Number.isFinite(Date.parse(descriptor.scheduledAt||''))||
     !Number.isFinite(Date.parse(descriptor.dateMarker||''))||
     new Date(descriptor.dateMarker).toISOString().slice(0,10)!==descriptor.eventDate||
@@ -65,7 +67,7 @@ export async function fetchOfficialMentionTranscript(descriptor,{fetcher=fetch,h
     }
     return body+decoder.decode();
   };
-  if(!descriptor.url){
+  if(!descriptor.url&&descriptor.discoveryUrl){
     if(!descriptor.discoveryUrl||!descriptor.linkText)return null;
     const listing=await read(url);
     if(!listing)return null;
@@ -77,23 +79,39 @@ export async function fetchOfficialMentionTranscript(descriptor,{fetcher=fetch,h
     url=trustedUrl(new URL(href,url).href,hosts);
     if(!url)return null;
   }
-  const body=await read(url);
-  if(!body)return null;
-  if(body.length>2_000_000)return null;
-  const text=plain(body);
-  if(!text.includes(descriptor.eventMarker)||!text.includes(descriptor.dateMarker)||
-    !markers.some(marker=>text.includes(marker)))return null;
-  const segments=descriptor.segments.map(part=>oneSlice(text,part.start,part.end));
-  if(segments.some(part=>!part))return null;
-  const spans=[...segments].sort((a,b)=>a.begin-b.begin);
-  if(spans.some((part,index)=>index>0&&part.begin<spans[index-1].finish))return null;
-  const complete=Boolean(descriptor.completeMarker&&text.includes(descriptor.completeMarker)&&
-    descriptor.endedAt&&Number.isFinite(Date.parse(descriptor.endedAt))&&
-    text.lastIndexOf(descriptor.completeMarker)>=spans.at(-1).begin);
-  return {id:url.href,url:url.href,official:true,eventTicker:descriptor.eventTicker,eventDate:descriptor.eventDate,
-    subject:descriptor.subject,contractTimeMarker:descriptor.contractTimeMarker,scheduledAt:descriptor.scheduledAt,
-    timezone:descriptor.timezone||'America/New_York',speakerConfirmed:true,eventConfirmed:true,
-    text:segments.map(part=>part.value).join('\n'),complete,
-    noCoverageConfirmed:complete&&descriptor.noCoverageConfirmed===true,
-    endedAt:complete?descriptor.endedAt:null};
+  let addresses=url?[url]:[];
+  if(!addresses.length){
+    if(typeof descriptor.searchQuery!=='string'||descriptor.searchQuery.length>350)return null;
+    const endpoint=new URL('https://api.search.brave.com/res/v1/web/search');
+    endpoint.search=new URLSearchParams({q:descriptor.searchQuery+' transcript',count:'8',freshness:'pw'}).toString();
+    const result=await searchFetcher(endpoint,{headers:{'x-subscription-token':searchKey},
+      redirect:'error',signal:AbortSignal.timeout(8000)});
+    if(!result.ok||Number(result.headers.get('content-length'))>200_000)return null;
+    const payload=await result.text();if(payload.length>200_000)return null;
+    const data=JSON.parse(payload);
+    addresses=[...new Set((data.web?.results||[]).slice(0,8).map(hit=>hit.url))]
+      .map(hit=>trustedUrl(hit,hosts)).filter(Boolean).slice(0,5);
+  }
+  const matches=[];
+  for(const address of addresses){
+    let body;try{body=await read(address)}catch{continue}
+    if(!body||body.length>2_000_000)continue;
+    const text=plain(body);
+    if(!text.includes(descriptor.eventMarker)||!text.includes(descriptor.dateMarker)||
+      !markers.some(marker=>text.includes(marker)))continue;
+    const segments=descriptor.segments.map(part=>oneSlice(text,part.start,part.end));
+    if(segments.some(part=>!part))continue;
+    const spans=[...segments].sort((a,b)=>a.begin-b.begin);
+    if(spans.some((part,index)=>index>0&&part.begin<spans[index-1].finish))continue;
+    const complete=Boolean(descriptor.completeMarker&&text.includes(descriptor.completeMarker)&&
+      descriptor.endedAt&&Number.isFinite(Date.parse(descriptor.endedAt))&&
+      text.lastIndexOf(descriptor.completeMarker)>=spans.at(-1).begin);
+    matches.push({id:address.href,url:address.href,official:true,eventTicker:descriptor.eventTicker,eventDate:descriptor.eventDate,
+      subject:descriptor.subject,contractTimeMarker:descriptor.contractTimeMarker,scheduledAt:descriptor.scheduledAt,
+      timezone:descriptor.timezone||'America/New_York',speakerConfirmed:true,eventConfirmed:true,
+      text:segments.map(part=>part.value).join('\n'),complete,
+      noCoverageConfirmed:complete&&descriptor.noCoverageConfirmed===true,
+      endedAt:complete?descriptor.endedAt:null});
+  }
+  return matches.length===1?matches[0]:null;
 }

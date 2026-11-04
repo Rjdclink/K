@@ -31,7 +31,9 @@ export function mentionEventTime(event,market,descriptor){
   if(!Number.isFinite(start)||!zone||mentionDay(start,zone)!==descriptor.eventDate)return false;
   const listed=Date.parse(event?.strike_date||'');
   const text=[event?.title,event?.sub_title,market?.rules_primary,market?.rules_secondary].join(' ');
-  return Number.isFinite(listed)?Math.abs(listed-start)<=60_000:
+  // The strike date may be the contract's final expiration rather than the
+  // broadcast time. An exact event-specific marker can establish the latter.
+  return Number.isFinite(listed)&&Math.abs(listed-start)<=60_000||
     Boolean(descriptor.contractTimeMarker&&text.includes(descriptor.contractTimeMarker));
 }
 

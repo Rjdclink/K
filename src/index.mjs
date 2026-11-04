@@ -2352,7 +2352,7 @@ async function scanOfficialMentions(){
   await client.query('BEGIN');
   const {rows:[lock]}=await client.query('SELECT pg_try_advisory_xact_lock(83027548) AS acquired');
   if(!lock.acquired)return {skipped:'mention scan in progress'};
-  const stats=await scanMentionMarkets({kalshi,sources,maxSeries:24,
+  const stats=await scanMentionMarkets({kalshi,sources,maxSeries:48,
     readTranscript:source=>fetchOfficialMentionTranscript(source,{hosts:String(process.env.MENTION_OFFICIAL_HOSTS||'').split(',').map(x=>x.trim().toLowerCase()).filter(Boolean)}),
     getWindow:async(ticker,side)=>(await pool.query(`SELECT observation FROM mention_verification_windows
       WHERE market_ticker=$1 AND side=$2`,[ticker,side])).rows[0]?.observation,

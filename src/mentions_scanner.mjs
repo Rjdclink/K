@@ -3,7 +3,7 @@ import {mentionContract,mentionDay,mentionTickerDay,mentionEventTime,mentionEntr
 // Every pass is bounded. A missing transcript never holds the rest of the
 // catalog behind a retry or a 45-second sleep; the next tick resumes windows.
 export async function scanMentionMarkets({kalshi,sources,readTranscript,getWindow,saveWindow,onVerified,
-  now=()=>Date.now(),cycle=Math.floor(now()/60_000),maxSeries=12}={}){
+  now=()=>Date.now(),cycle=Math.floor(now()/60_000),maxSeries=48}={}){
   const stats={series:0,events:0,markets:0,priced:0,scheduledLater:0,sourceUnavailable:0,
     firstChecks:0,pairedChecks:0,errors:0,sample:[],surveyed:[]};
   const catalog=(await kalshi('/series?category=Mentions')).series||[];
@@ -31,20 +31,26 @@ export async function scanMentionMarkets({kalshi,sources,readTranscript,getWindo
   for(let i=0;i<Math.min(maxSeries-recent.length,rotating.length);i++)
     selection.push(rotating[(cycle*(maxSeries-recent.length)+i)%rotating.length]);
   stats.surveyed=selection.map(series=>series.ticker);
-  for(const series of selection){
-    try{
+  // Bound concurrent API reads while covering the rotating catalog promptly.
+  for(let offset=0;offset<selection.length;offset+=4){
+    const batch=await Promise.all(selection.slice(offset,offset+4).map(async series=>{
       const query=new URLSearchParams({series_ticker:series.ticker,status:'open',limit:'200',with_nested_markets:'true'});
-      for(const event of (await kalshi('/events?'+query)).events||[])events.set(event.event_ticker,event);
-    }catch{stats.errors++}
+      try{return (await kalshi('/events?'+query)).events||[]}
+      catch{stats.errors++;return []}
+    }));
+    for(const group of batch)for(const event of group)events.set(event.event_ticker,event);
   }
   const bySeries=new Map(catalog.map(s=>[s.ticker,s]));
   for(const event of events.values())if(sources.has(event.event_ticker)&&!bySeries.has(event.series_ticker)){
     try{const {series}=await kalshi('/series/'+encodeURIComponent(event.series_ticker));
       if(series)bySeries.set(event.series_ticker,series)}catch{stats.errors++}
   }
-  const prioritized=[...events.values()].sort((a,b)=>Number(sources.has(b.event_ticker))-Number(sources.has(a.event_ticker)));
+  const lowestAsk=event=>Math.min(...(event.markets||[]).flatMap(market=>
+    ['yes','no'].map(side=>market[side+'_ask_dollars']).filter(mentionEntryPrice).map(Number)),Infinity);
+  const prioritized=[...events.values()].sort((a,b)=>
+    Number(sources.has(b.event_ticker))-Number(sources.has(a.event_ticker))||lowestAsk(a)-lowestAsk(b));
   for(const event of prioritized){
-    if(mentionTickerDay(event.event_ticker)>mentionDay(now())){
+    if(mentionTickerDay(event.event_ticker)>mentionDay(now(),sources.get(event.event_ticker)?.timezone||'America/New_York')){
       future.add(event.event_ticker);continue;
     }
     stats.events++;
@@ -61,19 +67,20 @@ export async function scanMentionMarkets({kalshi,sources,readTranscript,getWindo
       }
     }
     if(!candidates.length)continue;
+    candidates.sort((a,b)=>Number(a.market[a.side+'_ask_dollars'])-Number(b.market[b.side+'_ask_dollars']));
     const descriptor=sources.get(event.event_ticker);
     const scheduled=mentionTickerDay(event.event_ticker);
     if(descriptor&&scheduled&&scheduled!==descriptor.eventDate){stats.sourceUnavailable+=candidates.length;continue}
     if(!descriptor||descriptor.eventDate!==mentionDay(now(),descriptor.timezone||'America/New_York')){
       stats.sourceUnavailable+=candidates.length;continue;
     }
-    if(candidates.some(candidate=>!mentionEventTime(event,candidate.market,descriptor))){
-      stats.sourceUnavailable+=candidates.length;continue;
-    }
+    const timed=candidates.filter(candidate=>mentionEventTime(event,candidate.market,descriptor));
+    stats.sourceUnavailable+=candidates.length-timed.length;
+    if(!timed.length)continue;
     let transcript;
     try{transcript=await readTranscript(descriptor)}catch{stats.errors++;continue}
-    if(!transcript){stats.sourceUnavailable+=candidates.length;continue}
-    for(const candidate of candidates){
+    if(!transcript){stats.sourceUnavailable+=timed.length;continue}
+    for(const candidate of timed){
       const observation=mentionObservation(candidate.contract,transcript,{now:now(),side:candidate.side});
       if(!observation)continue;
       try{

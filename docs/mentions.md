@@ -2,9 +2,14 @@
 
 The scheduled Kalshi event, not the market's opening time or the viewer's local
 clock, determines the transcript day. The scanner discovers open Mentions
-series in rotating batches. Known future events get a calendar check only
+series in rotating batches (48 per minute, including the 12 most recently
+updated; a 465-series catalog is covered within 13 passes). Known future
+mapped events get a calendar check only
 until their scheduled day. It tracks future dated contracts, checks YES and
 NO asks at or below $0.40, and skips unavailable transcripts immediately.
+Available mapped events and their contracts are attempted from the lowest
+qualifying ask upward. The dashboard shows a separate Mentions card above
+Games found with per-pass coverage, asks, deferred events, and checks.
 
 An event can trade only after an exact official transcript is mapped. Set
 `MENTION_OFFICIAL_SOURCES` to a JSON array of event-specific descriptors. A
@@ -22,6 +27,14 @@ For a call whose transcript URL is not yet published, use `discoveryUrl` for
 the issuer's event page and `linkText` for the exact transcript link instead
 of `url`. The scanner checks that page on each pass, follows only one matching
 link on an approved host, and skips the event until it exists.
+For search-based URL discovery, provide `searchQuery` instead of `url` and set
+`MENTION_BRAVE_SEARCH_KEY` in the function environment. The scanner searches
+only on the scheduled event day, considers at most five official or explicitly
+approved host pages, and requires exactly one page to pass the same event,
+date, speaker, and segment checks. Search snippets never count as transcript
+evidence. Google's Custom Search JSON API is closed to new customers, so
+this optional search route uses the supported Brave Search API. Search is
+only a way to find the publisher's page; it cannot create missing transcripts.
 
 For a NO entry, also supply `completeMarker`, `endedAt`, and
 `noCoverageConfirmed:true` only after confirming that the selected segments
@@ -29,6 +42,14 @@ cover every speaker and portion of the event that can satisfy the contract.
 Without complete coverage, the NO side stays blocked. A press release,
 earnings presentation, captions, partial highlights, or a generic source
 home page is not a qualifying transcript.
+
+Each mapping requires checking the publisher's actual transcript, event date,
+broadcast time, and every qualifying speaker segment. Kalshi's settlement
+source may be a webcast rather than a transcript. For example, Wendy's
+November 5, 2026 investor page currently advertises a webcast, not a
+published official transcript; it cannot be mapped until one appears. If a
+publisher never posts an official transcript, the event remains blocked.
+The registry cannot promise coverage merely because Kalshi lists a market.
 
 The first fetched transcript is persisted per market and side. A second direct
 fetch at least 45 seconds later must have the same source, contract, event
