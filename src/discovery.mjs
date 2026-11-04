@@ -198,6 +198,10 @@ export function gameTimeLabel(game){
   if(/tennis/.test(family))return Number.isFinite(game.tennis?.firstGames)&&Number.isFinite(game.tennis?.secondGames)?`Set · ${game.tennis.firstGames}–${game.tennis.secondGames} games`:'Set score unavailable';
   if(/soccer/.test(family)&&Number.isFinite(game.matchRemainingSeconds)&&game.matchRemainingSeconds>=0)return `${String(Math.floor(game.matchRemainingSeconds/60)).padStart(2,'0')}:${String(game.matchRemainingSeconds%60).padStart(2,'0')} match time remaining`;
   if(/soccer/.test(family)&&Number.isFinite(game.soccerMinute))return `${game.soccerMinute}' elapsed`;
+  // Some feeds put a phase in period_remaining_time while status remains
+  // inprogress. Display that evidence; never turn it into an entry clock.
+  const phase=String(game.clock||'').trim();
+  if(/^(?:end of (?:the )?\d+(?:st|nd|rd|th)? (?:quarter|half|period)|half[ -]?time|intermission|break)$/i.test(phase))return phase;
   if(Number.isFinite(game.remainingSeconds)){const segment=Number.isFinite(game.period)?/basketball/.test(family)?`${game.sport==='NCAAB'?'Half':'Quarter'} ${game.period}`:/football/.test(family)?`Quarter ${game.period}`:/hockey/.test(family)?`Period ${game.period}`:'' : '';const seconds=game.clockRunning===false?Math.floor(game.remainingSeconds):Math.ceil(game.remainingSeconds);return `${segment?segment+' · ':''}${String(Math.floor(seconds/60)).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}${game.clockRunning===false?' paused':' remaining'}`}
   if(/cricket/.test(family))return Number.isFinite(game.period)?`Innings ${game.period}`:'Innings unavailable';
   return 'Live clock unavailable';

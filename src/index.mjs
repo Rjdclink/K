@@ -1,3 +1,4 @@
+import {writeScoreSnapshots,observedSnapshotGames} from './snapshots.mjs';
 import {parallelBasketballVerification,assertBasketballVerification} from './basketball_verification.mjs';
 import {verifyExternalOverExposure,assertOverExposure} from './over_exposure.mjs';
 import {rememberIndependentEntry,independentEntryValid,assertExternalPurchase} from './entry_verification.mjs';
@@ -2608,17 +2609,9 @@ function snapshotRow({milestone,state},liveMap,scanStarted){
   const displayClockLabel=clockSeconds!=null&&state.clockRunning===false?`${clockLabel} · paused`:clockLabel;
   return [state.id,state.title||'Sports game',state.sport,state.type,state.scoreKnown?state.home:null,state.scoreKnown?state.away:null,state.verifiedLive?'live':/^(final|finished|complete|completed|closed|ended)$/.test(state.status)?'final':'inactive',Number.isFinite(state.progress)?state.progress:null,String(state.period||''),timeLeft,clockSeconds,displayClockLabel,liveMap.get(milestone.id)?._observed_at||null,scanStarted,'[]',state.possessionSide,state.homeTeamId||null,state.awayTeamId||null];
 }
-async function publishLivePreview(active,liveMap,scanStarted){
-  for(let i=0;i<active.length;i+=100){
-    const batch=active.slice(i,i+100).map(game=>snapshotRow(game,liveMap,scanStarted));
-    if(!batch.length)continue;
-    const values=batch.map((_,row)=>'('+Array.from({length:18},(_,field)=>'$'+(row*18+field+1)).join(',')+')').join(',');
-    await pool.query(`INSERT INTO game_snapshots(id,title,sport,sport_family,home,away,status,progress,period,time_left,clock_seconds,clock_label,clock_observed_at,scanned_at,signals,possession_side,home_team_id,away_team_id) VALUES ${values}
-      ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,sport=EXCLUDED.sport,sport_family=EXCLUDED.sport_family,home=EXCLUDED.home,away=EXCLUDED.away,status=EXCLUDED.status,progress=EXCLUDED.progress,period=EXCLUDED.period,time_left=EXCLUDED.time_left,clock_seconds=EXCLUDED.clock_seconds,clock_label=EXCLUDED.clock_label,
-      clock_observed_at=CASE WHEN game_snapshots.clock_seconds IS NOT DISTINCT FROM EXCLUDED.clock_seconds AND game_snapshots.period=EXCLUDED.period THEN game_snapshots.clock_observed_at ELSE EXCLUDED.clock_observed_at END,
-      score_observed_at=EXCLUDED.scanned_at,possession_side=EXCLUDED.possession_side,home_team_id=EXCLUDED.home_team_id,away_team_id=EXCLUDED.away_team_id
-      WHERE game_snapshots.scanned_at<=EXCLUDED.scanned_at`,batch.flat());
-  }
+async function publishLivePreview(games,liveMap,scanStarted){
+  await writeScoreSnapshots((sql,args)=>pool.query(sql,args),
+    games.map(game=>snapshotRow(game,liveMap,scanStarted)));
 }
 async function scanThirdQuarterNos(games,events){
   if(!live())return 0;
@@ -2879,21 +2872,22 @@ async function scan(cachedMilestones,discoveryCount){
     ms=cachedMilestones||await milestones();discoveryCount??=ms.length;
     await ensurePropWindows();
     const {rows:propWatch}=await pool.query(`SELECT DISTINCT p.game_id FROM player_prop_windows p
-      JOIN game_snapshots g ON g.id=p.game_id WHERE g.status='live' AND g.scanned_at>now()-interval '30 minutes'`);
+      JOIN game_snapshots g ON g.id=p.game_id WHERE g.status='live' AND GREATEST(g.score_observed_at,g.scanned_at)>now()-interval '30 minutes'`);
     const propWatchIds=new Set(propWatch.map(row=>row.game_id));
     const {rows:recentLive}=await pool.query(`SELECT id,signals FROM game_snapshots
-      WHERE status='live' AND scanned_at>now()-interval '30 minutes'`);
+      WHERE status='live' AND GREATEST(score_observed_at,scanned_at)>now()-interval '30 minutes'`);
     ms=scanMilestones(ms,new Set([...recentLive.map(row=>row.id),...propWatchIds]));
     await upgradeTables();
     await ensureScanStatus();const liveMap=await liveBatch(ms);
-    const games=ms.map(m=>({milestone:m,state:gameState(m,liveMap.get(m.id))})).filter(g=>
+    const observedGames=ms.map(m=>({milestone:m,state:gameState(m,liveMap.get(m.id))}));
+    const games=observedGames.filter(g=>
       g.state.verifiedLive||Date.parse(g.milestone.start_date||'')>Date.now()-3600000);
     const active=games.filter(g=>g.state.verifiedLive && g.state.scoreKnown);
     scanned=active.length;
     // Publish fresh live scores before quote discovery or cash/combination
     // work. A slow exchange response must not empty the dashboard's live list.
     await ensureScoreTime();
-    await publishLivePreview(active,liveMap,scanStarted);
+    await publishLivePreview(observedSnapshotGames(observedGames,liveMap,new Set(recentLive.map(g=>g.id))),liveMap,scanStarted);
     if(live()||exitOnly())await Promise.all([reconcileCombos(),reconcileComboUpgrades()]);
     if(live()&&!cachedMilestones)try{await reconcileFundingTransfers()}catch(e){console.warn('Transfer history unavailable:',e.message)}
     await ensureLeadWatch();
@@ -3063,15 +3057,14 @@ async function scan(cachedMilestones,discoveryCount){
     const snapshots=[...snapshotRows.values()];
     for(let i=0;i<snapshots.length;i+=100){
       const batch=snapshots.slice(i,i+100);
-      const values=batch.map((_,row)=>'('+Array.from({length:18},(_,field)=>'$'+(row*18+field+1)).join(',')+')').join(',');
-      await pool.query(`INSERT INTO game_snapshots(id,title,sport,sport_family,home,away,status,progress,period,time_left,clock_seconds,clock_label,clock_observed_at,scanned_at,signals,possession_side,home_team_id,away_team_id) VALUES ${values} ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,sport=EXCLUDED.sport,sport_family=EXCLUDED.sport_family,home=EXCLUDED.home,away=EXCLUDED.away,status=EXCLUDED.status,progress=EXCLUDED.progress,period=EXCLUDED.period,time_left=EXCLUDED.time_left,clock_seconds=EXCLUDED.clock_seconds,clock_label=EXCLUDED.clock_label,clock_observed_at=CASE WHEN game_snapshots.clock_seconds IS NOT DISTINCT FROM EXCLUDED.clock_seconds AND game_snapshots.period=EXCLUDED.period AND game_snapshots.status=EXCLUDED.status AND game_snapshots.clock_label=EXCLUDED.clock_label THEN game_snapshots.clock_observed_at ELSE EXCLUDED.clock_observed_at END,scanned_at=game_snapshots.scanned_at,signals=game_snapshots.signals,possession_side=EXCLUDED.possession_side,home_team_id=EXCLUDED.home_team_id,away_team_id=EXCLUDED.away_team_id WHERE game_snapshots.status IS DISTINCT FROM 'live' OR EXCLUDED.status IS DISTINCT FROM 'live' OR game_snapshots.period IS DISTINCT FROM EXCLUDED.period OR game_snapshots.clock_seconds IS NULL OR EXCLUDED.clock_seconds IS NULL OR EXCLUDED.clock_seconds<=game_snapshots.clock_seconds`,batch.flat());
+      await writeScoreSnapshots((sql,args)=>pool.query(sql,args),batch);
       // A concurrent clock refresh may be newer than the scan's clock. Keep
       // that clock; publish a fresh signal set only for checked markets.
       const checked=batch.filter(row=>checkedIds.has(row[0]));
       if(checked.length){
         const signalValues=checked.map((_,row)=>`($${row*2+1},$${row*2+2})`).join(',');
         await pool.query(`UPDATE game_snapshots AS g SET signals=v.signals::jsonb,scanned_at=clock_timestamp()
-          FROM (VALUES ${signalValues}) AS v(id,signals) WHERE g.id=v.id`,checked.flatMap(row=>[row[0],row[14]]));
+          FROM (VALUES ${signalValues}) AS v(id,signals) WHERE g.id=v.id AND g.status='live'`,checked.flatMap(row=>[row[0],row[14]]));
       }
     }
     // Make the live score and clock visible before slower order preflights.
@@ -3336,40 +3329,25 @@ async function scan(cachedMilestones,discoveryCount){
   finally{if(scanLockHeld){await client.query('ROLLBACK');client.release()}}
 }
 async function refreshOpenClocks(){
-  // Only the dashboard visitor requests this five-second refresh; the scanner
-  // can spend longer evaluating orders without freezing the visible game clock.
   await ensureScoreTime();
+  await ensureLeadWatch();
   const claim=await pool.query(`UPDATE scan_status SET clock_refresh_at=clock_timestamp() WHERE id=1
     AND (clock_refresh_at IS NULL OR clock_refresh_at<now()-interval '20 seconds') RETURNING id`);
   if(!claim.rowCount)return;
   try{
-    // Refresh the visible live scoreboard independently of the slower market
-    // scan. This is bounded to four live-feed batches per dashboard refresh.
-    const {rows}=await pool.query(`SELECT g.id,g.title,g.sport,g.sport_family,g.home_team_id,g.away_team_id FROM game_snapshots g
-      WHERE g.status='live' AND g.sport_family<>'weather' AND g.scanned_at>now()-interval '15 minutes'
-      ORDER BY g.scanned_at DESC LIMIT 80`);
+    // Market checks may be deferred for hours while scores remain current.
+    // Retain the original milestone metadata for tennis, cricket and golf.
+    const {rows}=await pool.query(`SELECT g.id,g.title,g.sport,g.sport_family,g.home_team_id,g.away_team_id,w.milestone
+      FROM game_snapshots g LEFT JOIN lead_watch_milestones w ON w.game_id=g.id
+      WHERE g.status='live' AND g.sport_family<>'weather'
+        AND GREATEST(g.score_observed_at,g.scanned_at)>now()-interval '15 minutes'
+      ORDER BY g.score_observed_at ASC NULLS FIRST LIMIT 80`);
     if(!rows.length)return;
-    const milestones=rows.map(g=>({id:g.id,title:g.title,type:g.sport_family,details:{league:g.sport,home_team_id:g.home_team_id,away_team_id:g.away_team_id}}));
+    const milestones=rows.map(g=>g.milestone||{id:g.id,title:g.title,type:g.sport_family,
+      details:{league:g.sport,home_team_id:g.home_team_id,away_team_id:g.away_team_id}});
     const data=await liveBatch(milestones);
-    await Promise.all(milestones.map(async m=>{
-      const item=data.get(m.id);if(!item)return;
-      const s=gameState(m,item);
-      const final=/^(final|finished|complete|completed|closed|ended)$/.test(s.status);
-      if(!s.verifiedLive&&!final)return;
-      const soccer=/soccer/.test(s.type),baseball=/baseball/.test(s.type),tennis=/tennis/.test(s.type);
-      const seconds=s.verifiedLive?(soccer&&Number.isFinite(s.matchRemainingSeconds)?s.matchRemainingSeconds:
-        soccer&&Number.isFinite(s.soccerMinute)&&s.soccerMinute<90?(90-s.soccerMinute)*60:
-        !baseball&&!tennis&&!soccer&&Number.isFinite(s.remainingSeconds)?s.remainingSeconds:null):null;
-      const label=s.golf?'Round progress':/esports/.test(s.type)?'Match phase':/cricket/.test(s.type)?'Innings progress':soccer?'Regulation left':baseball?'Inning progress':tennis?'Set progress':s.sport==='NCAAB'?`Half ${s.period||'?'} left`:/hockey/.test(s.type)?`Period ${s.period||'?'} left`:/football|basketball/.test(s.type)?`Quarter ${s.period||'?'} left`:'Game clock';
-      await pool.query(`UPDATE game_snapshots SET home=$2,away=$3,status=$4,time_left=$5,possession_side=$9,score_observed_at=clock_timestamp(),
-        clock_observed_at=CASE WHEN clock_seconds IS DISTINCT FROM $6::integer OR period IS DISTINCT FROM $8::text OR status IS DISTINCT FROM $4::text
-          THEN clock_timestamp() ELSE clock_observed_at END,
-        clock_seconds=$6,clock_label=$7,period=$8
-        WHERE id=$1 AND (scanned_at<clock_timestamp() OR status='live')
-          AND (status IS DISTINCT FROM 'live' OR $4::text IS DISTINCT FROM 'live' OR period IS DISTINCT FROM $8::text OR clock_seconds IS NULL OR $6::integer IS NULL OR $6::integer<=clock_seconds)`,
-        [m.id,s.scoreKnown?s.home:null,s.scoreKnown?s.away:null,s.verifiedLive?'live':'final',
-          gameTimeLabel(s),storedClockSeconds(seconds,s.clockRunning),s.clockRunning===false?`${label} · paused`:label,String(s.period||''),s.possessionSide]);
-    }));
+    const games=milestones.filter(m=>data.has(m.id)).map(m=>({milestone:m,state:gameState(m,data.get(m.id))}));
+    await publishLivePreview(games,data,new Date());
   }catch(e){console.warn('Dashboard clock refresh deferred:',e.message)}
 }
 let recentDashboardPositions=null;
@@ -3526,7 +3504,7 @@ async function settlementAlerts(since){
   return rows;
 }
 async function handleRequest(req){const url=new URL(req.url);
-  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),mentionsConfigured:Boolean(process.env.MENTION_OFFICIAL_SOURCES),claudeConfigured:Boolean(process.env.ANTHROPIC_API_KEY),cryptoScannerEnabled:CRYPTO_SCAN_ENABLED,tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'mentions-source-20261104',verification:{primary:'ESPN',fallback:'Sportradar',espnRetries:0,sportradarConfigured:Boolean(process.env.SPORTRADAR_API_KEY)}});
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),mentionsConfigured:Boolean(process.env.MENTION_OFFICIAL_SOURCES),claudeConfigured:Boolean(process.env.ANTHROPIC_API_KEY),cryptoScannerEnabled:CRYPTO_SCAN_ENABLED,tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'clock-lifecycle-20261104',verification:{primary:'ESPN',fallback:'Sportradar',espnRetries:0,sportradarConfigured:Boolean(process.env.SPORTRADAR_API_KEY)}});
   if(req.method==='GET'&&url.pathname==='/manifest.webmanifest')return response(manifest,'application/manifest+json');
   if(req.method==='GET'&&url.pathname==='/sw.js')return new Response(worker,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','service-worker-allowed':'/','x-content-type-options':'nosniff'}});
   if(req.method==='GET'&&/^\/icon-(192|512)\.png$/.test(url.pathname))return response(Buffer.from(icons[Number(url.pathname.match(/\d+/)[0])],'base64'),'image/png');
@@ -3548,7 +3526,7 @@ async function handleRequest(req){const url=new URL(req.url);
     const {rows:knownLive}=await pool.query(`SELECT w.milestone FROM lead_watch_milestones w
       JOIN game_snapshots g ON g.id=w.game_id
       WHERE w.updated_at>now()-interval '30 minutes' AND g.status='live'
-        AND g.scanned_at>now()-interval '30 minutes' ORDER BY w.updated_at DESC`);
+        AND GREATEST(g.score_observed_at,g.scanned_at)>now()-interval '30 minutes' ORDER BY w.updated_at DESC`);
     let discovered=null,discoveryError=null,discoveryApplied=false;
     const discoveryJob=withApiPriority('background',()=>milestones())
       .then(found=>{discovered=found}).catch(error=>{discoveryError=error});
