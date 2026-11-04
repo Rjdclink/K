@@ -48,13 +48,16 @@ export async function proposeMentionBinding(event,contract,{env=process.env,fetc
       system:'Locate the exact published caption or transcript for this one event on the named publisher site. Prefer captions. The publisher page, not your answer, is the evidence. Return JSON only. If unavailable, return null. Never infer spoken words from a press release, event listing, or search snippet. Do not guess markers, speakers, or a call time.',
       messages:[{role:'user',content:JSON.stringify({eventTicker:event.event_ticker,eventTitle:event.title,
         eventDay:day,ruleSource,subject:contract.subject,task:'Find the exact official caption or transcript on the rule-named publisher host. Return {url or linkText,eventMarker,dateMarker,eventTimeMarker,scheduledAt,timezone,speakerMarkers,segments:[{start,end}]}. url must be a direct transcript or caption on that host; linkText must uniquely identify a link on the rule source page. Every marker must appear verbatim on the publisher page or caption/transcript, and each segment must start with its qualifying speaker label. If any required field is unknown, return null.'})}]})});
-  if(!response.ok)return null;
+  if(!response.ok){console.warn('Mention locator API unavailable:',response.status);return null}
   const payload=await response.json();
-  if(payload.stop_reason==='pause_turn')return null;
+  if(payload.stop_reason==='pause_turn'){
+    console.warn('Mention locator search paused:',event.event_ticker);return null;
+  }
   const raw=payload.content?.filter(part=>part.type==='text').map(part=>part.text).join('')||'';
   if(raw.length>7000)return null;
   let proposed;
-  try{proposed=JSON.parse(raw.replace(/^\s*```(?:json)?\s*/i,'').replace(/\s*```\s*$/,'').trim())}catch{return null}
+  try{proposed=JSON.parse(raw.replace(/^\s*```(?:json)?\s*/i,'').replace(/\s*```\s*$/,'').trim())}
+  catch{console.warn('Mention locator returned no JSON binding:',event.event_ticker);return null}
   if(!proposed||typeof proposed!=='object'||Array.isArray(proposed)||
     !['eventMarker','dateMarker','eventTimeMarker','scheduledAt','timezone'].every(key=>
       typeof proposed[key]==='string'&&proposed[key].length>2&&proposed[key].length<240)||
