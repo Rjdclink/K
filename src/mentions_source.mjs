@@ -1,3 +1,5 @@
+import {reviewExternalAmbiguity} from './ai.mjs';
+
 // Each mapping identifies an exact official transcript, not a search result or
 // an agency home page. An unmapped event has no external evidence.
 export function officialMentionSources(raw=process.env.MENTION_OFFICIAL_SOURCES){
@@ -112,6 +114,13 @@ export async function fetchOfficialMentionTranscript(descriptor,{fetcher=fetch,h
       text:segments.map(part=>part.value).join('\n'),complete,
       noCoverageConfirmed:complete&&descriptor.noCoverageConfirmed===true,
       endedAt:complete?descriptor.endedAt:null});
+  }
+  if(matches.length>1&&process.env.ANTHROPIC_API_KEY){
+    try{const review=await reviewExternalAmbiguity('mentions',{eventTicker:descriptor.eventTicker,
+      eventDate:descriptor.eventDate,issue:'Multiple approved pages passed the exact transcript markers',
+      pages:matches.map(item=>({url:item.url,excerpt:item.text.slice(0,120),length:item.text.length}))});
+      console.warn('Mention source ambiguity:',descriptor.eventTicker,review.assessment,review.reason);
+    }catch(e){console.warn('Mention source review deferred:',e.message)}
   }
   return matches.length===1?matches[0]:null;
 }
