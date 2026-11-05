@@ -23,6 +23,65 @@ test('Sportradar requires a unique live fixture and fresh complete score',async(
   const stale=live([row()]);stale.generated_at='2020-01-01T00:00:00Z';assert.equal(await run(stale),null);
   const missing=row();delete missing.sport_event_status.home_score;assert.equal(await run(live([missing])),null);
 });
+test('captured soccer aliases resolve only the exact live fixture from Sportradar',async()=>{
+  const at='2026-11-05T17:45:00Z',cases=[
+    ['Milan vs Ferencvarosi','AC Milan','Ferencvarosi Budapest'],
+    ['Mjallby vs Banja Luka','Mjallby AIF','FK Borac Banja Luka'],
+    ['Anderlecht vs Salzburg','RSC Anderlecht','FC Salzburg'],
+    ['Nijmegen vs Omonia Nicosia','NEC Nijmegen','AC Omonia Nicosia']
+  ];
+  const make=(home,away)=>({sport_event:{id:'sr:sport_event:74173022',start_time:at,
+    competitors:[{qualifier:'home',name:home},{qualifier:'away',name:away}]},
+    sport_event_status:{status:'live',match_status:'2nd_half',clock:{played:'89:36'},home_score:0,away_score:2}});
+  for(const [title,home,away] of cases){
+    const game={sport:'Soccer',type:'soccer_tournament_multi_leg',scoreKnown:true,home:0,away:2,period:2,soccerMinute:89.6};
+    const milestone={title,start_date:at};
+    const run=summary=>verifyIndependentOverDecision({...game},milestone,{market:{event_ticker:'KXUELGAME-X'},
+      minInterval:0,sportradarApiKey:'test-secret',fetcher:async url=>reply(url.includes('sportradar.com')?
+        live([summary]):{events:[],sectionList:[]})});
+    assert.equal(await run(make(home,away)),true,title);
+    assert.equal(await run(make(home,'Different Club')),null,`${title}: wrong opponent must fail closed`);
+    assert.equal(await run({...make(home,away),sport_event:{...make(home,away).sport_event,start_time:'2026-11-04T17:45:00Z'}}),null,
+      `${title}: wrong date must fail closed`);
+  }
+});
+test('Sportradar domestic team code and intact nickname resolve the captured NBA fixture',async()=>{
+  const at='2026-11-05T03:00:00Z',id='5b1e5d96-fc41-4b09-9bb6-187c1713dd3a';
+  const game={sport:'NBA',type:'basketball_game',scoreKnown:true,home:105,away:108,period:4,
+    homeName:'SAC Kings',awayName:'LA Lakers'};
+  const fixture={id,scheduled:at,home:{name:'Sacramento Kings',alias:'SAC'},away:{name:'Los Angeles Lakers',alias:'LAL'}};
+  const run=(row=fixture)=>verifyIndependentOverDecision({...game},{title:'LA Lakers at SAC Kings',start_date:at},{
+    market:{event_ticker:'KXNBAGAME-X'},minInterval:0,sportradarApiKey:'test-secret',
+    fetcher:async url=>url.includes('nba.com')?{ok:false,status:403}:
+      reply(url.includes('espn.com')?{events:[]}:url.endsWith('schedule.json')?{games:[row]}:
+        url.includes('sportradar.com')?{...row,status:'inprogress',quarter:4,clock:'1:41',
+          home:{...row.home,points:105},away:{...row.away,points:108}}:{sectionList:[]})});
+  assert.equal(await run(),true);
+  assert.equal(await run({...fixture,home:{name:'Sacramento Warriors',alias:'SAC'}}),null,
+    'matching provider code with a wrong mascot cannot authorize a trade');
+});
+test('soccer totals still require a complete independent goal timeline',async()=>{
+  const at='2026-11-05T17:45:00Z',milestone={title:'Anderlecht vs Salzburg',start_date:at};
+  const game={sport:'Soccer',type:'soccer_tournament_multi_leg',scoreKnown:true,home:2,away:0,period:2,soccerMinute:80};
+  const summary={sport_event:{id:'sr:sport_event:74173036',start_time:at,
+    competitors:[{qualifier:'home',name:'RSC Anderlecht'},{qualifier:'away',name:'FC Salzburg'}]},
+    sport_event_status:{status:'live',match_status:'2nd_half',clock:{played:'80:00'},home_score:2,away_score:0}};
+  const run=goals=>verifySportradarOver({...game},milestone,{market:{event_ticker:'KXUELTOTAL-X',floor_strike:1.5},
+    minInterval:0,sportradarApiKey:'test-secret',fetcher:async url=>reply(url.endsWith('timeline.json')?
+      {sport_event:{id:summary.sport_event.id},timeline:goals}:live([summary]))});
+  assert.equal(await run([{type:'score_change',period_type:'regular_period',home_score:1,away_score:0},
+    {type:'score_change',period_type:'regular_period',home_score:2,away_score:0}]),true);
+  assert.equal(await run([{type:'score_change',period_type:'regular_period',home_score:1,away_score:0}]),false);
+});
+test('an unavailable fixture names the attempted Sportradar source',async()=>{
+  const game={...row(),sport:'Soccer',type:'soccer_match',scoreKnown:true,home:1,away:0,
+    homeName:'Alpha',awayName:'Beta',period:2};
+  const decision=await verifyIndependentOverDecision(game,{title:'Alpha vs Beta',start_date:start},{
+    market:{event_ticker:'KXSOCCERGAME-X'},minInterval:0,sportradarApiKey:'test-secret',
+    fetcher:async url=>reply(url.includes('sportradar.com')?live([]):{events:[],sectionList:[]})});
+  assert.equal(decision,null);
+  assert.match(game.verificationIssue,/Sportradar: no exact matching fixture/);
+});
 test('ESPN success or contradiction never calls Sportradar; unavailable ESPN calls it once without retries',async()=>{
   for(const mode of ['success','conflict','failure']){
     const calls=[];
