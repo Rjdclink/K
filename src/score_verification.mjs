@@ -67,13 +67,23 @@ function sameTeam(expected,aliases,sport){
     Seattle:'Seattle Kraken','St. Louis':'St Louis Blues','Tampa Bay':'Tampa Bay Lightning',
     Toronto:'Toronto Maple Leafs',Utah:'Utah Mammoth',Vancouver:'Vancouver Canucks',
     Vegas:'Vegas Golden Knights',Washington:'Washington Capitals',Winnipeg:'Winnipeg Jets'};
-  const soccer={'Atletico Mineiro':'Atletico MG','Al Ahli Saudi':'Al Ahli','GA Eagles':'Go Ahead Eagles'};
-  const franchise=sport==='NHL'&&hockey[expected]?clean(hockey[expected]):soccer[expected]?clean(soccer[expected]):null;
+  const soccer={'Atletico Mineiro':'Atletico MG','Al Ahli Saudi':'Al Ahli','GA Eagles':'Go Ahead Eagles',
+    Ferencvarosi:'Ferencvarosi Budapest',Mjallby:'Mjallby AIF','Banja Luka':'FK Borac Banja Luka',
+    Anderlecht:'RSC Anderlecht',Salzburg:'FC Salzburg',Nijmegen:'NEC Nijmegen'};
+  const nba={'LA Lakers':'Los Angeles Lakers'};
+  const franchise=sport==='NHL'&&hockey[expected]?clean(hockey[expected]):sport==='Soccer'&&soccer[expected]?clean(soccer[expected]):sport==='NBA'&&nba[expected]?clean(nba[expected]):null;
   const clubName=name=>clean(String(name||'').replace(/^(?:AC|FC|CF|SC|AFC)\s+/i,'').replace(/\s+(?:AC|FC|CF|SC|AFC)$/i,''));
   const stripped=clubName(expected);
   const shortCode=variants.length>1&&/^[A-Za-z]{2}$/.test(String(expected||''));
+  const coded=String(expected||'').match(/^([A-Za-z]{2,5})\s+(.{4,})$/);
+  // Sportradar domestic schedules publish the provider code separately from
+  // the full team name. Require both the exact code and intact nickname.
+  const providerCode=coded&&['NBA','WNBA','NFL','CFB','MLB','NHL','NCAAB','NCAAW'].includes(sport)&&
+    aliases.some(name=>clean(name)===clean(coded[1]));
+  const nickname=coded&&clean(coded[2]);
   return (key.length>=3||shortCode) && aliases.some(name=>variants.includes(clean(name))||franchise&&clean(name)===franchise||
-    stripped.length>=5&&clubName(name)===stripped);
+    stripped.length>=5&&clubName(name)===stripped||
+    providerCode&&clean(String(name||'').split(/\s+/).slice(-coded[2].split(/\s+/).length).join(' '))===nickname);
 }
 function teamAliases(t,fox=false,includeLocation=false){
   if(fox)return [t?.imageAltText,t?.longName,t?.stackedNameBottom,t?.abbreviation,t?.shortName,t?.name,`${t?.name||''} ${t?.longName||''}`,`${t?.stackedNameTop||''} ${t?.stackedNameBottom||''}`];
@@ -450,10 +460,14 @@ export async function verifySportradarOver(game,milestone,options={}){
   const readings=await loadSportradar(game,milestone,{...options,apiKey:options.sportradarApiKey??process.env.SPORTRADAR_API_KEY,
     matchFixture:(home,away,time)=>sameFixture(game,milestone,home,away,time)});
   if(readings?.ambiguous)return false;
-  if(!readings)return null;
+  if(!readings){
+    if(!options.unavailableReasons?.some(reason=>reason.startsWith('Sportradar:')))
+      options.unavailableReasons?.push('Sportradar: no verifiable reading');
+    return null;
+  }
   const matches=readings.filter(r=>sameFixture(game,milestone,r.homeAliases,r.awayAliases,r.time));
   if(matches.length>1)return false;
-  if(!matches.length)return null;
+  if(!matches.length){options.unavailableReasons?.push('Sportradar: no exact matching fixture');return null;}
   const m=matches[0];
   if(!m.live)return false;
   if(game.tableTennis){
