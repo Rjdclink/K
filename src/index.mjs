@@ -16,7 +16,7 @@ import { historyPage } from './history_ui.mjs';
 import { completedTrade, completedNoTrade, manualSaleFill, reconcileManualSaleFills, settlementLookupCandidates } from './history.mjs';
 import { ensureExitLedger, recordExitFill } from './exit_ledger.mjs';
 import { gameState, overSignal, PLAYER_PROP_MAX_FRACTION, BASKETBALL_COUNT_PROP_MAX_FRACTION, BASKETBALL_WINNER_ENTRY_SECONDS, playerOverSpec, playerPropEarlyWindow, confirmedOver, fallbackScoringUnits, confirmedExternalLead, leadSignal, proBasketballLeadRules, basketballCloseoutEntry, basketballCloseoutMinimum, basketballEarlyPreflight, nbaSingleReadLead, kalshiSingleReadLead, confirmedSoccerWinnerClock, confirmedDrawClock, soccerWinnerWindowOpen, leadWatchReason, additionalLeadSignal, cricketLeadSignal, drawSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, minimumProfitCents, netSettlementProfitCents, profitableCount, comeback, teamScorePosition } from './strategy.mjs';
-import { reviewMiss,reviewExternalAmbiguity } from './ai.mjs';
+import { reviewMiss } from './ai.mjs';
 import { kalshiSignature } from './auth.mjs';
 import { marketShard, shardCash, transferPlan, comboShardBudget, awaitShardCash } from './funding.mjs';
 import { icons } from './icons.mjs';
@@ -45,7 +45,6 @@ import {mentionContract,mentionDay,mentionEventTime,mentionEntryPrice,pairedMent
 import {officialMentionSources,fetchOfficialMentionTranscript} from './mentions_source.mjs';
 import {scanMentionMarkets} from './mentions_scanner.mjs';
 import {dueMentionSeries} from './mentions_schedule.mjs';
-import {cachedMentionBinding,proposeMentionBinding} from './mentions_locator.mjs';
 import {cryptoHitContract,tripleCryptoProof} from './crypto_hit.mjs';
 import {scanCryptoHits} from './crypto_scanner.mjs';
 import {assertScannerTradeDisabled} from './scanner_trade_gate.mjs';
@@ -246,16 +245,8 @@ async function auditedOver(game,milestone,options={}){
     game.tableTennis?(await verifySportradarOver(game,milestone,{...options,fetcher})??await verifyIndependentTableTennisLeadDecision(game,milestone,{fetcher})):
     await verifyIndependentOverDecision(game,milestone,{...options,cache:undefined,fetcher,onOverValue});
   const passed=decision===true;
-  let aiReview=null;
-  if(decision!==true&&(decision===null||game.verificationIssue)&&process.env.ANTHROPIC_API_KEY&&
-    observations.some(read=>read.status===200)){
-    try{aiReview=await reviewExternalAmbiguity('sports',{ticker:options.market?.ticker,
-      game:game.id,score:[game.home,game.away],period:game.period,issue:game.verificationIssue||'',
-      sources:observations.map(read=>({source:read.source,status:read.status})),externalValues});}
-    catch(e){console.warn('Sports evidence review deferred:',e.message)}
-  }
   await auditTable();const id=randomUUID();
-  await pool.query('INSERT INTO verification_records(id,market_ticker,passed,evidence) VALUES($1,$2,$3,$4)',[id,options.market?.ticker||'',passed,JSON.stringify({game,milestone,observations,firstObservation:options.firstObservation,externalOverValues:externalValues,minimumOverValue:options.minimumOverValue,independentUnavailable:decision===null,aiReview})]);
+  await pool.query('INSERT INTO verification_records(id,market_ticker,passed,evidence) VALUES($1,$2,$3,$4)',[id,options.market?.ticker||'',passed,JSON.stringify({game,milestone,observations,firstObservation:options.firstObservation,externalOverValues:externalValues,minimumOverValue:options.minimumOverValue,independentUnavailable:decision===null})]);
   if(passed){game.verificationId=id;rememberIndependentEntry(game,options.market,id,requestedAt,externalValues.length?Math.min(...externalValues):undefined)}
   return options.allowUnavailable?decision:passed;
 }
@@ -2257,8 +2248,6 @@ function ensureMentionTables(){return mentionTablesReady??=(async()=>{
   await pool.query(`CREATE TABLE IF NOT EXISTS mention_commitments (
     order_id uuid PRIMARY KEY, cost_cents integer NOT NULL CHECK(cost_cents>0),
     created_at timestamptz NOT NULL DEFAULT now())`);
-  await pool.query(`CREATE TABLE IF NOT EXISTS mention_source_proposals (
-    event_ticker text PRIMARY KEY,checked_at timestamptz NOT NULL,descriptor jsonb)`);
 })().catch(error=>{mentionTablesReady=null;throw error})}
 async function mentionCommittedCents(positions,excludeId=null){
   const {rows}=await pool.query(`SELECT a.id,a.market_ticker,a.status,a.fill_count,a.updated_at,c.cost_cents
@@ -2366,10 +2355,6 @@ async function executeVerifiedMention(item){
 async function scanOfficialMentions(){
   const sources=officialMentionSources();
   await ensureMentionTables();
-  const {rows:proposals}=await pool.query(`SELECT event_ticker,descriptor
-    FROM mention_source_proposals WHERE descriptor IS NOT NULL AND checked_at>now()-interval '1 day'`);
-  for(const row of proposals)if(!sources.has(row.event_ticker)&&cachedMentionBinding(row))
-    sources.set(row.event_ticker,row.descriptor);
   const client=await pool.connect();
   try{
   await client.query('BEGIN');
@@ -2379,27 +2364,7 @@ async function scanOfficialMentions(){
   const previous=(await pool.query('SELECT stats FROM mention_scan_status WHERE id=1')).rows[0]?.stats;
   const scheduled=previous?.seriesSchedule||{};
   const due=dueMentionSeries(seriesCatalog,scheduled);
-  let locatorCalls=0,locatorErrors=0;
   const options={kalshi,sources,seriesCatalog,
-    resolveSource:async(event,contract)=>{
-      const {rows:[cached]}=await pool.query(`SELECT checked_at,descriptor FROM mention_source_proposals
-        WHERE event_ticker=$1`,[event.event_ticker]);
-      const bound=cachedMentionBinding(cached);
-      if(bound)return bound;
-      if(cached&&Date.now()-Date.parse(cached.checked_at)<5*60_000)return null;
-      if(locatorCalls>=3)return null;
-      locatorCalls++;
-      let descriptor=null;
-      try{descriptor=await proposeMentionBinding(event,contract,{forceSearch:true})}
-      catch(error){locatorErrors++;console.warn('Mention source locator deferred:',event.event_ticker,
-        String(error.message).slice(0,150))}
-      await pool.query(`INSERT INTO mention_source_proposals(event_ticker,checked_at,descriptor)
-        VALUES($1,now(),$2) ON CONFLICT(event_ticker) DO UPDATE
-        SET checked_at=now(),descriptor=EXCLUDED.descriptor`,
-        [event.event_ticker,descriptor?JSON.stringify(descriptor):null]);
-      if(descriptor)sources.set(event.event_ticker,descriptor);
-      return descriptor;
-    },
     readTranscript:source=>fetchOfficialMentionTranscript(source,{hosts:[
       new URL(source.ruleSourceUrl).hostname.toLowerCase(),
       ...String(process.env.MENTION_OFFICIAL_HOSTS||'').split(',').map(x=>x.trim().toLowerCase()).filter(Boolean)]}),
@@ -2425,8 +2390,8 @@ async function scanOfficialMentions(){
   const stats=await broad;
   if(broadError)throw broadError;
   stats.series=seriesCatalog.length;
-  stats.locatorCalls=locatorCalls;
-  stats.locatorErrors=locatorErrors;
+  stats.locatorCalls=0;
+  stats.locatorErrors=0;
   stats.boundSources=sources.size;
   stats.seriesSchedule={...scheduled,...stats.seriesSchedule};
   stats.scheduledLater=Object.values(stats.seriesSchedule).reduce((sum,item)=>sum+(item.future||0),0);
@@ -3502,14 +3467,14 @@ async function state(){
   const comboIssue=comboIssues.find(issue=>!(issue.status==='insufficient_cash'&&Number(balance?.balance)>=100)&&issue.leg_tickers.length>=2&&
     issue.leg_tickers.every(ticker=>open.has(ticker)))||null;
   if(comboIssue)comboIssue.leg_names=comboIssue.leg_tickers.map(ticker=>orders.find(o=>o.market_ticker===ticker)?.game_title||ticker);
-  return {live:live(),exitOnly:exitOnly(),credentials:configured(),aiConfigured:Boolean(process.env.ANTHROPIC_API_KEY),balance,balanceStale,balanceAsOf,accountError,positionsError,positionsStale:Boolean(positions&&positionsError),games:snap.rows,scan:stats.rows[0],weather:{disabled:true,series:0,eligible:0},crypto:{...(cryptoStatus.rows[0]||{}),disabled:!CRYPTO_SCAN_ENABLED,entryEnabled:CRYPTO_SCAN_ENABLED&&process.env.CRYPTO_HIT_TRADING!=='false'},mentions:{configured:Boolean(process.env.MENTION_OFFICIAL_SOURCES)||Number(mentionStatus.rows[0]?.stats?.boundSources)>0,locatorConfigured:Boolean(process.env.ANTHROPIC_API_KEY),...(mentionStatus.rows[0]||{})},comboIssue,orders};
+  return {live:live(),exitOnly:exitOnly(),credentials:configured(),balance,balanceStale,balanceAsOf,accountError,positionsError,positionsStale:Boolean(positions&&positionsError),games:snap.rows,scan:stats.rows[0],weather:{disabled:true,series:0,eligible:0},crypto:{...(cryptoStatus.rows[0]||{}),disabled:!CRYPTO_SCAN_ENABLED,entryEnabled:CRYPTO_SCAN_ENABLED&&process.env.CRYPTO_HIT_TRADING!=='false'},mentions:{configured:Boolean(process.env.MENTION_OFFICIAL_SOURCES),...(mentionStatus.rows[0]||{})},comboIssue,orders};
 }
 async function settlementAlerts(since){
   const {rows}=await pool.query(`SELECT id,ticker,profit_cents,settled_time,created_at FROM settlement_alerts WHERE id>$1 AND created_at>now()-interval '2 days' ORDER BY id LIMIT 50`,[since]);
   return rows;
 }
 async function handleRequest(req){const url=new URL(req.url);
-  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),mentionsConfigured:Boolean(process.env.MENTION_OFFICIAL_SOURCES),claudeConfigured:Boolean(process.env.ANTHROPIC_API_KEY),cryptoScannerEnabled:CRYPTO_SCAN_ENABLED,mentionsTradingEnabled:MENTIONS_TRADING_ENABLED,cryptoTradingEnabled:CRYPTO_TRADING_ENABLED,tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'clock-lifecycle-20261104',verification:{primary:'ESPN',fallback:'Sportradar',espnRetries:0,sportradarConfigured:Boolean(process.env.SPORTRADAR_API_KEY)}});
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),mentionsConfigured:Boolean(process.env.MENTION_OFFICIAL_SOURCES),cryptoScannerEnabled:CRYPTO_SCAN_ENABLED,mentionsTradingEnabled:MENTIONS_TRADING_ENABLED,cryptoTradingEnabled:CRYPTO_TRADING_ENABLED,tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'claude-off-clock-lifecycle-20261105',verification:{primary:'ESPN',fallback:'Sportradar',espnRetries:0,sportradarConfigured:Boolean(process.env.SPORTRADAR_API_KEY)}});
   if(req.method==='GET'&&url.pathname==='/manifest.webmanifest')return response(manifest,'application/manifest+json');
   if(req.method==='GET'&&url.pathname==='/sw.js')return new Response(worker,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','service-worker-allowed':'/','x-content-type-options':'nosniff'}});
   if(req.method==='GET'&&/^\/icon-(192|512)\.png$/.test(url.pathname))return response(Buffer.from(icons[Number(url.pathname.match(/\d+/)[0])],'base64'),'image/png');

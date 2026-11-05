@@ -23,13 +23,10 @@ replace the publisher named by the rules. The URL can be a webcast or events
 listing and does not itself prove the spoken words.
 
 An event can trade only after an exact official transcript is bound to that
-rule source. On the event day, Claude Haiku may propose an exact caption or
-transcript URL on the rule-named publisher host, or a unique link on its events
-page. A proposal is cached and never counts as evidence: the scanner independently
-fetches the publisher document and checks its date, time, speakers, and text
-before three separate reads. The locator makes at most three AI requests per
-scan and caches unavailable proposals for five minutes. A webcast without a
-readable caption or transcript stays blocked. To bind a source explicitly, set
+rule source. The scanner independently fetches the publisher document and
+checks its date, time, speakers, and text before three separate reads. No AI
+source locator or review runs. A webcast without a readable caption or
+transcript stays blocked. To bind a source explicitly, set
 `MENTION_OFFICIAL_SOURCES` to a JSON array of event-specific descriptors. A
 descriptor requires `eventTicker`, `ruleSourceUrl` (the exact Kalshi
 `settlement_sources` URL), `eventDate` (`YYYY-MM-DD`), `timezone` (IANA),
@@ -71,15 +68,9 @@ published official transcript; it cannot be mapped until one appears. If a
 publisher never posts an official transcript, the event remains blocked.
 The registry cannot promise coverage merely because Kalshi lists a market.
 
-When `ANTHROPIC_API_KEY` is present in the running Neon function, ambiguous
-external evidence can be summarized by Vireonix and reviewed by Claude Haiku.
-Only public, bounded discrepancy details are sent; Kalshi credentials and
-account data are not. A model result cannot establish a missing transcript,
-resolve conflicting official pages into an order, or bypass the direct source
-and final contract checks. Routine clean reads make no model request.
-GitHub repository and environment secrets are not automatically injected into
-Neon function deployments; the same key must be set in the function's own
-environment before this path can be exercised live.
+Ambiguous or unavailable external evidence cannot authorize a trade. The
+function does not call Claude for source discovery or verification, regardless
+of whether a key remains stored in its environment.
 
 The first fetched transcript is persisted per market and side even when its
 current ask is above $0.65. If that ask falls to $0.65 or less while the
