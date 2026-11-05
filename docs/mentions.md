@@ -52,15 +52,7 @@ published official transcript; it cannot be mapped until one appears. If a
 publisher never posts an official transcript, the event remains blocked.
 The registry cannot promise coverage merely because Kalshi lists a market.
 
-When `ANTHROPIC_API_KEY` is present in the running Neon function, ambiguous
-external evidence can be summarized by Vireonix and reviewed by Claude Haiku.
-Only public, bounded discrepancy details are sent; Kalshi credentials and
-account data are not. A model result cannot establish a missing transcript,
-resolve conflicting official pages into an order, or bypass the direct source
-and final contract checks. Routine clean reads make no model request.
-GitHub repository and environment secrets are not automatically injected into
-Neon function deployments; the same key must be set in the function's own
-environment before this path can be exercised live.
+Ambiguous or unavailable external evidence cannot authorize a trade. The scanner does not call Claude for source discovery or verification.
 
 The first fetched transcript is persisted per market and side even when its
 current ask is above $0.40. If that ask falls to $0.40 or less while the
