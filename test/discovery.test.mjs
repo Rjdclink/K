@@ -44,7 +44,7 @@ test('fast over queue retains active seller-backed windows despite a changed das
   assert.deepEqual(readyOverTickets(rows,12,new Set(['ACTIVE','NOASK'])).map(t=>t.signal.ticker),['ACTIVE']);
 });
 
-test('sports discovery traverses pages and includes esports and older live tournaments',async()=>{
+test('sports discovery traverses pages, excludes esports, and retains older live tournaments',async()=>{
   const now=Date.parse('2026-10-30T13:00:00Z'),at=days=>new Date(now+days*86400000).toISOString();
   const requests=[];
   const get=async path=>{
@@ -55,12 +55,13 @@ test('sports discovery traverses pages and includes esports and older live tourn
       {id:'completed-with-future-end',start_date:at(-2),end_date:at(1),details:{status:'completed'}}],cursor:'next'};
     if(category==='Sports'&&cursor==='future')return {milestones:[{id:'later',start_date:at(3)}],cursor:'unused'};
     if(category==='Sports')return {milestones:[{id:'live-baseball',start_date:at(-.1)},
+      {id:'embedded-esports',type:'esports_match',start_date:at(-.1)},
       {id:'upcoming',start_date:at(2)}],cursor:'future'};
-    return {milestones:[{id:'live-esports',start_date:at(-.1)}],cursor:''};
+    throw Error('Esports category must never be fetched');
   };
   const games=await discoverCurrentMilestones(get,now);
-  assert.deepEqual(games.map(m=>m.id),['old-golf','live-baseball','live-esports']);
-  assert.deepEqual(requests.map(([category,cursor])=>[category,cursor]).sort(),[['Sports',null],['Sports','next'],['Sports','future'],['Esports',null]].sort());
+  assert.deepEqual(games.map(m=>m.id),['old-golf','live-baseball']);
+  assert.deepEqual(requests.map(([category,cursor])=>[category,cursor]).sort(),[['Sports',null],['Sports','next'],['Sports','future']].sort());
   assert.ok(requests.every(([, ,min])=>min===at(-7)));
 });
 
@@ -257,7 +258,7 @@ test('darts overall scores and esports phase display without an invented clock',
   assert.equal(eligibleForMarkets(darts),true);
   const esports=gameState({id:'esports',type:'esports_match',title:'Fede vs Eder',details:{league:'eSoccer'}},{details:{status:'live',home_score:3,away_score:3,period_unit:'half',home_periods:{period_1:3,period_2:0},away_periods:{period_1:2,period_2:1}}});
   assert.equal(gameTimeLabel(esports),'Half 2 · score periods verified');
-  assert.equal(esports.scoreKnown,true);assert.equal(eligibleForMarkets(esports),true);
+  assert.equal(esports.scoreKnown,true);assert.equal(eligibleForMarkets(esports),false);
   const bad=gameState({id:'bad',type:'esports_match',details:{league:'eSoccer'}},{details:{status:'live',home_score:4,away_score:3,period_unit:'half',home_periods:{period_1:3,period_2:0},away_periods:{period_1:2,period_2:1}}});
   assert.equal(eligibleForMarkets(bad),false);
 });

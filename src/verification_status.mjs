@@ -17,11 +17,15 @@ export function completedOverWait(signal,record){
   return Boolean(signal?.verification_wait&&record?.passed&&record.mode==='independent_timed_over'&&
     Number.isFinite(updated)&&Number.isFinite(checked)&&checked>updated);
 }
-export function verificationWindowStatus(signal,window,timing,now=Date.now()){
+export function verificationWindowStatus(signal,window,timing,now=Date.now(),record=null){
   if(!signal?.verification_wait)return null;
   const seen=Number(window?.last_seen);
   if(!window||!Number.isFinite(seen))
     return {execution:'Verification window expired; fresh checks required'};
+  if(now-seen>30000)return {execution:'Verification window stale; fresh score and seller required'};
+  const checked=Date.parse(record?.created_at||'');
+  if(record&&!record.passed&&Number.isFinite(checked)&&checked>=Number(window.initial_at))
+    return {execution:verificationStatus(record)};
   if(timing?.stage==='first_wait'||timing?.stage==='final_wait'){
     const seconds=Math.ceil(timing.remainingMs/1000);
     return {execution:timing.stage==='first_wait'?`Waiting for first external check (${seconds}s; minimum 20s)`:

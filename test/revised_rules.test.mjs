@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {gameState,leadSignal,leadWatchReason,earlyLeadSignal,additionalLeadSignal,cricketLeadSignal,overSignal,confirmedSoccerWinnerClock,soccerWinnerWindowOpen,kalshiOnlyLead,soccerSingleReadLead,soccerSingleReadOver,singleReadOverSignal,kalshiSingleReadLead,nbaSingleReadLead} from '../src/strategy.mjs';
+import {gameState,leadSignal,leadWatchReason,basketballEarlyPreflight,earlyLeadSignal,additionalLeadSignal,cricketLeadSignal,overSignal,confirmedSoccerWinnerClock,soccerWinnerWindowOpen,kalshiOnlyLead,soccerSingleReadLead,soccerSingleReadOver,singleReadOverSignal,kalshiSingleReadLead,nbaSingleReadLead} from '../src/strategy.mjs';
 import {golfState,golfSignal} from '../src/golf.mjs';
 import {finalLeadFraction,directLeadFraction,minimumThreeGoalSpend} from '../src/lead_allocation.mjs';
 import {comboLegAllocation,comboAllocation} from '../src/combos.mjs';
@@ -80,6 +80,19 @@ test('basketball tiers include the stated lead and exclude the exact time bounda
  const nbaSecond=team('basketball_game','NBA',20,4,190,{possession_team_id:'away'});
  nbaFirst.state.observedAt=now-12000;
  assert.equal(kalshiOnlyLead(nbaFirst.state,nbaSecond.state,nbaFirst.market),true);
+});
+
+test('first-tier basketball external preflight starts before 4:30 but never changes the entry rule',()=>{
+  for(const league of ['NCAAB','NCAAW']){
+    const {state,market}=team('basketball_game',league,16,league==='NCAAB'?2:4,300);
+    assert.equal(basketballEarlyPreflight(state,market),true);
+    assert.equal(leadSignal(state,market),null);
+    assert.equal(basketballEarlyPreflight({...state,remainingSeconds:361},market),false);
+    assert.equal(basketballEarlyPreflight({...state,remainingSeconds:269},market),false);
+    assert.equal(basketballEarlyPreflight({...state,home:state.home-1,homeUnits:state.homeUnits-1},market),false);
+    assert.equal(basketballEarlyPreflight(state,{...market,custom_strike:{basketball_team:'away'}}),false);
+    assert.equal(basketballEarlyPreflight(state,{...market,status:'closed'}),false);
+  }
 });
 
 test('revised hockey and inning-based baseball winners reject superseded thresholds',()=>{

@@ -95,6 +95,11 @@ test('weather card reports a paused scan without stale candidate counts',async()
   assert.equal(elements.get('weatherSeries').textContent,'Paused');
   assert.equal(elements.get('weatherEligible').textContent,'—');
 });
+test('dashboard omits Mentions and Crypto cards without removing sports cards',()=>{
+  assert.doesNotMatch(page,/<article class="card (?:mentions|crypto)"/);
+  assert.doesNotMatch(page,/render(?:Mentions|Crypto)\(/);
+  for(const card of ['balance','games','orders','props'])assert.match(page,new RegExp('<article class="card '+card+'"'));
+});
 
 test('deferred football cards retain their last check time without claiming a current market scan',()=>{
   assert.match(page,/Market last checked/);

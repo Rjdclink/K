@@ -1,7 +1,7 @@
 import {createHash} from 'node:crypto';
 
-export const MENTION_DELAY_MS=45_000;
-export const MENTION_MAX_PRICE=0.40;
+export const MENTION_DELAY_MS=50_000;
+export const MENTION_MAX_PRICE=0.65;
 export const MENTION_MAX_FRACTION=0.15;
 
 const clean=value=>String(value||'').normalize('NFKC').replace(/[\u2018\u2019]/g,"'").trim();
@@ -20,13 +20,13 @@ export function mentionDay(at,zone='America/New_York'){
   return parts?`${parts.year}-${parts.month}-${parts.day}`:null;
 }
 export function mentionTickerDay(ticker){
-  const match=String(ticker||'').match(/-(\d{2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)(\d{2})$/i);
+  const match=String(ticker||'').match(/-(\d{2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)(\d{2})(?:-|$)/i);
   if(!match)return null;
   const month='JAN FEB MAR APR MAY JUN JUL AUG SEP OCT NOV DEC'.split(' ').indexOf(match[2].toUpperCase());
   const date=new Date(Date.UTC(2000+Number(match[1]),month,Number(match[3])));
   return date.getUTCMonth()===month&&date.getUTCDate()===Number(match[3])?date.toISOString().slice(0,10):null;
 }
-export function mentionEventTime(event,market,descriptor){
+export function mentionEventTime(event,market,descriptor,source){
   const start=Date.parse(descriptor?.scheduledAt||''),zone=descriptor?.timezone;
   if(!Number.isFinite(start)||!zone||mentionDay(start,zone)!==descriptor.eventDate)return false;
   const listed=Date.parse(event?.strike_date||'');
@@ -34,7 +34,9 @@ export function mentionEventTime(event,market,descriptor){
   // The strike date may be the contract's final expiration rather than the
   // broadcast time. An exact event-specific marker can establish the latter.
   return Number.isFinite(listed)&&Math.abs(listed-start)<=60_000||
-    Boolean(descriptor.contractTimeMarker&&text.includes(descriptor.contractTimeMarker));
+    Boolean(descriptor.contractTimeMarker&&text.includes(descriptor.contractTimeMarker))||
+    Boolean(source?.official&&source.eventTimeConfirmed&&
+      mentionTickerDay(event?.event_ticker)===descriptor.eventDate);
 }
 
 export function mentionContract(event,market,series){
@@ -44,9 +46,10 @@ export function mentionContract(event,market,series){
     !market.ticker||market.event_ticker!==event?.event_ticker)return null;
   const rule=clean(market.rules_primary),secondary=clean(market.rules_secondary);
   const target=clean(market.yes_sub_title||market.subtitle);
-  if(!rule||!target||!/^resolves yes if\b/i.test(rule)||
+  if(!rule||!target||!/^(?:resolves yes if|if)\b/i.test(rule)||
     !/\b(?:says?|said|states?|spoken|stated|mentions?)\b/i.test(rule)||
     !rule.toLowerCase().includes(target.replace(/\s*\(\d+\+\s*times?\)\s*$/i,'').toLowerCase()))return null;
+  if(/^if\b/i.test(rule)&&!/\bthen the market resolves to yes\.?$/i.test(rule))return null;
   const count=target.match(/\s*\((\d+)\+\s*times?\)\s*$/i);
   if(/\(\s*\d+\+?\s*times?\s*\)/i.test(target)&&!count)return null;
   const minimum=count?Number(count[1]):1;
@@ -58,8 +61,9 @@ export function mentionContract(event,market,series){
   if(/event does not qualify|event does not occur/i.test(phrase)||
     /\b(?:and|or)\b/i.test(secondary)&&!/plural|possessive/i.test(secondary))return null;
   const escaped=escape(phrase).replace(/\s+/g,'\\s+');
-  const forward=rule.match(new RegExp('^resolves yes if (.+?)\\s+(?:says?|mentions?)\\s+'+escaped+'\\b','i'));
-  const reverse=rule.match(new RegExp('^resolves yes if '+escaped+'\\s+is\\s+(?:said|stated|spoken)\\s+by\\s+(.+?)\\s+(?:during|at|before|as part of)\\b','i'));
+  const condition=rule.replace(/^(?:resolves yes if|if)\s+/i,'').replace(/,?\s*then the market resolves to yes\.?$/i,'');
+  const forward=condition.match(new RegExp('^(.+?)\\s+(?:says?|mentions?)\\s+'+escaped+'\\b','i'));
+  const reverse=condition.match(new RegExp('^'+escaped+'\\s+is\\s+(?:said|stated|spoken)\\s+by\\s+(.+?)\\s+(?:during|at|before|as part of)\\b','i'));
   const subject=label(forward?.[1]||reverse?.[1]);
   if(!subject)return null;
   return {ticker:market.ticker,eventTicker:event.event_ticker,rule,secondary,
@@ -130,9 +134,19 @@ export function pairedMentionProof(first,second,now=Date.now()){
     second.checkedAt<=now&&now-second.checkedAt<=30_000);
 }
 
+export function tripleMentionProof(first,second,third,now=Date.now()){
+  return Boolean(pairedMentionProof(first,second,second?.checkedAt)&&third&&
+    first.ticker===third.ticker&&first.side===third.side&&first.eventTicker===third.eventTicker&&
+    first.eventDate===third.eventDate&&first.eventStart===third.eventStart&&
+    first.contractKey===third.contractKey&&first.sourceUrl===third.sourceUrl&&
+    first.sourceId===third.sourceId&&first.contentHash===third.contentHash&&
+    third.checkedAt-second.checkedAt>=30_000&&third.checkedAt-second.checkedAt<=2*60_000&&
+    third.checkedAt<=now&&now-third.checkedAt<=10_000);
+}
+
 export function mentionEntryPrice(price){
   const value=Number(price);
-  return Number.isFinite(value)&&value>0&&Math.round(value*10_000)<=4_000&&value<=MENTION_MAX_PRICE;
+  return Number.isFinite(value)&&value>0&&Math.round(value*10_000)<=6_500&&value<=MENTION_MAX_PRICE;
 }
 export function remainingMentionCents(bankroll,heldCents,pendingCents=0){
   if(![bankroll,heldCents,pendingCents].every(Number.isFinite)||bankroll<=0||heldCents<0||pendingCents<0)return 0;
