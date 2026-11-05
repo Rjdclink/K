@@ -18,7 +18,7 @@ test('a completed second external check supersedes only its own pending wait',()
   assert.equal(completedOverWait(signal,{passed:true,mode:'first_external',created_at:new Date(2000).toISOString()}),false);
 });
 test('dashboard uses the durable window stage instead of an older wait message',()=>{
-  const now=200000,signal={verification_wait:{dueAt:100000,updatedAt:100000}};
+  const now=200000,signal={ask:'0.6500',ask_size:'12',verification_wait:{dueAt:100000,updatedAt:100000}};
   const window={initial_at:100000,last_seen:now-3000,first_external_at:150000};
   const waiting=verificationWindowStatus(signal,window,{stage:'final_wait',remainingMs:37000,minimumMs:137000},now);
   assert.match(waiting.execution,/First external check passed.*37s remaining/);
@@ -31,4 +31,14 @@ test('dashboard uses the durable window stage instead of an older wait message',
   assert.match(verificationWindowStatus(signal,{...window,last_seen:now-90001},{stage:'final_wait'},now).execution,/window stale/);
   assert.match(verificationWindowStatus(signal,window,{stage:'first_external'},now,
     {passed:false,independent_unavailable:'false',created_at:new Date(now-1000).toISOString()}).execution,/disagrees with Kalshi/);
+});
+test('a vanished seller is shown as no liquidity instead of a stale verification timer',()=>{
+  const now=200000,window={initial_at:100000,last_seen:100000};
+  assert.deepEqual(verificationWindowStatus({ask:'1.0000',ask_size:'0',verification_wait:{}},window,null,now),
+    {execution:'No ask liquidity'});
+  assert.match(verificationWindowStatus({ask:'0.6000',ask_size:'12',verification_wait:{}},window,null,now).execution,
+    /window stale/);
+  assert.match(verificationWindowStatus({ask:'0.6000',ask_size:'12',verification_wait:{}},window,null,now,
+    {passed:false,independent_unavailable:'true',created_at:new Date(now-1000).toISOString()}).execution,
+    /No matching external live score/);
 });
