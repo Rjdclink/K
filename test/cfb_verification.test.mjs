@@ -19,3 +19,23 @@ test('a CFB alias does not bypass conflicting scores or ambiguous fixture checks
   const duplicate={events:[...fixture.espn.events,{...fixture.espn.events[0],id:'other-fixture'}]};
   assert.equal(await verifyIndependentOverDecision({...fixture.game},fixture.milestone,{fetcher:async()=>({ok:true,json:async()=>duplicate})}),false);
 });
+test('FCS external checks request the FCS scoreboard instead of the default FBS subset',async()=>{
+  const milestone={...fixture.milestone,details:{division:'FCS'}},urls=[];
+  const fetcher=async url=>{
+    urls.push(url);
+    return {ok:true,json:async()=>new URL(url).searchParams.get('groups')==='81'?fixture.espn:{events:[]}};
+  };
+  assert.equal(await verifyIndependentOverDecision({...fixture.game},milestone,{fetcher}),true);
+  assert.equal(urls.length,1);
+  assert.equal(new URL(urls[0]).searchParams.get('groups'),'81');
+});
+test('unknown college football divisions cover both groups while retaining contradiction and ambiguity vetoes',async()=>{
+  const urls=[];
+  const fetcher=async url=>{
+    urls.push(url);
+    return {ok:true,json:async()=>new URL(url).searchParams.get('groups')==='81'?fixture.espn:{events:[]}};
+  };
+  assert.equal(await verifyIndependentOverDecision({...fixture.game},fixture.milestone,{fetcher}),true);
+  assert.deepEqual(urls.map(url=>new URL(url).searchParams.get('groups')).sort(),['80','81']);
+  assert.equal(await verifyIndependentOverDecision({...fixture.game,home:21},fixture.milestone,{fetcher}),false);
+});

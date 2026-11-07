@@ -19,7 +19,7 @@ test('each external verification stage counts down without refreshing a stale ma
   const detail=card.children.at(-1);elements.push(detail);
   assert.match(detail.textContent,/First external check in 20s/);
   now+=1000;vm.runInContext('paintCountdowns()',context);assert.match(detail.textContent,/First external check in 19s/);
-  now+=20000;vm.runInContext('paintCountdowns()',context);assert.match(detail.textContent,/Verification due; awaiting fresh checks/);
+  now+=20000;vm.runInContext('paintCountdowns()',context);assert.match(detail.textContent,/Wait complete \(0s\); first external check pending/);
   now+=11000;vm.runInContext('paintCountdowns()',context);assert.match(detail.textContent,/market recheck pending/);
   const final={...signal,execution:'First external check passed; waiting for paired checks (210s remaining)',
     verification_wait:{dueAt:now+210000,updatedAt:now}};

@@ -3180,14 +3180,16 @@ async function state(){
   const comboGameIds=[...new Set(attempts.rows.flatMap(o=>Array.isArray(o.combo_legs)?o.combo_legs.map(l=>l.game_id).filter(Boolean):[]))];
   const comboScores=new Map(comboGameIds.length?(await pool.query(`SELECT id,home,away,status,
     COALESCE(score_observed_at,scanned_at) AS observed_at FROM game_snapshots WHERE id=ANY($1::text[])`,[comboGameIds])).rows.map(g=>[g.id,g]):[]);
-  const awaiting=[...new Set(snap.rows.flatMap(g=>(g.signals||[]).filter(s=>s.execution==='Awaiting score verification'||s.verification_wait).map(s=>s.ticker)))];
+  const checked=new Map();
+  const awaiting=[...new Set(snap.rows.flatMap(g=>(g.signals||[]).filter(s=>s.execution==='Awaiting score verification'||s.verification_wait||
+    s.strategy==='over'&&Number(s.ask)>0&&Number(s.ask)<1&&Number(s.ask_size)>0).map(s=>s.ticker)))];
   if(awaiting.length){
     const {rows}=await pool.query(`SELECT DISTINCT ON (market_ticker) market_ticker,passed,created_at,evidence->>'mode' AS mode,
       evidence->>'independentUnavailable' AS independent_unavailable,
       evidence->'game'->>'verificationIssue' AS verification_issue
       FROM verification_records WHERE market_ticker=ANY($1) AND created_at>now()-interval '5 minutes'
       ORDER BY market_ticker,created_at DESC`,[awaiting]);
-    const checked=new Map(rows.map(r=>[r.market_ticker,r]));
+    for(const row of rows)checked.set(row.market_ticker,row);
     for(const game of snap.rows)for(const signal of game.signals||[]){
       const result=checked.get(signal.ticker);
       if(completedOverWait(signal,result)){
@@ -3212,9 +3214,10 @@ async function state(){
       if(signal.execution==='Both external checks passed; ask, cash and profit still required')continue;
       let timing=null;
       if(window)try{timing=overTiming(window,window.initial_state,window.contract,now)}catch{}
-      const progress=verificationWindowStatus(signal.verification_wait?signal:{...signal,verification_wait:{}},window,timing,now);
+      const progress=verificationWindowStatus(signal.verification_wait?signal:{...signal,verification_wait:{}},window,timing,now,checked.get(signal.ticker));
       if(!progress)continue;
       signal.execution=progress.execution;
+      if(progress.checkedAt)signal.verification_checked_at=progress.checkedAt;
       if(progress.wait)signal.verification_wait=progress.wait;
       else delete signal.verification_wait;
     }
@@ -3307,7 +3310,7 @@ async function settlementAlerts(since){
   return rows;
 }
 async function handleRequest(req){const url=new URL(req.url);
-  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),mentionsConfigured:Boolean(process.env.MENTION_OFFICIAL_SOURCES),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'claude-off-main-20261105',verification:{primary:'ESPN',fallback:'Sportradar',espnRetries:0,sportradarConfigured:Boolean(process.env.SPORTRADAR_API_KEY)}});
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),mentionsConfigured:Boolean(process.env.MENTION_OFFICIAL_SOURCES),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'verification-status-fcs-20261107',verification:{primary:'ESPN',fallback:'Sportradar',espnRetries:0,sportradarConfigured:Boolean(process.env.SPORTRADAR_API_KEY)}});
   if(req.method==='GET'&&url.pathname==='/manifest.webmanifest')return response(manifest,'application/manifest+json');
   if(req.method==='GET'&&url.pathname==='/sw.js')return new Response(worker,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','service-worker-allowed':'/','x-content-type-options':'nosniff'}});
   if(req.method==='GET'&&/^\/icon-(192|512)\.png$/.test(url.pathname))return response(Buffer.from(icons[Number(url.pathname.match(/\d+/)[0])],'base64'),'image/png');
