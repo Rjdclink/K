@@ -1,3 +1,13 @@
+CREATE TABLE IF NOT EXISTS verification_records (
+  id uuid PRIMARY KEY,market_ticker text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),passed boolean NOT NULL,evidence jsonb NOT NULL
+);
+-- On an existing live installation, use CREATE INDEX CONCURRENTLY outside a
+-- transaction for these indexes. Evidence can be large; never scan it merely
+-- to find the latest verification for a displayed contract.
+CREATE INDEX IF NOT EXISTS verification_records_market_created_idx ON verification_records(market_ticker,created_at DESC);
+CREATE INDEX IF NOT EXISTS verification_records_created_idx ON verification_records(created_at DESC);
+
 CREATE TABLE IF NOT EXISTS game_snapshots (
   id text PRIMARY KEY,
   title text NOT NULL,

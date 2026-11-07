@@ -1,4 +1,5 @@
 import {playerValueQualifies,externalScoresQualify} from './external_values.mjs';
+import {espnScoreboardUrls} from './espn_scoreboards.mjs';
 import { alternateCheck } from './alternate_scores.mjs';
 import { teamAbbreviationVariants } from './team_identity.mjs';
 import { loadSportradar, sportradarPlayerValue } from './sportradar.mjs';
@@ -265,8 +266,7 @@ export async function verifyIndependentYardageZero(game,milestone,player,{fetche
   if(!Number.isFinite(start))return false;
   const read=async url=>{const response=await fetcher(url,{signal:AbortSignal.timeout(7000)});if(!response.ok)throw Error('ESPN unavailable');return response.json()};
   try{
-    const fixtures=(await Promise.all(dateCandidates(start).map(day=>
-      read(`https://site.api.espn.com/apis/site/v2/sports/${feed}/scoreboard?dates=${day}&limit=500${game.sport==='CFB'?'&groups=80':''}`))))
+    const fixtures=(await Promise.all(espnScoreboardUrls(feed,game,milestone,dateCandidates(start)).map(read)))
       .flatMap(data=>espnMatches(data,game,milestone));
     if(!fixtures.length||fixtures.some(match=>!match.live||!match.clockOk||match.period!==game.period))return false;
     const ids=[...new Set(fixtures.map(match=>match.eventId))];
@@ -323,7 +323,7 @@ async function verifyExistingOver(game,milestone,{fetcher=fetch,cache,market,sou
     const foxBase=`https://api.foxsports.com/bifrost/v1/${feed}`;
     const foxQuery=`apikey=${FOX_KEY}&api-version=1.1`;
     let requests;
-    if(source==='ESPN')requests=dates.map(day=>`https://site.api.espn.com/apis/site/v2/sports/${feed}/scoreboard?dates=${day}&limit=500${['NCAAB','NCAAW'].includes(game.sport)?'&groups=50':''}`);
+    if(source==='ESPN')requests=espnScoreboardUrls(feed,game,milestone,dates);
     else if(feed==='nfl'||feed==='cfb'){
       // Football score segments are season/week IDs, never calendar dates.
       // Discover the provider's current segment instead of guessing its week.

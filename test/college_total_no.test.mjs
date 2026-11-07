@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {gameState} from '../src/strategy.mjs';
 import {collegeFootballTotalNo,collegeBasketballTotalNo} from '../src/no_strategy.mjs';
-import {independentCollegeTotalNoReading} from '../src/college_total_no.mjs';
+import {independentCollegeTotalNoReading,verifyIndependentCollegeTotalNo} from '../src/college_total_no.mjs';
 import {nearEntryPhase,entryEventTickers} from '../src/discovery.mjs';
 import {sameSportsContract,overContractKey} from '../src/over_verification.mjs';
 import {rememberIndependentEntry} from '../src/entry_verification.mjs';
@@ -19,6 +19,23 @@ function state(period,clock='1:58',situation={possession_team_id:'ohio-id',side_
   return gameState(milestone,{milestone_id:milestone.id,_observed_at:new Date().toISOString(),
     details:{status:'inprogress',home_points:6,away_points:7,quarter:period,clock,last_updated_ts:Date.now()/1000,situation}});
 }
+test('college NO verification discovers FCS fixtures and survives an unavailable date without accepting a conflict',async()=>{
+  const m={...milestone,details:{...milestone.details,division:'FCS'}},game=state(2),half=market(true);
+  const board={events:[{id:'fixture',date:m.start_date,competitions:[{status:{period:2,displayClock:'1:58',type:{state:'in'}},
+    competitors:[{homeAway:'home',score:'6',team:{displayName:'Akron'}},
+      {homeAway:'away',score:'7',team:{displayName:'Ohio'}}]}]}]};
+  const urls=[];
+  const fetcher=async url=>{urls.push(url);const q=new URL(url).searchParams;
+    if(q.get('dates')==='20261104')throw Error('temporary timeout');
+    return {ok:true,json:async()=>q.get('groups')==='81'?board:{events:[]}};
+  };
+  assert.equal((await verifyIndependentCollegeTotalNo(game,m,half,{fetcher}))?.eventId,'fixture');
+  assert.ok(urls.every(url=>new URL(url).searchParams.get('groups')==='81'));
+  let calls=0;
+  const conflict=structuredClone(board);conflict.events[0].competitions[0].competitors[0].score='9';
+  assert.equal(await verifyIndependentCollegeTotalNo(game,m,half,{fetcher:async()=>({ok:true,json:async()=>++calls===1?conflict:board})}),null);
+  assert.equal(calls,1,'do not retry another date after an exact conflicting fixture');
+});
 test('Q2 first-half and Q4 full-game NO are distinct, strict two-minute entries',()=>{
   const first=state(2),last=state(4),half=market(true),full=market(false);
   assert.equal(collegeFootballTotalNo(first,half)?.period,'first_half');
