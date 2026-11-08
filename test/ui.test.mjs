@@ -484,6 +484,33 @@ test('sell quote refresh covers every filled card beyond the first twenty and ex
  assert.equal(elements.get('orders').children.at(-1).children.at(-1).textContent,'Sell · est. loss −$0.10');
 });
 
+test('filled full-game NO cards display live, stale, final and unavailable scores with the combined total',()=>{
+ let now=Date.now();class Clock extends Date{static now(){return now}}
+ const elements=new Map();
+ const element=()=>({children:[],classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){},append(...x){this.children.push(...x)},replaceChildren(...x){this.children=x}});
+ const document={getElementById:id=>{if(!elements.has(id))elements.set(id,element());return elements.get(id)},
+  querySelectorAll:selector=>selector==='.no-game-score'?elements.get('orders').children.flatMap(card=>card.children.filter(child=>child.className==='no-game-score')):[],createElement:element};
+ const context=vm.createContext({Date:Clock,document,window:{addEventListener(){}},navigator:{},localStorage:{getItem(){return null}},fetch:()=>new Promise(()=>{}),AbortSignal,setInterval(){}});
+ vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],context);
+ const base={external_position:true,managed_no:true,strategy:'no',side:'NO',market_ticker:'KXNCAAFTOTAL-26NOV07UCFKU-63',
+  market_title:'CFB full-game NO over 62.5',game_title:'UCF at Kansas',game_status:'live',home_score:30,away_score:26,score_scanned_at:new Date(now).toISOString()};
+ context.base=base;vm.runInContext('currentOrders=[base];renderOrders()',context);
+ const card=elements.get('orders').children[0],score=card.children.find(child=>child.className==='no-game-score');
+ assert.equal(score.textContent,'Full-game score · Away 26 · Home 30 · Total 56 points');
+ assert.equal(card.children.at(-1).textContent,'Manage this position on Kalshi');
+ assert.equal(card.children.some(child=>child.ariaLabel==='Sell position'),false);
+ now+=91000;vm.runInContext('paintCountdowns()',context);
+ assert.equal(score.textContent,'Full-game score · Last score · Away 26 · Home 30 · Total 56 points');
+ const render=vm.runInContext('externalOrder',context);
+ const read=changes=>render({...base,...changes}).children.find(child=>child.className==='no-game-score')?.textContent;
+ assert.equal(read({game_status:'final'}),'Full-game score · Final · Away 26 · Home 30 · Total 56 points');
+ assert.equal(read({home_score:0,away_score:0,score_scanned_at:new Date(now).toISOString()}),'Full-game score · Away 0 · Home 0 · Total 0 points');
+ assert.equal(read({home_score:null}),'Full-game score · Score unavailable');
+ for(const series of ['KXNCAAMBTOTAL','KXNCAAWBTOTAL'])assert.match(read({market_ticker:series+'-GAME-150'}),/Total 56 points/);
+ for(const ticker of ['KXNCAAF1HTOTAL-GAME-30','KXNCAAMB1HTOTAL-GAME-60','KXNCAAFRUSHYDS-GAME-100'])assert.equal(read({market_ticker:ticker}),undefined);
+ assert.equal(read({managed_no:false}),undefined);
+});
+
 test('untracked Kalshi positions show their side without offering an unverified YES sale',async()=>{
  const elements=new Map(),requests=[];
  const element=()=>({children:[],classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){},append(...x){this.children.push(...x)},replaceChildren(...x){this.children=x}});
