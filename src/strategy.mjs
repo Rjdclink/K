@@ -443,7 +443,7 @@ export function soccerSingleReadOver(game,market,now=Date.now()){
     Number.isFinite(game.updatedAt)&&(game.updatedAt>game.observedAt+5000||game.observedAt-game.updatedAt>30000))return null;
   const signal=overSignal(game,market);
   if(!signal)return null;
-  return cushionedOverSignal(game,market)||signal;
+  return cushionedOverSignal(game,market);
 }
 export function singleReadOverSignal(game,market,now=Date.now()){
   // Player-prop overs retain their independent statistic confirmation.
