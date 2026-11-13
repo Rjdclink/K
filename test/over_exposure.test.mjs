@@ -3,8 +3,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
-import {gameState,overSignal,orderSize,estimatedCostCents,profitableCount,PLAYER_PROP_MAX_FRACTION,BASKETBALL_COUNT_PROP_MAX_FRACTION} from '../src/strategy.mjs';
-import {overContractKey,timedOverEntryValid,sameSportsContract} from '../src/over_verification.mjs';
+import {gameState,overSignal,orderSize,estimatedCostCents,profitableCount,playerOverSpec,PLAYER_PROP_MAX_FRACTION,BASKETBALL_COUNT_PROP_MAX_FRACTION} from '../src/strategy.mjs';
+import {overContractKey,overCushion,timedOverEntryValid,sameSportsContract} from '../src/over_verification.mjs';
 import {singleSpendableCash} from '../src/combos.mjs';
 import {externalOverMinimum,verifyExternalOverExposure,externalOverExposureValid,assertOverExposure} from '../src/over_exposure.mjs';
 import {verifiedOverFraction} from '../src/lead_allocation.mjs';
@@ -18,7 +18,7 @@ function fixture(){
     floor_strike:.5,strike_type:'greater',yes_ask_dollars:'.91',yes_ask_size_fp:'1000'};
   const game=gameState(milestone,{milestone_id:'g',_observed_at:new Date(now).toISOString(),details:{status:'live',
     home_score:2,away_score:2,time:"68'",half:'2nd',home_team_name:'Rafaela',away_team_name:'Parana',last_updated_ts:now/1000}});
-  game.verificationId='external';rememberIndependentEntry(game,market,'external',now);game.overVerification={route:'seller_cushion',contractKey:overContractKey(game,market),sellerAt:now};
+  game.verificationId='external';rememberIndependentEntry(game,market,'external',now,4);game.overVerification={route:'seller_cushion',contractKey:overContractKey(game,market),sellerAt:now};
   return {game,market,milestone};
 }
 async function proof(game,market,value=4){
@@ -55,7 +55,7 @@ test('higher tiers require independently established cushion values; a basic pas
     const {game,market}=fixture();
     assert.equal(verifiedOverFraction(overSignal(game,market),game,market),.40);
     assert.equal(await proof(game,market,value===undefined?NaN:value),value>=3);
-    assert.equal(verifiedOverFraction(overSignal(game,market),game,market),value>=4?.60:value>=3?.50:.40);
+    assert.equal(verifiedOverFraction(overSignal(game,market),game,market),value>=4?.60:value>=3?.50:value>=2?.40:.15);
   }
   const {game,market}=fixture();delete game.independentEntry;
   assert.equal(await verifyExternalOverExposure(game,market,{now:()=>now}),false,'an internal audit cannot serve as independent evidence');
@@ -191,7 +191,7 @@ test('sixty percent position reads reject a malformed exchange response',async()
 test('the production audit records the independently documented cushion and erases permission after a conflicting recheck',async()=>{
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
   const {game,market,milestone}=fixture();let goals=4,documented=4;const audits=[];
-  const context=vm.createContext({console,AbortSignal,verifyIndependentOverDecision,rememberIndependentEntry,randomUUID:()=>String(audits.length),
+  const context=vm.createContext({console,AbortSignal,overSignal,overCushion,playerOverSpec,verifyIndependentOverDecision,rememberIndependentEntry,randomUUID:()=>String(audits.length),
     auditTable:async()=>{},pool:{query:async(sql,args)=>{audits.push(args);return {rows:[]}}},
     fetch:async()=>({ok:true,status:200,text:async()=>JSON.stringify({events:[{id:'external',date:start,
       status:{period:2,displayClock:"68'",type:{state:'in'}},competitions:[{competitors:[
@@ -207,4 +207,35 @@ test('the production audit records the independently documented cushion and eras
   goals=0;documented=0;assert.equal(await context.auditedOver(game,milestone,{market}),false);
   assert.equal(game.independentEntry,undefined);assert.throws(()=>assertOverExposure(game,market,.40));
   assert.equal(audits.at(-1)[2],false);
+});
+
+test('external verification requires an actual fresh successful HTTP response and never reuses a raw cache',async()=>{
+  const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
+  const {game,market,milestone}=fixture(),records=[];let requests=0,status=200,request=true;
+  const cache=new Map([['raw:https://external.test/score',{at:Date.now(),value:Promise.resolve({ok:true})}]]);
+  const context=vm.createContext({console,overSignal,overCushion,playerOverSpec,rememberIndependentEntry,
+    randomUUID:()=>String(records.length),auditTable:async()=>{},
+    pool:{query:async(sql,args)=>{records.push(args);return {rows:[]}}},
+    verifyIndependentOverDecision:async(g,m,options)=>{
+      if(request){const response=await options.fetcher('https://external.test/score');
+        if(!response.ok)return false;options.onOverValue(4);}
+      return true;
+    },fetch:async(url,options)=>{requests++;assert.equal(options.cache,'no-store');
+      return {ok:status===200,status,text:async()=>JSON.stringify({goals:4})}}});
+  vm.runInContext(source.slice(source.indexOf('async function auditedOver('),source.indexOf('async function verifyCommandingLead(')),context);
+  for(let i=1;i<=2;i++){
+    assert.equal(await context.auditedOver(game,milestone,{market,cache}),true);
+    assert.equal(requests,i);
+    const record=JSON.parse(records.at(-1)[3]);
+    assert.equal(record.externalVerified,true);assert.equal(record.minimumOverValue,2);
+    assert.equal(record.observations.length,1);
+    assert.ok(Date.parse(record.observations[0].requested_at)>=record.externalRequestedAt);
+  }
+  status=503;assert.equal(await context.auditedOver(game,milestone,{market,cache,allowUnavailable:true}),false);
+  assert.equal(game.independentEntry,undefined);
+  status=200;request=false;
+  assert.equal(await context.auditedOver(game,milestone,{market,allowUnavailable:true}),false);
+  assert.equal(game.independentEntry,undefined);assert.equal(records.at(-1)[2],false);
+  assert.equal(JSON.parse(records.at(-1)[3]).externalVerified,false);
+  assert.throws(()=>assertOverExposure(game,market,.40));
 });

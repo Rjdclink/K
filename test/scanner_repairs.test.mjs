@@ -70,8 +70,8 @@ test('Sportradar resolves school and mascot names by provider team ID and caches
 });
 
 test('incremental discovery preserves old tournaments and periodically reconciles the full catalog',async()=>{
-  const now=Date.parse('2026-11-03T00:00:00Z'),old={id:'golf',type:'golf_tournament',start_date:'2026-10-30T12:00:00Z'};
-  const fresh={id:'new',start_date:'2026-11-02T23:00:00Z'},queries=[];
+  const now=Date.parse('2026-11-03T00:00:00Z'),old={id:'golf',type:'golf_tournament',details:{tour:'pga'},start_date:'2026-10-30T12:00:00Z'};
+  const fresh={id:'new',type:'soccer_match',start_date:'2026-11-02T23:00:00Z'},queries=[];
   const get=async url=>{queries.push(new URL(url,'https://test').searchParams);return {milestones:[fresh]}};
   const previous={milestones:[old,{id:'expired',start_date:'2026-11-02T22:00:00Z'}],full_discovered_at:new Date(now-60000).toISOString()};
   const recent=await discovery.refreshDiscovery(get,previous,now);

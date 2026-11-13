@@ -38,8 +38,8 @@ export const BASKETBALL_WINNER_ENTRY_SECONDS=270;
 export const BASKETBALL_LEAD_RULES=Object.freeze({
   NBA:{period:4,possession:false,tiers:[[16,270],[7,105]]},
   WNBA:{period:4,possession:false,tiers:[[11,360],[7,105]]},
-  college:{period:2,possession:false,tiers:[[18,270],[12,105]]},
-  collegeWomen:{period:4,possession:false,tiers:[[18,270],[12,105]]},
+  college:{period:2,possession:false,tiers:[[18,270],[14,105]]},
+  collegeWomen:{period:4,possession:false,tiers:[[18,270],[14,105]]},
   international:{period:4,possession:false,tiers:[[16,300],[10,270]]}
 });
 export function basketballLeadProfile(game){
@@ -54,7 +54,7 @@ export function basketballEntryTier(game){
 }
 // The late NBA route also covers stronger leads; other earlier tiers remain.
 export function basketballCloseoutMinimum(game){
-  return basketballLeadProfile(game)&&game.sport!=='WNBA'?['NCAAB','NCAAW'].includes(game.sport)?12:7:null;
+  return basketballLeadProfile(game)&&game.sport!=='WNBA'?['NCAAB','NCAAW'].includes(game.sport)?14:7:null;
 }
 export function basketballCloseoutEntry(game){
   const profile=basketballLeadProfile(game),minimum=basketballCloseoutMinimum(game),seconds=game?.remainingSeconds;
@@ -452,7 +452,7 @@ export function singleReadOverSignal(game,market,now=Date.now()){
   if(game.feedId!==game.id||!game.verifiedLive||!game.scoreKnown||!game.scoreConsistent||!game.periodConsistent||
     !Number.isFinite(game.observedAt)||now<game.observedAt||now-game.observedAt>10000||
     Number.isFinite(game.updatedAt)&&(game.updatedAt>game.observedAt+5000||game.observedAt-game.updatedAt>30000))return null;
-  return cushionedOverSignal(game,market)||overSignal(game,market);
+  return cushionedOverSignal(game,market);
 }
 export function fallbackOverFraction(game,market){
   const signal=overSignal(game,market),units=fallbackScoringUnits(game);

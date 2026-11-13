@@ -6,19 +6,20 @@ import {page} from '../src/ui.mjs';
 test('each external verification stage counts down without refreshing a stale market quote',()=>{
   let now=Date.now();
   class Clock extends Date{static now(){return now}}
-  const elements=[];
+  const elements=[],intervals=new Map();
   const element=()=>({children:[],classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){},append(...items){this.children.push(...items)}});
   const document={getElementById:element,createElement:element,
     querySelectorAll:selector=>selector==='.verification-wait'?elements:[]};
   const context=vm.createContext({Date:Clock,document,window:{addEventListener(){}},navigator:{},
-    localStorage:{getItem(){return null}},fetch:()=>new Promise(()=>{}),AbortSignal,setInterval(){}});
+    localStorage:{getItem(){return null}},fetch:()=>new Promise(()=>{}),AbortSignal,setInterval(fn,ms){intervals.set(ms,fn)}});
   vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],context);
   const signal={ticker:'OVER',title:'Player over',ask:'.96',ask_size:'8',execution:'Waiting for first external check (20s; minimum 20s)',
     verification_wait:{dueAt:now+20000,updatedAt:now}};
   const card=vm.runInContext('item',context)({title:'Game',sport:'NBA',home:3,away:2,signals:[signal]});
   const detail=card.children.at(-1);elements.push(detail);
   assert.match(detail.textContent,/First external check in 20s/);
-  now+=1000;vm.runInContext('paintCountdowns()',context);assert.match(detail.textContent,/First external check in 19s/);
+  assert.ok(intervals.has(1000));
+  now+=1000;intervals.get(1000)();assert.match(detail.textContent,/First external check in 19s/);
   now+=20000;vm.runInContext('paintCountdowns()',context);assert.match(detail.textContent,/Wait complete \(0s\); first external check pending/);
   now+=11000;vm.runInContext('paintCountdowns()',context);assert.match(detail.textContent,/market recheck pending/);
   const final={...signal,execution:'First external check passed; waiting for paired checks (210s remaining)',

@@ -1,10 +1,10 @@
 import {OVER_EXTERNAL_DELAY_MS} from './over_verification.mjs';
 
 export function verificationStatus(record){
-  if(record.passed&&record.mode==='seller_backed_cushioned_over')return 'Cushioned over; live seller checked; final quote pending';
+  const external=record.external_verified===true||record.external_verified==='true';
+  if(record.passed&&!external)return 'Kalshi preflight passed; independent external verification still required';
   if(record.passed&&record.mode==='independent_timed_over')return 'Both external checks and paired Kalshi check passed; final quote pending';
-  if(record.passed)return record.mode==='kalshi_only_crossed_over'?
-    'Two Kalshi score checks passed; final quote pending':'External score matched; fresh Kalshi read and final quote pending';
+  if(record.passed)return 'External score matched; fresh Kalshi read and final quote pending';
   if(record.verification_issue)return record.verification_issue;
   if(record.independent_unavailable===true||record.independent_unavailable==='true')
     return 'No matching external live score; entry blocked';
@@ -15,6 +15,7 @@ export function verificationStatus(record){
 export function completedOverWait(signal,record){
   const updated=Number(signal?.verification_wait?.updatedAt),checked=Date.parse(record?.created_at||'');
   return Boolean(signal?.verification_wait&&record?.passed&&record.mode==='independent_timed_over'&&
+    (record.external_verified===true||record.external_verified==='true')&&
     Number.isFinite(updated)&&Number.isFinite(checked)&&checked>updated);
 }
 export function verificationWindowStatus(signal,window,timing,now=Date.now(),record=null){

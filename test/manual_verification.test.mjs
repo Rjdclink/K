@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
 import {gameState,overSignal} from '../src/strategy.mjs';
+import {supportedScannerSport} from '../src/discovery.mjs';
+import {overCushion} from '../src/over_verification.mjs';
 import {rememberIndependentEntry,independentEntryValid,assertExternalPurchase} from '../src/entry_verification.mjs';
 import {verifyIndependentOverDecision} from '../src/score_verification.mjs';
 const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
@@ -17,7 +19,7 @@ const combo={ticker:'COMBO',status:'active',mve_collection_ticker:'C',mve_select
 function harness({goals=4,unavailable=false,stale=false}={}){
  const records=[],markets=new Map([market,other,combo].map(m=>[m.ticker,m]));
  let ids=0;
- const bindings={console,gameState,overSignal,rememberIndependentEntry,independentEntryValid,randomUUID:()=>String(++ids),auditTable:async()=>{},
+ const bindings={console,gameState,overSignal,overCushion,supportedScannerSport,rememberIndependentEntry,independentEntryValid,randomUUID:()=>String(++ids),auditTable:async()=>{},
   pool:{query:async(sql,args)=>{
    if(sql.startsWith('SELECT game_id'))return {rows:[{game_id:'fixture',strategy:'over',combo_legs:args[0]==='COMBO'?legs:null}]};
    if(sql.startsWith('SELECT milestone'))return {rows:[{milestone}]};

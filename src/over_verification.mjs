@@ -29,14 +29,14 @@ export function overTiming(window,game,market,now=Date.now()){
   const elapsed=now-initial;
   if(!Number.isFinite(initial)||elapsed<0)return {stage:'invalid'};
   const player=playerOverSpec(game,market),cushion=overCushion(game,market);
-  if(player&&cushion===null)return {stage:'invalid'};
+  if(cushion===null)return {stage:'invalid'};
   const delay=player?PLAYER_CUSHION_CONFIRM_DELAY_MS:
     /soccer/.test(String(game?.type||''))?OVER_SOCCER_CONFIRM_DELAY_MS:OVER_CONFIRM_DELAY_MS;
   if(elapsed<OVER_EXTERNAL_DELAY_MS)return {stage:'first_wait',remainingMs:OVER_EXTERNAL_DELAY_MS-elapsed,minimumMs:delay};
   if(external===null)return {stage:'first_external',remainingMs:0};
   if(!Number.isFinite(external)||external<initial+OVER_EXTERNAL_DELAY_MS||external>now||!window.first_external_id)return {stage:'invalid'};
-  if(elapsed<delay&&(player||cushion===null))return {stage:'final_wait',remainingMs:delay-elapsed,minimumMs:delay};
-  return {stage:'paired',route:player||elapsed<delay?'cushion':'elapsed',cushionUnits:cushion};
+  if(elapsed<delay&&player)return {stage:'final_wait',remainingMs:delay-elapsed,minimumMs:delay};
+  return {stage:'paired',route:'cushion',cushionUnits:cushion};
 }
 export function sameOverReading(first,second,market){
   const a=overSignal(first,market),b=overSignal(second,market);
@@ -47,16 +47,18 @@ export function sameOverReading(first,second,market){
 export function timedOverEntryValid(game,market,now=Date.now()){
   if(!independentEntryValid(game,market,now))return false;
   const proof=game?.overVerification,player=playerOverSpec(game,market);
+  const cushion=overCushion(game,market),signal=overSignal(game,market);
+  if(cushion===null||!player&&!(game.independentEntry.overValue>=Math.floor(signal.strike+cushion)+1))return false;
   if(player&&(overCushion(game,market)===null||proof?.route!=='cushion'))return false;
   if(proof?.route==='seller_cushion')return Boolean(game.verificationId&&proof.contractKey===overContractKey(game,market)&&
     Number.isFinite(proof.sellerAt)&&now>=proof.sellerAt&&now-proof.sellerAt<=OVER_FRESH_MS&&
     freshOverState(game,market,now)&&overCushion(game,market)!==null);
-  if(!proof||!game.verificationId||proof.contractKey!==overContractKey(game,market)||
+  if(!proof||proof.route!=='cushion'||!game.verificationId||proof.contractKey!==overContractKey(game,market)||
     !freshOverState(game,market,now)||!Number.isFinite(proof.pairedAt)||proof.pairedAt>now||
     now-proof.pairedAt>OVER_FRESH_MS||!proof.pairedExternalId||proof.pairedExternalId===proof.firstExternalId)return false;
   const timing=overTiming({initial_at:proof.initialAt,first_external_at:proof.firstExternalAt,
     first_external_id:proof.firstExternalId},game,market,proof.pairedAt);
-  return timing.stage==='paired'&&(proof.route!=='cushion'||overCushion(game,market)!==null);
+  return timing.stage==='paired'&&proof.route===timing.route;
 }
 
 export function assertTimedOverEntry(game,market,now=Date.now()){

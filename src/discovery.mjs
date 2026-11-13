@@ -1,8 +1,16 @@
 // Only fetch event families used by the two entry strategies and comeback exits.
 // The exchange remains authoritative: a guessed ticker is ignored unless an
 // open event and its market are actually returned by Kalshi.
-import { cricketOneInningsFormat, cfbLeadApproaching, basketballLeadProfile } from './strategy.mjs';
-const supportedType=type=>/basketball|baseball|football|hockey|soccer|tennis|golf|handball|rugby|lacrosse|volleyball|darts/.test(String(type||'').toLowerCase());
+import { cricketOneInningsFormat, cfbLeadApproaching, basketballLeadProfile, sportName } from './strategy.mjs';
+// Only families with implemented entry rules belong in discovery or saved watches.
+export function supportedScannerSport(item){
+  const type=String(item?.type||'').toLowerCase();
+  if(!/^(?:basketball|baseball|football|hockey|soccer|tennis|table_tennis|golf|handball|rugby|lacrosse|volleyball|darts|cricket)_/.test(type))return false;
+  if(/esports/i.test(`${type} ${item?.sport||''} ${item?.details?.league||''}`))return false;
+  if(type.startsWith('basketball_'))return ['NBA','WNBA','NCAAB','NCAAW'].includes(item.sport||sportName(item));
+  if(type.startsWith('golf_'))return ['pga','lpga','euro'].includes(item.tour||item.details?.tour);
+  return true;
+}
 
 export async function mapBatches(items,limit,task){
   const results=new Array(items.length);let next=0;
@@ -14,9 +22,8 @@ export async function mapBatches(items,limit,task){
 
 export const internationalBasketball=game=>/basketball/.test(String(game?.type||''))&&
   !['NBA','WNBA','NCAAB','NCAAW'].includes(game?.sport);
-export function eligibleForMarkets(game){return game?.verifiedLive && game.scoreKnown && !internationalBasketball(game) &&
-  (supportedType(game.type)||game.type==='cricket_match'&&(cricketOneInningsFormat(game.competition)||game.cricket?.innings===4)||
-    game.type==='esports_match'&&['eSoccer','eBasketball'].includes(game.sport)&&game.esportsPeriodsValid)}
+export function eligibleForMarkets(game){return game?.verifiedLive && game.scoreKnown && supportedScannerSport(game) &&
+  (game.type!=='cricket_match'||cricketOneInningsFormat(game.competition)||game.cricket?.innings===4)}
 
 export async function discoverCurrentMilestones(get,now=Date.now(),lookbackMs=7*86400000){
   const cutoff=now+3600000,min=new Date(now-lookbackMs).toISOString();
@@ -25,13 +32,13 @@ export async function discoverCurrentMilestones(get,now=Date.now(),lookbackMs=7*
     return /^(?:final|finished|completed|closed|ended|event closed|match complete)(?:\b|$)/.test(status)&&
       Date.parse(m.start_date||'')<now-2*3600000;
   };
-  const categories=await Promise.all(['Sports','Esports'].map(async category=>{
+  const categories=await Promise.all(['Sports'].map(async category=>{
     const found=[],seen=new Set();let cursor='';
     for(;;){
       const query=new URLSearchParams({category,limit:'500',minimum_start_date:min});
       if(cursor)query.set('cursor',cursor);
       const response=await get('/milestones?'+query),page=response.milestones||[];
-      found.push(...page.filter(m=>m.id&&!finished(m)&&Date.parse(m.start_date||'')<cutoff&&
+      found.push(...page.filter(m=>m.id&&supportedScannerSport(m)&&!finished(m)&&Date.parse(m.start_date||'')<cutoff&&
         (!m.end_date||Date.parse(m.end_date)>now-36*3600000||
           /^(?:live|inprogress|in_progress|playing)$/.test(String(m.details?.status||'').toLowerCase()))));
       // Kalshi lists milestones in start-date order. The next page of an
@@ -51,7 +58,7 @@ export async function refreshDiscovery(get,previous,now=Date.now()){
   const found=await discoverCurrentMilestones(get,now,full?7*86400000:8*3600000);
   // Keep long-running events and refresh their scores independently. The
   // periodic full pass also finds late-published or rescheduled older games.
-  const retained=full?[]:previous.milestones.filter(m=>Date.parse(m.start_date||'')<now-8*3600000);
+  const retained=full?[]:previous.milestones.filter(m=>supportedScannerSport(m)&&Date.parse(m.start_date||'')<now-8*3600000);
   return {milestones:[...new Map([...retained,...found].map(m=>[m.id,m])).values()],
     full_discovered_at:full?new Date(now).toISOString():previous.full_discovered_at};
 }
@@ -64,8 +71,8 @@ export async function refreshDiscovery(get,previous,now=Date.now()){
 export function scanMilestones(milestones,recentLiveIds=new Set(),now=Date.now()){
   return milestones.filter(m=>{
     const started=Date.parse(m.start_date||'');
-    return recentLiveIds.has(m.id)||
-      /golf|cricket/.test(String(m.type||''))||!Number.isFinite(started)||started>=now-8*3600000;
+    return supportedScannerSport(m)&&(recentLiveIds.has(m.id)||
+      /golf|cricket/.test(String(m.type||''))||!Number.isFinite(started)||started>=now-8*3600000);
   });
 }
 
