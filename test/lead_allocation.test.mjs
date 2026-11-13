@@ -167,18 +167,18 @@ test('NBA under-1:45 entries retain the fifteen percent closeout cap',()=>{
   assert.equal(directLeadFraction({...college,homeUnits:20},lead),.15);
   assert.equal(directLeadFraction({...college,remainingSeconds:105},lead),.15);
 });
-test('timed independent checks unlock 20% for uncushioned overs and preserve 40% cushions',()=>{
+test('elapsed proofs cannot unlock uncushioned overs; independent cushions retain 40%',()=>{
   const now=Date.now(),market={ticker:'OVER',event_ticker:'KXNBATOTAL-TEST',status:'active',
     title:'Over 139.5 total points',rules_primary:'Combined total points scored in the full game',
     floor_strike:139.5,strike_type:'greater'};
   const state={id:'game',feedId:'game',verifiedLive:true,scoreKnown:true,scoreConsistent:true,
     periodConsistent:true,type:'basketball_game',sport:'NBA',home:71,away:70,observedAt:now,
     updatedAt:now-1000,verificationId:'verified'};
-  rememberIndependentEntry(state,market,'verified',now);
+  rememberIndependentEntry(state,market,'verified',now,145);
   const proof={contractKey:overContractKey(state,market),initialAt:now-220000,
     firstExternalAt:now-200000,firstExternalId:'one',pairedAt:now,pairedExternalId:'two',route:'elapsed'};
-  assert.equal(verifiedOverFraction({strategy:'over',fraction:.10},{...state,overVerification:proof},market),.20);
-  assert.equal(verifiedOverFraction({strategy:'over',fraction:.40},{...state,overVerification:proof},market),.40);
+  assert.equal(verifiedOverFraction({strategy:'over',fraction:.10},{...state,overVerification:proof},market),.10);
+  assert.equal(verifiedOverFraction({strategy:'over',fraction:.40},{...state,overVerification:proof},market),.15);
   assert.equal(verifiedOverFraction({strategy:'over',fraction:.40},state,market),.15);
   const cushioned={...state,home:75,overVerification:{route:'seller_cushion',contractKey:overContractKey(state,market),sellerAt:now}};
   assert.equal(verifiedOverFraction({strategy:'over',fraction:.15},cushioned,market),.40);

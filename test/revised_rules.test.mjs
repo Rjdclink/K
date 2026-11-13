@@ -30,7 +30,7 @@ test('football uses inclusive score/time cutoffs and ignores possession',()=>{
 
 test('basketball tiers include the stated lead and exclude the exact time boundary',()=>{
  const categories=[['NBA',4,[[16,270],[7,105]]],['WNBA',4,[[11,360],[7,105]]],
-   ['NCAAB',2,[[18,270],[12,105]]],['NCAAW',4,[[18,270],[12,105]]],
+   ['NCAAB',2,[[18,270],[14,105]]],['NCAAW',4,[[18,270],[14,105]]],
    ...['China CBA','Italy Serie A','LNB Elite','Japan B League'].map(s=>[s,4,[[16,300],[10,270]]])];
  for(const [league,period,tiers] of categories)for(const [points,seconds] of tiers){
    const entrySeconds=Math.min(seconds,270);
@@ -45,14 +45,16 @@ test('basketball tiers include the stated lead and exclude the exact time bounda
    assert.ok(signal('basketball_game',league,margin,period,269),`${league} under 4:30`);
  }
  for(const league of ['NBA','WNBA','NCAAB','NCAAW','China CBA','Italy Serie A']){
-   const period=league==='NCAAB'?2:4,minimum=['NBA','WNBA'].includes(league)?7:['NCAAB','NCAAW'].includes(league)?12:10;
+   const period=league==='NCAAB'?2:4,minimum=['NBA','WNBA'].includes(league)?7:['NCAAB','NCAAW'].includes(league)?14:10;
    assert.ok(signal('basketball_game',league,minimum,period,104),`${league} under 1:45`);
    assert.equal(Boolean(signal('basketball_game',league,minimum-1,period,104)),!['NBA','WNBA','NCAAB','NCAAW'].includes(league));
    if(league==='NBA'||league==='WNBA')assert.equal(signal('basketball_game',league,minimum,period,105),null);
  }
  assert.equal(signal('basketball_game','NCAAW',12,4,268),null,'Jacksonville +12 at 4:28 is excluded');
  assert.equal(signal('basketball_game','NCAAW',12,4,105),null,'the new boundary is strict');
- assert.ok(signal('basketball_game','NCAAW',12,4,104),'the +12 entry opens under 1:45');
+ assert.equal(signal('basketball_game','NCAAW',12,4,104),null,'the former +12 entry is disabled');
+ assert.equal(signal('basketball_game','NCAAW',13,4,104),null);
+ assert.ok(signal('basketball_game','NCAAW',14,4,104),'the +14 entry opens under 1:45');
  assert.equal(signal('basketball_game','NCAAW',7,4,104),null,'the former +7 closeout cannot bypass +12');
  assert.ok(signal('basketball_game','NCAAW',18,4,268),'the stronger early tier remains');
  assert.equal(signal('basketball_game','NBA',12,4,268),null,'the former NBA +12 route is removed');
@@ -247,12 +249,13 @@ test('active crossed-prop games join the urgent scan instead of the rotating ear
 });
 
 
-test('a soccer over uses one recorded Kalshi score without an extra-goal cushion',()=>{
+test('a soccer over requires an extra-goal cushion even on the single-read route',()=>{
  const m={id:'mumbai',type:'soccer_match',title:'Mumbai vs SC Delhi'};
  const raw={milestone_id:m.id,_observed_at:new Date(now).toISOString(),details:{status:'live',home_score:2,away_score:3,period:2,half:'2nd',time:"96'"}};
  const state=gameState(m,raw);
  const market={ticker:'KXSOCCERTOTAL-MUMDEL-5',event_ticker:'KXSOCCERTOTAL-MUMDEL',status:'active',title:'Will over 4.5 goals be scored?',rules_primary:'Combined total goals scored after 90 minutes plus stoppage time.',floor_strike:4.5,strike_type:'greater',yes_ask_dollars:'.99'};
- assert.equal(soccerSingleReadOver(state,market,state.observedAt+29999)?.fraction,.15);
+ assert.equal(soccerSingleReadOver(state,market,state.observedAt+29999),null);
+ assert.equal(soccerSingleReadOver({...state,home:3,homeUnits:3},market,state.observedAt+29999)?.fraction,.40);
  assert.equal(soccerSingleReadOver(state,market,state.observedAt+30001),null);
  assert.equal(soccerSingleReadOver({...state,home:1,homeUnits:1},market,now),null);
  assert.equal(soccerSingleReadOver({...state,feedId:'other'},market,now),null);
@@ -276,10 +279,11 @@ test('commanding leads qualify on one recent Kalshi observation without an exter
  }
 });
 
-test('non-player overs do not require an extra scoring cushion; player overs still require independent verification',()=>{
+test('non-player overs require a scoring cushion; player overs retain independent verification',()=>{
  const {state}=team('basketball_game','NBA',3,4,60);
  const total={event_ticker:'KXNBATOTAL-TEST',status:'active',title:'Over 42.5 total points',rules_primary:'Combined total points scored',floor_strike:42.5,strike_type:'greater',yes_ask_dollars:'.99'};
- assert.equal(singleReadOverSignal(state,total,now)?.fraction,.15);
+ assert.equal(singleReadOverSignal(state,total,now),null);
+ assert.equal(singleReadOverSignal({...state,home:state.home+4},total,now)?.fraction,.40);
  const player={event_ticker:'KXNBASTL-TEST',status:'active',title:'Pat Player: 2+ steals',floor_strike:1.5,custom_strike:{basketball_player:'pat'},yes_ask_dollars:'.95'};
  const credited={...state,remainingSeconds:600,playerStats:{pat:{steals:4}}};
  assert.ok(overSignal(credited,player));
@@ -291,7 +295,8 @@ test('college women use the fourth quarter rather than a second-half period numb
  assert.equal(signal('basketball_game','NCAAW',18,2,269),null);
  assert.ok(signal('basketball_game','NCAAW',18,4,269));
  assert.equal(signal('basketball_game','NCAAW',12,4,105),null);
- assert.ok(signal('basketball_game','NCAAW',12,4,104));
+ assert.equal(signal('basketball_game','NCAAW',12,4,104),null);
+ assert.ok(signal('basketball_game','NCAAW',14,4,104));
 });
 
 test('hockey uses inclusive three-goal 6:45 and two-goal 3:45 windows across leagues',()=>{

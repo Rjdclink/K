@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {discoverCurrentMilestones,scanMilestones,nearEntryPhase,prioritizeMarketGames,eligibleForMarkets,linkedEventTickers,playerPropEntryClosed,entryEventTickers,winnerEventTickers,readyOverTickets,prioritizeReadyOverTickets,gameTimeLabel,storedClockSeconds,mapBatches} from '../src/discovery.mjs';
+import {discoverCurrentMilestones,supportedScannerSport,refreshDiscovery,scanMilestones,nearEntryPhase,prioritizeMarketGames,eligibleForMarkets,linkedEventTickers,playerPropEntryClosed,entryEventTickers,winnerEventTickers,readyOverTickets,prioritizeReadyOverTickets,gameTimeLabel,storedClockSeconds,mapBatches} from '../src/discovery.mjs';
 import {gameState,overSignal,sportName} from '../src/strategy.mjs';
 
 test('bounded parallel live batches cover every milestone without losing result order',async()=>{
@@ -44,23 +44,23 @@ test('fast over queue retains active seller-backed windows despite a changed das
   assert.deepEqual(readyOverTickets(rows,12,new Set(['ACTIVE','NOASK'])).map(t=>t.signal.ticker),['ACTIVE']);
 });
 
-test('sports discovery traverses pages and includes esports and older live tournaments',async()=>{
+test('sports discovery traverses pages and excludes esports and retains supported older live tournaments',async()=>{
   const now=Date.parse('2026-10-30T13:00:00Z'),at=days=>new Date(now+days*86400000).toISOString();
   const requests=[];
   const get=async path=>{
     const query=new URL(path,'https://kalshi.test').searchParams,category=query.get('category'),cursor=query.get('cursor');
     requests.push([category,cursor,query.get('minimum_start_date')]);
-    if(category==='Sports'&&!cursor)return {milestones:[{id:'old-golf',start_date:at(-5),end_date:at(1)},
+    if(category==='Sports'&&!cursor)return {milestones:[{id:'old-golf',type:'golf_tournament',details:{tour:'pga'},start_date:at(-5),end_date:at(1)},
       {id:'finished',start_date:at(-2),end_date:at(-2)},
       {id:'completed-with-future-end',start_date:at(-2),end_date:at(1),details:{status:'completed'}}],cursor:'next'};
     if(category==='Sports'&&cursor==='future')return {milestones:[{id:'later',start_date:at(3)}],cursor:'unused'};
-    if(category==='Sports')return {milestones:[{id:'live-baseball',start_date:at(-.1)},
+    if(category==='Sports')return {milestones:[{id:'live-baseball',type:'baseball_game',start_date:at(-.1)},
       {id:'upcoming',start_date:at(2)}],cursor:'future'};
     return {milestones:[{id:'live-esports',start_date:at(-.1)}],cursor:''};
   };
   const games=await discoverCurrentMilestones(get,now);
-  assert.deepEqual(games.map(m=>m.id),['old-golf','live-baseball','live-esports']);
-  assert.deepEqual(requests.map(([category,cursor])=>[category,cursor]).sort(),[['Sports',null],['Sports','next'],['Sports','future'],['Esports',null]].sort());
+  assert.deepEqual(games.map(m=>m.id),['old-golf','live-baseball']);
+  assert.deepEqual(requests.map(([category,cursor])=>[category,cursor]).sort(),[['Sports',null],['Sports','next'],['Sports','future']].sort());
   assert.ok(requests.every(([, ,min])=>min===at(-7)));
 });
 
@@ -73,7 +73,7 @@ test('live scan omits old inactive milestones while retaining active and long-ru
     {id:'long-live',type:'baseball_game',start_date:at(-12),details:{status:'scheduled'}},
     {id:'old-live-flag',type:'football_game',start_date:at(-50),details:{status:'live'}},
     {id:'previously-live',type:'soccer_game',start_date:at(-48),details:{status:'scheduled'}},
-    {id:'golf',type:'golf_tournament',start_date:at(-96),details:{status:'scheduled'}},
+    {id:'golf',type:'golf_tournament',start_date:at(-96),details:{status:'scheduled',tour:'pga'}},
     {id:'cricket',type:'cricket_match',start_date:at(-96),details:{status:'scheduled'}}
   ];
   assert.deepEqual(scanMilestones(games,new Set(['previously-live','long-live']),now).map(m=>m.id),
@@ -257,8 +257,30 @@ test('darts overall scores and esports phase display without an invented clock',
   assert.equal(eligibleForMarkets(darts),true);
   const esports=gameState({id:'esports',type:'esports_match',title:'Fede vs Eder',details:{league:'eSoccer'}},{details:{status:'live',home_score:3,away_score:3,period_unit:'half',home_periods:{period_1:3,period_2:0},away_periods:{period_1:2,period_2:1}}});
   assert.equal(gameTimeLabel(esports),'Half 2 · score periods verified');
-  assert.equal(esports.scoreKnown,true);assert.equal(eligibleForMarkets(esports),true);
+  assert.equal(esports.scoreKnown,true);assert.equal(eligibleForMarkets(esports),false);
   const bad=gameState({id:'bad',type:'esports_match',details:{league:'eSoccer'}},{details:{status:'live',home_score:4,away_score:3,period_unit:'half',home_periods:{period_1:3,period_2:0},away_periods:{period_1:2,period_2:1}}});
   assert.equal(eligibleForMarkets(bad),false);
 });
 
+
+
+test('unsupported sports and esports stay excluded even in retained caches and recent-live watches',async()=>{
+ const now=Date.now(),at=new Date(now-3600000).toISOString();
+ const excluded=['esports_match','boxing_match','mma_match','motor_sport_race','water_polo_match','unknown_match']
+  .map(type=>({id:type,type,start_date:at,details:{league:'eSoccer'}}));
+ excluded.push({id:'foreign',type:'basketball_game',start_date:at,details:{league:'Japan B League'}});
+ excluded.push({id:'unsupported-golf',type:'golf_tournament',start_date:at,details:{tour:'unknown'}});
+ const supported=['baseball_game','football_game','hockey_match','soccer_match','tennis_tournament_singles',
+  'tennis_tournament_doubles','table_tennis_match','handball_match','rugby_match','lacrosse_match','volleyball_match','darts_match','cricket_match']
+  .map(type=>({id:type,type,start_date:at}));
+ supported.push({id:'college',type:'basketball_game',start_date:at,details:{league:'NCAAWB'}});
+ supported.push({id:'golf',type:'golf_tournament',start_date:at,details:{tour:'pga'}});
+ for(const m of excluded)assert.equal(supportedScannerSport(m),false,m.type);
+ for(const m of supported)assert.equal(supportedScannerSport(m),true,m.type);
+ const all=[...excluded,...supported],recent=new Set(all.map(m=>m.id));
+ assert.deepEqual(scanMilestones(all,recent,now).map(m=>m.id),supported.map(m=>m.id));
+ const old=all.map(m=>({...m,start_date:new Date(now-12*3600000).toISOString()}));
+ const refreshed=await refreshDiscovery(async()=>({milestones:[]}),{milestones:old,
+  full_discovered_at:new Date(now-60000).toISOString()},now);
+ assert.deepEqual(refreshed.milestones.map(m=>m.id),supported.map(m=>m.id));
+});

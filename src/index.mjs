@@ -23,7 +23,7 @@ import { manifest, worker } from './pwa.mjs';
 import { vapidIdentity, validateSubscription, deliverPush } from './push.mjs';
 import { favorableSettlement } from './settlements.mjs';
 import { authorized, checkCredentials, sessionCookie, loginPage } from './dashboard_auth.mjs';
-import { refreshDiscovery, scanMilestones, eligibleForMarkets, internationalBasketball, prioritizeMarketGames, linkedEventTickers, playerPropEntryClosed, entryEventTickers, winnerEventTickers, readyOverTickets, prioritizeReadyOverTickets, gameTimeLabel, storedClockSeconds, mapBatches } from './discovery.mjs';
+import { refreshDiscovery, scanMilestones, supportedScannerSport, eligibleForMarkets, internationalBasketball, prioritizeMarketGames, linkedEventTickers, playerPropEntryClosed, entryEventTickers, winnerEventTickers, readyOverTickets, prioritizeReadyOverTickets, gameTimeLabel, storedClockSeconds, mapBatches } from './discovery.mjs';
 import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOverDecision, verifySportradarOver, verifyIndependentTableTennisLeadDecision, verifyIndependentTableTennisMatch } from './score_verification.mjs';
 import { verificationStatus, completedOverWait, verificationWindowStatus } from './verification_status.mjs';
@@ -218,16 +218,22 @@ function upgradeTables(){return upgradesReady??=Promise.all([
 ]).catch(e=>{upgradesReady=null;throw e})}
 async function auditedOver(game,milestone,options={}){
   delete game.independentEntry;
+  const signal=options.market&&overSignal(game,options.market);
+  if(signal){
+    const cushion=overCushion(game,options.market);
+    if(cushion===null)return false;
+    if(!playerOverSpec(game,options.market))options={...options,
+      minimumOverValue:Math.max(options.minimumOverValue??0,Math.floor(signal.strike+cushion)+1)};
+  }
   const requestedAt=Date.now();
   const observations=[],externalValues=[];
   const onOverValue=value=>{if(Number.isInteger(value)&&value>=0)externalValues.push(value)};
   const fetcher=async(url,opts)=>{
-    const at=new Date().toISOString(),key='raw:'+url,cached=options.cache?.get(key);
-    const task=cached&&Date.now()-cached.at<2000?cached.value:(async()=>{
-      const r=await fetch(url,opts),raw=await r.text();let data;try{data=JSON.parse(raw)}catch{data=raw}
+    const at=new Date().toISOString();
+    const task=(async()=>{
+      const r=await fetch(url,{...opts,cache:'no-store'}),raw=await r.text();let data;try{data=JSON.parse(raw)}catch{data=raw}
       return {ok:r.ok,status:r.status,headers:r.headers,data,raw,requested_at:at,received_at:new Date().toISOString()};
     })();
-    if(!cached||Date.now()-cached.at>=2000)options.cache?.set(key,{at:Date.now(),value:task});
     try{const r=await task;observations.push({source:url.includes('espn.com')?'ESPN':url.includes('api.sportradar.com')?'Sportradar':url.includes('sofascore.com')?'Sofascore':url.includes('cdn.nba.com')?'NBA':url.includes('cbssports.com')?'CBS':url.includes('yahoo.com')?'Yahoo':'FOX',url,requested_at:r.requested_at,received_at:r.received_at,status:r.status,data:r.data});return {ok:r.ok,status:r.status,headers:r.headers,json:async()=>r.data,text:async()=>r.raw}}
     catch(e){observations.push({url,requested_at:at,error:String(e.message)});throw e}
   };
@@ -235,11 +241,16 @@ async function auditedOver(game,milestone,options={}){
   const decision=game.golf?options.event?(await verifyGolfDecision(game,milestone,options.event,fetcher)??await verifySportradarGolf(game,milestone,options.event,{fetcher})):null:
     game.tableTennis?(await verifySportradarOver(game,milestone,{...options,fetcher})??await verifyIndependentTableTennisLeadDecision(game,milestone,{fetcher})):
     await verifyIndependentOverDecision(game,milestone,{...options,cache:undefined,fetcher,onOverValue});
-  const passed=decision===true;
+  const completedAt=Date.now();
+  const requested=observations.some(o=>o.status>=200&&o.status<300&&
+    Date.parse(o.requested_at)>=requestedAt&&Date.parse(o.received_at)>=Date.parse(o.requested_at)&&
+    Date.parse(o.received_at)<=completedAt);
+  const passed=decision===true&&requested;
+  if(decision===true&&!requested)game.verificationIssue='No fresh external response recorded; entry blocked';
   await auditTable();const id=randomUUID();
-  await pool.query('INSERT INTO verification_records(id,market_ticker,passed,evidence) VALUES($1,$2,$3,$4)',[id,options.market?.ticker||'',passed,JSON.stringify({game,milestone,observations,firstObservation:options.firstObservation,externalOverValues:externalValues,minimumOverValue:options.minimumOverValue,independentUnavailable:decision===null})]);
+  await pool.query('INSERT INTO verification_records(id,market_ticker,passed,evidence) VALUES($1,$2,$3,$4)',[id,options.market?.ticker||'',passed,JSON.stringify({mode:'independent_external',externalVerified:passed,externalRequestedAt:requestedAt,externalCompletedAt:completedAt,game,milestone,observations,firstObservation:options.firstObservation,externalOverValues:externalValues,minimumOverValue:options.minimumOverValue,independentUnavailable:decision===null})]);
   if(passed){game.verificationId=id;rememberIndependentEntry(game,options.market,id,requestedAt,externalValues.length?Math.min(...externalValues):undefined)}
-  return options.allowUnavailable?decision:passed;
+  return options.allowUnavailable?(passed?true:decision===null?null:false):passed;
 }
 async function verifyCommandingLead(game,milestone,market,cache,event){
   if(basketballCloseoutEntry(game)){
@@ -308,11 +319,22 @@ async function pairedOverRead(first,milestone,market,decorate=state=>state){
 }
 async function confirmedIndependentOver(first,milestone,market,{decorate=state=>state}={}){
   await ensureOverWindows();
-  if(playerOverSpec(first,market)&&overCushion(first,market)===null){
+  if(overCushion(first,market)===null){
     await pool.query('DELETE FROM over_verification_windows WHERE market_ticker=$1 AND game_id=$2',[market.ticker,first.id]);
     return null;
   }
   const {rows:[prior]}=await pool.query('SELECT * FROM over_verification_windows WHERE market_ticker=$1',[market.ticker]);
+  if(prior?.first_external_id){
+    const proof=await pool.query(`SELECT 1 FROM verification_records WHERE id=$1 AND passed=true
+      AND evidence @> '{"externalVerified":true}'::jsonb
+      AND evidence->'externalRequestedAt'>=to_jsonb($2::bigint)
+      AND market_ticker=$3 AND evidence->'game'->>'id'=$4`,[prior.first_external_id,Number(prior.first_external_at),market.ticker,first.id]);
+    if(!proof.rowCount){
+      await pool.query(`UPDATE over_verification_windows SET first_external_at=NULL,first_external_id=NULL
+        WHERE market_ticker=$1 AND generation=$2`,[market.ticker,prior.generation]);
+      prior.first_external_at=null;prior.first_external_id=null;
+    }
+  }
   if(prior&&prior.game_id===first.id&&prior.contract_key===overContractKey(first,market)&&freshOverState(first,market)){
     const pending=overTiming(prior,first,market);
     if(['first_wait','final_wait'].includes(pending.stage)&&(playerOverSpec(first,market)||overCushion(first,market)===null)){
@@ -336,6 +358,7 @@ async function confirmedIndependentOver(first,milestone,market,{decorate=state=>
     await pool.query('DELETE FROM over_verification_windows WHERE market_ticker=$1',[market.ticker]);
     return null;
   }
+  if(overCushion(first,seller)===null)return null;
   const now=Date.now(),key=overContractKey(first,seller);
   if(overCushion(first,seller)!==null&&!playerOverSpec(first,seller)){
     const id=randomUUID(),proof={route:'seller_cushion',contractKey:key,sellerAt:now,cushionUnits:overCushion(first,seller)};
@@ -399,7 +422,7 @@ async function confirmedIndependentOver(first,milestone,market,{decorate=state=>
     route:finalTiming.route,cushionUnits:finalTiming.cushionUnits};
   const id=randomUUID();await auditTable();
   await pool.query('INSERT INTO verification_records(id,market_ticker,passed,evidence) VALUES($1,$2,true,$3)',
-    [id,seller.ticker,JSON.stringify({mode:'independent_timed_over',game:pair.state,initial:window.initial_state,timing:proof})]);
+    [id,seller.ticker,JSON.stringify({mode:'independent_timed_over',externalVerified:true,game:pair.state,initial:window.initial_state,timing:proof})]);
   pair.state.verificationId=id;pair.state.overVerification=proof;
   rememberIndependentEntry(pair.state,seller,id,pair.pairedAt,pair.overValue);
   // If another observer reset this crossing, its old timer cannot authorize entry.
@@ -545,12 +568,14 @@ async function verifiedPurchaseEntries(market,knownLegs=null,visited=new Set()){
   if(!attempt?.game_id)reject();
   const {rows:[saved]}=await pool.query('SELECT milestone FROM lead_watch_milestones WHERE game_id=$1',[attempt.game_id]);
   const milestone=saved?.milestone;if(!milestone||milestone.id!==attempt.game_id)reject();
+  if(!supportedScannerSport(milestone))reject();
   const raw=await liveMilestone(milestone.id);if(!raw)reject();raw._observed_at=new Date().toISOString();
   const game=gameState(milestone,raw);
   if(game.feedId!==milestone.id||!game.scoreKnown)reject();
   const signal=attempt.strategy==='over'?overSignal(game,market):leadSignal(game,market)||additionalLeadSignal(game,market)||
     cricketLeadSignal(game,market)||drawSignal(game,market)||earlyLeadSignal(game,market);
   if(!signal)reject();
+  if(attempt.strategy==='over'&&overCushion(game,market)===null)reject();
   const eventResponse=game.golf?await kalshi('/events/'+encodeURIComponent(market.event_ticker)+'?with_nested_markets=true'):null;
   const event=eventResponse?{...eventResponse.event,markets:eventResponse.markets||eventResponse.event?.markets}:undefined;
   if(await auditedOver(game,milestone,{market,event,allowUnavailable:true})!==true||!independentEntryValid(game,market))reject();
@@ -952,20 +977,20 @@ async function milestones(){
   await pool.query('ALTER TABLE sports_discovery_cache ADD COLUMN IF NOT EXISTS full_discovered_at timestamptz');
   const {rows:[cached]}=await pool.query(`SELECT milestones FROM sports_discovery_cache
     WHERE id=1 AND discovered_at>now()-interval '60 seconds'`);
-  if(cached)return cached.milestones;
+  if(cached)return cached.milestones.filter(supportedScannerSport);
   const client=await pool.connect();
   try{
     await client.query('BEGIN');
     const {rows:[claim]}=await client.query('SELECT pg_try_advisory_xact_lock(83027547) AS acquired');
     if(!claim.acquired){
       const {rows:[stale]}=await client.query('SELECT milestones FROM sports_discovery_cache WHERE id=1');
-      if(stale){await client.query('ROLLBACK');return stale.milestones}
+      if(stale){await client.query('ROLLBACK');return stale.milestones.filter(supportedScannerSport)}
       await client.query('SELECT pg_advisory_xact_lock(83027547)');
     }
     // A competing instance may have filled the cache before this claim.
     const {rows:[current]}=await client.query(`SELECT milestones FROM sports_discovery_cache
       WHERE id=1 AND discovered_at>now()-interval '60 seconds'`);
-    if(current){await client.query('COMMIT');return current.milestones}
+    if(current){await client.query('COMMIT');return current.milestones.filter(supportedScannerSport)}
     const {rows:[previous]}=await client.query('SELECT milestones,full_discovered_at FROM sports_discovery_cache WHERE id=1');
     const started=Date.now(),catalog=await refreshDiscovery(kalshi,previous),found=catalog.milestones;
     await client.query(`INSERT INTO sports_discovery_cache(id,milestones,discovered_at,full_discovered_at) VALUES(1,$1,clock_timestamp(),$2)
@@ -977,6 +1002,7 @@ async function milestones(){
   finally{client.release()}
 }
 async function liveBatch(ms){
+  ms=ms.filter(supportedScannerSport);
   const started=Date.now();
   const map=new Map(),groups=[];
   for(let i=0;i<ms.length;i+=20)groups.push(ms.slice(i,i+20));
@@ -1950,7 +1976,8 @@ async function watchCorrectedOvers(until){
           WHERE a.status='filled' AND (a.strategy='over' OR a.combo_legs IS NOT NULL)
           ORDER BY a.market_ticker,a.updated_at DESC`);
         rows=result.rows;
-        const overRows=rows.filter(row=>row.strategy==='over'&&row.game_status==='live'&&row.sport_family);
+        const overRows=rows.filter(row=>row.strategy==='over'&&row.game_status==='live'&&
+          supportedScannerSport({type:row.sport_family,sport:row.game_sport}));
         const quotes=await Promise.all(overRows.map(async row=>{
           try{return [row.market_ticker,(await kalshi('/markets/'+encodeURIComponent(row.market_ticker))).market]}
           catch{return [row.market_ticker,null]}
@@ -1959,7 +1986,7 @@ async function watchCorrectedOvers(until){
         nextRefresh=Date.now()+5000;
       }
       const singles=rows.filter(row=>row.strategy==='over'&&row.game_status==='live'&&
-        row.sport_family&&marketsByTicker.has(row.market_ticker));
+        supportedScannerSport({type:row.sport_family,sport:row.game_sport})&&marketsByTicker.has(row.market_ticker));
       const milestones=[...new Map(singles.map(row=>[row.game_id,{id:row.game_id,title:row.title,
         type:row.sport_family,details:{league:row.game_sport,home_team_id:row.home_team_id,away_team_id:row.away_team_id}}])).values()];
       if(milestones.length){
@@ -2003,7 +2030,7 @@ async function watchLeadWindows(until){
         WHERE w.updated_at>now()-interval '15 minutes' AND g.status='live'
           AND GREATEST(g.score_observed_at,g.scanned_at)>now()-interval '15 minutes'
         ORDER BY w.updated_at DESC LIMIT 100`);
-      const watching=rows.map(row=>row.milestone);
+      const watching=rows.map(row=>row.milestone).filter(supportedScannerSport);
       if(watching.length){
         const cached=new Map(rows.filter(row=>
           Date.now()-Date.parse(row.live_score?._observed_at||'')>=0&&
@@ -2124,7 +2151,7 @@ async function watchReadyOverTickets(until){
       const tickers=[...new Set(rows.flatMap(row=>(row.signals||[]).filter(s=>s.strategy==='over'&&s.ticker).map(s=>s.ticker)))];
       const {rows:windows}=tickers.length?await pool.query(`SELECT market_ticker,last_seen FROM over_verification_windows
         WHERE market_ticker=ANY($1::text[])`,[tickers]):{rows:[]};
-      const allTickets=readyOverTickets(rows,Infinity,new Set(windows.map(w=>w.market_ticker)));
+      const allTickets=readyOverTickets(rows.filter(row=>supportedScannerSport(row.milestone)),Infinity,new Set(windows.map(w=>w.market_ticker)));
       const tickets=prioritizeReadyOverTickets(allTickets,windows);
       for(const {milestone,signal:ticket} of tickets){
         if(Date.now()>=until)break;
@@ -3185,7 +3212,7 @@ async function state(){
     s.strategy==='over'&&Number(s.ask)>0&&Number(s.ask)<1&&Number(s.ask_size)>0).map(s=>s.ticker)))];
   if(awaiting.length){
     const {rows}=await pool.query(`SELECT DISTINCT ON (market_ticker) market_ticker,passed,created_at,evidence->>'mode' AS mode,
-      evidence->>'independentUnavailable' AS independent_unavailable,
+      evidence->>'independentUnavailable' AS independent_unavailable,evidence->>'externalVerified' AS external_verified,
       evidence->'game'->>'verificationIssue' AS verification_issue
       FROM verification_records WHERE market_ticker=ANY($1) AND created_at>now()-interval '5 minutes'
       ORDER BY market_ticker,created_at DESC`,[awaiting]);
@@ -3310,7 +3337,7 @@ async function settlementAlerts(since){
   return rows;
 }
 async function handleRequest(req){const url=new URL(req.url);
-  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),mentionsConfigured:Boolean(process.env.MENTION_OFFICIAL_SOURCES),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'full-game-no-score-20261108',verification:{primary:'ESPN',fallback:'Sportradar',espnRetries:0,sportradarConfigured:Boolean(process.env.SPORTRADAR_API_KEY)}});
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),mentionsConfigured:Boolean(process.env.MENTION_OFFICIAL_SOURCES),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'scanner-cushion-scope-20261113',verification:{primary:'ESPN',fallback:'Sportradar',espnRetries:0,sportradarConfigured:Boolean(process.env.SPORTRADAR_API_KEY)}});
   if(req.method==='GET'&&url.pathname==='/manifest.webmanifest')return response(manifest,'application/manifest+json');
   if(req.method==='GET'&&url.pathname==='/sw.js')return new Response(worker,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','service-worker-allowed':'/','x-content-type-options':'nosniff'}});
   if(req.method==='GET'&&/^\/icon-(192|512)\.png$/.test(url.pathname))return response(Buffer.from(icons[Number(url.pathname.match(/\d+/)[0])],'base64'),'image/png');

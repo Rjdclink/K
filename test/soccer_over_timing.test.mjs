@@ -25,46 +25,32 @@ const contracts=[market,
     title:'John Doe: 2+ goals',yes_sub_title:'John Doe: 2+',rules_primary:'John Doe goals',
     custom_strike:{soccer_player:'p1'}}];
 
-test('soccer game, team and period overs pair at 2:30; an uncushioned player cannot enter',()=>{
+test('soccer game, team, period and player overs cannot bypass the extra-goal cushion after any timer',()=>{
   for(const type of ['soccer_match','soccer_tournament_multi_leg'])for(const contract of contracts){
     const game=state(type);
     assert.ok(overSignal(game,contract),contract.ticker);
     assert.equal(overCushion(game,contract),null,contract.ticker);
-    if(contract.ticker==='PLAYER'){
-      assert.equal(overTiming(window,game,contract,start+150000).stage,'invalid');
-      continue;
-    }
-    assert.equal(overTiming({...window,first_external_at:null},game,contract,start+19999).stage,'first_wait');
-    assert.equal(overTiming({...window,first_external_at:null},game,contract,start+20000).stage,'first_external');
-    assert.deepEqual(overTiming(window,game,contract,start+149999),{stage:'final_wait',remainingMs:1,minimumMs:150000});
-    assert.equal(overTiming(window,game,contract,start+150000).stage,'paired');
-    assert.equal(overTiming(window,game,contract,start+150000).route,'elapsed');
+    for(const elapsed of [19999,20000,149999,150000,180000,600000])
+      assert.equal(overTiming(window,game,contract,start+elapsed).stage,'invalid');
+    const proof={contractKey:overContractKey(game,contract),initialAt:start,firstExternalAt:start+20000,
+      firstExternalId:'first',pairedAt:start+150000,pairedExternalId:'second',route:'elapsed'};
+    const verified={...game,verificationId:'aggregate',overVerification:proof};
+    rememberIndependentEntry(verified,contract,'aggregate',start+150000,overSignal(game,contract).scored);
+    assert.equal(timedOverEntryValid(verified,contract,start+150000),false);
   }
 });
-
-test('soccer dispatch proof enforces 2:30, distinct external reads, contract identity and freshness',()=>{
-  const proof={contractKey:overContractKey(state('soccer_match'),market),initialAt:start,
-    firstExternalAt:start+20000,firstExternalId:'first',pairedAt:start+150000,
-    pairedExternalId:'second',route:'elapsed'};
-  const game={...state('soccer_match'),verificationId:'aggregate',overVerification:proof};rememberIndependentEntry(game,market,'aggregate',start+150000);
-  assert.equal(timedOverEntryValid({...game,overVerification:{...proof,pairedAt:start+149999}},market,start+150000),false);
-  assert.equal(timedOverEntryValid(game,market,start+150000),true);
-  assert.equal(timedOverEntryValid({...game,overVerification:{...proof,pairedExternalId:'first'}},market,start+150000),false);
-  assert.equal(timedOverEntryValid({...game,overVerification:{...proof,firstExternalAt:start+19999}},market,start+150000),false);
-  assert.equal(timedOverEntryValid(game,{...market,floor_strike:3.5},start+150000),false);
-  assert.equal(timedOverEntryValid(game,market,start+160001),false);
-});
-
-test('other sport timers retain 3:00, including eSoccer; soccer scoring cushions remain immediate',()=>{
-  for(const type of ['basketball_game','football_game','hockey_match','baseball_game','tennis_tournament_singles','esports_match']){
-    const game={...state(type),sport:type==='esports_match'?'eSoccer':'Other'};
-    assert.equal(overTiming(window,game,market,start+150000).stage,'final_wait');
-    assert.equal(overTiming(window,game,market,start+180000).stage,'paired');
-  }
+test('soccer cushion requires the independent extra goal and a fresh exact-contract seller proof',()=>{
   const game={...state('soccer_match'),home:3};
+  assert.equal(overCushion(game,market),1);
   assert.equal(overTiming(window,game,market,start+20000).route,'cushion');
   const verified={...game,verificationId:'external',overVerification:{route:'seller_cushion',contractKey:overContractKey(game,market),sellerAt:start+150000}};
   assert.equal(timedOverEntryValid(verified,market,start+150000),false);
-  rememberIndependentEntry(verified,market,'external',start+150000);
+  for(const value of [undefined,3]){
+    rememberIndependentEntry(verified,market,'external',start+150000,value);
+    assert.equal(timedOverEntryValid(verified,market,start+150000),false);
+  }
+  rememberIndependentEntry(verified,market,'external',start+150000,4);
   assert.equal(timedOverEntryValid(verified,market,start+150000),true);
+  assert.equal(timedOverEntryValid(verified,{...market,floor_strike:3.5},start+150000),false);
+  assert.equal(timedOverEntryValid(verified,market,start+160001),false);
 });

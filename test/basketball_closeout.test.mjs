@@ -17,9 +17,9 @@ function fixture(league='NBA',margin=7,seconds=104,possession='away'){
     yes_sub_title:'Boston Celtics',custom_strike:{basketball_team:'home'},yes_ask_dollars:'.90',yes_ask_size_fp:'20'};
   return {game,market,milestone};
 }
-test('basketball closeout uses +7 NBA and international, +12 college, strictly under 1:45',()=>{
+test('basketball closeout uses +7 NBA and international, +14 college, strictly under 1:45',()=>{
   for(const league of ['NBA','NCAAB','NCAAW','Australia NBL','EuroLeague']){
-    const minimum=['NCAAB','NCAAW'].includes(league)?12:7;
+    const minimum=['NCAAB','NCAAW'].includes(league)?14:7;
     for(const possession of ['home','away',null]){
       const {game,market}=fixture(league,minimum,104,possession);
       assert.ok(leadSignal(game,market),league);
