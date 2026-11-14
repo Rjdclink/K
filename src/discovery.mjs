@@ -82,7 +82,7 @@ export function scanMilestones(milestones,recentLiveIds=new Set(),now=Date.now()
 export function nearEntryPhase(game){
   const type=String(game?.type||''),period=Number(game?.period),seconds=Number(game?.remainingSeconds);
   if(/football/.test(type))return game.sport==='CFB'?
-    cfbLeadApproaching(game)||[2,4].includes(period)&&seconds>=0&&seconds<=240:period>=4&&seconds>=0&&seconds<=480;
+    cfbLeadApproaching(game)||[2,4].includes(period)&&seconds>=0&&seconds<=420:period>=4&&seconds>=0&&seconds<=480;
   if(/basketball/.test(type)){
     const profile=basketballLeadProfile(game);
     return Boolean(profile)&&seconds>=0&&(

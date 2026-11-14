@@ -2559,7 +2559,7 @@ async function scanThirdQuarterNos(games,events){
 }
 async function scanCollegeTotalNos(games,events,sport){
   const basketball=sport==='basketball',qualifies=basketball?collegeBasketballTotalNo:collegeFootballTotalNo;
-  const prewindow=basketball?300:180,entry=basketball?240:120;
+  const prewindow=basketball?300:360,entry=basketball?240:300;
   const label=basketball?'College basketball':'CFB';
   const watching=games.filter(({state})=>(basketball?['NCAAB','NCAAW'].includes(state.sport):state.sport==='CFB')&&
     (basketball?state.period===(state.sport==='NCAAB'?1:2)||state.period===(state.sport==='NCAAB'?2:4):[2,4].includes(state.period))&&
@@ -3337,7 +3337,7 @@ async function settlementAlerts(since){
   return rows;
 }
 async function handleRequest(req){const url=new URL(req.url);
-  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),mentionsConfigured:Boolean(process.env.MENTION_OFFICIAL_SOURCES),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'scanner-cushion-scope-20261113',verification:{primary:'ESPN',fallback:'Sportradar',espnRetries:0,sportradarConfigured:Boolean(process.env.SPORTRADAR_API_KEY)}});
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),mentionsConfigured:Boolean(process.env.MENTION_OFFICIAL_SOURCES),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'college-total-no-20261114',verification:{primary:'ESPN',fallback:'Sportradar',espnRetries:0,sportradarConfigured:Boolean(process.env.SPORTRADAR_API_KEY)}});
   if(req.method==='GET'&&url.pathname==='/manifest.webmanifest')return response(manifest,'application/manifest+json');
   if(req.method==='GET'&&url.pathname==='/sw.js')return new Response(worker,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','service-worker-allowed':'/','x-content-type-options':'nosniff'}});
   if(req.method==='GET'&&/^\/icon-(192|512)\.png$/.test(url.pathname))return response(Buffer.from(icons[Number(url.pathname.match(/\d+/)[0])],'base64'),'image/png');
