@@ -46,6 +46,13 @@ function harness({home=70,away=70,seller=true,decisions=[],contract=market,playe
  });vm.runInContext(runtime,context);
  return {events,proofs,context,get window(){return window},get externalCount(){return externalCount},get kalshiCount(){return kalshiCount},run:async(ms)=>{if(ms!==undefined)time=start+ms;return context.confirmedIndependentOver({...state(time-1,home,away),playerStats},milestone,contract)},setTime:ms=>{time=start+ms},setScore:(h,a)=>{home=h;away=a},setSeller:v=>{seller=v},setFirstProof:v=>{firstProof=v}};
 }
+test('obsolete countdown windows are cleared when the immediate route is active',async()=>{
+ const h=harness({home:69,away:70});
+ await h.context.preflightNearOver(state(start,69,70),milestone,market);
+ assert.ok(h.window,'legacy preflight once stored a window');
+ await h.context.pruneOverWindows([{state:state(start,69,70)}]);
+ assert.equal(h.window,null,'countdown must not persist into dashboard state');
+});
 test('an uncushioned over cannot enter after any wait or create a verification window',async()=>{
  const h=harness();
  for(const ms of [0,19999,20000,150000,180000,600000])assert.equal(await h.run(ms),null);
@@ -66,7 +73,12 @@ test('a cushioned over needs independent external confirmation and expires at di
  assert.equal(verified.overVerification.route,'seller_cushion');assert.equal(verified.overVerification.cushionUnits,4);
  assert.equal(timedOverEntryValid(verified,market,start+3),true);
  assert.equal(timedOverEntryValid({...verified,home:70},market,start+3),false);
- assert.equal(timedOverEntryValid(verified,market,start+10001),false);
+ assert.equal(timedOverEntryValid(verified,market,start+10001),false,'stale Kalshi score still expires after 10 seconds');
+ const refreshed={...verified,...state(start+15000,75,70)};
+ assert.equal(timedOverEntryValid(refreshed,market,start+15000),true,'30-second proof can be used with freshly refreshed Kalshi score');
+ const nearExpiry={...verified,...state(start+30000,75,70)};
+ assert.equal(timedOverEntryValid(nearExpiry,market,start+30000),true);
+ assert.equal(timedOverEntryValid({...verified,...state(start+30001,75,70)},market,start+30001),false);
  assert.equal(timedOverEntryValid(verified,{...market,floor_strike:138.5},start+3),false);
  for(const overValue of [undefined,140,143])assert.equal(timedOverEntryValid({...verified,
   independentEntry:{...verified.independentEntry,overValue}},market,start+3),false);
@@ -116,18 +128,25 @@ test('timing proof requires a cushion route, exact contract and two distinct ext
  assert.equal(timedOverEntryValid({...verified,home:70},market,start+220001),false);
 });
 
-test('player checks actually run at 20 seconds and 1:50; an unproven saved first check is repeated',async()=>{
+test('cushioned countable player overs verify immediately with an executable seller',async()=>{
  const contract={...market,ticker:'STEAL',event_ticker:'KXNBASTL-TEST',title:'Pat Player: 1+ steals',
   yes_sub_title:'Pat Player: 1+',floor_strike:.5,custom_strike:{basketball_player:'p'}};
- const make=()=>harness({contract,playerStats:{p:{steals:2}}});
- const h=make();assert.equal(await h.run(0),null);assert.equal(h.externalCount,0);
- assert.equal(await h.run(19999),null);assert.equal(h.externalCount,0);
- assert.equal(await h.run(20000),null);assert.equal(h.externalCount,1);
- assert.equal(await h.run(109999),null);assert.equal(h.externalCount,1);
- const verified=await h.run(110000);assert.ok(verified);assert.equal(h.externalCount,2);
- assert.equal(verified.overVerification.route,'cushion');assert.equal(h.kalshiCount,1);
- assert.equal(timedOverEntryValid(verified,contract,start+110003),true);
- const unproven=make();await unproven.run(0);await unproven.run(20000);unproven.setFirstProof(false);
- assert.equal(await unproven.run(50000),null);assert.equal(unproven.externalCount,2,'the first external check is really requested again');
- assert.equal(unproven.window.first_external_at,start+50000);
+ const h=harness({contract,playerStats:{p:{steals:2}}});
+ const verified=await h.run(0);
+ assert.ok(verified,'no artificial waiting period');
+ assert.equal(h.externalCount,1,'fresh independent evidence is mandatory');
+ assert.equal(h.kalshiCount,0,'no second Kalshi read is required merely to wait');
+ assert.equal(h.window,null,'no timer window is created');
+ assert.equal(verified.overVerification.route,'seller_cushion');
+ assert.equal(timedOverEntryValid(verified,contract,start+1),true);
+ const withoutSeller=harness({contract,playerStats:{p:{steals:2}},seller:false});
+ assert.equal(await withoutSeller.run(0),null);
+ assert.equal(withoutSeller.externalCount,0);
+ for(const decision of [false,null]){
+  const rejected=harness({contract,playerStats:{p:{steals:2}},decisions:[decision]});
+  assert.equal(await rejected.run(0),null,'disagreement or unavailability must block buying');
+ }
+ const uncushioned=harness({contract,playerStats:{p:{steals:1}}});
+ assert.equal(await uncushioned.run(0),null);
+ assert.equal(uncushioned.externalCount,0);
 });

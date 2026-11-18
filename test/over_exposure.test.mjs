@@ -33,29 +33,49 @@ test('four goals over 0.5 withstands three removals; three goals do not',()=>{
   assert.equal(externalOverMinimum(game,{...market,floor_strike:1.5,title:'Over 1.5 goals scored'}),null);
   const basketball={...game,type:'basketball_game',sport:'NBA',home:105,away:0,period:3,remainingSeconds:300};
   const points={...market,event_ticker:'KXNBATOTAL-X',floor_strike:100.5,title:'Over 100.5 total points',rules_primary:'Combined total points in the full game'};
-  assert.equal(externalOverMinimum(basketball,points),105,'the existing four-point correction allowance remains');
+  assert.equal(externalOverMinimum(basketball,points),null,'four-point base cushion alone never unlocks a double or triple allocation');
+  assert.equal(externalOverMinimum({...basketball,home:109},points,2),109,'double basketball cushion must remove eight points');
+  assert.equal(externalOverMinimum({...basketball,home:113},points,3),113,'triple basketball cushion must remove twelve points');
   assert.equal(externalOverMinimum({...basketball,home:104},points),null);
 });
-test('two removable goals unlock fifty percent; three removable goals unlock sixty percent',async()=>{
-  for(const [goals,fraction] of [[3,.50],[4,.60]]){
+test('double sport cushion unlocks forty-five percent; triple unlocks sixty percent immediately',async()=>{
+  for(const [goals,fraction] of [[3,.45],[4,.60]]){
     const {game,market}=fixture();game.home=goals;game.away=0;
     assert.equal(await proof(game,market,goals),true);
     assert.equal(verifiedOverFraction(overSignal(game,market),game,market),fraction);
     assert.doesNotThrow(()=>assertOverExposure(game,market,fraction,now));
-    if(fraction===.50)assert.throws(()=>assertOverExposure(game,market,.60,now));
+    if(fraction===.45)assert.throws(()=>assertOverExposure(game,market,.60,now));
   }
 });
 test('an external reading with two removable goals cannot authorize sixty percent',async()=>{
   const {game,market}=fixture();
   assert.equal(await proof(game,market,3),true);
-  assert.equal(verifiedOverFraction(overSignal(game,market),game,market),.50);
+  assert.equal(verifiedOverFraction(overSignal(game,market),game,market),.45);
+});
+test('NFL double and triple cushions scale the actual eight-point correction allowance, without a countdown',async()=>{
+  const {game,market}=fixture();
+  const quote={...market,event_ticker:'KXNFLTOTAL-X',title:'Over 41.5 total points',floor_strike:41.5,
+    rules_primary:'Combined total points scored in the full game'};
+  for(const [score,tier] of [[50,null],[57,null],[58,.45],[65,.45],[66,.60]]){
+    const g={...game,type:'football_game',sport:'NFL',home:score,away:0};
+    g.overVerification={route:'seller_cushion',contractKey:overContractKey(g,quote),sellerAt:now};
+    assert.equal(externalOverMinimum(g,quote,2),score>=58?58:null);
+    assert.equal(externalOverMinimum(g,quote,3),score>=66?66:null);
+    g.verificationId='fresh-external';
+    rememberIndependentEntry(g,quote,g.verificationId,now,score);
+    const valid=await verifyExternalOverExposure(g,quote,{now:()=>now});
+    assert.equal(valid,tier!==null, 'at '+score+' total points');
+    assert.equal(verifiedOverFraction(overSignal(g,quote),g,quote),tier??.40);
+    if(tier===.45)assert.throws(()=>assertOverExposure(g,quote,.60,now));
+    if(tier)assert.doesNotThrow(()=>assertOverExposure(g,quote,tier,now));
+  }
 });
 test('higher tiers require independently established cushion values; a basic passing record cannot authorize them',async()=>{
   for(const value of [undefined,0,1,2,3,4]){
     const {game,market}=fixture();
     assert.equal(verifiedOverFraction(overSignal(game,market),game,market),.40);
     assert.equal(await proof(game,market,value===undefined?NaN:value),value>=3);
-    assert.equal(verifiedOverFraction(overSignal(game,market),game,market),value>=4?.60:value>=3?.50:value>=2?.40:.15);
+    assert.equal(verifiedOverFraction(overSignal(game,market),game,market),value>=4?.60:value>=3?.45:value>=2?.40:.15);
   }
   const {game,market}=fixture();delete game.independentEntry;
   assert.equal(await verifyExternalOverExposure(game,market,{now:()=>now}),false,'an internal audit cannot serve as independent evidence');
@@ -68,10 +88,13 @@ test('enhanced dispatch rejects stale proofs, a changed contract, altered audit 
   for(const changed of [{...game,away:1},{...game,verificationId:'other'},
     {...game,externalOverProof:{...game.externalOverProof,requestedAt:now+1}}])
     assert.throws(()=>assertOverExposure(changed,market,.60,now),{code:'LOCAL_OVER_PROOF_EXPIRED'});
-  assert.throws(()=>assertOverExposure(game,market,.60,now+10001));
+  assert.throws(()=>assertOverExposure(game,market,.60,now+10001),'an old Kalshi observation still blocks even if external proof is within 30 seconds');
+  const refreshed={...game,observedAt:now+20000,updatedAt:now+20000};
+  assert.doesNotThrow(()=>assertOverExposure(refreshed,market,.60,now+20000),'30-second proof must support a fresh Kalshi observation');
+  assert.throws(()=>assertOverExposure({...refreshed,observedAt:now+30001,updatedAt:now+30001},market,.60,now+30001),'proof expires after 30 seconds');
   assert.throws(()=>assertOverExposure(game,{...market,rules_secondary:'Changed'},.60,now));
   assert.throws(()=>assertOverExposure(game,market,.61,now));
-  const late=fixture();rememberIndependentEntry(late.game,late.market,late.game.verificationId,now-10001,4);
+  const late=fixture();rememberIndependentEntry(late.game,late.market,late.game.verificationId,now-30001,4);
   assert.equal(await verifyExternalOverExposure(late.game,late.market,{now:()=>now}),false);
 });
 test('external totals must establish the entire cushion for the selected team or period',()=>{
@@ -123,6 +146,14 @@ test('existing player-prop caps and combinations are not raised by the new tier'
   assert.equal(await verifyExternalOverExposure(g,prop,{verify:async()=>{throw Error('must not request a player increase')}}),false);
   rememberIndependentEntry(g,prop,g.verificationId,now);
   assert.equal(verifiedOverFraction(overSignal(g,prop),g,prop),.10);
+});
+test('double-cushion 45% allocation honors existing holdings and fees',()=>{
+  const position={ticker:'OVER',position_fp:'40',market_exposure_dollars:'39',fees_paid_dollars:'1'};
+  assert.equal(remainingVerifiedOverCents(position,10000,.45),500);
+  assert.equal(remainingVerifiedOverCents({...position,market_exposure_dollars:'45'},10000,.45),0);
+  const fill={status:'filled',strategy:'over',market_ticker:'OVER',event_ticker:'E',game_id:'g'};
+  assert.equal(upgradeEligible(fill,position,{market:{ticker:'OVER'},event:{event_ticker:'E'},milestone:{id:'g'},signal:{strategy:'over',fraction:.45}}),true);
+  assert.equal(upgradeEligible(fill,position,{market:{ticker:'OVER'},event:{event_ticker:'E'},milestone:{id:'g'},signal:{strategy:'over',fraction:.50}}),false);
 });
 test('sixty percent subtracts held exposure and paid fees from the entire position budget',()=>{
   const position={ticker:'OVER',position_fp:'40',market_exposure_dollars:'39',fees_paid_dollars:'1'};
@@ -203,7 +234,7 @@ test('the production audit records the independently documented cushion and eras
   assert.equal(verifiedOverFraction(overSignal(game,market),game,market),.60);
   documented=3;assert.equal(await context.auditedOver(game,milestone,{market}),true);
   assert.equal(game.independentEntry.overValue,3);await verifyExternalOverExposure(game,market);
-  assert.equal(verifiedOverFraction(overSignal(game,market),game,market),.50);
+  assert.equal(verifiedOverFraction(overSignal(game,market),game,market),.45);
   goals=0;documented=0;assert.equal(await context.auditedOver(game,milestone,{market}),false);
   assert.equal(game.independentEntry,undefined);assert.throws(()=>assertOverExposure(game,market,.40));
   assert.equal(audits.at(-1)[2],false);

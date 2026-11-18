@@ -335,14 +335,6 @@ async function confirmedIndependentOver(first,milestone,market,{decorate=state=>
       prior.first_external_at=null;prior.first_external_id=null;
     }
   }
-  if(prior&&prior.game_id===first.id&&prior.contract_key===overContractKey(first,market)&&freshOverState(first,market)){
-    const pending=overTiming(prior,first,market);
-    if(['first_wait','final_wait'].includes(pending.stage)&&(playerOverSpec(first,market)||overCushion(first,market)===null)){
-      await pool.query('UPDATE over_verification_windows SET last_seen=GREATEST(last_seen,$3) WHERE market_ticker=$1 AND generation=$2',
-        [market.ticker,prior.generation,Date.now()]);
-      await overProgress(first,market,pending,prior.initial_at);return null;
-    }
-  }
   // An actual seller on the unchanged contract is required to start the clock.
   const current=(await kalshi('/markets/'+encodeURIComponent(market.ticker))).market;
   if(!current||overContractKey(first,current)!==overContractKey(first,market))return null;
@@ -360,7 +352,7 @@ async function confirmedIndependentOver(first,milestone,market,{decorate=state=>
   }
   if(overCushion(first,seller)===null)return null;
   const now=Date.now(),key=overContractKey(first,seller);
-  if(overCushion(first,seller)!==null&&!playerOverSpec(first,seller)){
+  if(overCushion(first,seller)!==null){
     const id=randomUUID(),proof={route:'seller_cushion',contractKey:key,sellerAt:now,cushionUnits:overCushion(first,seller)};
     await auditTable();await pool.query('INSERT INTO verification_records(id,market_ticker,passed,evidence) VALUES($1,$2,false,$3)',
       [id,seller.ticker,JSON.stringify({mode:'seller_backed_cushioned_over_preflight',game:first,timing:proof})]);
@@ -482,13 +474,9 @@ async function resetLostOverWindow(game,market){
 }
 async function pruneOverWindows(games){
   await ensureOverWindows();
-  const states=new Map(games.map(g=>[g.state.id,g.state]));
-  const {rows}=await pool.query('SELECT market_ticker,game_id,contract,generation,initial_state FROM over_verification_windows WHERE game_id=ANY($1::text[])',[[...states.keys()]]);
-  for(const w of rows){const state=states.get(w.game_id);
-    if(freshOverObservation(state)&&!overSignal(state,w.contract)&&
-      (overSignal(w.initial_state,w.contract)||!overSignal(state,w.contract,{allowUncrossed:true})))
-      await pool.query('DELETE FROM over_verification_windows WHERE market_ticker=$1 AND generation=$2',[w.market_ticker,w.generation]);
-  }
+  // The cushioned route is immediate; retire any persisted countdown windows.
+  const gameIds=games.map(g=>g.state.id);
+  if(gameIds.length)await pool.query('DELETE FROM over_verification_windows WHERE game_id=ANY($1::text[])',[gameIds]);
 }
 async function auditSingleReadNbaLead(game,market,milestone){
   if(basketballCloseoutEntry(game))return Boolean(game.basketballVerification&&game.verificationId);
@@ -942,14 +930,14 @@ async function withEntryProfitFloor({ticker,count,price,fees,strategy,fraction,b
       const {rows:[lock]}=await client.query('SELECT pg_try_advisory_xact_lock(83027546) AS acquired');
       if(!lock.acquired){busy=true;await client.query('ROLLBACK')}
       else{
-        const positions=await allOpenPositions({strict:manual||strategy==='over'&&fraction>=.50});
+        const positions=await allOpenPositions({strict:manual||strategy==='over'&&fraction>=.45});
         if(manual){
           if(!positions.market_positions.some(p=>p.ticker===ticker&&Number(p.position_fp??p.position)>0)){await client.query('COMMIT');return null}
           const result=await send();await client.query('COMMIT');return result;
         }
         const pendingManual=await client.query("SELECT 1 FROM manual_combo_buys WHERE ticker=$1 AND status='pending' LIMIT 1",[ticker]);
         if(pendingManual.rowCount){await client.query('COMMIT');return null}
-        if(strategy==='over'&&fraction>=.50){
+        if(strategy==='over'&&fraction>=.45){
           const latestAccount=await accountBalance({fresh:true});
           const latestBankroll=Number(latestAccount.balance)+Number(latestAccount.portfolio_value);
           if(!Number.isFinite(latestBankroll)||latestBankroll<=0){await client.query('COMMIT');return null}
@@ -1221,7 +1209,7 @@ async function submit(signal,game,event,market,balance,bankroll,budgetCents=Infi
     // entire quantity at the limit price or no entry at all.
     const result=await withEntryProfitFloor({ticker:market.ticker,count,price,fees:feeReserve(event,market),strategy:signal.strategy,fraction:signal.fraction,bankroll,game,market},
       ()=>kalshi('/portfolio/events/orders',{method:'POST',auth:true,entryVerifications:[{game,market}],beforeDispatch:()=>{if(signal.strategy==='over')assertOverExposure(game,market,signal.fraction);if(signal.strategy==='lead')assertFreshLead(game,market)},body:{ticker:market.ticker,client_order_id:id,side:'bid',count:count.toFixed(2),price:price.toFixed(4),time_in_force:'fill_or_kill',self_trade_prevention_type:'taker_at_cross',post_only:false}}));
-    if(!result){await pool.query(`UPDATE trade_attempts SET status='unfilled',error=$2,updated_at=now() WHERE id=$1`,[id,signal.fraction>=.50?'Entry exceeds current position allocation or profit limit':'Below filled-order net profit floor']);return false}
+    if(!result){await pool.query(`UPDATE trade_attempts SET status='unfilled',error=$2,updated_at=now() WHERE id=$1`,[id,signal.fraction>=.45?'Entry exceeds current position allocation or profit limit':'Below filled-order net profit floor']);return false}
     const filled=Number(result.fill_count_fp??result.fill_count??result.order?.fill_count_fp??0);
     await pool.query(`UPDATE trade_attempts SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE id=$1`,[id,filled>0?'filled':'unfilled',result.order_id||result.order?.order_id||null,filled]);
     if(filled>0)await confirmedSingleFill(id,market.ticker);
@@ -1268,7 +1256,7 @@ async function recoverPending(signal,game,event,market,balance,bankroll,budgetCe
   }
   try{const result=await withEntryProfitFloor({ticker:row.market_ticker,count:Number(row.count),price:Number(row.limit_price),fees:feeReserve(event,market),strategy:signal.strategy,fraction:signal.fraction,bankroll,game,market},
     ()=>kalshi('/portfolio/events/orders',{method:'POST',auth:true,entryVerifications:[{game,market}],beforeDispatch:()=>{if(signal.strategy==='over')assertOverExposure(game,market,signal.fraction);if(signal.strategy==='lead')assertFreshLead(game,market)},body:{ticker:row.market_ticker,client_order_id:row.id,side:'bid',count:Number(row.count).toFixed(2),price:Number(row.limit_price).toFixed(4),time_in_force:'fill_or_kill',self_trade_prevention_type:'taker_at_cross',post_only:false}}));
-    if(!result){await pool.query(`UPDATE trade_attempts SET status='check_order',retries=0,error=$2,updated_at=now() WHERE id=$1`,[row.id,signal.fraction>=.50?'Entry exceeds current position allocation or profit limit':'Below filled-order net profit floor']);return false}
+    if(!result){await pool.query(`UPDATE trade_attempts SET status='check_order',retries=0,error=$2,updated_at=now() WHERE id=$1`,[row.id,signal.fraction>=.45?'Entry exceeds current position allocation or profit limit':'Below filled-order net profit floor']);return false}
     const filled=Number(result.fill_count_fp??result.fill_count??result.order?.fill_count_fp??result.order?.fill_count??0);await pool.query(`UPDATE trade_attempts SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE id=$1`,[row.id,filled>0?'filled':'unfilled',result.order_id||result.order?.order_id||null,filled]);if(filled>0)await confirmedSingleFill(row.id,row.market_ticker);return filled>0
   }catch(e){
     if(['LOCAL_OVER_PROOF_EXPIRED','LOCAL_LEAD_SCORE_EXPIRED'].includes(e.code))await pool.query(`UPDATE trade_attempts SET status='check_order',retries=0,error=$2,updated_at=now() WHERE id=$1`,[row.id,String(e.message)]);
@@ -1315,7 +1303,7 @@ async function upgradeHeldOver(c,preflight,original,scoreboardCache){
       first_verified_at=CASE WHEN fallback_verifications.original_id=EXCLUDED.original_id THEN fallback_verifications.first_verified_at ELSE now() END,verified_at=now()`,
   [current.ticker,original.id,state.verificationId]);
   verifiedSignal.fraction=verifiedOverFraction(verifiedSignal,state,current);
-  const enhanced=verifiedSignal.fraction>=.50,robust=verifiedSignal.fraction===.40;
+  const enhanced=verifiedSignal.fraction>=.45,robust=verifiedSignal.fraction===.40;
   const upgradeTable=verifiedSignal.fraction===.60?'external_cushion_upgrades':enhanced?'double_cushion_upgrades':robust?'robust_over_upgrades':'position_upgrades';
   const tierTables=['position_upgrades','robust_over_upgrades','double_cushion_upgrades','external_cushion_upgrades'];
   for(const otherTable of tierTables.filter(t=>t!==upgradeTable)){
@@ -2763,8 +2751,8 @@ async function scan(cachedMilestones,discoveryCount){
       nearby.sort((a,b)=>Number(a.market.yes_ask_dollars)-Number(b.market.yes_ask_dollars));
       if(nearby.length)nearOvers.push(nearby[0]);
     }
-    const nearOverJob=live()?Promise.all(nearOvers.slice(0,20).map(c=>preflightNearOver(c.state,c.milestone,c.market)
-      .catch(e=>console.warn('Early over verification deferred:',c.market.ticker,e.message)))):Promise.resolve();
+    // Pre-cross timers no longer authorize cushioned overs or need scheduling.
+    const nearOverJob=Promise.resolve();
     const propWindows=new Map();
     for(let i=0;i<crossingRows.length;i+=100){
       const batch=crossingRows.slice(i,i+100);

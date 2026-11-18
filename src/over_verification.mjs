@@ -10,6 +10,7 @@ export const OVER_CONFIRM_DELAY_MS=180000;
 export const OVER_SOCCER_CONFIRM_DELAY_MS=150000;
 export const PLAYER_CUSHION_CONFIRM_DELAY_MS=110000;
 export const OVER_FRESH_MS=10000;
+export const OVER_PROOF_MS=30000;
 export const overContractKey=sportsContractKey;
 export function freshOverObservation(game,now=Date.now()){
   return Boolean(game&&game.verifiedLive&&game.scoreKnown&&game.scoreConsistent&&game.feedId===game.id&&game.periodConsistent&&
@@ -49,13 +50,13 @@ export function timedOverEntryValid(game,market,now=Date.now()){
   const proof=game?.overVerification,player=playerOverSpec(game,market);
   const cushion=overCushion(game,market),signal=overSignal(game,market);
   if(cushion===null||!player&&!(game.independentEntry.overValue>=Math.floor(signal.strike+cushion)+1))return false;
-  if(player&&(overCushion(game,market)===null||proof?.route!=='cushion'))return false;
+  if(player&&!['cushion','seller_cushion'].includes(proof?.route))return false;
   if(proof?.route==='seller_cushion')return Boolean(game.verificationId&&proof.contractKey===overContractKey(game,market)&&
-    Number.isFinite(proof.sellerAt)&&now>=proof.sellerAt&&now-proof.sellerAt<=OVER_FRESH_MS&&
+    Number.isFinite(proof.sellerAt)&&now>=proof.sellerAt&&now-proof.sellerAt<=OVER_PROOF_MS&&
     freshOverState(game,market,now)&&overCushion(game,market)!==null);
   if(!proof||proof.route!=='cushion'||!game.verificationId||proof.contractKey!==overContractKey(game,market)||
     !freshOverState(game,market,now)||!Number.isFinite(proof.pairedAt)||proof.pairedAt>now||
-    now-proof.pairedAt>OVER_FRESH_MS||!proof.pairedExternalId||proof.pairedExternalId===proof.firstExternalId)return false;
+    now-proof.pairedAt>OVER_PROOF_MS||!proof.pairedExternalId||proof.pairedExternalId===proof.firstExternalId)return false;
   const timing=overTiming({initial_at:proof.initialAt,first_external_at:proof.firstExternalAt,
     first_external_id:proof.firstExternalId},game,market,proof.pairedAt);
   return timing.stage==='paired'&&proof.route===timing.route;
