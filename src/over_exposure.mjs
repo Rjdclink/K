@@ -1,5 +1,5 @@
 import {overSignal,overCushionUnits,playerOverSpec} from './strategy.mjs';
-import {overContractKey,timedOverEntryValid,assertTimedOverEntry,OVER_FRESH_MS} from './over_verification.mjs';
+import {overContractKey,timedOverEntryValid,assertTimedOverEntry,OVER_PROOF_MS} from './over_verification.mjs';
 export const EXTERNAL_OVER_MAX_FRACTION=.60;
 // Preserve a larger existing one-play allowance while requiring at least
 // two/three removable units of the exact selected statistic.
@@ -17,7 +17,7 @@ export function externalOverExposureValid(game,market,now=Date.now()){
     proof.contractKey===overContractKey(game,market)&&proof.minimumOverValue===minimum&&
     proof.verificationId===game.verificationId&&game.independentEntry.overValue>=minimum&&
     proof.requestedAt===game.independentEntry.requestedAt&&Number.isFinite(proof.requestedAt)&&
-    now>=proof.requestedAt&&now-proof.requestedAt<=OVER_FRESH_MS);
+    now>=proof.requestedAt&&now-proof.requestedAt<=OVER_PROOF_MS);
 }
 export async function verifyExternalOverExposure(game,market,{now=Date.now}={}){
   delete game.externalOverProof;
