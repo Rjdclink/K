@@ -68,7 +68,10 @@ test('enhanced dispatch rejects stale proofs, a changed contract, altered audit 
   for(const changed of [{...game,away:1},{...game,verificationId:'other'},
     {...game,externalOverProof:{...game.externalOverProof,requestedAt:now+1}}])
     assert.throws(()=>assertOverExposure(changed,market,.60,now),{code:'LOCAL_OVER_PROOF_EXPIRED'});
-  assert.throws(()=>assertOverExposure(game,market,.60,now+10001));
+  assert.throws(()=>assertOverExposure(game,market,.60,now+10001),'an old Kalshi observation still blocks even if external proof is within 30 seconds');
+  const refreshed={...game,observedAt:now+20000,updatedAt:now+20000};
+  assert.doesNotThrow(()=>assertOverExposure(refreshed,market,.60,now+20000),'30-second proof must support a fresh Kalshi observation');
+  assert.throws(()=>assertOverExposure({...refreshed,observedAt:now+30001,updatedAt:now+30001},market,.60,now+30001),'proof expires after 30 seconds');
   assert.throws(()=>assertOverExposure(game,{...market,rules_secondary:'Changed'},.60,now));
   assert.throws(()=>assertOverExposure(game,market,.61,now));
   const late=fixture();rememberIndependentEntry(late.game,late.market,late.game.verificationId,now-10001,4);
