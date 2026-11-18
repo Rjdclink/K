@@ -74,7 +74,7 @@ test('enhanced dispatch rejects stale proofs, a changed contract, altered audit 
   assert.throws(()=>assertOverExposure({...refreshed,observedAt:now+30001,updatedAt:now+30001},market,.60,now+30001),'proof expires after 30 seconds');
   assert.throws(()=>assertOverExposure(game,{...market,rules_secondary:'Changed'},.60,now));
   assert.throws(()=>assertOverExposure(game,market,.61,now));
-  const late=fixture();rememberIndependentEntry(late.game,late.market,late.game.verificationId,now-10001,4);
+  const late=fixture();rememberIndependentEntry(late.game,late.market,late.game.verificationId,now-30001,4);
   assert.equal(await verifyExternalOverExposure(late.game,late.market,{now:()=>now}),false);
 });
 test('external totals must establish the entire cushion for the selected team or period',()=>{
