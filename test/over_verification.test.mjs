@@ -46,6 +46,13 @@ function harness({home=70,away=70,seller=true,decisions=[],contract=market,playe
  });vm.runInContext(runtime,context);
  return {events,proofs,context,get window(){return window},get externalCount(){return externalCount},get kalshiCount(){return kalshiCount},run:async(ms)=>{if(ms!==undefined)time=start+ms;return context.confirmedIndependentOver({...state(time-1,home,away),playerStats},milestone,contract)},setTime:ms=>{time=start+ms},setScore:(h,a)=>{home=h;away=a},setSeller:v=>{seller=v},setFirstProof:v=>{firstProof=v}};
 }
+test('obsolete countdown windows are cleared when the immediate route is active',async()=>{
+ const h=harness({home:69,away:70});
+ await h.context.preflightNearOver(state(start,69,70),milestone,market);
+ assert.ok(h.window,'legacy preflight once stored a window');
+ await h.context.pruneOverWindows([{state:state(start,69,70)}]);
+ assert.equal(h.window,null,'countdown must not persist into dashboard state');
+});
 test('an uncushioned over cannot enter after any wait or create a verification window',async()=>{
  const h=harness();
  for(const ms of [0,19999,20000,150000,180000,600000])assert.equal(await h.run(ms),null);
