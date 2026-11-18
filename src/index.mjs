@@ -474,13 +474,9 @@ async function resetLostOverWindow(game,market){
 }
 async function pruneOverWindows(games){
   await ensureOverWindows();
-  const states=new Map(games.map(g=>[g.state.id,g.state]));
-  const {rows}=await pool.query('SELECT market_ticker,game_id,contract,generation,initial_state FROM over_verification_windows WHERE game_id=ANY($1::text[])',[[...states.keys()]]);
-  for(const w of rows){const state=states.get(w.game_id);
-    if(freshOverObservation(state)&&!overSignal(state,w.contract)&&
-      (overSignal(w.initial_state,w.contract)||!overSignal(state,w.contract,{allowUncrossed:true})))
-      await pool.query('DELETE FROM over_verification_windows WHERE market_ticker=$1 AND generation=$2',[w.market_ticker,w.generation]);
-  }
+  // The cushioned route is immediate; retire any persisted countdown windows.
+  const gameIds=games.map(g=>g.state.id);
+  if(gameIds.length)await pool.query('DELETE FROM over_verification_windows WHERE game_id=ANY($1::text[])',[gameIds]);
 }
 async function auditSingleReadNbaLead(game,market,milestone){
   if(basketballCloseoutEntry(game))return Boolean(game.basketballVerification&&game.verificationId);
@@ -2755,8 +2751,8 @@ async function scan(cachedMilestones,discoveryCount){
       nearby.sort((a,b)=>Number(a.market.yes_ask_dollars)-Number(b.market.yes_ask_dollars));
       if(nearby.length)nearOvers.push(nearby[0]);
     }
-    const nearOverJob=live()?Promise.all(nearOvers.slice(0,20).map(c=>preflightNearOver(c.state,c.milestone,c.market)
-      .catch(e=>console.warn('Early over verification deferred:',c.market.ticker,e.message)))):Promise.resolve();
+    // Pre-cross timers no longer authorize cushioned overs or need scheduling.
+    const nearOverJob=Promise.resolve();
     const propWindows=new Map();
     for(let i=0;i<crossingRows.length;i+=100){
       const batch=crossingRows.slice(i,i+100);
