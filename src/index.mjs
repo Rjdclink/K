@@ -335,14 +335,6 @@ async function confirmedIndependentOver(first,milestone,market,{decorate=state=>
       prior.first_external_at=null;prior.first_external_id=null;
     }
   }
-  if(prior&&prior.game_id===first.id&&prior.contract_key===overContractKey(first,market)&&freshOverState(first,market)){
-    const pending=overTiming(prior,first,market);
-    if(['first_wait','final_wait'].includes(pending.stage)&&(playerOverSpec(first,market)||overCushion(first,market)===null)){
-      await pool.query('UPDATE over_verification_windows SET last_seen=GREATEST(last_seen,$3) WHERE market_ticker=$1 AND generation=$2',
-        [market.ticker,prior.generation,Date.now()]);
-      await overProgress(first,market,pending,prior.initial_at);return null;
-    }
-  }
   // An actual seller on the unchanged contract is required to start the clock.
   const current=(await kalshi('/markets/'+encodeURIComponent(market.ticker))).market;
   if(!current||overContractKey(first,current)!==overContractKey(first,market))return null;
@@ -360,7 +352,7 @@ async function confirmedIndependentOver(first,milestone,market,{decorate=state=>
   }
   if(overCushion(first,seller)===null)return null;
   const now=Date.now(),key=overContractKey(first,seller);
-  if(overCushion(first,seller)!==null&&!playerOverSpec(first,seller)){
+  if(overCushion(first,seller)!==null){
     const id=randomUUID(),proof={route:'seller_cushion',contractKey:key,sellerAt:now,cushionUnits:overCushion(first,seller)};
     await auditTable();await pool.query('INSERT INTO verification_records(id,market_ticker,passed,evidence) VALUES($1,$2,false,$3)',
       [id,seller.ticker,JSON.stringify({mode:'seller_backed_cushioned_over_preflight',game:first,timing:proof})]);
