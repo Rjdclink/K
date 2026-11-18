@@ -1,0 +1,55 @@
+name: Temporary K five-pass verification
+on:
+  push:
+    branches:
+      - fix/immediate-cushioned-overs-proof-30s-20261118
+permissions:
+  contents: write
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: 'PASS 1 - focused edit correctness'
+        run: node --test test/over_verification.test.mjs test/over_exposure.test.mjs test/mandatory_verification.test.mjs test/nba_verification.test.mjs
+      - name: 'PASS 2 - syntax and build'
+        run: |
+          find src test -type f -name '*.mjs' -print0 | xargs -0 -n1 node --check
+          npm run package:neon
+          unzip -t neon-function.zip
+      - name: 'PASS 3 - full correctness and regression suite'
+        run: npm test
+      - name: 'PASS 4 - exact change-file scope'
+        run: |
+          git fetch origin main
+          git diff --check origin/main
+          git diff --name-only origin/main | tee /tmp/k-changed.txt
+          grep -Ev '^(src/index.mjs|src/over_verification.mjs|src/over_exposure.mjs|src/verification_status.mjs|src/ui.mjs|test/over_verification.test.mjs|test/over_exposure.test.mjs|README.md|.github/workflows/k-five-pass.yml)$' /tmp/k-changed.txt > /tmp/k-unexpected.txt || true
+          test ! -s /tmp/k-unexpected.txt
+      - name: 'PASS 5 - independent scope invariant checks'
+        run: |
+          git diff --quiet origin/main -- src/strategy.mjs src/entry_verification.mjs src/score_verification.mjs src/no_strategy.mjs src/lead_allocation.mjs src/combos.mjs src/positions.mjs src/discovery.mjs
+          grep -q 'if(/football/.test(type))return 8;' src/strategy.mjs
+          grep -q "BASKETBALL_COUNT_PROP_MAX_FRACTION=.10" src/strategy.mjs
+          grep -q "PLAYER_PROP_MAX_FRACTION=.25" src/strategy.mjs
+          grep -q "return.*OVER_FRESH_MS" src/over_verification.mjs || grep -q "OVER_FRESH_MS" src/over_verification.mjs
+          git diff --check origin/main
+          test -f neon-function.zip
+      - name: Export packaged ZIP for controlled Neon deployment
+        run: |
+          base64 -w0 neon-function.zip > .k-neon-deploy.zip.base64
+          echo "bundle_sha256=$(sha256sum neon-function.zip | cut -d' ' -f1)" >> "$GITHUB_STEP_SUMMARY"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .k-neon-deploy.zip.base64
+          git commit -m "ci: package verified Neon bundle [skip ci]"
+          git push origin HEAD:"$GITHUB_REF_NAME"
