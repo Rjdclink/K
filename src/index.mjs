@@ -2547,8 +2547,9 @@ async function scanThirdQuarterNos(games,events){
 }
 async function scanCollegeTotalNos(games,events,sport){
   const basketball=sport==='basketball',qualifies=basketball?collegeBasketballTotalNo:collegeFootballTotalNo;
-  const prewindow=basketball?300:360,entry=basketball?240:300;
+  const prewindow=basketball?300:360,entry=basketball?30:300;
   const label=basketball?'College basketball':'CFB';
+  const allocation=basketball?.05:.15;
   const watching=games.filter(({state})=>(basketball?['NCAAB','NCAAW'].includes(state.sport):state.sport==='CFB')&&
     (basketball?state.period===(state.sport==='NCAAB'?1:2)||state.period===(state.sport==='NCAAB'?2:4):[2,4].includes(state.period))&&
     Number.isFinite(state.remainingSeconds)&&state.remainingSeconds>0&&state.remainingSeconds<prewindow);
@@ -2629,8 +2630,8 @@ async function scanCollegeTotalNos(games,events,sport){
       const awaiting=managed.filter(row=>!visible.has(row.market_ticker)&&Date.now()-new Date(row.updated_at).getTime()<5*60000);
       if(awaiting.some(row=>!Number.isFinite(Number(row.fill_count))||!Number.isFinite(Number(row.limit_price))))continue;
       const unreported=awaiting.reduce((sum,row)=>sum+estimatedCostCents(Number(row.fill_count),Number(row.limit_price)),0);
-      const budget=Math.max(0,Math.floor(bankroll*.15)-held-unreported),fees=feeReserve(c.event,current);
-      const count=orderSize(Math.min(singleSpendableCash(account.balance),local),ask.price,ask.size,.15,1,bankroll,budget,fees);
+      const budget=Math.max(0,Math.floor(bankroll*allocation)-held-unreported),fees=feeReserve(c.event,current);
+      const count=orderSize(Math.min(singleSpendableCash(account.balance),local),ask.price,ask.size,allocation,1,bankroll,budget,fees);
       const quantity=current.fractional_trading_enabled===false?Math.floor(count):count;
       if(quantity<minimumCount(current)||!profitableCount(quantity,ask.price,fees,'no',bankroll,fresh.type,fresh.remainingSeconds,{game:fresh,market:current}))continue;
       await auditTable();const verificationId=randomUUID(),verifiedAt=Date.now();
@@ -2639,11 +2640,11 @@ async function scanCollegeTotalNos(games,events,sport){
           firstAt:window.first_at,firstClock:window.first_clock,firstExternal:window.first_evidence,
           secondAt:new Date(verifiedAt),external:proof,ask:ask.price})]);
       fresh.verificationId=verificationId;rememberIndependentEntry(fresh,current,verificationId,verifiedAt);
-      const signal={strategy:'no',fraction:.15,reason:qualifies(fresh,current).reason};
+      const signal={strategy:'no',fraction:allocation,reason:qualifies(fresh,current).reason};
       const id=await reserve(signal,fresh,c.event,current,quantity,ask.price,account.balance);
       if(!id)continue;
       try{
-        const result=await withEntryProfitFloor({ticker:current.ticker,count:quantity,price:ask.price,fees,strategy:'no',fraction:.15,bankroll,game:fresh,market:current},
+        const result=await withEntryProfitFloor({ticker:current.ticker,count:quantity,price:ask.price,fees,strategy:'no',fraction:allocation,bankroll,game:fresh,market:current},
           ()=>kalshi('/portfolio/events/orders',{method:'POST',auth:true,entryVerifications:[{game:fresh,market:current}],
             beforeDispatch:()=>{if(!qualifies(fresh,current)||Date.now()-fresh.observedAt>10000)
               throw Object.assign(Error(`${label} total NO proof expired`),{code:'LOCAL_EXTERNAL_VERIFICATION_REQUIRED'})},
