@@ -51,7 +51,7 @@ export function collegeBasketballTotalNo(game,market,{beforeWindow=false}={}){
     !game.scoreKnown||!game.scoreConsistent||!game.periodConsistent||game.feedId!==game.id||
     !Number.isFinite(game.observedAt)||Date.now()-game.observedAt>10000||
     !Number.isFinite(game.remainingSeconds)||game.remainingSeconds<=0||
-    game.remainingSeconds>=(beforeWindow?300:240)||
+    game.remainingSeconds>=(beforeWindow?300:30)||
     !['active','open'].includes(market?.status)||
     market.result&&!['','not_determined'].includes(String(market.result)))return null;
   const firstHalf=game.period===(game.sport==='NCAAB'?1:2),fullGame=game.period===(game.sport==='NCAAB'?2:4);
@@ -61,7 +61,7 @@ export function collegeBasketballTotalNo(game,market,{beforeWindow=false}={}){
     market.strike_type&&!['greater','greater_than'].includes(market.strike_type))return null;
   const displayed=totalLine(market);
   const line=Number(market.floor_strike),rules=String(market.rules_primary||'');
-  if(!Number.isFinite(line)||line!==displayed||line-(game.home+game.away)<40||
+  if(!Number.isFinite(line)||line!==displayed||line-(game.home+game.away)<25||
     !/over\s+\d+(?:\.\d+)?\s+total points are scored/i.test(rules)||
     (firstHalf?!/1st half|first half/i.test(rules):/\b(?:1st|first|2nd|second)\s+half\b|quarter|team total/i.test(rules)))return null;
   return {strategy:'no',period:firstHalf?'first_half':'full_game',line,total:game.home+game.away,

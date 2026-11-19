@@ -98,7 +98,7 @@ test('the independent check requires exact ESPN score and matching period and cl
   assert.equal(independentCollegeTotalNoReading({...scoreboard,events:[{...scoreboard.events[0],competitions:[{...scoreboard.events[0].competitions[0],competitors:[{...scoreboard.events[0].competitions[0].competitors[0],score:'10'},scoreboard.events[0].competitions[0].competitors[1]]}]}]},game,milestone,half),false);
   assert.equal(independentCollegeTotalNoReading({...scoreboard,events:[{...scoreboard.events[0],competitions:[{...scoreboard.events[0].competitions[0],status:{period:2,displayClock:'1:30',type:{state:'in'}}}]}]},game,milestone,half),false);
 });
-test('college basketball NO uses distinct half and game contracts, forty-point cushion and four-minute windows',()=>{
+test('college basketball NO uses distinct half and game contracts, 25-point cushion and final 30-second window',()=>{
   for(const [league,prefix,halfPeriod,gamePeriod] of [
     ['NCAAMB','KXNCAAMB',1,2],['NCAAWB','KXNCAAWB',2,4]]){
     const fixture={...milestone,type:'basketball_game',title:'Away at Home',details:{league,home_team_id:'home',away_team_id:'away',
@@ -106,38 +106,38 @@ test('college basketball NO uses distinct half and game contracts, forty-point c
     const stateAt=(period,clock)=>gameState(fixture,{milestone_id:fixture.id,_observed_at:new Date().toISOString(),
       details:{status:'live',home_points:30,away_points:20,period,clock,last_updated_ts:Date.now()/1000,
         home_team_name:'Home',away_team_name:'Away'}});
-    const contract=(half,line=90.5)=>({ticker:`${prefix}${half?'1H':''}TOTAL-TEST-${line}`,
+    const contract=(half,line=75.5)=>({ticker:`${prefix}${half?'1H':''}TOTAL-TEST-${line}`,
       event_ticker:`${prefix}${half?'1H':''}TOTAL-TEST`,status:'active',title:`Over ${line} points`,
       floor_strike:line,strike_type:'greater',rules_primary:`Resolves Yes if over ${line} total points are scored in ${half?'the 1st half of ':''}the Away vs Home college basketball game.`});
     const half=contract(true),full=contract(false);
-    assert.equal(collegeBasketballTotalNo(stateAt(halfPeriod,'3:59'),half)?.period,'first_half');
-    assert.equal(collegeBasketballTotalNo(stateAt(gamePeriod,'3:59'),full)?.period,'full_game');
-    assert.ok(collegeBasketballTotalNo(stateAt(gamePeriod,'3:59'),{
-      ...full,title:'Full Game: Over 90.5 points scored',yes_sub_title:'Over 90.5 points',
-      rules_primary:'If over 90.5 total points are scored in the Away vs Home college basketball game, then the market resolves to Yes.'}));
-    assert.ok(collegeBasketballTotalNo(stateAt(halfPeriod,'3:59'),{
-      ...half,title:'1st Half: Over 90.5 points scored',yes_sub_title:'Over 90.5 points'}));
-    assert.equal(collegeBasketballTotalNo(stateAt(halfPeriod,'4:00'),half),null);
+    assert.equal(collegeBasketballTotalNo(stateAt(halfPeriod,'0:29'),half)?.period,'first_half');
+    assert.equal(collegeBasketballTotalNo(stateAt(gamePeriod,'0:29'),full)?.period,'full_game');
+    assert.ok(collegeBasketballTotalNo(stateAt(gamePeriod,'0:29'),{
+      ...full,title:'Full Game: Over 75.5 points scored',yes_sub_title:'Over 75.5 points',
+      rules_primary:'If over 75.5 total points are scored in the Away vs Home college basketball game, then the market resolves to Yes.'}));
+    assert.ok(collegeBasketballTotalNo(stateAt(halfPeriod,'0:29'),{
+      ...half,title:'1st Half: Over 75.5 points scored',yes_sub_title:'Over 75.5 points'}));
+    assert.equal(collegeBasketballTotalNo(stateAt(halfPeriod,'0:30'),half),null);
     assert.ok(collegeBasketballTotalNo(stateAt(halfPeriod,'4:30'),half,{beforeWindow:true}));
     for(const half of [true,false]){
       const period=half?halfPeriod:gamePeriod;
-      assert.ok(collegeBasketballTotalNo(stateAt(period,'3:59'),contract(half,90)),'an exact forty-point gap qualifies');
-      assert.equal(collegeBasketballTotalNo(stateAt(period,'3:59'),contract(half,89.5)),null,'less than forty blocks entry');
-      assert.equal(collegeBasketballTotalNo(stateAt(period,'3:59'),contract(half,80.5)),null,'the former thirty-point gap is disabled');
-      assert.equal(collegeBasketballTotalNo(stateAt(period,'4:00'),contract(half,90)),null);
-      assert.ok(collegeBasketballTotalNo(stateAt(period,'4:59'),contract(half,90),{beforeWindow:true}));
-      assert.equal(collegeBasketballTotalNo(stateAt(period,'5:00'),contract(half,90),{beforeWindow:true}),null);
+      assert.ok(collegeBasketballTotalNo(stateAt(period,'0:29'),contract(half,75)),'an exact 25-point gap qualifies');
+      assert.equal(collegeBasketballTotalNo(stateAt(period,'0:29'),contract(half,74.5)),null,'less than 25 points blocks entry');
+      assert.ok(collegeBasketballTotalNo(stateAt(period,'0:29'),contract(half,80.5)),'a larger cushion qualifies');
+      assert.equal(collegeBasketballTotalNo(stateAt(period,'0:30'),contract(half,75)),null);
+      assert.ok(collegeBasketballTotalNo(stateAt(period,'4:59'),contract(half,75),{beforeWindow:true}));
+      assert.equal(collegeBasketballTotalNo(stateAt(period,'5:00'),contract(half,75),{beforeWindow:true}),null);
     }
-    assert.equal(collegeBasketballTotalNo(stateAt(halfPeriod,'3:59'),full),null);
-    assert.equal(collegeBasketballTotalNo(stateAt(gamePeriod,'3:59'),half),null);
+    assert.equal(collegeBasketballTotalNo(stateAt(halfPeriod,'0:29'),full),null);
+    assert.equal(collegeBasketballTotalNo(stateAt(gamePeriod,'0:29'),half),null);
     assert.equal(nearEntryPhase(stateAt(halfPeriod,'4:30')),true);
     const linked={...fixture,related_event_tickers:[`${prefix}GAME-TEST`]};
     assert.ok(entryEventTickers(linked,stateAt(halfPeriod,'4:30')).includes(half.event_ticker));
     assert.ok(entryEventTickers(linked,stateAt(gamePeriod,'4:30')).includes(full.event_ticker));
-    const board={events:[{id:'401',date:fixture.start_date,competitions:[{status:{period:halfPeriod,displayClock:'3:59',type:{state:'in'}},
+    const board={events:[{id:'401',date:fixture.start_date,competitions:[{status:{period:halfPeriod,displayClock:'0:29',type:{state:'in'}},
       competitors:[{id:'1',homeAway:'home',team:{displayName:'Home',abbreviation:'HOM'},score:'30'},
         {id:'2',homeAway:'away',team:{displayName:'Away',abbreviation:'AWY'},score:'20'}]}]}]};
-    assert.equal(independentCollegeTotalNoReading(board,stateAt(halfPeriod,'3:59'),fixture,half)?.seconds,239);
+    assert.equal(independentCollegeTotalNoReading(board,stateAt(halfPeriod,'0:29'),fixture,half)?.seconds,29);
   }
 });
 test('the scanner starts before 5:00 and only submits after a second fresh check and executable NO seller',async()=>{
