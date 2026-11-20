@@ -30,7 +30,7 @@ const board=(elapsed="41'",home=0,away=1,period=1)=>({events:[{
   ]}]
 }]});
 
-test('first half soccer NO uses strictly less than 3:30 remaining in 45-minute regulation only',()=>{
+test('first half soccer NO uses strictly less than 5:00 remaining in 45-minute regulation only',()=>{
  assert.equal(soccerFirstHalfSeconds(state("41'")),240);
  assert.equal(soccerFirstHalfSeconds(state("41:30'")),210);
  assert.equal(soccerFirstHalfSeconds(state("41:31'")),209);
@@ -43,12 +43,12 @@ test('first half soccer NO uses strictly less than 3:30 remaining in 45-minute r
  assert.equal(soccerFirstHalfSeconds(state("41'",0,1,{half:'2nd',period:2})),null);
 });
 
-test('initial independent check requires remaining 4:00 to at least 3:30; entry strictly under 3:30',()=>{
- assert.equal(soccerFirstHalfNoSpec(state("40:59'"),market(),{beforeWindow:true}),null);
- assert.ok(soccerFirstHalfNoSpec(state("41'"),market(),{beforeWindow:true}));
- assert.ok(soccerFirstHalfNoSpec(state("41:30'"),market(),{beforeWindow:true}));
- assert.equal(soccerFirstHalfNo(state("41:30'"),market()),null);
- assert.equal(soccerFirstHalfNo(state("41:31'"),market())?.total,1);
+test('initial independent check begins at 6:00 remaining; entry strictly under 5:00',()=>{
+ assert.equal(soccerFirstHalfNoSpec(state("38:59'"),market(),{beforeWindow:true}),null);
+ assert.ok(soccerFirstHalfNoSpec(state("39'"),market(),{beforeWindow:true}));
+ assert.ok(soccerFirstHalfNoSpec(state("40'"),market(),{beforeWindow:true}));
+ assert.equal(soccerFirstHalfNo(state("40'"),market()),null);
+ assert.equal(soccerFirstHalfNo(state("40:01'"),market())?.total,1);
  assert.equal(soccerFirstHalfNo(state("44:59'"),market())?.total,1);
  assert.equal(soccerFirstHalfNo(state("45'"),market()),null);
  assert.equal(soccerFirstHalfNo(state("45+2'"),market()),null);
