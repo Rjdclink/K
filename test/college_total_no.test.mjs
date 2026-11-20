@@ -98,7 +98,7 @@ test('the independent CFB check requires exact ESPN score and matching fourth-qu
   assert.equal(independentCollegeTotalNoReading({...scoreboard,events:[{...scoreboard.events[0],competitions:[{...scoreboard.events[0].competitions[0],competitors:[{...scoreboard.events[0].competitions[0].competitors[0],score:'10'},scoreboard.events[0].competitions[0].competitors[1]]}]}]},game,milestone,full),false);
   assert.equal(independentCollegeTotalNoReading({...scoreboard,events:[{...scoreboard.events[0],competitions:[{...scoreboard.events[0].competitions[0],status:{period:4,displayClock:'1:30',type:{state:'in'}}}]}]},game,milestone,full),false);
 });
-test('college basketball NO uses distinct half and game contracts, 20-point cushion and final 30-second window',()=>{
+test('college basketball NO separates 30-second first-half and 90-second full-game windows with a 20-point cushion',()=>{
   for(const [league,prefix,halfPeriod,gamePeriod] of [
     ['NCAAMB','KXNCAAMB',1,2],['NCAAWB','KXNCAAWB',2,4]]){
     const fixture={...milestone,type:'basketball_game',title:'Away at Home',details:{league,home_team_id:'home',away_team_id:'away',
@@ -124,7 +124,7 @@ test('college basketball NO uses distinct half and game contracts, 20-point cush
       assert.ok(collegeBasketballTotalNo(stateAt(period,'0:29'),contract(half,70)),'an exact 20-point gap qualifies');
       assert.equal(collegeBasketballTotalNo(stateAt(period,'0:29'),contract(half,69.5)),null,'less than 20 points blocks entry');
       assert.ok(collegeBasketballTotalNo(stateAt(period,'0:29'),contract(half,75.5)),'a larger cushion qualifies');
-      assert.equal(collegeBasketballTotalNo(stateAt(period,'0:30'),contract(half,70)),null);
+      assert.equal(collegeBasketballTotalNo(stateAt(period,half?'0:30':'1:30'),contract(half,70)),null);
       assert.ok(collegeBasketballTotalNo(stateAt(period,'4:59'),contract(half,70),{beforeWindow:true}));
       assert.equal(collegeBasketballTotalNo(stateAt(period,'5:00'),contract(half,70),{beforeWindow:true}),null);
     }

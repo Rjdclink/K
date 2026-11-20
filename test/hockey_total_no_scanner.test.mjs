@@ -113,12 +113,21 @@ test('NHL NO checks both full-game and P3, with independent 2:15 preflight then 
     new Set(markets.map(x=>x.ticker)));
 });
 
-test('NHL total NO blocks entry until its 45-second preflight countdown completes',async()=>{
-  const h=harness({ageMs:30000});
+test('NHL total NO enters after its first external proof without a 45-second wait',async()=>{
+  const h=harness({ageMs:1000});
+  await h.scan('2:15');
+  assert.equal(h.windows.size,2);
+  assert.equal(await h.scan('1:29'),2);
+  assert.equal(h.orders,2,'no arbitrary wall-clock dwell after preflight');
+  assert.ok((h.dashboard.get(milestone.id)||[]).every(s=>!/45-second/.test(s.execution)));
+  assert.ok(h.trace.lastIndexOf('external')<h.trace.lastIndexOf('reserve'));
+});
+
+test('NHL total NO rejects a preflight timestamp from the future',async()=>{
+  const h=harness({ageMs:-1000});
   await h.scan('2:15');
   assert.equal(await h.scan('1:29'),0);
   assert.equal(h.orders,0);
-  assert.ok((h.dashboard.get(milestone.id)||[]).some(s=>/45-second/.test(s.execution)));
 });
 
 test('NHL total NO requires verifiable period linescores and declines missing independent evidence',async()=>{
