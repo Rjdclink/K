@@ -126,6 +126,10 @@ test('history returns losses with signed totals and supports a loss-only view',a
   const id='00000000-0000-4000-8000-000000000001',calls=[];
   pg.Pool.prototype.query=async function(sql,params){
     calls.push({sql,params});
+    if(sql.startsWith('CREATE TABLE IF NOT EXISTS account_history_')||
+      sql.startsWith('CREATE TABLE IF NOT EXISTS account_realized_history')||
+      sql.startsWith('INSERT INTO account_history_sync'))return {rows:[]};
+    if(sql.includes('FROM account_history_sync WHERE id=1'))return {rows:[{phase:'complete',last_completed:new Date().toISOString(),last_error:null,imported_fills:'2',account_markets:'2'}]};
     if(sql.includes('FROM trade_history')&&sql.includes('LIMIT 51'))return {rows:[{id,sport:'Soccer',teams:'Cottbus vs Bochum',occurred_at:'2026-10-30T19:00:00Z',profit_cents:-478}]};
     if(sql.includes('FROM trade_history')&&sql.includes('profit_count'))return {rows:[{profit_count:'49',loss_count:'2',profit_cents:'1245',loss_cents:'-1284'}]};
     throw Error('Unexpected history query');
@@ -137,6 +141,8 @@ test('history returns losses with signed totals and supports a loss-only view',a
     const body=await response.json();
     assert.equal(body.history[0].profit_cents,-478);
     assert.equal(body.summary.loss_cents,'-1284');
+    assert.equal(body.coverage.phase,'complete');
+    assert.match(calls.find(call=>call.sql.includes('LIMIT 51')).sql,/NOT EXISTS\(SELECT 1 FROM account_realized_history/);
     assert.deepEqual(calls.find(call=>call.sql.includes('LIMIT 51')).params,[null,null,'loss','today']);
     assert.match(calls.find(call=>call.sql.includes('LIMIT 51')).sql,/history_view_config/);
     const full=await app.fetch(new Request(base+'/api/history?view=full',{headers}));
