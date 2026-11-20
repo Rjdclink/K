@@ -11,7 +11,7 @@ function buy(fillId,ticker,side='yes',price='0.40',count='10'){
 function storage(){
  const state={phase:'live_fills',cursor:'',last_completed:null},fills=new Map(),settlements=new Map(),history=new Map();
  const query=async(sql,args=[])=>{
-  if(sql.startsWith('CREATE TABLE')||sql.startsWith('INSERT INTO account_history_sync'))return {rows:[],rowCount:1};
+  if(sql.startsWith('CREATE TABLE')||sql.startsWith('ALTER TABLE account_history_sync')||sql.startsWith('INSERT INTO account_history_sync'))return {rows:[],rowCount:1};
   if(sql.startsWith('SELECT phase,cursor,last_completed'))return {rows:[{...state}]};
   if(sql.startsWith('UPDATE account_history_sync SET phase=')&&sql.includes('phase=$1')){
    state.phase=args[0];state.cursor=args[1];return {rows:[]};
