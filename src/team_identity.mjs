@@ -21,6 +21,17 @@ export function teamAbbreviationVariants(name,sport){
     if(/\sSt\.?$/i.test(text))return [text,text.replace(/\sSt\.?$/i,' State')];
     if(/\sState$/i.test(text))return [text,text.replace(/\sState$/i,' St.'),text.replace(/\sState$/i,' St')];
   }
+  if(String(sport||'').toUpperCase()==='SOCCER'){
+    // These are verified, exact club-name variants published for the same
+    // fixtures by Kalshi and ESPN; never use a generic fuzzy name match.
+    const clubs=[
+      ['Bodoe/Glimt','Bodo/Glimt','Bodø/Glimt'],
+      ['Aarhus','AGF','Aarhus GF']
+    ];
+    const variants=clubs.find(names=>names.some(name=>
+      name.normalize('NFKD').toLowerCase()===text.normalize('NFKD').toLowerCase()));
+    if(variants)return [...new Set([text,...variants])];
+  }
   if(!match)return [text];
   const group=groups[String(sport||'').toUpperCase()]?.find(codes=>codes.includes(match[1].toUpperCase()));
   return group?[...new Set([text,...group.map(code=>code+(match[2]||''))])]:[text];
