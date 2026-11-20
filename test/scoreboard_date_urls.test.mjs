@@ -69,3 +69,25 @@ test('date-based FOX fallback URLs are also valid after two unavailable ESPN att
  assert.equal(calls.filter(url=>url.includes('espn.com')).length,6);
  assert.ok(calls.some(url=>url.includes('/c0d20261120?')));
 });
+
+test('ESPN Grambling Lady Tigers at Central Arkansas Sugar Bears matches Kalshi Grambling St. without relaxing the other team or score',async()=>{
+ const game={id:'kalshi-grambling-cark',type:'basketball_game',sport:'NCAAW',verifiedLive:true,
+   home:74,away:77,homeName:'Central Arkansas',awayName:'Grambling St.'};
+ const milestone={id:game.id,type:game.type,title:'Grambling St. at Central Arkansas',
+   start_date:start,details:{league:'NCAAWB'}};
+ const record={id:'401918520',date:'2026-11-20T17:00Z',competitions:[{
+   status:{period:4,displayClock:'1:14',type:{state:'in'}},competitors:[
+   {homeAway:'home',score:'74',team:{displayName:'Central Arkansas Sugar Bears',shortDisplayName:'C Arkansas',
+     location:'Central Arkansas',name:'Sugar Bears',abbreviation:'CARK'}},
+   {homeAway:'away',score:'77',team:{displayName:'Grambling Lady Tigers',shortDisplayName:'Grambling',
+     location:'Grambling',name:'Lady Tigers',abbreviation:'GRAM'}}]}]};
+ const fetcher=async url=>({ok:true,json:async()=>({events:url.includes('dates=20261120')?[record]:[]})});
+ const result=await fetchIndependentMatchScore(game,milestone,{fetcher,
+   espnFeed:'basketball/womens-college-basketball'});
+ assert.equal(result?.source,'ESPN');assert.equal(result?.eventId,'401918520');
+ assert.deepEqual([result.home,result.away],[74,77]);
+ const wrong=structuredClone(record);wrong.competitions[0].competitors[1].score='76';
+ const bad=await fetchIndependentMatchScore(game,milestone,{fetcher:async url=>({ok:true,json:async()=>({events:url.includes('dates=20261120')?[wrong]:[]})}),
+   espnFeed:'basketball/womens-college-basketball'});
+ assert.equal(bad,false,'a one-point ESPN score disagreement must still prevent entry');
+});
