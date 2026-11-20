@@ -129,8 +129,10 @@ test('history returns losses with signed totals and supports a loss-only view',a
     if(sql.startsWith('ALTER TABLE account_history_sync')||
       sql.startsWith('CREATE TABLE IF NOT EXISTS account_history_')||
       sql.startsWith('CREATE TABLE IF NOT EXISTS account_realized_history')||
+      sql.startsWith('CREATE TABLE IF NOT EXISTS account_position_history_publish')||
+      sql.startsWith('CREATE TABLE IF NOT EXISTS account_position_realized_history')||
       sql.startsWith('INSERT INTO account_history_sync'))return {rows:[]};
-    if(sql.includes('FROM account_history_sync WHERE id=1'))return {rows:[{phase:'complete',last_completed:new Date().toISOString(),last_error:null,imported_fills:'2',account_markets:'2'}]};
+    if(sql.includes('FROM account_history_sync WHERE id=1'))return {rows:[{phase:'complete',last_completed:new Date().toISOString(),last_error:null,imported_fills:'2',account_markets:'2',verified_positions:'2',unresolved_markets:'0'}]};
     if(sql.includes('FROM trade_history')&&sql.includes('LIMIT 51'))return {rows:[{id,sport:'Soccer',teams:'Cottbus vs Bochum',occurred_at:'2026-10-30T19:00:00Z',profit_cents:-478}]};
     if(sql.includes('FROM trade_history')&&sql.includes('profit_count'))return {rows:[{profit_count:'49',loss_count:'2',profit_cents:'1245',loss_cents:'-1284'}]};
     throw Error('Unexpected history query');
