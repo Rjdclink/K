@@ -21,7 +21,8 @@ export async function ensureAccountHistoryTables(query){
    last_error text,updated_at timestamptz NOT NULL DEFAULT now())`);
  await query("INSERT INTO account_history_sync(id,phase,cursor) VALUES(1,'live_fills','') ON CONFLICT DO NOTHING");
 }
-const validDate=value=>{const dt=new Date(value);return Number.isFinite(dt.getTime())?dt.toISOString():null;};
+const validDate=value=>{if(value===null||value===undefined||value==='')return null;
+ const dt=new Date(value);return Number.isFinite(dt.getTime())?dt.toISOString():null;};
 const parseFill=fill=>{
  const fillId=String(fill.fill_id||fill.trade_id||'');
  const ticker=String(fill.ticker||fill.market_ticker||'');
