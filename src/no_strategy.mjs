@@ -25,7 +25,7 @@ export function thirdQuarterYardageNo(game,market){
   return player;
 }
 
-// Football total NO: Q4 full-game contracts only. CFB needs an 18-point
+// Football total NO: Q4 full-game contracts only. CFB needs a 20-point
 // cushion and NFL needs a 15-point cushion; the first check precedes 5:00.
 export function collegeFootballTotalNo(game,market,{beforeWindow=false}={}){
   if(!['CFB','NFL'].includes(game?.sport)||game.type!=='football_game'||!game.verifiedLive||
@@ -40,7 +40,7 @@ export function collegeFootballTotalNo(game,market,{beforeWindow=false}={}){
     market.strike_type&&!['greater','greater_than'].includes(market.strike_type))return null;
   const line=Number(market.floor_strike),displayed=totalLine(market);
   const rules=String(market.rules_primary||'');
-  const gap=game.sport==='CFB'?18:15;
+  const gap=game.sport==='CFB'?20:15;
   if(!Number.isFinite(line)||line!==displayed||line-(game.home+game.away)<gap||
     !(/collectively score more than|combined total points scored/i.test(rules)||
       game.sport==='NFL'&&/over\s+\d+(?:\.\d+)?\s+total points are scored/i.test(rules))||
