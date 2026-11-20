@@ -8,7 +8,6 @@ export function sameSportsContract(a,b){
 export const OVER_EXTERNAL_DELAY_MS=20000;
 export const OVER_CONFIRM_DELAY_MS=180000;
 export const OVER_SOCCER_CONFIRM_DELAY_MS=150000;
-export const PLAYER_CUSHION_CONFIRM_DELAY_MS=110000;
 export const OVER_FRESH_MS=10000;
 export const OVER_PROOF_MS=30000;
 export const overContractKey=sportsContractKey;
@@ -30,13 +29,12 @@ export function overTiming(window,game,market,now=Date.now()){
   const elapsed=now-initial;
   if(!Number.isFinite(initial)||elapsed<0)return {stage:'invalid'};
   const player=playerOverSpec(game,market),cushion=overCushion(game,market);
-  if(cushion===null)return {stage:'invalid'};
-  const delay=player?PLAYER_CUSHION_CONFIRM_DELAY_MS:
-    /soccer/.test(String(game?.type||''))?OVER_SOCCER_CONFIRM_DELAY_MS:OVER_CONFIRM_DELAY_MS;
+  // Player props use immediate seller-backed independent proof, never a timer.
+  if(player||cushion===null)return {stage:'invalid'};
+  const delay=/soccer/.test(String(game?.type||''))?OVER_SOCCER_CONFIRM_DELAY_MS:OVER_CONFIRM_DELAY_MS;
   if(elapsed<OVER_EXTERNAL_DELAY_MS)return {stage:'first_wait',remainingMs:OVER_EXTERNAL_DELAY_MS-elapsed,minimumMs:delay};
   if(external===null)return {stage:'first_external',remainingMs:0};
   if(!Number.isFinite(external)||external<initial+OVER_EXTERNAL_DELAY_MS||external>now||!window.first_external_id)return {stage:'invalid'};
-  if(elapsed<delay&&player)return {stage:'final_wait',remainingMs:delay-elapsed,minimumMs:delay};
   return {stage:'paired',route:'cushion',cushionUnits:cushion};
 }
 export function sameOverReading(first,second,market){
@@ -50,7 +48,7 @@ export function timedOverEntryValid(game,market,now=Date.now()){
   const proof=game?.overVerification,player=playerOverSpec(game,market);
   const cushion=overCushion(game,market),signal=overSignal(game,market);
   if(cushion===null||!player&&!(game.independentEntry.overValue>=Math.floor(signal.strike+cushion)+1))return false;
-  if(player&&!['cushion','seller_cushion'].includes(proof?.route))return false;
+  if(player&&proof?.route!=='seller_cushion')return false;
   if(proof?.route==='seller_cushion')return Boolean(game.verificationId&&proof.contractKey===overContractKey(game,market)&&
     Number.isFinite(proof.sellerAt)&&now>=proof.sellerAt&&now-proof.sellerAt<=OVER_PROOF_MS&&
     freshOverState(game,market,now)&&overCushion(game,market)!==null);

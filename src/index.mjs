@@ -1098,6 +1098,9 @@ function signalExecution(c,filled,account,balance,bankroll){
   if(!account)return 'Trading paused';
   const price=Number(c.market.yes_ask_dollars),fees=feeReserve(c.event,c.market);
   if(price>Number(process.env.MAX_YES_PRICE||1))return 'Ask above maximum YES price';
+  const player=c.signal.strategy==='over'?playerOverSpec(c.state,c.market):null;
+  if(player&&overCushion(c.state,c.market)===null)
+    return 'Player prop blocked: one additional credited statistic required';
   const spendable=singleSpendableCash(balance);
   const raw=contractCount(spendable,c.market,c.signal.fraction,bankroll,Infinity,fees);
   if(!raw)return 'Insufficient available cash for this trade';
@@ -1114,13 +1117,15 @@ function signalExecution(c,filled,account,balance,bankroll){
       c.state.remainingSeconds<390&&Math.abs(c.state.home-c.state.away)>=12);
   if(local===null)return 'Shard balance unavailable';
   if(local<estimatedCostCents(raw,price,fees)){
-    if(transferPlan(account,marketShard(c.event,c.market),estimatedCostCents(raw,price,fees)))return singleRead?
+    if(transferPlan(account,marketShard(c.event,c.market),estimatedCostCents(raw,price,fees)))return player?
+      'Shard transfer needed before immediate independent player-stat verification':singleRead?
       'Shard transfer needed; one fresh Kalshi score required':
       'Verification pending; shard transfer needed if confirmed';
     const localCount=contractCount(Math.min(spendable,local),c.market,c.signal.fraction,bankroll,Infinity,fees);
     if(!profitableCount(localCount,price,fees,c.signal.strategy,bankroll,c.state.type,c.state.remainingSeconds,{game:c.state,market:c.market}))return 'Insufficient shard cash';
   }
-  return singleRead?'Eligible for one fresh Kalshi score; checking live ask':
+  return player?'Independent player-stat check immediately before entry':
+    singleRead?'Eligible for one fresh Kalshi score; checking live ask':
     c.signal.strategy==='over'?'Awaiting score verification':'Eligible for final verification';
 }
 async function ensureShardFunding(signal,event,market,account,desiredCents,sourceFloorCents=0){
@@ -1175,6 +1180,14 @@ async function reconcileFundingTransfers(){
   const completed=(history.transfers||[]).filter(t=>t.status==='complete');
   for(const row of pending.rows){const match=completed.find(t=>t.client_transfer_id===row.id||row.transfer_id&&t.transfer_id===row.transfer_id);
     if(match){await pool.query(`UPDATE funding_transfers SET status='complete',transfer_id=$2,updated_at=now() WHERE id=$1`,[row.id,match.transfer_id]);await invalidateBalance()}}
+}
+// Earlier worker verification is preflight, not the final player-stat proof.
+// Obtain a new independent check after seller, funding and profitability gates.
+async function freshPlayerPropForEntry(game,milestone,market,decorate=state=>state){
+  if(!playerOverSpec(game,market))return game;
+  if(overCushion(game,market)===null)return null;
+  const checked=await confirmedIndependentOver(game,milestone,market,{decorate});
+  return checked&&overCushion(checked,market)!==null&&timedOverEntryValid(checked,market)?checked:null;
 }
 async function submit(signal,game,event,market,balance,bankroll,budgetCents=Infinity,availableCents=bankroll,cashCents=balance){
   if(internationalBasketball(game))return false;
@@ -1334,6 +1347,10 @@ async function upgradeHeldOver(c,preflight,original,scoreboardCache){
   if(local<desiredCost&&transferPlan(account,shard,desiredCost))await ensureShardFunding({strategy:'over'},c.event,quote,account,desiredCost);
   const count=profitableCount(contractCount(Math.min(spendable,local),quote,fraction,bankroll,budget,fees),price,fees,'over',bankroll,state.type,state.remainingSeconds,{game:state,market:quote});
   if(!count)return {verified:true,filled:false};
+  if(playerOverSpec(state,quote)){
+    state=await freshPlayerPropForEntry(state,c.milestone,quote);
+    if(!state)return {verified:false,filled:false};
+  }
   if(!timedOverEntryValid(state,quote))return {verified:false,filled:false};
   const id=randomUUID();
   const reserved=await pool.query(`INSERT INTO ${upgradeTable}(market_ticker,id,original_id,verification_id,status,count,limit_price,available_cents)
@@ -3054,7 +3071,9 @@ async function scan(cachedMilestones,discoveryCount){
         const player=playerOverSpec(state,market);
         if(player&&player.value>Number(market.floor_strike))
           crossingRows.push({ticker:market.ticker,game_id:state.id,value:player.value,
-            title:market.title||market.yes_sub_title||market.ticker,entryWindowOpen:playerPropEarlyWindow(state)});
+            title:market.title||market.yes_sub_title||market.ticker,entryWindowOpen:playerPropEarlyWindow(state),
+            variableValue:['PASSYDS','RUSHYDS','RECYDS','PTS','PRA','RBI'].includes(player.metric),
+            hasCushion:player.value-1>Number(market.floor_strike)});
       }
       nearby.sort((a,b)=>Number(a.market.yes_ask_dollars)-Number(b.market.yes_ask_dollars));
       if(nearby.length)nearOvers.push(nearby[0]);
@@ -3164,11 +3183,18 @@ async function scan(cachedMilestones,discoveryCount){
       snapshotRows.get(id)[14]=JSON.stringify([
         ...(hockeyNoSignals.get(id)||[]),
         ...(basketballNoSignals.get(id)||[]),
-        ...candidates.map(c=>({strategy:c.signal.strategy,reason:c.signal.reason,ticker:c.market.ticker,title:c.market.title||c.market.yes_sub_title||'',ask:c.market.yes_ask_dollars,ask_size:c.market.yes_ask_size_fp,execution:signalExecution(c,filled,account,balance,bankroll)})),
+        ...candidates.map(c=>({strategy:c.signal.strategy,reason:c.signal.reason,ticker:c.market.ticker,title:c.market.title||c.market.yes_sub_title||'',
+          player_prop:Boolean(playerOverSpec(c.state,c.market)),ask:c.market.yes_ask_dollars,ask_size:c.market.yes_ask_size_fp,
+          execution:signalExecution(c,filled,account,balance,bankroll)})),
         ...crossingRows.filter(row=>row.game_id===id&&!candidates.some(c=>c.market.ticker===row.ticker))
-          .map(row=>({strategy:'watch',ticker:row.ticker,title:row.title,
-            reason:row.entryWindowOpen?`${row.value} recorded; line crossed; verification pending`:`${row.value} recorded; player-prop entry requires at least 10 minutes of regulation remaining`,
-            execution:row.entryWindowOpen?'Awaiting score verification':'Player-prop entry window closed'})),
+          .map(row=>({strategy:'watch',ticker:row.ticker,title:row.title,player_prop:true,
+            reason:row.variableValue?`${row.value} recorded; variable-value YES prop disabled without a fixed cushion`:
+              !row.entryWindowOpen?`${row.value} recorded; player-prop entry requires at least 10 minutes of regulation remaining`:
+              !row.hasCushion?`${row.value} recorded; one additional credited statistic required`:
+              `${row.value} recorded; removable cushion; independent check at entry`,
+            execution:row.variableValue?'Variable-value YES player prop disabled':
+              !row.entryWindowOpen?'Player-prop entry window closed':
+              !row.hasCushion?'Player-stat cushion not established':'Independent player-stat check immediately before entry'})),
         ...(snapshotRows.get(id).leadWatch&&!candidates.some(c=>c.signal.strategy==='lead')?
           [{strategy:'watch',title:'Commanding lead watch',execution:snapshotRows.get(id).leadWatch}]:[])
       ]);
@@ -3417,6 +3443,17 @@ async function scan(cachedMilestones,discoveryCount){
         // affordable in this shard while any top-up settles asynchronously.
         if(c.signal.strategy==='lead'&&!soccerWinnerWindowOpen(state))continue;
         stage='submission';
+        // Early external preflight may have aged during cash or shard checks.
+        // Validate the player's removable cushion with a new external request.
+        if(c.signal.strategy==='over'&&playerOverSpec(state,c.market)){
+          const fresh=await freshPlayerPropForEntry(state,c.milestone,c.market,withPropWindow);
+          if(!fresh)continue;
+          const finalSignal=overSignal(fresh,c.market);
+          const finalFraction=finalSignal?verifiedOverFraction(finalSignal,fresh,c.market):null;
+          if(finalFraction===null)continue;
+          c.signal={...finalSignal,fraction:finalFraction,externallyVerified:independentEntryValid(fresh,c.market)};
+          c.state=state=fresh;
+        }
         if(await submit(c.signal,state,c.event,c.market,Math.min(spendable,localCash),bankroll,budget,bankroll,balance)||await recoverPending(c.signal,state,c.event,c.market,Math.min(spendable,localCash),bankroll,budget,bankroll,balance)){
           outcome='filled';
           submitted++;filled.add(signalKey(c));

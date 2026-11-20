@@ -188,7 +188,7 @@ test('an existing forty percent fill can top up once through its separate sixty 
     const original={id:'initial',status:'filled',strategy:'over',market_ticker:market.ticker,event_ticker:market.event_ticker,game_id:game.id};
     const position={ticker:market.ticker,position_fp:'40',market_exposure_dollars:'39',fees_paid_dollars:'1'};
     const sent=[],reserved=[];
-    const context=vm.createContext({console,PLAYER_PROP_MAX_FRACTION,BASKETBALL_COUNT_PROP_MAX_FRACTION,overSignal,timedOverEntryValid,sameSportsContract,
+    const context=vm.createContext({console,PLAYER_PROP_MAX_FRACTION,BASKETBALL_COUNT_PROP_MAX_FRACTION,overSignal,playerOverSpec,timedOverEntryValid,sameSportsContract,
       verifiedOverFraction,remainingVerifiedOverCents,upgradeEligible,estimatedCostCents,profitableCount,assertOverExposure,singleSpendableCash,
       upgradeTables:async()=>{},reconcileUpgrade:async row=>row,randomUUID:()=> 'external-upgrade',
       recoverSummaryAsk:async m=>m,hasAsk:()=>true,executableQuote:async m=>m,

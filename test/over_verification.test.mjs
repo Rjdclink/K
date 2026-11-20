@@ -95,25 +95,25 @@ test('player, team and period cushions use the exact selected statistic',()=>{
  assert.equal(overCushion({...g,playerStats:{p:{rebounds:6}}},prop),null);assert.equal(overCushion({...g,playerStats:{p:{rebounds:7}}},prop),1);
  const points={...market,event_ticker:'KXNBAPTS-TEST',title:'Pat Player: 20+ points',yes_sub_title:'Pat Player: 20+',floor_strike:19.5,custom_strike:{basketball_player:'p'}};
  assert.equal(overTiming({initial_at:start,first_external_at:null},{...g,playerStats:{p:{points:20}}},points,start).stage,'invalid');
- assert.deepEqual(overTiming({initial_at:start,first_external_at:start+20000,first_external_id:'first'},{...g,playerStats:{p:{rebounds:7}}},prop,start+109999),{stage:'final_wait',remainingMs:1,minimumMs:110000});
- assert.equal(overTiming({initial_at:start,first_external_at:start+20000,first_external_id:'first'},{...g,playerStats:{p:{rebounds:7}}},prop,start+110000).route,'cushion');
+ assert.equal(overTiming({initial_at:start,first_external_at:start+20000,first_external_id:'first'},{...g,playerStats:{p:{rebounds:7}}},prop,start+109999).stage,'invalid');
+ assert.equal(overTiming({initial_at:start,first_external_at:start+20000,first_external_id:'first'},{...g,playerStats:{p:{rebounds:7}}},prop,start+110000).stage,'invalid');
  const team={...market,event_ticker:'KXNBATEAMTOTAL-TEST',title:'New York over 73.5 total points',floor_strike:73.5,custom_strike:{basketball_team:'ny'}};
  assert.equal(overCushion(g,team),null);
  const segment={...market,event_ticker:'KXNBA1QTOTAL-TEST',title:'Over 39.5 total points in 1st quarter',floor_strike:39.5};
  const periods={...g,periodScores:[{number:1,home:21,away:19}]};assert.equal(overCushion(periods,segment),null);assert.equal(sameOverReading(periods,{...periods,periodScores:[{number:1,home:22,away:19}]},segment),false);
 });
-test('one credited steal cannot authorize YES after any wait; two steals need both checks and 1:50',()=>{
+test('a credited extra steal uses immediate seller proof rather than the historical 1:50 clock',()=>{
  const prop={...market,event_ticker:'KXNBASTL-TEST',title:'Dillon Brooks: 1+ steals',yes_sub_title:'Dillon Brooks: 1+',floor_strike:.5,custom_strike:{basketball_player:'p'}};
  const one={...state(start+180000),playerStats:{p:{steals:1}}},two={...one,playerStats:{p:{steals:2}}};
  const window={initial_at:start,first_external_at:start+20000,first_external_id:'first'};
  assert.equal(overTiming(window,one,prop,start+180000).stage,'invalid');
- assert.equal(overTiming(window,two,prop,start+109999).stage,'final_wait');
- assert.equal(overTiming(window,two,prop,start+110000).route,'cushion');
+ assert.equal(overTiming(window,two,prop,start+109999).stage,'invalid');
+ assert.equal(overTiming(window,two,prop,start+110000).stage,'invalid');
  const proof={contractKey:overContractKey(one,prop),initialAt:start,firstExternalAt:start+20000,firstExternalId:'first',pairedAt:start+180000,pairedExternalId:'second',route:'elapsed'};
  const verified={...one,verificationId:'aggregate',overVerification:proof};rememberIndependentEntry(verified,prop,'aggregate',start+180000);
  assert.equal(timedOverEntryValid(verified,prop,start+180001),false);
  const cushioned={...state(start+110000),playerStats:{p:{steals:2}},verificationId:'aggregate',overVerification:{...proof,route:'cushion',pairedAt:start+110000}};rememberIndependentEntry(cushioned,prop,'aggregate',start+110000);
- assert.equal(timedOverEntryValid(cushioned,prop,start+110001),true);
+ assert.equal(timedOverEntryValid(cushioned,prop,start+110001),false,'retired paired proof is not valid');
  assert.equal(timedOverEntryValid({...cushioned,overVerification:{...cushioned.overVerification,route:'seller_cushion'}},prop,start+110001),false);
 });
 test('timing proof requires a cushion route, exact contract and two distinct external checks',()=>{
@@ -149,4 +149,18 @@ test('cushioned countable player overs verify immediately with an executable sel
  const uncushioned=harness({contract,playerStats:{p:{steals:1}}});
  assert.equal(await uncushioned.run(0),null);
  assert.equal(uncushioned.externalCount,0);
+});
+
+test('obsolete player countdown windows never wait or authorize a historical paired proof',()=>{
+ const prop={...market,ticker:'PROP',event_ticker:'KXNBAREB-TEST',title:'Pat Player: 6+ rebounds',
+   yes_sub_title:'Pat Player: 6+',floor_strike:5.5,custom_strike:{basketball_player:'p'}};
+ const game={...state(start+110000,75,70),playerStats:{p:{rebounds:7}}};
+ const window={initial_at:start,first_external_at:start+20000,first_external_id:'first'};
+ for(const ms of [0,20000,109999,110000,180000])
+   assert.equal(overTiming(window,game,prop,start+ms).stage,'invalid','no legacy player timer at '+ms);
+ const proof={route:'cushion',contractKey:overContractKey(game,prop),initialAt:start,
+   firstExternalAt:start+20000,firstExternalId:'first',pairedAt:start+110000,pairedExternalId:'second'};
+ const legacy={...game,verificationId:'external',overVerification:proof};
+ rememberIndependentEntry(legacy,prop,'external',start+110000);
+ assert.equal(timedOverEntryValid(legacy,prop,start+110001),false,'old paired route is ineligible for player purchases');
 });
