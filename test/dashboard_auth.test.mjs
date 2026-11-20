@@ -126,7 +126,8 @@ test('history returns losses with signed totals and supports a loss-only view',a
   const id='00000000-0000-4000-8000-000000000001',calls=[];
   pg.Pool.prototype.query=async function(sql,params){
     calls.push({sql,params});
-    if(sql.startsWith('CREATE TABLE IF NOT EXISTS account_history_')||
+    if(sql.startsWith('ALTER TABLE account_history_sync')||
+      sql.startsWith('CREATE TABLE IF NOT EXISTS account_history_')||
       sql.startsWith('CREATE TABLE IF NOT EXISTS account_realized_history')||
       sql.startsWith('INSERT INTO account_history_sync'))return {rows:[]};
     if(sql.includes('FROM account_history_sync WHERE id=1'))return {rows:[{phase:'complete',last_completed:new Date().toISOString(),last_error:null,imported_fills:'2',account_markets:'2'}]};
