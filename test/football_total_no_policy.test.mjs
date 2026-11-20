@@ -31,7 +31,7 @@ function market(sport='NFL',line=52,{half=false,quarter=false}={}){
 
 test('football total NO accepts only Q4 full-game contracts strictly under five minutes',()=>{
   for(const sport of ['CFB','NFL']){
-    const line=sport==='CFB'?55:52;
+    const line=sport==='CFB'?57:52;
     for(const period of [1,2,3,5]){
       assert.equal(collegeFootballTotalNo(fixture(sport,period).state,market(sport,line)),null,
         sport+' must reject all non-Q4 periods');
@@ -51,12 +51,15 @@ test('football total NO accepts only Q4 full-game contracts strictly under five 
   }
 });
 
-test('college football needs 18 points; NFL needs 15 points above both teams combined',()=>{
-  for(const [sport,line,threshold] of [['CFB',55,18],['NFL',52,15]]){
+test('college football needs 20 points; NFL needs 15 points above both teams combined',()=>{
+  for(const [sport,line,threshold] of [['CFB',57,20],['NFL',52,15]]){
     const game=fixture(sport).state;
     assert.equal(collegeFootballTotalNo(game,market(sport,line))?.total,37);
     assert.equal(collegeFootballTotalNo(game,market(sport,line))?.line,37+threshold);
-    assert.equal(collegeFootballTotalNo(game,market(sport,line-.5)),null);
+    assert.equal(collegeFootballTotalNo(game,market(sport,line-.5)),null,
+      sport+' rejects a cushion half a point below its minimum');
+    if(sport==='CFB')assert.equal(collegeFootballTotalNo(game,market(sport,55)),null,
+      'old 18-point college football cushion must not qualify');
     assert.ok(collegeFootballTotalNo(game,market(sport,line+.5)));
     assert.equal(collegeFootballTotalNo(game,market(sport,line+1,{half:true})),null);
     assert.equal(collegeFootballTotalNo(game,market(sport,line+1,{quarter:true})),null);

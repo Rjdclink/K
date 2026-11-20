@@ -12,7 +12,7 @@ import {readFileSync} from 'node:fs';
 
 const milestone={id:'ohio-akron',title:'Ohio at Akron',type:'football_game',start_date:'2026-11-04T00:00:00Z',
   details:{league:'CFB',home_team_id:'akron-id',away_team_id:'ohio-id'}};
-const market=(half,line=31.5)=>({ticker:`KXNCAAF${half?'1H':''}TOTAL-TEST-${line}`,
+const market=(half,line=33.5)=>({ticker:`KXNCAAF${half?'1H':''}TOTAL-TEST-${line}`,
   event_ticker:`KXNCAAF${half?'1H':''}TOTAL-TEST`,status:'active',title:`Over ${line} points`,
   floor_strike:line,strike_type:'greater',rules_primary:`The teams collectively score more than ${line} points in the ${half?'1st half of the':'full'} Ohio vs Akron college football game.`});
 function state(period,clock='1:58',situation={possession_team_id:'ohio-id',side_team_id:'ohio-id',yardline:16}){
@@ -49,15 +49,15 @@ test('CFB NO exclusively uses a fourth-quarter full-game market',()=>{
   assert.equal(nearEntryPhase(state(4,'5:30')),true);
 });
 
-test('CFB NO requires an 18-point gap in Q4 and strictly fewer than five minutes',()=>{
+test('CFB NO requires a 20-point gap in Q4 and strictly fewer than five minutes',()=>{
   const contract=line=>market(false,line),fresh=clock=>state(4,clock);
-  assert.ok(collegeFootballTotalNo(fresh('4:59'),contract(31)),'exact 18-point gap qualifies');
-  assert.equal(collegeFootballTotalNo(fresh('4:59'),contract(30.5)),null,'17.5 points is insufficient');
-  assert.equal(collegeFootballTotalNo(fresh('4:59'),contract(28.5)),null,'previous 15.5-point threshold is disabled');
-  assert.equal(collegeFootballTotalNo(fresh('5:00'),contract(31)),null,'five minutes is preflight only');
-  assert.ok(collegeFootballTotalNo(fresh('5:59'),contract(31),{beforeWindow:true}));
-  assert.equal(collegeFootballTotalNo(fresh('6:00'),contract(31),{beforeWindow:true}),null);
-  assert.equal(collegeFootballTotalNo({...fresh('4:59'),sport:'NFL'},contract(31)),null);
+  assert.ok(collegeFootballTotalNo(fresh('4:59'),contract(33)),'exact 20-point gap qualifies');
+  assert.equal(collegeFootballTotalNo(fresh('4:59'),contract(32.5)),null,'19.5 points is insufficient');
+  assert.equal(collegeFootballTotalNo(fresh('4:59'),contract(28.5)),null,'previous threshold is disabled');
+  assert.equal(collegeFootballTotalNo(fresh('5:00'),contract(33)),null,'five minutes is preflight only');
+  assert.ok(collegeFootballTotalNo(fresh('5:59'),contract(33),{beforeWindow:true}));
+  assert.equal(collegeFootballTotalNo(fresh('6:00'),contract(33),{beforeWindow:true}),null);
+  assert.equal(collegeFootballTotalNo({...fresh('4:59'),sport:'NFL'},contract(33)),null);
 });
 
 test('the market pass fetches actual full-game totals while rejecting first-half NO eligibility',()=>{
@@ -80,11 +80,11 @@ test('CFB NO line and field position are independent; an invalid market fails cl
 });
 
 test('Kalshi full-game titles require exact contract matching; first-half titles are rejected',()=>{
-  const full=market(false,31.5),half=market(true,31.5);
-  assert.ok(collegeFootballTotalNo(state(4),{...full,title:'Full Game: Over 31.5 points scored',yes_sub_title:'Over 31.5 points'}));
-  assert.equal(collegeFootballTotalNo(state(2),{...half,title:'Over 31.5 1H points scored',yes_sub_title:'Over 31.5 points'}),null);
-  assert.equal(collegeFootballTotalNo(state(4),{...full,title:'Full Game: Over 30.5 points scored',yes_sub_title:'Over 30.5 points'}),null);
-  assert.equal(collegeFootballTotalNo(state(4),{...full,title:'Full Game: Over 30.5 points scored',yes_sub_title:'Over 31.5 points'}),null);
+  const full=market(false,33.5),half=market(true,33.5);
+  assert.ok(collegeFootballTotalNo(state(4),{...full,title:'Full Game: Over 33.5 points scored',yes_sub_title:'Over 33.5 points'}));
+  assert.equal(collegeFootballTotalNo(state(2),{...half,title:'Over 31.5 1H points scored',yes_sub_title:'Over 33.5 points'}),null);
+  assert.equal(collegeFootballTotalNo(state(4),{...full,title:'Full Game: Over 34.5 points scored',yes_sub_title:'Over 34.5 points'}),null);
+  assert.equal(collegeFootballTotalNo(state(4),{...full,title:'Full Game: Over 34.5 points scored',yes_sub_title:'Over 33.5 points'}),null);
 });
 
 test('the independent CFB check requires exact ESPN score and matching fourth-quarter clock',()=>{

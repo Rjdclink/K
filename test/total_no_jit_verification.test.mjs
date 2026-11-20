@@ -11,7 +11,7 @@ function harness(sport,{ageMs=46000,failSecond=false,legacyFirstClock=null}={}){
   const basketball=sport==='NCAAB',league=basketball?'NCAAMB':sport;
   const prefix=basketball?'KXNCAAMB':sport==='NFL'?'KXNFL':'KXNCAAF';
   const period=basketball?2:4,home=basketball?65:20,away=basketball?65:17;
-  const line=basketball?150:sport==='CFB'?55:52;
+  const line=basketball?150:sport==='CFB'?57:52;
   const firstClock=basketball?'2:00':'5:30',entryClock=basketball?'1:29':'4:59';
   const milestone={id:'jit-'+sport,title:'Away at Home',
     type:basketball?'basketball_game':'football_game',start_date:'2026-11-19T12:00:00Z',
