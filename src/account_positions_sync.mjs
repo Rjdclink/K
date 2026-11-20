@@ -53,5 +53,6 @@ export async function syncAccountPositions({query,fetchPage,now=Date.now(),maxPa
   await query('UPDATE account_positions_sync SET phase=$1,cursor=$2,last_error=NULL,updated_at=now() WHERE id=1',
    [phase,cursor]);
  }
+ if(phase==='complete')await query("UPDATE account_positions_sync SET phase='complete',cursor='',completed_at=now(),last_error=NULL,updated_at=now() WHERE id=1");
  return {phase,imported};
 }
