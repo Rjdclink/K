@@ -905,6 +905,18 @@ async function syncSettlementAlerts(){
   // A second scanner instance cannot poll and enqueue the same records simultaneously.
   const claim=await pool.query(`UPDATE settlement_poll SET last_check=now() WHERE id=1 AND last_check<now()-interval '30 seconds' RETURNING id`);
   if(!claim.rowCount)return;
+  // Account-wide History includes purchases made directly on Kalshi, not only
+  // those in bot trade_attempts. Import both live and archived fills before
+  // publishing exchange-authoritative realized profit or loss.
+  try{
+    const progress=await syncAccountHistory({query:(...args)=>pool.query(...args),
+      fetchPage:path=>kalshi(path,{auth:true})});
+    if(!progress.skipped)console.info('Account-wide history import:',JSON.stringify(progress));
+  }catch(error){
+    console.warn('Account-wide history import deferred:',error.message);
+    await pool.query('UPDATE account_history_sync SET last_error=$1,updated_at=now() WHERE id=1',
+      [String(error.message).slice(0,250)]).catch(()=>{});
+  }
   try{
     const observedSettlements=[];
     const held=await pool.query(`SELECT DISTINCT market_ticker FROM trade_attempts WHERE status='filled' AND created_at>now()-interval '14 days'`);
@@ -928,18 +940,6 @@ async function syncSettlementAlerts(){
     try{await reconcilePendingManualOrders()}catch(e){console.error('Manual order reconciliation deferred:',e)}
     try{await syncTradeHistory(observedSettlements)}catch(e){console.error('Trade history reconciliation deferred:',e)}
   }catch(e){console.error('Settlement polling failed:',e);await pool.query(`UPDATE settlement_poll SET last_check=to_timestamp(0) WHERE id=1`).catch(()=>{})}
-  // Account-wide History includes purchases made directly on Kalshi, not only
-  // those in bot trade_attempts. Import both live and archived fills before
-  // publishing exchange-authoritative realized profit or loss.
-  try{
-    const progress=await syncAccountHistory({query:(...args)=>pool.query(...args),
-      fetchPage:path=>kalshi(path,{auth:true})});
-    if(!progress.skipped)console.info('Account-wide history import:',JSON.stringify(progress));
-  }catch(error){
-    console.warn('Account-wide history import deferred:',error.message);
-    await pool.query('UPDATE account_history_sync SET last_error=$1,updated_at=now() WHERE id=1',
-      [String(error.message).slice(0,250)]).catch(()=>{});
-  }
   const due=await pool.query(`SELECT d.alert_id,d.endpoint,s.subscription,a.ticker,a.profit_cents FROM push_deliveries d JOIN push_subscriptions s USING(endpoint) JOIN settlement_alerts a ON a.id=d.alert_id WHERE d.status='pending' AND d.next_attempt<=now() ORDER BY d.alert_id LIMIT 15`);
   await Promise.all(due.rows.map(async row=>{
     try{
