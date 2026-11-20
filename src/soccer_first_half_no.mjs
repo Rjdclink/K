@@ -23,7 +23,7 @@ const externalCurrent=(reading,game)=>Boolean(
 
 export function soccerFirstHalfNoSpec(game,market,{beforeWindow=false}={}){
   const seconds=soccerFirstHalfSeconds(game);
-  if(seconds===null||seconds<=0||(beforeWindow?seconds>240:seconds>=210)||
+  if(seconds===null||seconds<=0||(beforeWindow?seconds>360:seconds>=300)||
     !game.verifiedLive||!game.scoreKnown||!game.scoreConsistent||!game.periodConsistent||
     game.feedId!==game.id||game.clockRunning===false||
     !Number.isFinite(game.observedAt)||game.observedAt>Date.now()||
