@@ -12,7 +12,10 @@ const groups={
 export function teamAbbreviationVariants(name,sport){
   const text=String(name||'').trim(),match=text.match(/^([A-Za-z]{2,5})(\s+.*)?$/);
   if(['NCAAB','NCAAW','CFB'].includes(String(sport||'').toUpperCase())){
-    const schools=[['USC Upstate','SC Upstate','South Carolina Upstate'],['UConn','CONN','Connecticut'],['UMass','MASS','Massachusetts']];
+    const schools=[['USC Upstate','SC Upstate','South Carolina Upstate'],['UConn','CONN','Connecticut'],['UMass','MASS','Massachusetts'],
+      // ESPN uses 'Grambling' for the exact Grambling State school, while
+      // Kalshi often uses 'Grambling St.' for the same opponent.
+      ['Grambling St.','Grambling St','Grambling State','Grambling']];
     const school=schools.find(names=>names.some(n=>n.toLowerCase()===text.toLowerCase()));
     if(school)return [...new Set([text,...school])];
     if(/\sSt\.?$/i.test(text))return [text,text.replace(/\sSt\.?$/i,' State')];
