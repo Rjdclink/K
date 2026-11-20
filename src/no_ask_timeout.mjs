@@ -1,9 +1,17 @@
 // Persist liquidity decisions across concurrent scanner instances. Missing YES
 // asks and missing NO asks are independent markets on the same Kalshi ticker.
 // A still-empty candidate has 30 real seconds from first observation, after
-// which it is retired for that exact game/contract/side (never another game).
+// which empty books are skipped until the market reports changed quotes. A
+// subsequently confirmed executable offer always clears the absence timer.
 export const NO_ASK_GRACE_MS=30_000;
 export const NO_ASK_RETIRED='No executable ask after 30 seconds; candidate skipped';
+export function potentialSeller(market,side){
+  if(!market||!['yes','no'].includes(side))return false;
+  const price=Number(market[side+'_ask_dollars']);
+  if(!Number.isFinite(price)||price<=0||price>=1)return false;
+  const size=market[side+'_ask_size_fp'];
+  return size===undefined||size===null||Number.isFinite(Number(size))&&Number(size)>0;
+}
 
 const clean=(c,side)=>({
   ticker:String(c?.market_ticker||c?.ticker||c?.market?.ticker||'').trim(),
@@ -18,7 +26,12 @@ export function createNoAskTimeout(query){
       market_ticker text NOT NULL, game_id text NOT NULL,
       side text NOT NULL CHECK (side IN ('yes','no')),
       first_missing_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+      recovery_checked_at timestamptz,
+      recovery_market_at timestamptz,
       PRIMARY KEY(market_ticker,game_id,side))`)
+      .then(()=>query(`ALTER TABLE no_ask_timeouts
+        ADD COLUMN IF NOT EXISTS recovery_checked_at timestamptz,
+        ADD COLUMN IF NOT EXISTS recovery_market_at timestamptz`))
       .catch(e=>{ready=null;throw e});
     return ready;
   };
@@ -69,11 +82,33 @@ export function createNoAskTimeout(query){
     await query(`DELETE FROM no_ask_timeouts t USING
       jsonb_to_recordset($1::jsonb) AS x(ticker text,game_id text)
       WHERE t.market_ticker=x.ticker AND t.game_id=x.game_id AND
-      t.side=$2 AND t.first_missing_at>clock_timestamp()-interval '30 seconds'`,
+      t.side=$2`,
       [JSON.stringify(rows),side]);
+  };
+  const claimRecovery=async(candidate,side)=>{
+    const c=clean(candidate,side),market=candidate.market||candidate;
+    if(!valid(c,side)||!potentialSeller(market,side))return false;
+    await ensure();
+    const update=Date.parse(market.updated_time||market.updated_at||market.last_updated_time||'');
+    const updated=Number.isFinite(update)?new Date(update).toISOString():null;
+    // Book rechecks are triggered by updated quotes, not by repeated empty
+    // scan cycles. If source timestamps are unavailable, at most one probe
+    // per minute is allowed for a market now advertising an ask.
+    const response=await query(`UPDATE no_ask_timeouts SET
+      recovery_checked_at=clock_timestamp(),
+      recovery_market_at=COALESCE($4::timestamptz,recovery_market_at)
+      WHERE market_ticker=$1 AND game_id=$2 AND side=$3
+        AND first_missing_at<=clock_timestamp()-interval '30 seconds'
+        AND (
+          $4::timestamptz IS NOT NULL AND $4::timestamptz>first_missing_at AND
+          (recovery_market_at IS NULL OR recovery_market_at<$4::timestamptz)
+          OR recovery_checked_at IS NULL AND $4::timestamptz IS NULL
+          OR recovery_checked_at<=clock_timestamp()-interval '60 seconds' AND $4::timestamptz IS NULL
+        ) RETURNING market_ticker`,[c.ticker,c.game_id,side,updated]);
+    return Boolean(response.rows.length);
   };
   const isRetired=async(candidate,side)=>Boolean((await retired([candidate],side)).size);
   const observeMissing=async(candidate,side)=>(await missing([candidate],side))
     .get(clean(candidate,side).ticker+'\u0000'+clean(candidate,side).game_id)||null;
-  return {retired,missing,available,isRetired,observeMissing};
+  return {retired,missing,available,claimRecovery,isRetired,observeMissing};
 }

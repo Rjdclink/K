@@ -6,5 +6,5 @@ export const waitingOnAsk=()=> 'No executable ask; waiting 30s before skip';
 export const noAskKey=c=>String(c.market?.ticker||c.ticker)+'\0'+String(c.state?.id||c.game?.id||c.game_id||c.milestone?.id);
 export const noAskTimeout={
  retired:async()=>new Set(),missing:async()=>new Map(),available:async()=>{},
- isRetired:async()=>false,observeMissing:async()=>({retired:false,elapsedMs:0})
+ isRetired:async()=>false,claimRecovery:async()=>false,observeMissing:async()=>({retired:false,elapsedMs:0})
 };

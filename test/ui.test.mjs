@@ -541,3 +541,15 @@ test('a stale player-prop wait marker does not render a verification countdown',
   assert.match(outcome,/immediate|entry/i);
   assert.doesNotMatch(outcome,/in 20s|first external check pending/i);
 });
+test('final score verification is shown independently even when a no-ask or bankroll restriction prevents buying',()=>{
+ const context=vm.createContext({document:{getElementById:()=>({addEventListener(){},setAttribute(){},classList:{add(){},remove(){},toggle(){}}}),querySelectorAll:()=>[],createElement:()=>({})},
+  window:{addEventListener(){}},navigator:{},localStorage:{getItem(){return null}},
+  fetch:()=>new Promise(()=>{}),AbortSignal,setInterval(){}});
+ vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],context);
+ const format=vm.runInContext('verificationExecution',context);
+ const proven={strategy:'no',ticker:'SOCCER-NO',final_verification_attempted:true,
+  final_verification_passed:true,execution:'No executable ask after 30 seconds; candidate skipped'};
+ assert.match(format(proven),/Final external score verified.*No executable ask after 30 seconds/);
+ assert.doesNotMatch(format({...proven,final_verification_passed:false}),/Final external score verified/);
+ assert.doesNotMatch(page,/Quote expired after 30 seconds; checking live sellers/);
+});
