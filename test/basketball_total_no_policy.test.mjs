@@ -25,35 +25,35 @@ function totalMarket(league,half,line){
       (half?'the 1st half of ':'')+'the Away vs Home college basketball game.'};
 }
 
-test('basketball total NO requires exactly 25 unscored points strictly under 0:30 for men and women, halves and games',()=>{
+test('basketball total NO requires exactly 20 unscored points strictly under 0:30 for men and women, halves and games',()=>{
   for(const [league,halfPeriod,gamePeriod] of [['NCAAMB',1,2],['NCAAWB',2,4]]){
     for(const half of [true,false]){
       const period=half?halfPeriod:gamePeriod;
       const market=totalMarket(league,half,150);
-      const at=clock=>basketball(league,period,clock).state;
-      assert.equal(collegeBasketballTotalNo(at('0:29'),market)?.total,125);
+      const at=clock=>basketball(league,period,clock,65,65).state;
+      assert.equal(collegeBasketballTotalNo(at('0:29'),market)?.total,130);
       assert.ok(collegeBasketballTotalNo(at('0:01'),market));
       assert.equal(collegeBasketballTotalNo(at('0:30'),market),null,'thirty seconds is not strictly less');
       assert.equal(collegeBasketballTotalNo(at('0:00'),market),null,'game or period already ended');
       assert.equal(collegeBasketballTotalNo(at('3:29'),market),null,'old entry window must be closed');
       assert.equal(collegeBasketballTotalNo(at('0:29'),totalMarket(league,half,149.5)),null,
-        '24.5-point cushion is insufficient');
+        '19.5-point cushion is insufficient');
       assert.ok(collegeBasketballTotalNo(at('0:39'),market,{beforeWindow:true}),
         'first check remains available before the entry window');
       assert.equal(collegeBasketballTotalNo(at('5:00'),market,{beforeWindow:true}),null);
-      assert.equal(collegeBasketballTotalNo(basketball(league,period,'0:29',61,65).state,market),null,
-        'a combined score of 126 is too high for Over 150');
+      assert.equal(collegeBasketballTotalNo(basketball(league,period,'0:29',66,65).state,market),null,
+        'a combined score of 131 is too high for Over 150');
     }
   }
 });
 
-test('college basketball NO submits only under 0:30 with an aggregate 5% bankroll ceiling',async()=>{
+test('college basketball NO preflights at 1:15, waits 45s and enters under 0:30 at 5% cap',async()=>{
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
   const code=source.slice(source.indexOf('async function scanCollegeTotalNos('),
     source.indexOf('async function scan(cachedMilestones'));
   assert.ok(code.includes('async function scanCollegeTotalNos'));
   const league='NCAAMB',market=totalMarket(league,false,150);
-  const first=basketball(league,2,'0:39'),last=basketball(league,2,'0:29');
+  const first=basketball(league,2,'1:15'),last=basketball(league,2,'0:29');
   const events=new Map([[market.event_ticker,{event_ticker:market.event_ticker,
     category:'Sports',markets:[market]}]]);
   let window=null,checks=0,orders=0,reserved=null,floor=null,orderSizing=null;
@@ -67,7 +67,7 @@ test('college basketball NO submits only under 0:30 with an aggregate 5% bankrol
       if(sql.startsWith('INSERT INTO college_total_no_windows')){
         window={market_ticker:args[0],game_id:args[1],contract_key:args[2],
           period:args[3],first_clock:args[4],first_evidence:JSON.parse(args[5]),
-          first_at:new Date(Date.now()-25000)};
+          first_at:new Date(Date.now()-46000)};
         return {rows:[]};
       }
       if(sql.startsWith('SELECT 1 FROM trade_attempts'))return {rowCount:0};
@@ -106,7 +106,7 @@ test('college basketball NO submits only under 0:30 with an aggregate 5% bankrol
   assert.equal(checks,0);
   assert.equal(await run(first.state),0,'first independent check only');
   assert.equal(checks,1);
-  assert.equal(window?.first_clock,39);
+  assert.equal(window?.first_clock,75);
   assert.equal(await run(basketball(league,2,'0:30').state),0,'0:30 is not entry eligible');
   assert.equal(orders,0);
   assert.equal(await run(last.state),1,'second check should authorize the final 29 seconds');
