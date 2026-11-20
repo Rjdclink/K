@@ -1,3 +1,4 @@
+import {basketballTotalNoFeed} from './basketball_no_leagues.mjs';
 import {espnMatches} from './score_verification.mjs';
 import {espnScoreboardUrls} from './espn_scoreboards.mjs';
 import {collegeFootballTotalNo,collegeBasketballTotalNo} from './no_strategy.mjs';
@@ -25,8 +26,7 @@ export async function verifyIndependentCollegeTotalNo(game,milestone,market,{fet
   if(!Number.isFinite(start)||!qualifies(game,market))return null;
   const dates=[start,start-86400000].map(ms=>new Date(ms).toISOString().slice(0,10).replaceAll('-',''));
   for(const date of new Set(dates)){
-    const feed=game.sport==='CFB'?'football/college-football':game.sport==='NFL'?'football/nfl':game.sport==='NCAAB'? 'basketball/mens-college-basketball':
-      game.sport==='NCAAW'?'basketball/womens-college-basketball':null;
+    const feed=game.sport==='CFB'?'football/college-football':game.sport==='NFL'?'football/nfl':basketballTotalNoFeed(game.sport);
     if(!feed)return null;
     const results=await Promise.allSettled(espnScoreboardUrls(feed,game,milestone,[date]).map(async url=>{
       const response=await fetcher(url,{signal:AbortSignal.timeout(6000)});

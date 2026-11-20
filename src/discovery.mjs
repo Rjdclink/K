@@ -1,3 +1,4 @@
+import {basketballTotalNoSupported} from './basketball_no_leagues.mjs';
 // Only fetch event families used by the two entry strategies and comeback exits.
 // The exchange remains authoritative: a guessed ticker is ignored unless an
 // open event and its market are actually returned by Kalshi.
@@ -7,7 +8,7 @@ export function supportedScannerSport(item){
   const type=String(item?.type||'').toLowerCase();
   if(!/^(?:basketball|baseball|football|hockey|soccer|tennis|table_tennis|golf|handball|rugby|lacrosse|volleyball|darts|cricket)_/.test(type))return false;
   if(/esports/i.test(`${type} ${item?.sport||''} ${item?.details?.league||''}`))return false;
-  if(type.startsWith('basketball_'))return ['NBA','WNBA','NCAAB','NCAAW'].includes(item.sport||sportName(item));
+  if(type.startsWith('basketball_'))return basketballTotalNoSupported(item.sport)||basketballTotalNoSupported(sportName(item));
   if(type.startsWith('golf_'))return ['pga','lpga','euro'].includes(item.tour||item.details?.tour);
   return true;
 }
@@ -22,7 +23,7 @@ export async function mapBatches(items,limit,task){
 
 export const internationalBasketball=game=>/basketball/.test(String(game?.type||''))&&
   !['NBA','WNBA','NCAAB','NCAAW'].includes(game?.sport);
-export function eligibleForMarkets(game){return game?.verifiedLive && game.scoreKnown && supportedScannerSport(game) &&
+export function eligibleForMarkets(game){return game?.verifiedLive && game.scoreKnown && supportedScannerSport(game) && !internationalBasketball(game) &&
   (game.type!=='cricket_match'||cricketOneInningsFormat(game.competition)||game.cricket?.innings===4)}
 
 export async function discoverCurrentMilestones(get,now=Date.now(),lookbackMs=7*86400000){
@@ -212,4 +213,3 @@ export function gameTimeLabel(game){
 export function storedClockSeconds(value,running=true){
   return Number.isFinite(value)?Math.max(0,running===false?Math.floor(value):Math.ceil(value)):null;
 }
-
