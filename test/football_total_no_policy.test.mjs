@@ -136,13 +136,11 @@ test('football scanner handles both NFL and CFB and enforces a shared 10% cap in
   });
   vm.runInContext(code,context);
   const run=(f,scanSport='football')=>context.scanCollegeTotalNos([{milestone:f.milestone,state:f.state}],events,scanSport);
-  assert.equal(await run(later),0,'no opening a new verification window after entry begins');
+  assert.equal(await run(first),0,'football does not verify before the under-5:00 entry window');
   assert.equal(checks,0);
-  assert.equal(await run(first),0,'first independent check before five minutes');
+  assert.equal(saved,null,'no football preflight window');
+  assert.equal(await run(later),1,'NFL Q4 enters after one immediate independent check');
   assert.equal(checks,1);
-  assert.equal(saved?.first_clock,330);
-  assert.equal(await run(later),1,'NFL final window submits after second independent check');
-  assert.equal(checks,2);
   assert.equal(orders,1);
   assert.equal(allocation,.10);
   assert.equal(budget,100,'$100 bankroll, with $8 CFB exposure and $1 fees, leaves only $1');
