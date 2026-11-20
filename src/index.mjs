@@ -2767,13 +2767,13 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null){
   return filled;
 }
 async function scanHockeyTotalNos(games,events,signalSink=null){
-  const allocation=.10,entry=90,start=135,reasonPattern='NHL hockey total NO %';
+  const allocation=.05,entry=90,start=135,reasonPattern='NHL hockey total NO %';
   const report=(c,execution,signal=null,ask=null)=>{
     if(!signalSink)return;
     const list=signalSink.get(c.state.id)||[];
     const item={strategy:'no',ticker:c.market.ticker,
       title:c.market.title||c.market.yes_sub_title||c.market.ticker,
-      reason:signal?.reason||'NHL full-game or third-period NO needs 2.5-goal cushion',
+      reason:signal?.reason||'NHL NO cushion: 2.5 full game, 1.5 third period',
       execution,...(ask?{ask:ask.price.toFixed(4),ask_size:ask.size.toFixed(2)}:{})};
     const i=list.findIndex(row=>row.ticker===item.ticker);
     if(i<0)list.push(item);else list[i]=item;
@@ -2845,7 +2845,7 @@ async function scanHockeyTotalNos(games,events,signalSink=null){
         }
         const signal=proof&&hockeyTotalNo(game,c.market,{beforeWindow:true,external:proof});
         if(!signal||game.remainingSeconds*1000-(Date.now()-game.observedAt)<=entry*1000){
-          report(c,'First external check unavailable or 2.5-goal cushion not met');continue;
+          report(c,'First external check unavailable or market-specific goal cushion not met');continue;
         }
         await pool.query('INSERT INTO hockey_total_no_windows '+
           '(market_ticker,game_id,contract_key,period,first_clock,first_evidence,first_at) '+
@@ -2923,7 +2923,7 @@ async function scanHockeyTotalNos(games,events,signalSink=null){
       const quantity=current.fractional_trading_enabled===false?Math.floor(count):count;
       if(quantity<minimumCount(current)||!profitableCount(quantity,ask.price,fees,
         'no',bankroll,fresh.type,fresh.remainingSeconds,{game:fresh,market:current})){
-        report(c,'Entry blocked: 10% shared NHL total-NO cap, fees or net profit',null,ask);continue;
+        report(c,'Entry blocked: 5% shared NHL total-NO cap, fees or net profit',null,ask);continue;
       }
       await auditTable();
       // Only a fresh exact ESPN game score plus third-period goals can authorize entry.
