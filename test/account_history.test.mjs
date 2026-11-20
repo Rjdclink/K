@@ -40,7 +40,7 @@ test('unknown action, missing fees, invalid quantity and missing fill ID fail cl
  for(const bad of [
   {...fill('a'),action:undefined},{...fill('b'),fee_cost:undefined},
   {...fill('c'),count_fp:'0'}, {...fill('d'),fill_id:undefined},
-  {...fill('e'),yes_price_dollars:undefined}
+  {...fill('e'),yes_price_dollars:undefined,no_price_dollars:undefined}
  ])assert.equal(normalizeAccountFill(bad),null);
 });
 test('every market gets one realized row, each exchange fill counted once',()=>{
