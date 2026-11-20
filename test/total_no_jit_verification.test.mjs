@@ -12,7 +12,7 @@ function harness(sport,{ageMs=46000,failSecond=false,legacyFirstClock=null}={}){
   const prefix=basketball?'KXNCAAMB':sport==='NFL'?'KXNFL':'KXNCAAF';
   const period=basketball?2:4,home=basketball?65:20,away=basketball?65:17;
   const line=basketball?150:sport==='CFB'?55:52;
-  const firstClock=basketball?'1:15':'5:30',entryClock=basketball?'0:29':'4:59';
+  const firstClock=basketball?'2:00':'5:30',entryClock=basketball?'1:29':'4:59';
   const milestone={id:'jit-'+sport,title:'Away at Home',
     type:basketball?'basketball_game':'football_game',start_date:'2026-11-19T12:00:00Z',
     details:{league,home_team_id:'home',away_team_id:'away',main_game_event_ticker:prefix+'GAME-TEST'}};
@@ -27,7 +27,7 @@ function harness(sport,{ageMs=46000,failSecond=false,legacyFirstClock=null}={}){
       'The teams collectively score more than '+line+' points in the full Away vs Home football game.'};
   let window=legacyFirstClock===null?null:{
     market_ticker:market.ticker,game_id:milestone.id,
-    contract_key:overContractKey(state('1:15'),market),period,
+    contract_key:overContractKey(state('2:00'),market),period,
     first_clock:legacyFirstClock,first_evidence:{source:'ESPN',seconds:legacyFirstClock},
     first_at:new Date(Date.now()-ageMs)
   },proofs=0,orders=0,blocked=false;
@@ -41,7 +41,7 @@ function harness(sport,{ageMs=46000,failSecond=false,legacyFirstClock=null}={}){
     collegeFootballTotalNo,collegeBasketballTotalNo,overContractKey,sameSportsContract,
     verifyIndependentCollegeTotalNo:async()=>{
       proofs++;trace.push('external'+proofs);
-      return blocked||failSecond&&proofs===2?null:{source:'ESPN',seconds:basketball?29:299,period};
+      return blocked||failSecond&&proofs===2?null:{source:'ESPN',seconds:basketball?89:299,period};
     },
     pool:{query:async(sql,args=[])=>{
       if(sql.startsWith('SELECT * FROM college_total_no_windows'))return {rows:window?[window]:[]};
@@ -93,35 +93,35 @@ function harness(sport,{ageMs=46000,failSecond=false,legacyFirstClock=null}={}){
   };
 }
 
-test('basketball first ESPN check starts at 1:15, 45-second real timer, then second immediately before under-30-second entry',async()=>{
+test('basketball full-game first ESPN check starts at 2:00 and fresh second proof permits entry strictly under 1:30',async()=>{
   const h=harness('NCAAB');
-  assert.equal(await h.scan('1:16'),0,'do not start preflight before 1:15');
+  assert.equal(await h.scan('2:01'),0,'do not start preflight before 2:00');
   assert.equal(h.proofs,0);
-  assert.equal(await h.scan('1:15'),0);
+  assert.equal(await h.scan('2:00'),0);
   assert.equal(h.proofs,1);
-  assert.equal(h.window?.first_clock,75);
+  assert.equal(h.window?.first_clock,120);
   assert.equal(h.orders,0);
-  assert.equal(await h.scan('0:30'),0,'no entry at exactly thirty seconds');
+  assert.equal(await h.scan('1:30'),0,'no entry at exactly ninety seconds');
   assert.equal(h.proofs,1);
-  assert.equal(await h.scan('0:29'),1);
+  assert.equal(await h.scan('1:29'),1);
   assert.equal(h.proofs,2,'exactly two independent readings total');
   assert.equal(h.orders,1);
   assert.ok(h.trace.indexOf('external2')>h.trace.indexOf('orderbook'),'second verification must occur AFTER quote/size checks');
   assert.ok(h.trace.indexOf('external2')<h.trace.indexOf('reserve'),'second verification must occur immediately BEFORE reservation');
 });
 
-test('basketball NO fails closed when the 45-second preflight clock has not elapsed',async()=>{
-  const h=harness('NCAAB',{ageMs:30000});
-  assert.equal(await h.scan('1:15'),0);
-  assert.equal(await h.scan('0:29'),0);
-  assert.equal(h.proofs,1,'no second external lookup if countdown incomplete');
-  assert.equal(h.orders,0);
+test('basketball NO no longer waits 45 seconds after its initial independent verification',async()=>{
+  const h=harness('NCAAB',{ageMs:1000});
+  assert.equal(await h.scan('2:00'),0);
+  assert.equal(await h.scan('1:29'),1);
+  assert.equal(h.proofs,2,'second independent external proof is required immediately at entry');
+  assert.equal(h.orders,1);
 });
 
 test('basketball NO fails closed when the immediate external lookup disagrees or is unavailable',async()=>{
   const h=harness('NCAAB',{failSecond:true});
-  assert.equal(await h.scan('1:15'),0);
-  assert.equal(await h.scan('0:29'),0);
+  assert.equal(await h.scan('2:00'),0);
+  assert.equal(await h.scan('1:29'),0);
   assert.equal(h.proofs,2);
   assert.equal(h.orders,0);
 });
@@ -150,13 +150,13 @@ test('NFL and CFB NO reject the trade when their only independent check is unava
   }
 });
 
-test('stale preflight windows from earlier policies are reverified at 1:15 instead of blocking an eligible last-quarter entry',async()=>{
-  for(const oldClock of [284,25]){
+test('stale preflight windows from earlier policies are reverified at 2:00 instead of being trusted at 1:29',async()=>{
+  for(const oldClock of [284,25,75]){
     const h=harness('NCAAB',{legacyFirstClock:oldClock});
-    assert.equal(await h.scan('1:15'),0,'a stale preflight should be replaced, not trusted');
+    assert.equal(await h.scan('2:00'),0,'a stale preflight should be replaced, not trusted');
     assert.equal(h.proofs,1,'exactly one new first external verification');
-    assert.equal(h.window?.first_clock,75,'restart the 45-second timer from a valid 1:15 preflight');
-    assert.equal(await h.scan('0:29'),1,'entry after new 45-second countdown with fresh final proof');
+    assert.equal(h.window?.first_clock,120,'restart initial proof at the valid 2:00 clock');
+    assert.equal(await h.scan('1:29'),1,'entry after new first proof with fresh final independent confirmation');
     assert.equal(h.proofs,2);
     assert.equal(h.orders,1);
   }

@@ -50,16 +50,17 @@ export function collegeFootballTotalNo(game,market,{beforeWindow=false}={}){
 }
 
 export function collegeBasketballTotalNo(game,market,{beforeWindow=false}={}){
+  const collegeMen=game?.sport==='NCAAB',collegeWomen=game?.sport==='NCAAW';
+  const firstHalf=(collegeMen&&game?.period===1)||(collegeWomen&&game?.period===2);
+  const fullGame=game?.period===(collegeMen?2:4);
+  const entrySeconds=fullGame?90:30;
   if(!basketballTotalNoSupported(game?.sport)||game.type!=='basketball_game'||!game.verifiedLive||
     !game.scoreKnown||!game.scoreConsistent||!game.periodConsistent||game.feedId!==game.id||
     !Number.isFinite(game.observedAt)||Date.now()-game.observedAt>10000||
     !Number.isFinite(game.remainingSeconds)||game.remainingSeconds<=0||
-    game.remainingSeconds>=(beforeWindow?300:30)||
+    game.remainingSeconds>=(beforeWindow?300:entrySeconds)||
     !['active','open'].includes(market?.status)||
     market.result&&!['','not_determined'].includes(String(market.result)))return null;
-  const collegeMen=game.sport==='NCAAB',collegeWomen=game.sport==='NCAAW';
-  const firstHalf=(collegeMen&&game.period===1)||(collegeWomen&&game.period===2);
-  const fullGame=game.period===(collegeMen?2:4);
   if(!firstHalf&&!fullGame)return null;
   let prefix=collegeMen?'KXNCAAMB':collegeWomen?'KXNCAAWB':
     game.sport==='NBA'?'KXNBA':game.sport==='WNBA'?'KXWNBA':null;

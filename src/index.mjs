@@ -2566,7 +2566,7 @@ async function scanThirdQuarterNos(games,events){
 }
 async function scanCollegeTotalNos(games,events,sport,signalSink=null){
   const basketball=sport==='basketball',qualifies=basketball?collegeBasketballTotalNo:collegeFootballTotalNo;
-  const prewindow=300,entry=basketball?30:300;
+  const prewindow=300,entry=300;
   const label=basketball?'College basketball':'Football';
   const allocation=basketball?.05:.10;
   const reasonPatterns=basketball?['College basketball %','Basketball total NO %']:['CFB %','NFL %'];
@@ -2609,10 +2609,15 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null){
     eligible.sort((a,b)=>a.signal.line-b.signal.line);
     if(eligible.length){
       choices.push(...(basketball?eligible:[eligible[0]]));
-      if(basketball)for(const candidate of eligible)report(candidate,
-        state.remainingSeconds<entry?'Waiting for final just-in-time independent verification':
-          state.remainingSeconds>75?'External preflight scheduled near 1:15 remaining':
-          'First external preflight and 45-second countdown pending');
+      if(basketball)for(const candidate of eligible){
+        const initialClock=candidate.signal.period==='full_game'?120:75;
+        const entryClock=candidate.signal.period==='full_game'?90:30;
+        const initialLabel=candidate.signal.period==='full_game'?'2:00':'1:15';
+        report(candidate,
+          state.remainingSeconds<entryClock?'Awaiting fresh final external verification in entry window':
+            state.remainingSeconds>initialClock?'Initial independent external verification scheduled near '+initialLabel:
+              'Initial independent external verification pending');
+      }
     }else if(basketball&&signalSink){
       signalSink.set(state.id,[{strategy:'watch',title:'Basketball total NO',
         reason:'No open matched total with a 20-point cushion',
@@ -2625,8 +2630,10 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null){
   for(const c of choices){
     try{
       const game=c.state;
-      // Basketball: first independent reading starts near 1:15, then a
-      // 45-second real-time hold before the final under-0:30 external reading.
+      const entryClock=basketball?(c.signal.period==='full_game'?90:30):entry;
+      const firstClock=basketball?(c.signal.period==='full_game'?120:75):null;
+      // Basketball: initial external verification precedes the entry window;
+      // a fresh independent reading still runs immediately before submission.
       // Football: Q4 entry under 5:00 requires only its final external reading.
       let window=null;
       if(basketball){
@@ -2635,10 +2642,11 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null){
         const key=overContractKey(game,c.market);
         window=priorWindow;
         if(!window||window.game_id!==game.id||window.contract_key!==key||window.period!==game.period||
-          !Number.isFinite(Number(window.first_clock))||Number(window.first_clock)>75||Number(window.first_clock)<=30){
-          if(game.remainingSeconds>75||game.remainingSeconds<=30){
-            report(c,game.remainingSeconds>75?'First external preflight scheduled at about 1:15 remaining':
-              'Entry blocked: preflight was not completed before the final 30 seconds');
+          !Number.isFinite(Number(window.first_clock))||Number(window.first_clock)>firstClock||Number(window.first_clock)<=entryClock){
+          if(game.remainingSeconds>firstClock||game.remainingSeconds<=entryClock){
+            report(c,game.remainingSeconds>firstClock?
+              'Initial independent verification scheduled near '+(c.signal.period==='full_game'?'2:00':'1:15'):
+              'Entry blocked: first external verification was not completed before the entry window');
             continue;
           }
           let firstProof;
@@ -2648,7 +2656,7 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null){
             firstProofs.set(game.id,firstProof);
           }
           if(!firstProof||!qualifies(game,c.market,{beforeWindow:true})||
-            game.remainingSeconds*1000-(Date.now()-game.observedAt)<=30000){
+            game.remainingSeconds*1000-(Date.now()-game.observedAt)<=entryClock*1000){
             report(c,'Entry deferred: independent first score and clock verification unavailable');
             continue;
           }
@@ -2658,23 +2666,19 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null){
             'game_id=EXCLUDED.game_id,contract_key=EXCLUDED.contract_key,period=EXCLUDED.period,'+
             'first_clock=EXCLUDED.first_clock,first_evidence=EXCLUDED.first_evidence,first_at=EXCLUDED.first_at',
             [c.market.ticker,game.id,key,game.period,game.remainingSeconds,JSON.stringify(firstProof)]);
-          report(c,'First external check passed; 45-second countdown started');
+          report(c,'First external check passed; awaiting entry window');
           continue;
         }
-        if(game.remainingSeconds>=entry){
-          report(c,'First external check saved; waiting for under 0:30');
+        if(game.remainingSeconds>=entryClock){
+          report(c,'First external check saved; awaiting entry window');
           continue;
         }
-        if(Number(window.first_clock)<=30||Number(window.first_clock)>75){
-          report(c,'Entry blocked: first proof was not started around 1:15');
+        if(Number(window.first_clock)<=entryClock||Number(window.first_clock)>firstClock){
+          report(c,'Entry blocked: first proof did not precede the entry window');
           continue;
         }
         const preflightAge=Date.now()-new Date(window.first_at).getTime();
-        if(preflightAge<45000){
-          report(c,'First external check passed; waiting for 45-second countdown');
-          continue;
-        }
-        if(preflightAge>5*60000){
+        if(!Number.isFinite(preflightAge)||preflightAge<0||preflightAge>5*60000){
           report(c,'Entry blocked: first external preflight expired');
           continue;
         }
@@ -2808,7 +2812,7 @@ async function scanHockeyTotalNos(games,events,signalSink=null){
         const c={milestone,state,event,market,spec};
         candidates.push(c);found++;
         report(c,state.remainingSeconds>=entry?'Independent P3 score and clock preflight pending':
-          'Waiting for 45-second preflight and fresh final verification');
+          'Awaiting fresh final external verification in entry window');
       }
     }
     if(!found&&signalSink)signalSink.set(state.id,[{
@@ -2854,17 +2858,14 @@ async function scanHockeyTotalNos(games,events,signalSink=null){
           'contract_key=EXCLUDED.contract_key,period=EXCLUDED.period,'+
           'first_clock=EXCLUDED.first_clock,first_evidence=EXCLUDED.first_evidence,first_at=EXCLUDED.first_at',
           [c.market.ticker,game.id,key,game.period,game.remainingSeconds,JSON.stringify(proof)]);
-        report(c,'First ESPN verification passed; 45-second countdown started',signal);
+        report(c,'First ESPN verification passed; awaiting entry window',signal);
         continue;
       }
       if(game.remainingSeconds>=entry){
         report(c,'First external check saved; awaiting less than 1:30');continue;
       }
       const age=Date.now()-new Date(window.first_at).getTime();
-      if(age<45000){
-        report(c,'Waiting for 45-second preflight countdown');continue;
-      }
-      if(!Number.isFinite(age)||age>5*60000){
+      if(!Number.isFinite(age)||age<0||age>5*60000){
         report(c,'Entry blocked: external preflight expired');continue;
       }
       const raw=await liveMilestone(c.milestone.id);
