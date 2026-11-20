@@ -31,7 +31,7 @@ export function soccerNoMarketSpec(game,market,{beforeWindow=false}={}){
     Date.now()<game.observedAt||Date.now()-game.observedAt>10000||
     game.period!==2||game.soccerExtraTime||game.soccerOvertime||game.clockRunning===false||
     !Number.isFinite(game.soccerMinute)||!Number.isFinite(seconds)||seconds<=0||
-    (beforeWindow?seconds>660:seconds>=600)||
+    (beforeWindow?seconds>660:seconds>=480)||
     !Number.isInteger(game.home)||game.home<0||!Number.isInteger(game.away)||game.away<0||
     !['active','open'].includes(market?.status)||
     market.result&&!['','not_determined'].includes(String(market.result)))return null;
