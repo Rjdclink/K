@@ -24,26 +24,28 @@ export function thirdQuarterYardageNo(game,market){
   return player;
 }
 
-// These are distinct settlement periods: Q2 for a first-half total and Q4
-// for a full-game total. The nearest line still needs a 15-point gap.
+// Football total NO: Q4 full-game contracts only. CFB needs an 18-point
+// cushion and NFL needs a 15-point cushion; the first check precedes 5:00.
 export function collegeFootballTotalNo(game,market,{beforeWindow=false}={}){
-  if(game?.sport!=='CFB'||game.type!=='football_game'||!game.verifiedLive||
+  if(!['CFB','NFL'].includes(game?.sport)||game.type!=='football_game'||!game.verifiedLive||
     !game.scoreKnown||!game.scoreConsistent||!game.periodConsistent||game.feedId!==game.id||
     !Number.isFinite(game.observedAt)||Date.now()-game.observedAt>10000||
-    ![2,4].includes(game.period)||!Number.isFinite(game.remainingSeconds)||
+    game.period!==4||!Number.isFinite(game.remainingSeconds)||
     game.remainingSeconds<=0||game.remainingSeconds>=(beforeWindow?360:300)||
     !['active','open'].includes(market?.status)||
     market.result&&!['','not_determined'].includes(String(market.result)))return null;
-  const firstHalf=game.period===2,series=String(market.event_ticker||'').split('-')[0];
-  if(series!==(firstHalf?'KXNCAAF1HTOTAL':'KXNCAAFTOTAL')||
+  const series=String(market.event_ticker||'').split('-')[0];
+  if(series!==(game.sport==='CFB'?'KXNCAAFTOTAL':'KXNFLTOTAL')||
     market.strike_type&&!['greater','greater_than'].includes(market.strike_type))return null;
   const line=Number(market.floor_strike),displayed=totalLine(market);
   const rules=String(market.rules_primary||'');
-  if(!Number.isFinite(line)||line!==displayed||line-(game.home+game.away)<15||
-    !/collectively score more than|combined total points scored/i.test(rules)||
-    (firstHalf?!/1st half|first half/i.test(rules):/\b(?:1st|first|2nd|second)\s+half\b|quarter|team total/i.test(rules)))return null;
-  return {strategy:'no',period:firstHalf?'first_half':'full_game',line,total:game.home+game.away,
-    reason:`CFB ${firstHalf?'first-half':'full-game'} NO over ${line}; ${game.home+game.away} scored, ${game.remainingSeconds}s left in Q${game.period}`};
+  const gap=game.sport==='CFB'?18:15;
+  if(!Number.isFinite(line)||line!==displayed||line-(game.home+game.away)<gap||
+    !(/collectively score more than|combined total points scored/i.test(rules)||
+      game.sport==='NFL'&&/over\s+\d+(?:\.\d+)?\s+total points are scored/i.test(rules))||
+    /\b(?:1st|first|2nd|second)\s+half\b|quarter|team total/i.test(rules))return null;
+  return {strategy:'no',period:'full_game',line,total:game.home+game.away,
+    reason:game.sport+' full-game NO over '+line+'; '+(game.home+game.away)+' scored, '+game.remainingSeconds+'s left in Q4'};
 }
 
 export function collegeBasketballTotalNo(game,market,{beforeWindow=false}={}){

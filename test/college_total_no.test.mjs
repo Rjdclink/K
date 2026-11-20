@@ -12,16 +12,16 @@ import {readFileSync} from 'node:fs';
 
 const milestone={id:'ohio-akron',title:'Ohio at Akron',type:'football_game',start_date:'2026-11-04T00:00:00Z',
   details:{league:'CFB',home_team_id:'akron-id',away_team_id:'ohio-id'}};
-const market=(half,line=28.5)=>({ticker:`KXNCAAF${half?'1H':''}TOTAL-TEST-${line}`,
+const market=(half,line=31.5)=>({ticker:`KXNCAAF${half?'1H':''}TOTAL-TEST-${line}`,
   event_ticker:`KXNCAAF${half?'1H':''}TOTAL-TEST`,status:'active',title:`Over ${line} points`,
   floor_strike:line,strike_type:'greater',rules_primary:`The teams collectively score more than ${line} points in the ${half?'1st half of the':'full'} Ohio vs Akron college football game.`});
 function state(period,clock='1:58',situation={possession_team_id:'ohio-id',side_team_id:'ohio-id',yardline:16}){
   return gameState(milestone,{milestone_id:milestone.id,_observed_at:new Date().toISOString(),
     details:{status:'inprogress',home_points:6,away_points:7,quarter:period,clock,last_updated_ts:Date.now()/1000,situation}});
 }
-test('college NO verification discovers FCS fixtures and survives an unavailable date without accepting a conflict',async()=>{
-  const m={...milestone,details:{...milestone.details,division:'FCS'}},game=state(2),half=market(true);
-  const board={events:[{id:'fixture',date:m.start_date,competitions:[{status:{period:2,displayClock:'1:58',type:{state:'in'}},
+test('college NO verification discovers FCS fixtures and refuses conflicting evidence',async()=>{
+  const m={...milestone,details:{...milestone.details,division:'FCS'}},game=state(4),full=market(false);
+  const board={events:[{id:'fixture',date:m.start_date,competitions:[{status:{period:4,displayClock:'1:58',type:{state:'in'}},
     competitors:[{homeAway:'home',score:'6',team:{displayName:'Akron'}},
       {homeAway:'away',score:'7',team:{displayName:'Ohio'}}]}]}]};
   const urls=[];
@@ -29,74 +29,74 @@ test('college NO verification discovers FCS fixtures and survives an unavailable
     if(q.get('dates')==='20261104')throw Error('temporary timeout');
     return {ok:true,json:async()=>q.get('groups')==='81'?board:{events:[]}};
   };
-  assert.equal((await verifyIndependentCollegeTotalNo(game,m,half,{fetcher}))?.eventId,'fixture');
+  assert.equal((await verifyIndependentCollegeTotalNo(game,m,full,{fetcher}))?.eventId,'fixture');
   assert.ok(urls.every(url=>new URL(url).searchParams.get('groups')==='81'));
   let calls=0;
   const conflict=structuredClone(board);conflict.events[0].competitions[0].competitors[0].score='9';
-  assert.equal(await verifyIndependentCollegeTotalNo(game,m,half,{fetcher:async()=>({ok:true,json:async()=>++calls===1?conflict:board})}),null);
+  assert.equal(await verifyIndependentCollegeTotalNo(game,m,full,{fetcher:async()=>({ok:true,json:async()=>++calls===1?conflict:board})}),null);
   assert.equal(calls,1,'do not retry another date after an exact conflicting fixture');
 });
-test('Q2 first-half and Q4 full-game NO are distinct, strict five-minute entries',()=>{
-  const first=state(2),last=state(4),half=market(true),full=market(false);
-  assert.equal(collegeFootballTotalNo(first,half)?.period,'first_half');
-  assert.equal(collegeFootballTotalNo(last,full)?.period,'full_game');
-  assert.equal(collegeFootballTotalNo(first,full),null);
-  assert.equal(collegeFootballTotalNo(last,half),null);
-  assert.equal(collegeFootballTotalNo(state(2,'5:00'),half),null);
-  assert.ok(collegeFootballTotalNo(state(2,'5:30'),half,{beforeWindow:true}));
-  assert.equal(collegeFootballTotalNo(state(2,'5:30'),half),null);
-  assert.equal(nearEntryPhase(state(2,'5:30')),true);
+
+test('CFB NO exclusively uses a fourth-quarter full-game market',()=>{
+  const half=market(true),full=market(false);
+  assert.equal(collegeFootballTotalNo(state(2),half),null);
+  assert.equal(collegeFootballTotalNo(state(2),full),null);
+  assert.equal(collegeFootballTotalNo(state(3),full),null);
+  assert.equal(collegeFootballTotalNo(state(4),half),null);
+  assert.equal(collegeFootballTotalNo(state(2,'5:30'),half,{beforeWindow:true}),null);
+  assert.equal(collegeFootballTotalNo(state(2,'5:30'),full,{beforeWindow:true}),null);
+  assert.equal(collegeFootballTotalNo(state(4),full)?.period,'full_game');
   assert.equal(nearEntryPhase(state(4,'5:30')),true);
 });
-test('CFB NO requires fifteen points and final verification below five minutes in Q2 and Q4',()=>{
-  for(const period of [2,4]){
-    const contract=line=>market(period===2,line),fresh=clock=>state(period,clock);
-    assert.ok(collegeFootballTotalNo(fresh('4:59'),contract(28)),'an exact fifteen-point gap qualifies');
-    assert.equal(collegeFootballTotalNo(fresh('4:59'),contract(27.5)),null,'less than fifteen blocks entry');
-    assert.equal(collegeFootballTotalNo(fresh('4:59'),contract(25.5)),null,'the former twelve-point gap is disabled');
-    assert.equal(collegeFootballTotalNo(fresh('5:00'),contract(28)),null,'five minutes is preflight only');
-    assert.ok(collegeFootballTotalNo(fresh('5:59'),contract(28),{beforeWindow:true}));
-    assert.equal(collegeFootballTotalNo(fresh('6:00'),contract(28),{beforeWindow:true}),null);
-    assert.equal(nearEntryPhase(fresh('6:30')),true,'market discovery starts before the preflight window');
-    assert.equal(collegeFootballTotalNo({...fresh('4:59'),sport:'NFL'},contract(28)),null);
-  }
+
+test('CFB NO requires an 18-point gap in Q4 and strictly fewer than five minutes',()=>{
+  const contract=line=>market(false,line),fresh=clock=>state(4,clock);
+  assert.ok(collegeFootballTotalNo(fresh('4:59'),contract(31)),'exact 18-point gap qualifies');
+  assert.equal(collegeFootballTotalNo(fresh('4:59'),contract(30.5)),null,'17.5 points is insufficient');
+  assert.equal(collegeFootballTotalNo(fresh('4:59'),contract(28.5)),null,'previous 15.5-point threshold is disabled');
+  assert.equal(collegeFootballTotalNo(fresh('5:00'),contract(31)),null,'five minutes is preflight only');
+  assert.ok(collegeFootballTotalNo(fresh('5:59'),contract(31),{beforeWindow:true}));
+  assert.equal(collegeFootballTotalNo(fresh('6:00'),contract(31),{beforeWindow:true}),null);
+  assert.equal(collegeFootballTotalNo({...fresh('4:59'),sport:'NFL'},contract(31)),null);
 });
-test('the market pass fetches both college football total families from a real game link',()=>{
+
+test('the market pass fetches actual full-game totals while rejecting first-half NO eligibility',()=>{
   const linked={...milestone,details:{...milestone.details,main_game_event_ticker:'KXNCAAFGAME-26NOV03OHIOAKR'},
     related_event_tickers:['KXNCAAFGAME-26NOV03OHIOAKR','KXNCAAF1HTOTAL-26NOV03OHIOAKR','KXNCAAFTOTAL-26NOV03OHIOAKR']};
-  for(const game of [state(2,'5:30'),state(4,'5:30')]){
-    const tickers=entryEventTickers(linked,game);
-    assert.ok(tickers.includes('KXNCAAF1HTOTAL-26NOV03OHIOAKR'));
-    assert.ok(tickers.includes('KXNCAAFTOTAL-26NOV03OHIOAKR'));
-  }
+  const tickers=entryEventTickers(linked,state(4,'5:30'));
+  assert.ok(tickers.includes('KXNCAAFTOTAL-26NOV03OHIOAKR'));
+  assert.equal(collegeFootballTotalNo(state(4),market(true)),null);
 });
-test('the football line is at least fifteen above the combined score regardless of field position',()=>{
-  const first=state(2),half=market(true);
-  assert.equal(collegeFootballTotalNo(first,half)?.total,13);
-  assert.equal(collegeFootballTotalNo(first,market(true,27.5)),null);
-  assert.equal(collegeFootballTotalNo(first,{...half,title:'Over 22.5 points'}),null);
-  assert.ok(collegeFootballTotalNo(state(2,'1:58',{possession_team_id:'ohio-id',side_team_id:'akron-id',yardline:16}),half));
-  assert.ok(collegeFootballTotalNo(state(2,'1:58',{possession_team_id:'ohio-id',side_team_id:'ohio-id',yardline:50}),half));
-  assert.ok(collegeFootballTotalNo(state(2,'1:58',{possession_team_id:'unknown',side_team_id:'unknown',yardline:16}),half));
-  assert.equal(collegeFootballTotalNo(first,{...half,status:'closed'}),null);
+
+test('CFB NO line and field position are independent; an invalid market fails closed',()=>{
+  const full=market(false);
+  assert.equal(collegeFootballTotalNo(state(4),full)?.total,13);
+  assert.equal(collegeFootballTotalNo(state(4),market(false,30.5)),null);
+  assert.equal(collegeFootballTotalNo(state(4),{...full,title:'Over 22.5 points'}),null);
+  assert.ok(collegeFootballTotalNo(state(4,'1:58',{possession_team_id:'ohio-id',side_team_id:'akron-id',yardline:16}),full));
+  assert.ok(collegeFootballTotalNo(state(4,'1:58',{possession_team_id:'ohio-id',side_team_id:'ohio-id',yardline:50}),full));
+  assert.ok(collegeFootballTotalNo(state(4,'1:58',{possession_team_id:'unknown',side_team_id:'unknown',yardline:16}),full));
+  assert.equal(collegeFootballTotalNo(state(4),{...full,status:'closed'}),null);
 });
-test('Kalshi full-game and first-half title formats retain the exact No threshold',()=>{
-  const full=market(false,28.5),half=market(true,28.5);
-  assert.ok(collegeFootballTotalNo(state(4),{...full,title:'Full Game: Over 28.5 points scored',yes_sub_title:'Over 28.5 points'}));
-  assert.ok(collegeFootballTotalNo(state(2),{...half,title:'Over 28.5 1H points scored',yes_sub_title:'Over 28.5 points'}));
-  assert.equal(collegeFootballTotalNo(state(4),{...full,title:'Full Game: Over 27.5 points scored',yes_sub_title:'Over 27.5 points'}),null);
-  assert.equal(collegeFootballTotalNo(state(4),{...full,title:'Full Game: Over 27.5 points scored',yes_sub_title:'Over 28.5 points'}),null);
+
+test('Kalshi full-game titles require exact contract matching; first-half titles are rejected',()=>{
+  const full=market(false,31.5),half=market(true,31.5);
+  assert.ok(collegeFootballTotalNo(state(4),{...full,title:'Full Game: Over 31.5 points scored',yes_sub_title:'Over 31.5 points'}));
+  assert.equal(collegeFootballTotalNo(state(2),{...half,title:'Over 31.5 1H points scored',yes_sub_title:'Over 31.5 points'}),null);
+  assert.equal(collegeFootballTotalNo(state(4),{...full,title:'Full Game: Over 30.5 points scored',yes_sub_title:'Over 30.5 points'}),null);
+  assert.equal(collegeFootballTotalNo(state(4),{...full,title:'Full Game: Over 30.5 points scored',yes_sub_title:'Over 31.5 points'}),null);
 });
-test('the independent check requires exact ESPN score and matching period and clock',()=>{
-  const game=state(2),half=market(true);
+
+test('the independent CFB check requires exact ESPN score and matching fourth-quarter clock',()=>{
+  const game=state(4),full=market(false);
   const situation={possession:'1',downDistanceText:'2nd & 12 at OHIO 16'};
   const scoreboard={events:[{id:'401866453',date:milestone.start_date,
-    competitions:[{status:{period:2,displayClock:'1:58',type:{state:'in'}},situation,
+    competitions:[{status:{period:4,displayClock:'1:58',type:{state:'in'}},situation,
       competitors:[{id:'1',homeAway:'away',team:{displayName:'Ohio Bobcats',shortDisplayName:'Ohio',abbreviation:'OHIO'},score:'7'},
         {id:'2',homeAway:'home',team:{displayName:'Akron Zips',shortDisplayName:'Akron',abbreviation:'AKR'},score:'6'}]}]}]};
-  assert.equal(independentCollegeTotalNoReading(scoreboard,game,milestone,half)?.seconds,118);
-  assert.equal(independentCollegeTotalNoReading({...scoreboard,events:[{...scoreboard.events[0],competitions:[{...scoreboard.events[0].competitions[0],competitors:[{...scoreboard.events[0].competitions[0].competitors[0],score:'10'},scoreboard.events[0].competitions[0].competitors[1]]}]}]},game,milestone,half),false);
-  assert.equal(independentCollegeTotalNoReading({...scoreboard,events:[{...scoreboard.events[0],competitions:[{...scoreboard.events[0].competitions[0],status:{period:2,displayClock:'1:30',type:{state:'in'}}}]}]},game,milestone,half),false);
+  assert.equal(independentCollegeTotalNoReading(scoreboard,game,milestone,full)?.seconds,118);
+  assert.equal(independentCollegeTotalNoReading({...scoreboard,events:[{...scoreboard.events[0],competitions:[{...scoreboard.events[0].competitions[0],competitors:[{...scoreboard.events[0].competitions[0].competitors[0],score:'10'},scoreboard.events[0].competitions[0].competitors[1]]}]}]},game,milestone,full),false);
+  assert.equal(independentCollegeTotalNoReading({...scoreboard,events:[{...scoreboard.events[0],competitions:[{...scoreboard.events[0].competitions[0],status:{period:4,displayClock:'1:30',type:{state:'in'}}}]}]},game,milestone,full),false);
 });
 test('college basketball NO uses distinct half and game contracts, 25-point cushion and final 30-second window',()=>{
   for(const [league,prefix,halfPeriod,gamePeriod] of [
@@ -143,8 +143,8 @@ test('college basketball NO uses distinct half and game contracts, 25-point cush
 test('the scanner starts before 5:00 and only submits after a second fresh check and executable NO seller',async()=>{
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
   const code=source.slice(source.indexOf('async function scanCollegeTotalNos('),source.indexOf('async function scan(cachedMilestones'));
-  const half=market(true),event={event_ticker:half.event_ticker,category:'Sports',markets:[half]};
-  let window=null,checks=0,orders=0;const first=state(2,'5:30'),last=state(2,'4:59');
+  const half=market(false),event={event_ticker:half.event_ticker,category:'Sports',markets:[half]};
+  let window=null,checks=0,orders=0;const first=state(4,'5:30'),last=state(4,'4:59');
   const context=vm.createContext({Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),
     linkedEventTickers:()=>[half.event_ticker],collegeFootballTotalNo,collegeBasketballTotalNo,overContractKey,sameSportsContract,
@@ -161,24 +161,24 @@ test('the scanner starts before 5:00 and only submits after a second fresh check
       if(path==='/portfolio/events/orders'){orders++;assert.equal(opts.body.side,'ask');assert.equal(opts.body.price,'0.0500');opts.beforeDispatch();return {fill_count_fp:'10',order_id:'filled'}};
       throw Error(path);
     },liveMilestone:async()=>({milestone_id:milestone.id,_observed_at:new Date().toISOString(),
-      details:{status:'inprogress',home_points:6,away_points:7,quarter:2,clock:'4:59',last_updated_ts:Date.now()/1000,
+      details:{status:'inprogress',home_points:6,away_points:7,quarter:4,clock:'4:59',last_updated_ts:Date.now()/1000,
         situation:{possession_team_id:'ohio-id',side_team_id:'ohio-id',yardline:16}}}),gameState,
     bestNoAsk,noDepthAtAsk,minimumCount:()=>1,allOpenPositions:async()=>({market_positions:[]}),
     accountBalance:async()=>({balance:10000,portfolio_value:0}),shardCash:()=>10000,marketShard:()=>0,
     singleSpendableCash:v=>v,feeReserve:()=>0,orderSize:()=>10,profitableCount:n=>n,
     estimatedCostCents:()=>500,auditTable:async()=>{},randomUUID:()=> 'proof',
-    rememberIndependentEntry,reserve:async signal=>{assert.equal(signal.fraction,.15);return 'order-1'},
-    withEntryProfitFloor:async(options,fn)=>{assert.equal(options.fraction,.15);return fn()},
+    rememberIndependentEntry,reserve:async signal=>{assert.equal(signal.fraction,.10);return 'order-1'},
+    withEntryProfitFloor:async(options,fn)=>{assert.equal(options.fraction,.10);return fn()},
     invalidateBalance:async()=>{}});
   vm.runInContext(code,context);
   const args=g=>[[{milestone,state:g}],new Map([[half.event_ticker,event]])];
-  assert.equal(await context.scanCollegeTotalNos(...args(last),'CFB'),0,'no first check after the window opens');
+  assert.equal(await context.scanCollegeTotalNos(...args(last),'football'),0,'no first check after the window opens');
   assert.equal(checks,0);
-  const tooLate={...state(2,'5:05'),observedAt:Date.now()-6000};
-  assert.equal(await context.scanCollegeTotalNos(...args(tooLate),'CFB'),0,'the first check must finish before the window');
+  const tooLate={...state(4,'5:05'),observedAt:Date.now()-6000};
+  assert.equal(await context.scanCollegeTotalNos(...args(tooLate),'football'),0,'the first check must finish before the window');
   assert.equal(window,null);
-  assert.equal(await context.scanCollegeTotalNos(...args(first),'CFB'),0);
+  assert.equal(await context.scanCollegeTotalNos(...args(first),'football'),0);
   assert.equal(checks,2);assert.equal(orders,0);assert.equal(window.first_clock,330);
-  assert.equal(await context.scanCollegeTotalNos(...args(last),'CFB'),1);
+  assert.equal(await context.scanCollegeTotalNos(...args(last),'football'),1);
   assert.equal(checks,3);assert.equal(orders,1);
 });

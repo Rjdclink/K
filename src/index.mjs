@@ -2548,16 +2548,17 @@ async function scanThirdQuarterNos(games,events){
 async function scanCollegeTotalNos(games,events,sport){
   const basketball=sport==='basketball',qualifies=basketball?collegeBasketballTotalNo:collegeFootballTotalNo;
   const prewindow=basketball?300:360,entry=basketball?30:300;
-  const label=basketball?'College basketball':'CFB';
-  const allocation=basketball?.05:.15;
-  const watching=games.filter(({state})=>(basketball?['NCAAB','NCAAW'].includes(state.sport):state.sport==='CFB')&&
-    (basketball?state.period===(state.sport==='NCAAB'?1:2)||state.period===(state.sport==='NCAAB'?2:4):[2,4].includes(state.period))&&
+  const label=basketball?'College basketball':'Football';
+  const allocation=basketball?.05:.10;
+  const reasonPatterns=basketball?['College basketball %']:['CFB %','NFL %'];
+  const watching=games.filter(({state})=>(basketball?['NCAAB','NCAAW'].includes(state.sport):['CFB','NFL'].includes(state.sport))&&
+    (basketball?state.period===(state.sport==='NCAAB'?1:2)||state.period===(state.sport==='NCAAB'?2:4):state.period===4)&&
     Number.isFinite(state.remainingSeconds)&&state.remainingSeconds>0&&state.remainingSeconds<prewindow);
   if(!live()||!watching.length)return 0;
   const latest=await liveBatch(watching.map(({milestone})=>milestone));
   for(const game of watching){const raw=latest.get(game.milestone.id);
     if(raw)game.state=gameState(game.milestone,raw)}
-  const unresolved=await pool.query("SELECT 1 FROM trade_attempts WHERE strategy='no' AND reason LIKE $1 AND status IN ('reserved','check_order','retrying') LIMIT 1",[label+' %']);
+  const unresolved=await pool.query("SELECT 1 FROM trade_attempts WHERE strategy='no' AND reason LIKE ANY($1) AND status IN ('reserved','check_order','retrying') LIMIT 1",[reasonPatterns]);
   if(unresolved.rowCount)return 0;
   await pool.query(`CREATE TABLE IF NOT EXISTS college_total_no_windows (
     market_ticker text PRIMARY KEY,game_id text NOT NULL,contract_key text NOT NULL,
@@ -2619,7 +2620,7 @@ async function scanCollegeTotalNos(games,events,sport){
       const account=await accountBalance({fresh:true}),bankroll=Number(account.balance)+Number(account.portfolio_value);
       const local=shardCash(account,marketShard(c.event,current));
       if(!Number.isFinite(bankroll)||bankroll<=0||local===null||local<=0)continue;
-      const {rows:managed}=await pool.query("SELECT market_ticker,fill_count,limit_price,updated_at FROM trade_attempts WHERE strategy='no' AND reason LIKE $1 AND status='filled'",[label+' %']);
+      const {rows:managed}=await pool.query("SELECT market_ticker,fill_count,limit_price,updated_at FROM trade_attempts WHERE strategy='no' AND reason LIKE ANY($1) AND status='filled'",[reasonPatterns]);
       const tickers=new Set(managed.map(row=>row.market_ticker));
       const positions=await allOpenPositions({strict:true});
       const negative=(positions.market_positions||[]).filter(p=>tickers.has(p.ticker)&&Number(p.position_fp??p.position)<0);
@@ -2636,7 +2637,7 @@ async function scanCollegeTotalNos(games,events,sport){
       if(quantity<minimumCount(current)||!profitableCount(quantity,ask.price,fees,'no',bankroll,fresh.type,fresh.remainingSeconds,{game:fresh,market:current}))continue;
       await auditTable();const verificationId=randomUUID(),verifiedAt=Date.now();
       await pool.query('INSERT INTO verification_records(id,market_ticker,passed,evidence) VALUES($1,$2,true,$3)',
-        [verificationId,current.ticker,JSON.stringify({mode:basketball?'independent_college_basketball_total_no':'independent_cfb_total_no',game:fresh,milestone:c.milestone,
+        [verificationId,current.ticker,JSON.stringify({mode:basketball?'independent_college_basketball_total_no':fresh.sport==='NFL'?'independent_nfl_total_no':'independent_cfb_total_no',game:fresh,milestone:c.milestone,
           firstAt:window.first_at,firstClock:window.first_clock,firstExternal:window.first_evidence,
           secondAt:new Date(verifiedAt),external:proof,ask:ask.price})]);
       fresh.verificationId=verificationId;rememberIndependentEntry(fresh,current,verificationId,verifiedAt);
@@ -2799,7 +2800,7 @@ async function scan(cachedMilestones,discoveryCount){
     // Begin held combo discovery after exits while the ordinary signal scan
     // proceeds. The final quote acceptance rechecks held legs and cash.
     const comboJob=live()?fillComboQueue.enqueue(null,scanStarted):Promise.resolve(null);
-    submitted+=await scanCollegeTotalNos(marketGames,events,'CFB');
+    submitted+=await scanCollegeTotalNos(marketGames,events,'football');
     submitted+=await scanCollegeTotalNos(marketGames,events,'basketball');
     submitted+=await scanThirdQuarterNos(marketGames,events);
     await candidateTable();
