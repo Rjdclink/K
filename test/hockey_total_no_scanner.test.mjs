@@ -167,7 +167,7 @@ test('hockey NO dashboard signals are persisted alongside existing strategies, w
   const snapshotCandidates=new Map([['game',[]]]);
   const hockeyNoSignals=new Map([['game',[{strategy:'no',ticker:markets[0].ticker,title:'Over 5.5 goals',execution:'Preflight scheduled'}]]]);
   const basketballNoSignals=new Map();
-  vm.runInNewContext(src.slice(begin,end),{snapshotRows,snapshotCandidates,hockeyNoSignals,basketballNoSignals,
+  vm.runInNewContext(src.slice(begin,end),{snapshotRows,snapshotCandidates,hockeyNoSignals,basketballNoSignals,soccerNoSignals:new Map(),
     crossingRows:[],filled:new Set(),account:{},balance:0,bankroll:0,signalExecution:()=>''});
   assert.equal(JSON.parse(row[14])[0].strategy,'no');
   assert.equal(JSON.parse(row[14])[0].ticker,markets[0].ticker);
