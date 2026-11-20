@@ -7,12 +7,15 @@ export function verifiedPositionProfit(position){
    !Number.isFinite(profit)||!Number.isFinite(fees)||fees<0)return null;
  return Math.round((profit-fees)*100);
 }
-export async function publishVerifiedPositions({query,minCalibration=25}){
+export async function ensureVerifiedPositionTables(query){
  await query('CREATE TABLE IF NOT EXISTS account_position_history_publish ('+
    'id integer PRIMARY KEY,published_at timestamptz)');
  await query('CREATE TABLE IF NOT EXISTS account_position_realized_history ('+
    'ticker text PRIMARY KEY,occurred_at timestamptz NOT NULL,profit_cents bigint NOT NULL,'+
    'source_completed_at timestamptz NOT NULL)');
+}
+export async function publishVerifiedPositions({query,minCalibration=25}){
+ await ensureVerifiedPositionTables(query);
  const {rows:[state]}=await query(`SELECT s.completed_at,p.published_at FROM account_positions_sync s
    LEFT JOIN account_position_history_publish p ON p.id=1 WHERE s.id=1 AND s.phase='complete'`);
  if(!state?.completed_at)return {status:'deferred',reason:'Position import is incomplete'};
