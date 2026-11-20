@@ -21,12 +21,12 @@ const market=(third=false,line=4.5)=>({
   rules_primary:'If the teams collectively score more than '+line+' goals in the '+
     (third?'3rd Period of the ':'')+'Away vs Home NHL game originally scheduled for Nov 20, 2026, then the market resolves to Yes.'
 });
-test('NHL NO preflight starts exactly at 5:00 remaining and entry is strictly below 4:30',()=>{
+test('NHL NO preflight starts exactly at 7:00 remaining and entry is strictly below 6:00',()=>{
   for(const third of [false,true]){
-    assert.equal(hockeyNoMarketSpec(state('5:01'),market(third),{beforeWindow:true}),null);
-    assert.ok(hockeyNoMarketSpec(state('5:00'),market(third),{beforeWindow:true}));
-    assert.equal(hockeyTotalNo(state('4:30'),market(third)),null);
-    assert.ok(hockeyTotalNo(state('4:29'),market(third,third?1.5:5.5)));
+    assert.equal(hockeyNoMarketSpec(state('7:01'),market(third),{beforeWindow:true}),null);
+    assert.ok(hockeyNoMarketSpec(state('7:00'),market(third),{beforeWindow:true}));
+    assert.equal(hockeyTotalNo(state('6:00'),market(third)),null);
+    assert.ok(hockeyTotalNo(state('5:59'),market(third,third?1.5:5.5)));
     assert.equal(hockeyTotalNo(state('0:00'),market(third)),null);
   }
 });
