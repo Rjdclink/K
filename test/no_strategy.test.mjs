@@ -1,3 +1,4 @@
+import {noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey} from './support/no_ask_mock.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -102,7 +103,7 @@ test('scan preserves the first verification and sends a bounded NO order after a
     if(sql.includes('UPDATE trade_attempts')){attempt=args;return {rows:[],rowCount:1}}
     return {rows:[],rowCount:0};
   }};
-  const context=vm.createContext({console,Date,Number,Math,JSON,Set,Map,Promise,pool,live:()=>true,
+  const context=vm.createContext({noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,console,Date,Number,Math,JSON,Set,Map,Promise,pool,live:()=>true,
     linkedEventTickers:()=>[m.event_ticker],thirdQuarterYardageNo,highestYardageNos,bestNoAsk,noDepthAtAsk,
     mapBatches:async(items,_,fn)=>Promise.all(items.map(fn)),
     kalshi:async(path,options)=>options?.method==='POST'?(order=options,{fill_count_fp:'2.00',order_id:'ord'}):

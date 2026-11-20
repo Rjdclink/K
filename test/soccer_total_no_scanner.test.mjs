@@ -1,3 +1,4 @@
+import {noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey} from './support/no_ask_mock.mjs';
 import {pairedExternalMatch} from '../src/independent_match_score.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -26,7 +27,7 @@ const market={ticker:'KXEPLTOTAL-26NOV20AWAYHOME-5',
 const events=new Map([[market.event_ticker,{event_ticker:market.event_ticker,category:'Sports',markets:[market]}]]);
 
 function harness({canVerify=true,hasSeller=true,initialAgeMs=61000,existingExposure=false,
-  afterRefreshScore=3,missingClock=false,finalExternalFails=false,duplicate=false,globalPending=false}={}){
+  afterRefreshScore=3,missingClock=false,finalExternalFails=false,duplicate=false,globalPending=false,noAskPolicy=noAskTimeout}={}){
   const src=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
   const a=src.indexOf('async function scanSoccerTotalNos('),b=src.indexOf('async function scan(cachedMilestones',a);
   assert.ok(a>0&&b>a,'soccer NO scanner must be confined to a dedicated function');
@@ -34,7 +35,7 @@ function harness({canVerify=true,hasSeller=true,initialAgeMs=61000,existingExpos
   const windows=new Map(),dashboard=new Map(),trace=[],diagnostics=[];
   let verified=0,orders=0,lastBudget=null,lastFraction=null,lastQuantity=null;
   const held={ticker:'KXEPLTOTAL-OLDER',position_fp:-1,market_exposure_dollars:'4.00',fees_paid_dollars:'0.50'};
-  const context=vm.createContext({recordDecision:async decision=>{diagnostics.push(decision)},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
+  const context=vm.createContext({noAskTimeout:noAskPolicy,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async decision=>{diagnostics.push(decision)},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
     Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),
     linkedEventTickers:()=>[market.event_ticker],
@@ -113,6 +114,35 @@ function harness({canVerify=true,hasSeller=true,initialAgeMs=61000,existingExpos
     get lastFraction(){return lastFraction;},get lastQuantity(){return lastQuantity;}
   };
 }
+
+test('NO book probes stop at 30 elapsed seconds of absent asks, even when game clock is stopped',async()=>{
+ let elapsed=0,firstAt=null;
+ const gate={
+  isRetired:async()=>firstAt!==null&&elapsed-firstAt>=30_000,
+  observeMissing:async()=>{
+   if(firstAt===null)firstAt=elapsed;
+   const age=elapsed-firstAt;
+   return {retired:age>=30_000,elapsedMs:Math.min(30_000,age)};
+  },
+  available:async()=>{},retired:async()=>new Set(),missing:async()=>new Map()
+ };
+ const h=harness({hasSeller:false,noAskPolicy:gate});
+ assert.equal(await h.scan(540),0,'first ESPN score check remains scheduled');
+ assert.equal(h.windows.size,1);
+ assert.equal(await h.scan(479),0,'first missing NO ask begins its 30-second grace');
+ assert.equal(h.trace.filter(t=>t==='orderbook').length,1);
+ elapsed=29_999;
+ assert.equal(await h.scan(479),0,'another probe may occur within the 30-second grace');
+ assert.equal(h.trace.filter(t=>t==='orderbook').length,2);
+ elapsed=30_000;
+ assert.equal(await h.scan(479),0,'same contract is retired after 30 seconds');
+ assert.equal(h.trace.filter(t=>t==='orderbook').length,2,
+   'no more orderbook calls for a retired market');
+ assert.equal(h.verifications,1,'retired market also avoids further independent score calls');
+ assert.equal((h.dashboard.get(milestone.id)||[]).find(x=>x.ticker===market.ticker)?.execution,
+   NO_ASK_RETIRED);
+ assert.equal(h.orders,0);
+});
 
 test('a qualifying soccer NO cushion is not mislabeled when external score coverage is unavailable',async()=>{
   const blocked=harness({canVerify:false});

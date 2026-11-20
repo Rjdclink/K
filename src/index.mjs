@@ -37,6 +37,7 @@ import { sellQuote,cashoutQuote } from './sell.mjs';
 import {takerFeeSpec,manualPositionQuote,cashoutEstimate} from './manual_position.mjs';
 import { manualComboQuote } from './combo_manual.mjs';
 import { yesDepthAtAsk, bestYesAsk, bestAsksForTickers, createMissingAskProbe } from './orderbook.mjs';
+import {createNoAskTimeout,NO_ASK_GRACE_MS,NO_ASK_RETIRED} from './no_ask_timeout.mjs';
 import { filledOrderGateCount } from './entry_floor.mjs';
 import {thirdQuarterYardageNo,collegeFootballTotalNo,collegeBasketballTotalNo,highestYardageNos,bestNoAsk,noDepthAtAsk} from './no_strategy.mjs';
 import {verifyIndependentCollegeTotalNo} from './college_total_no.mjs';
@@ -73,6 +74,10 @@ const ensureManualSales=()=>manualSalesReady??=(async()=>{
 })().catch(e=>{manualSalesReady=null;throw e});
 const executionAudit=createExecutionAudit((...args)=>pool.query(...args));
 const probeMissingAsks=createMissingAskProbe((...args)=>pool.query(...args));
+const noAskTimeout=createNoAskTimeout((...args)=>pool.query(...args));
+const noAskKey=c=>String(c.market?.ticker||c.ticker)+'\0'+String(c.state?.id||c.game?.id||c.game_id||c.milestone?.id);
+const waitingOnAsk=gap=>gap?.retired?NO_ASK_RETIRED:
+  'No executable ask; waiting '+Math.max(1,Math.ceil((NO_ASK_GRACE_MS-(gap?.elapsedMs||0))/1000))+'s before skip';
 const recordDecision=decision=>executionAudit(decision).catch(e=>console.warn('Execution audit deferred:',e.message));
 const fillComboQueue=createFillComboQueue((fill,options)=>withApiPriority('normal',()=>checkCurrentHeldCombinations(fill,options)),
   {onError:(error,fill)=>console.warn('Post-fill combo check deferred:',fill?.market_ticker||'held positions',error.message)});
@@ -271,10 +276,14 @@ async function verifyCommandingLead(game,milestone,market,cache,event){
   return lateCommandingLead(game,market)&&leadSignal(game,market)?true:null;
 }
 async function verifiedEntryQuote(game,milestone,market,cache,strategy='lead',onRawQuote){
+  if(await noAskTimeout.isRetired({market,game},'yes'))return null;
   const readQuote=async()=>{
     const current=await recoverSummaryAsk((await kalshi('/markets/'+encodeURIComponent(market.ticker))).market,{fresh:true});
     onRawQuote?.(current);
-    return current&&hasAsk(current)?executableQuote(current):null;
+    const executable=current&&hasAsk(current)?await executableQuote(current):null;
+    if(!executable)await noAskTimeout.observeMissing({market,game},'yes');
+    else await noAskTimeout.available([{market,game}],'yes');
+    return executable&&!await noAskTimeout.isRetired({market,game},'yes')?executable:null;
   };
   if(strategy!=='lead'||!basketballCloseoutEntry(game))return readQuote();
   if(Date.now()-game.observedAt>5000){
@@ -327,6 +336,7 @@ async function pairedOverRead(first,milestone,market,decorate=state=>state){
   return {state:second,pairedAt,externalId:first.verificationId,overValue:first.independentEntry?.overValue};
 }
 async function confirmedIndependentOver(first,milestone,market,{decorate=state=>state}={}){
+  if(await noAskTimeout.isRetired({market,game:first},'yes'))return null;
   await ensureOverWindows();
   if(overCushion(first,market)===null){
     await pool.query('DELETE FROM over_verification_windows WHERE market_ticker=$1 AND game_id=$2',[market.ticker,first.id]);
@@ -349,7 +359,9 @@ async function confirmedIndependentOver(first,milestone,market,{decorate=state=>
   if(!current||overContractKey(first,current)!==overContractKey(first,market))return null;
   const quoted=await recoverSummaryAsk(current,{fresh:true});
   const seller=quoted&&hasAsk(quoted)?await executableQuote(quoted):null;
-  if(!seller)return null;
+  if(!seller){await noAskTimeout.observeMissing({market,game:first},'yes');return null;}
+  await noAskTimeout.available([{market,game:first}],'yes');
+  if(await noAskTimeout.isRetired({market,game:first},'yes'))return null;
   if(!freshOverState(first,seller)){
     const raw=await liveMilestone(milestone.id);
     if(!raw)return null;
@@ -2077,6 +2089,7 @@ async function watchLeadWindows(until){
           if(!event||event.category!=='Sports')continue;
           for(const market of event.markets||[]){
             if(Date.now()>=until||market.event_ticker!==main)continue;
+            if(await noAskTimeout.isRetired({market,game:first},'yes'))continue;
             const decision={source:'fast_lead',market,signal:{strategy:'lead'},game:first,
               stage:'entry_rule',outcome:'skipped',startedAt:Date.now()};
             try{
@@ -2098,7 +2111,11 @@ async function watchLeadWindows(until){
               decision.stage='ask_liquidity';
               const offered=await recoverSummaryAsk(market,{fresh:true});
               decision.market=offered||market;
-              if(!hasAsk(offered))continue;
+              if(!hasAsk(offered)){
+                const gap=await noAskTimeout.observeMissing({market,game:first},'yes');
+                decision.detail=waitingOnAsk(gap);continue;
+              }
+              if(await noAskTimeout.isRetired({market,game:first},'yes'))continue;
               const firstSignal=leadSignal(first,offered)||
                 earlyLeadSignal(first,offered)||additionalLeadSignal(first,offered);
               if(!firstSignal)continue;
@@ -2182,6 +2199,7 @@ async function watchReadyOverTickets(until){
         let state=null,market={ticker:ticket.ticker},verified=null;
         const checkedAt=Date.now();
         try{
+          if(await noAskTimeout.isRetired({market:{ticker:ticket.ticker},game:{id:milestone.id}},'yes'))continue;
           const cached=rows.find(row=>row.milestone.id===milestone.id)?.live_score;
           const useCached=/soccer/.test(milestone.type||'')&&Date.now()-Date.parse(cached?._observed_at||'')<=30000;
           const raw=useCached?cached:await liveMilestone(milestone.id);
@@ -2204,7 +2222,11 @@ async function watchReadyOverTickets(until){
           if(!sameSportsContract(current,listed)||!['active','open'].includes(current.status)||current.event_ticker!==eventTicker)continue;
           market=await recoverSummaryAsk(current,{fresh:true});
           market=hasAsk(market)?await executableQuote(market):null;
-          if(!market)continue;
+          if(!market){
+            await noAskTimeout.observeMissing({market:current,game:state},'yes');continue;
+          }
+          await noAskTimeout.available([{market,game:state}],'yes');
+          if(await noAskTimeout.isRetired({market,game:state},'yes'))continue;
           stage='score_and_cash_recheck';
           if(!overSignal(state,market))continue;
           const account=await accountBalance({fresh:true});
@@ -2484,11 +2506,18 @@ async function scanThirdQuarterNos(games,events){
     }
   }
   const highest=highestYardageNos(candidates);
-  const quoted=(await mapBatches(highest,12,async candidate=>{
+  const retiredNo=await noAskTimeout.retired(highest,'no');
+  const eligible=highest.filter(c=>!retiredNo.has(noAskKey(c)));
+  const quoted=(await mapBatches(eligible,12,async candidate=>{
     try{
       const {orderbook_fp}=await kalshi('/markets/'+encodeURIComponent(candidate.market.ticker)+'/orderbook');
       const ask=bestNoAsk(orderbook_fp);
-      return ask&&ask.size>=minimumCount(candidate.market)?{...candidate,ask}:null;
+      if(!ask||ask.size<minimumCount(candidate.market)){
+        await noAskTimeout.observeMissing(candidate,'no');return null;
+      }
+      await noAskTimeout.available([candidate],'no');
+      if(await noAskTimeout.isRetired(candidate,'no'))return null;
+      return {...candidate,ask};
     }catch(e){console.warn('NO quote deferred:',candidate.market.ticker,e.message)}
     return null;
   })).filter(Boolean);
@@ -2525,7 +2554,11 @@ async function scanThirdQuarterNos(games,events){
       const {orderbook_fp}=await kalshi('/markets/'+encodeURIComponent(current.ticker)+'/orderbook');
       const ask=bestNoAsk(orderbook_fp);
       if(!ask||ask.size<minimumCount(refreshed)||
-        noDepthAtAsk(orderbook_fp,ask.price,ask.size)<minimumCount(refreshed))continue;
+        noDepthAtAsk(orderbook_fp,ask.price,ask.size)<minimumCount(refreshed)){
+        await noAskTimeout.observeMissing(c,'no');continue;
+      }
+      await noAskTimeout.available([c],'no');
+      if(await noAskTimeout.isRetired(c,'no'))continue;
       const account=await accountBalance({fresh:true}),bankroll=Number(account.balance)+Number(account.portfolio_value);
       if(!Number.isFinite(bankroll)||bankroll<=0)continue;
       const local=shardCash(account,marketShard(c.event,refreshed));
@@ -2662,6 +2695,9 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null){
   for(const c of choices){
     try{
       const game=c.state;
+      if(await noAskTimeout.isRetired(c,'no')){
+        report(c,NO_ASK_RETIRED);continue;
+      }
       const entryClock=basketball?90:entry;
       const firstClock=basketball?(c.signal.period==='full_game'?120:150):null;
       // The initial checkpoint is a START, not a deadline. If a scanner
@@ -2726,9 +2762,14 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null){
       const {orderbook_fp}=await kalshi('/markets/'+encodeURIComponent(current.ticker)+'/orderbook');
       const ask=bestNoAsk(orderbook_fp);
       if(!ask||ask.size<minimumCount(current)||noDepthAtAsk(orderbook_fp,ask.price,ask.size)<minimumCount(current)){
-        report(c,'Entry blocked: no executable NO seller depth');continue;
+        const gap=await noAskTimeout.observeMissing(c,'no');
+        report(c,gap?.retired?NO_ASK_RETIRED:waitingOnAsk(gap));continue;
       }
       report(c,'NO seller available; checking cash, fees and profitability',ask);
+      await noAskTimeout.available([c],'no');
+      if(await noAskTimeout.isRetired(c,'no')){
+        report(c,NO_ASK_RETIRED);continue;
+      }
       const prior=await pool.query(`SELECT 1 FROM trade_attempts WHERE market_ticker=$1 AND status IN
         ('filled','reserved','check_order','retrying','combo_pending') LIMIT 1`,[current.ticker]);
       if(prior.rowCount){report(c,'Entry blocked: existing order or filled position',ask);continue;}
@@ -2883,6 +2924,9 @@ async function scanHockeyTotalNos(games,events,signalSink=null){
   for(const c of candidates){
     try{
       const game=c.state,key=overContractKey(game,c.market);
+      if(await noAskTimeout.isRetired(c,'no')){
+        report(c,NO_ASK_RETIRED);continue;
+      }
       const {rows:[window]}=await pool.query(
         'SELECT * FROM hockey_total_no_windows_v2 WHERE market_ticker=$1',[c.market.ticker]);
       const invalidWindow=!validNoPreflight(window,{gameId:game.id,
@@ -2946,7 +2990,12 @@ async function scanHockeyTotalNos(games,events,signalSink=null){
       const {orderbook_fp}=await kalshi('/markets/'+encodeURIComponent(current.ticker)+'/orderbook');
       const ask=bestNoAsk(orderbook_fp);
       if(!ask||ask.size<minimumCount(current)||noDepthAtAsk(orderbook_fp,ask.price,ask.size)<minimumCount(current)){
-        report(c,'Entry blocked: no executable NO seller depth');continue;
+        const gap=await noAskTimeout.observeMissing(c,'no');
+        report(c,gap?.retired?NO_ASK_RETIRED:waitingOnAsk(gap));continue;
+      }
+      await noAskTimeout.available([c],'no');
+      if(await noAskTimeout.isRetired(c,'no')){
+        report(c,NO_ASK_RETIRED);continue;
       }
       const prior=await pool.query(
         "SELECT 1 FROM trade_attempts WHERE market_ticker=$1 AND status IN ('filled','reserved','check_order','retrying','combo_pending') LIMIT 1",
@@ -3160,6 +3209,9 @@ async function scanEarlyPeriodNos(games,events,signalSink=null,sport='NHL'){
   for(const c of candidates){
     try{
       const game=c.state,seconds=policy.seconds(game);
+      if(await noAskTimeout.isRetired(c,'no')){
+        report(c,NO_ASK_RETIRED);continue;
+      }
       const key=overContractKey(game,c.market);
       const {rows:[window]}=await pool.query(
         'SELECT * FROM '+policy.table+' WHERE market_ticker=$1',[c.market.ticker]);
@@ -3228,7 +3280,12 @@ async function scanEarlyPeriodNos(games,events,signalSink=null,sport='NHL'){
       const ask=bestNoAsk(orderbook_fp);
       if(!ask||ask.size<minimumCount(current)||
         noDepthAtAsk(orderbook_fp,ask.price,ask.size)<minimumCount(current)){
-        report(c,'Entry blocked: no executable NO seller depth');continue;
+        const gap=await noAskTimeout.observeMissing(c,'no');
+        report(c,gap?.retired?NO_ASK_RETIRED:waitingOnAsk(gap));continue;
+      }
+      await noAskTimeout.available([c],'no');
+      if(await noAskTimeout.isRetired(c,'no')){
+        report(c,NO_ASK_RETIRED);continue;
       }
       const prior=await pool.query(
         "SELECT 1 FROM trade_attempts WHERE market_ticker=$1 AND status IN ('filled','reserved','check_order','retrying','combo_pending') LIMIT 1",
@@ -3429,6 +3486,9 @@ async function scanSoccerTotalNos(games,events,signalSink=null){
   for(const c of candidates){
     try{
       const game=c.state,key=overContractKey(game,c.market);
+      if(await noAskTimeout.isRetired(c,'no')){
+        report(c,NO_ASK_RETIRED);continue;
+      }
       const {rows:[window]}=await pool.query(
         'SELECT * FROM soccer_total_no_windows WHERE market_ticker=$1',[c.market.ticker]);
       const invalidWindow=!validNoPreflight(window,{gameId:game.id,
@@ -3492,7 +3552,12 @@ async function scanSoccerTotalNos(games,events,signalSink=null){
       const ask=bestNoAsk(orderbook_fp);
       if(!ask||ask.size<minimumCount(current)||
         noDepthAtAsk(orderbook_fp,ask.price,ask.size)<minimumCount(current)){
-        report(c,'Entry blocked: no executable NO seller depth');continue;
+        const gap=await noAskTimeout.observeMissing(c,'no');
+        report(c,gap?.retired?NO_ASK_RETIRED:waitingOnAsk(gap));continue;
+      }
+      await noAskTimeout.available([c],'no');
+      if(await noAskTimeout.isRetired(c,'no')){
+        report(c,NO_ASK_RETIRED);continue;
       }
       const prior=await pool.query(
         "SELECT 1 FROM trade_attempts WHERE market_ticker=$1 AND status IN ('filled','reserved','check_order','retrying','combo_pending') LIMIT 1",
@@ -3641,6 +3706,16 @@ async function scanVariablePlayerOvers(games,events,signalSink=null){
   let filled=0;
   for(const c of candidates){
     try{
+      if(await noAskTimeout.isRetired(c,'yes')){
+        report(c,NO_ASK_RETIRED);continue;
+      }
+      if(!hasAsk(c.market)){
+        const gap=await noAskTimeout.observeMissing(c,'yes');
+        report(c,waitingOnAsk(gap));continue;
+      }
+      if(await noAskTimeout.isRetired(c,'yes')){
+        report(c,NO_ASK_RETIRED);continue;
+      }
       const key=c.spec.contractKey;
       const {rows:[window]}=await pool.query(
         'SELECT * FROM variable_player_over_windows WHERE market_ticker=$1',[c.market.ticker]);
@@ -3684,7 +3759,12 @@ async function scanVariablePlayerOvers(games,events,signalSink=null){
       const quoted=await recoverSummaryAsk(current,{fresh:true});
       const seller=quoted&&hasAsk(quoted)?await executableQuote(quoted):null;
       if(!seller||!hasAsk(seller)){
-        report(c,'Entry blocked: no executable YES seller');continue;
+        const gap=await noAskTimeout.observeMissing(c,'yes');
+        report(c,waitingOnAsk(gap));continue;
+      }
+      await noAskTimeout.available([c],'yes');
+      if(await noAskTimeout.isRetired(c,'yes')){
+        report(c,NO_ASK_RETIRED);continue;
       }
       if(Number(seller.yes_ask_dollars)>Number(process.env.MAX_YES_PRICE||1)){
         report(c,'Entry blocked: YES ask exceeds configured maximum');continue;
@@ -3960,18 +4040,37 @@ async function scan(cachedMilestones,discoveryCount){
       snapshotRows.set(game.state.id,snapshotRow(game,liveMap,scanStarted));
       snapshotRows.get(game.state.id).leadWatch=null;
     }
-    const missing=[...allCandidates,...upgradeCandidates].filter(c=>!hasAsk(c.market));
+    // Only a trade with a qualified score/contract starts the no-ask timer.
+    // Retired contracts never reenter execution, while a different contract
+    // on the same game and a NO ask on the same ticker remain independent.
+    const yesCandidates=[...allCandidates,...upgradeCandidates];
+    const executableSummaryAsk=m=>hasAsk(m)&&Number.isFinite(Number(m.yes_ask_dollars))&&
+      Number(m.yes_ask_dollars)>0&&Number(m.yes_ask_dollars)<1;
+    const retiredYes=live()?await noAskTimeout.retired(yesCandidates,'yes'):new Set();
+    const stillEligible=c=>!retiredYes.has(noAskKey(c));
+    const observedEmpty=live()?yesCandidates.filter(c=>stillEligible(c)&&!executableSummaryAsk(c.market)):[];
+    const emptyAge=observedEmpty.length?await noAskTimeout.missing(observedEmpty,'yes'):new Map();
+    for(const [key,gap] of emptyAge)if(gap.retired)retiredYes.add(key);
+    const missing=observedEmpty.filter(stillEligible);
     if(missing.length){
       const quotes=await probeMissingAsks(missing.map(c=>c.market.ticker),tickers=>bestAsksForTickers(tickers,async tickers=>{
         const q=new URLSearchParams();tickers.forEach(ticker=>q.append('tickers',ticker));
         return (await kalshi('/markets/orderbooks?'+q)).orderbooks;
       },async ticker=>({ticker,orderbook_fp:(await kalshi('/markets/'+encodeURIComponent(ticker)+'/orderbook')).orderbook_fp}),
       (ticker,error)=>console.warn('Ask depth probe unavailable:',ticker,error.message)));
+      const recovered=[];
       for(const c of missing){const quote=quotes.get(c.market.ticker);
-        if(quote)c.market={...c.market,yes_ask_dollars:quote.price.toFixed(4),yes_ask_size_fp:quote.size.toFixed(2)};
+        if(quote){
+          c.market={...c.market,yes_ask_dollars:quote.price.toFixed(4),yes_ask_size_fp:quote.size.toFixed(2)};
+          recovered.push(c);
+        }
       }
+      if(recovered.length)await noAskTimeout.available(recovered,'yes');
     }
-    for(let i=0;i<allCandidates.length;i+=100){const batch=allCandidates.slice(i,i+100);if(!batch.length)continue;
+    // Advertised summary asks alone cannot reset a timer: only actual
+    // executable orderbook depth can clear a previous missing-liquidity age.
+    const activeYesCandidates=allCandidates.filter(stillEligible);
+    for(let i=0;i<activeYesCandidates.length;i+=100){const batch=activeYesCandidates.slice(i,i+100);if(!batch.length)continue;
       const values=batch.map((_,n)=>`($${2*n+1},$${2*n+2})`).join(',');
       await pool.query(`INSERT INTO candidate_windows(market_ticker,strategy) VALUES ${values} ON CONFLICT DO NOTHING`,batch.flatMap(c=>[c.market.ticker,c.signal.strategy]));
     }
@@ -3983,7 +4082,9 @@ async function scan(cachedMilestones,discoveryCount){
         ...(basketballNoSignals.get(id)||[]),
         ...candidates.map(c=>({strategy:c.signal.strategy,reason:c.signal.reason,ticker:c.market.ticker,title:c.market.title||c.market.yes_sub_title||'',
           player_prop:Boolean(playerOverSpec(c.state,c.market)),ask:c.market.yes_ask_dollars,ask_size:c.market.yes_ask_size_fp,
-          execution:signalExecution(c,filled,account,balance,bankroll)})),
+          execution:retiredYes.has(noAskKey(c))?NO_ASK_RETIRED:
+            !executableSummaryAsk(c.market)&&emptyAge.has(noAskKey(c))?
+              waitingOnAsk(emptyAge.get(noAskKey(c))):signalExecution(c,filled,account,balance,bankroll)})),
         ...crossingRows.filter(row=>row.game_id===id&&!candidates.some(c=>c.market.ticker===row.ticker)&&
           !(variableOverSignals.get(id)||[]).some(signal=>signal.ticker===row.ticker))
           .map(row=>({strategy:'watch',ticker:row.ticker,title:row.title,player_prop:true,
@@ -4003,7 +4104,7 @@ async function scan(cachedMilestones,discoveryCount){
     // still-live market to enter a new window on a later scan, including when
     // ask liquidity appears after an earlier unfilled window.
     const aged=await pool.query(`DELETE FROM candidate_windows WHERE first_seen<now()-interval '10 minutes' RETURNING market_ticker,strategy`);
-    opportunities.push(...allCandidates);signals=opportunities.length;
+    opportunities.push(...allCandidates.filter(stillEligible));signals=opportunities.length;
     const checkedIds=new Set(marketGames.map(game=>game.milestone.id));
     for(const game of noOnlyBasketballGames)checkedIds.add(game.milestone.id);
     const snapshots=[...snapshotRows.values()];
@@ -4045,7 +4146,7 @@ async function scan(cachedMilestones,discoveryCount){
     // Verify crossed overs in parallel. Cushions use the current seller;
     // other entries wait for the independent checks on the same contract.
     const overPreflights=new Map(),overReady=new Map(),overs=live()?
-      [...opportunities.filter(c=>hasAsk(c.market)),...upgradeCandidates].filter(c=>c.signal.strategy==='over'):[];
+      [...opportunities.filter(c=>hasAsk(c.market)),...upgradeCandidates.filter(stillEligible)].filter(c=>c.signal.strategy==='over'):[];
     for(const c of overs)overReady.set(signalKey(c),new Promise(resolve=>{c.preflightDone=resolve}));
     let cursor=0;
     const workersDone=Promise.all(Array.from({length:Math.min(20,overs.length)},async()=>{
@@ -4059,7 +4160,7 @@ async function scan(cachedMilestones,discoveryCount){
       }
     }));
     await nearOverJob;
-    const heldLeads=upgradeCandidates.filter(c=>c.signal.strategy==='lead');
+    const heldLeads=upgradeCandidates.filter(c=>stillEligible(c)&&c.signal.strategy==='lead');
     const leadReady=new Map(heldLeads.map(c=>[signalKey(c),new Promise(resolve=>{c.leadDone=resolve})]));
     let leadCursor=0;
     const leadWorkers=Promise.all(Array.from({length:Math.min(12,heldLeads.length)},async()=>{
@@ -4070,7 +4171,7 @@ async function scan(cachedMilestones,discoveryCount){
       }
     }));
     const immediateUpgradeJobs=[];
-    for(const c of [...opportunities,...upgradeCandidates]){let state=c.state;
+    for(const c of [...opportunities,...upgradeCandidates.filter(stillEligible)]){let state=c.state;
       let stage='trading_enabled',outcome='skipped',detail=null;const startedAt=Date.now();
       try{
         if(!live())continue;
@@ -4126,6 +4227,7 @@ async function scan(cachedMilestones,discoveryCount){
         let rawQuote;
         const quote=await verifiedEntryQuote(freshState,c.milestone,c.market,scoreboardCache,c.signal.strategy,current=>{rawQuote=current});
         if(!quote){
+          if(rawQuote&&!hasAsk(rawQuote))await noAskTimeout.observeMissing(c,'yes');
           if(c.signal.strategy==='over'&&freshState.verificationId)
             await reportVerifiedGate(freshState,c.market.ticker,rawQuote&&hasAsk(rawQuote)?
               'Score verified; quoted YES shares disappeared from the live orderbook':
@@ -4134,6 +4236,8 @@ async function scan(cachedMilestones,discoveryCount){
         }
         stage='contract_unchanged';
         if(quote.ticker!==c.market.ticker||quote.event_ticker!==c.event.event_ticker||!hasAsk(quote))continue;
+        await noAskTimeout.available([c],'yes');
+        if(await noAskTimeout.isRetired(c,'yes'))continue;
         if(!sameSportsContract(quote,c.market))continue;
         if(directKalshiLead&&Date.now()-freshState.observedAt>30000){
           const raw=await liveMilestone(c.milestone.id);

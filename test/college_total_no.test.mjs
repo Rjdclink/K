@@ -1,3 +1,4 @@
+import {noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey} from './support/no_ask_mock.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {gameState} from '../src/strategy.mjs';
@@ -147,7 +148,7 @@ test('football Q4 total NO enters with a single immediately preceding external c
   const code=source.slice(source.indexOf('async function scanCollegeTotalNos('),source.indexOf('async function scan(cachedMilestones'));
   const half=market(false),event={event_ticker:half.event_ticker,category:'Sports',markets:[half]};
   let window=null,checks=0,orders=0;const first=state(4,'5:30'),last=state(4,'4:59');
-  const context=vm.createContext({recordDecision:async()=>{},tagNoPreflight,validNoPreflight,lateNoPreflightProgress,Date,JSON,Number,Math,Promise,console,live:()=>true,
+  const context=vm.createContext({noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async()=>{},tagNoPreflight,validNoPreflight,lateNoPreflightProgress,Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),
     linkedEventTickers:()=>[half.event_ticker],collegeFootballTotalNo,collegeBasketballTotalNo,overContractKey,sameSportsContract,
     verifyIndependentCollegeTotalNo:async()=>{checks++;return {source:'ESPN',seconds:299}},
