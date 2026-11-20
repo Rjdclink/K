@@ -107,7 +107,7 @@ export function nearEntryPhase(game){
       pro&&period>=1&&period<=3&&seconds<=360||
       college&&period===firstHalf&&seconds<=480||
       college&&period===fullGame&&seconds<=600||
-      pro&&period===4&&seconds<=300||
+      pro&&period===4&&seconds<=480||
       Boolean(profile)&&period>=profile.period&&seconds<=profile.tiers[0][1]+90);
   }
   if(/hockey/.test(type))return (period===1||period===2)&&seconds>0&&seconds<=360||
