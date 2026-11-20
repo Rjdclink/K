@@ -25,6 +25,7 @@ import { vapidIdentity, validateSubscription, deliverPush } from './push.mjs';
 import { favorableSettlement } from './settlements.mjs';
 import { authorized, checkCredentials, sessionCookie, loginPage } from './dashboard_auth.mjs';
 import { refreshDiscovery, scanMilestones, supportedScannerSport, isScannerExcludedSport, eligibleForMarkets, internationalBasketball, prioritizeMarketGames, linkedEventTickers, playerPropEntryClosed, entryEventTickers, winnerEventTickers, readyOverTickets, prioritizeReadyOverTickets, gameTimeLabel, storedClockSeconds, mapBatches } from './discovery.mjs';
+import {selectStaleReviews,classifyStaleLive,retainedAfterStaleReview} from './stale_review.mjs';
 import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOverDecision, verifySportradarOver, verifyIndependentTableTennisLeadDecision, verifyIndependentTableTennisMatch } from './score_verification.mjs';
 import { verificationStatus, completedOverWait, verificationWindowStatus } from './verification_status.mjs';
@@ -988,28 +989,39 @@ async function withEntryProfitFloor({ticker,count,price,fees,strategy,fraction,b
     if(busy)await new Promise(resolve=>setTimeout(resolve,100));
   }
 }
+async function ensureStaleReviewTable(){
+  await pool.query('CREATE TABLE IF NOT EXISTS sports_stale_reviews ('+
+    'game_id text PRIMARY KEY, checked_at timestamptz NOT NULL, outcome text NOT NULL)');
+}
+async function prunePreviouslyFinished(milestones){
+  await ensureStaleReviewTable();
+  const {rows}=await pool.query("SELECT game_id,checked_at,outcome FROM sports_stale_reviews "+
+    "WHERE outcome='terminal' AND checked_at>now()-interval '24 hours'");
+  return retainedAfterStaleReview(milestones,rows);
+}
 async function milestones(){
   await pool.query(`CREATE TABLE IF NOT EXISTS sports_discovery_cache (
     id integer PRIMARY KEY, milestones jsonb NOT NULL, discovered_at timestamptz NOT NULL)`);
   await pool.query('ALTER TABLE sports_discovery_cache ADD COLUMN IF NOT EXISTS full_discovered_at timestamptz');
   const {rows:[cached]}=await pool.query(`SELECT milestones FROM sports_discovery_cache
     WHERE id=1 AND discovered_at>now()-interval '60 seconds'`);
-  if(cached)return cached.milestones.filter(supportedScannerSport);
+  if(cached)return (await prunePreviouslyFinished(cached.milestones)).filter(supportedScannerSport);
   const client=await pool.connect();
   try{
     await client.query('BEGIN');
     const {rows:[claim]}=await client.query('SELECT pg_try_advisory_xact_lock(83027547) AS acquired');
     if(!claim.acquired){
       const {rows:[stale]}=await client.query('SELECT milestones FROM sports_discovery_cache WHERE id=1');
-      if(stale){await client.query('ROLLBACK');return stale.milestones.filter(supportedScannerSport)}
+      if(stale){await client.query('ROLLBACK');return (await prunePreviouslyFinished(stale.milestones)).filter(supportedScannerSport)}
       await client.query('SELECT pg_advisory_xact_lock(83027547)');
     }
     // A competing instance may have filled the cache before this claim.
     const {rows:[current]}=await client.query(`SELECT milestones FROM sports_discovery_cache
       WHERE id=1 AND discovered_at>now()-interval '60 seconds'`);
-    if(current){await client.query('COMMIT');return current.milestones.filter(supportedScannerSport)}
+    if(current){await client.query('COMMIT');return (await prunePreviouslyFinished(current.milestones)).filter(supportedScannerSport)}
     const {rows:[previous]}=await client.query('SELECT milestones,full_discovered_at FROM sports_discovery_cache WHERE id=1');
-    const started=Date.now(),catalog=await refreshDiscovery(kalshi,previous),found=catalog.milestones;
+    const started=Date.now(),catalog=await refreshDiscovery(kalshi,previous),
+      found=await prunePreviouslyFinished(catalog.milestones);
     await client.query(`INSERT INTO sports_discovery_cache(id,milestones,discovered_at,full_discovered_at) VALUES(1,$1,clock_timestamp(),$2)
       ON CONFLICT(id) DO UPDATE SET milestones=EXCLUDED.milestones,discovered_at=EXCLUDED.discovered_at,full_discovered_at=EXCLUDED.full_discovered_at`,[JSON.stringify(found),catalog.full_discovered_at]);
     await client.query('COMMIT');
@@ -1041,6 +1053,39 @@ async function liveBatch(ms){
   }
   if(ms.length>100)console.info('Live batch:',JSON.stringify({milestones:ms.length,groups:groups.length,returned:map.size,elapsedMs:Date.now()-started}));
   return map;
+}
+// Revalidate a bounded set of old fixtures against fresh Kalshi live data.
+// A confirmed terminal fixture leaves discovery only, not historical records.
+async function refreshStaleMilestones(milestones){
+  await ensureStaleReviewTable();
+  const {rows:reviews}=await pool.query('SELECT game_id,checked_at,outcome FROM sports_stale_reviews '+
+    'WHERE game_id=ANY($1::text[])',[milestones.map(m=>m.id)]);
+  const now=Date.now(),batch=selectStaleReviews(milestones,reviews,now);
+  if(!batch.length)return {milestones:retainedAfterStaleReview(milestones,reviews,now),recoveredIds:new Set()};
+  let fresh;
+  try{fresh=await liveBatch(batch)}
+  catch(error){
+    console.warn('Stale milestone refresh deferred; retaining unverified candidates:',error.message);
+    return {milestones:retainedAfterStaleReview(milestones,reviews,now),recoveredIds:new Set()};
+  }
+  const checkedAt=new Date(),outcomes=batch.map(m=>({game_id:m.id,
+    checked_at:checkedAt.toISOString(),outcome:classifyStaleLive(m,fresh.get(m.id),checkedAt.getTime())}));
+  const values=outcomes.map((_,i)=>`(${i*3+1},${i*3+2}::timestamptz,${i*3+3})`).join(',');
+  await pool.query('INSERT INTO sports_stale_reviews(game_id,checked_at,outcome) VALUES '+values+
+    ' ON CONFLICT(game_id) DO UPDATE SET checked_at=EXCLUDED.checked_at,outcome=EXCLUDED.outcome',
+    outcomes.flatMap(r=>[r.game_id,r.checked_at,r.outcome]));
+  const removed=outcomes.filter(r=>r.outcome==='terminal').map(r=>r.game_id);
+  if(removed.length){
+    await pool.query('UPDATE sports_discovery_cache SET milestones=COALESCE(('+
+      'SELECT jsonb_agg(m) FROM jsonb_array_elements(milestones) m '+
+      "WHERE NOT (m->>'id'=ANY($1::text[]))), '[]'::jsonb) WHERE id=1",[removed]);
+  }
+  console.info('Stale milestone refresh:',JSON.stringify({checked:outcomes.length,
+    recovered:outcomes.filter(r=>r.outcome==='live').length,pruned:removed.length,
+    retry:outcomes.filter(r=>r.outcome==='unknown').length}));
+  return {milestones:retainedAfterStaleReview(milestones,[...reviews.filter(r=>
+    !outcomes.some(o=>o.game_id===r.game_id)),...outcomes],checkedAt.getTime()),
+    recoveredIds:new Set(outcomes.filter(r=>r.outcome==='live').map(r=>r.game_id))};
 }
 async function liveMilestone(id,options={}){
   const path='/live_data/milestone/'+encodeURIComponent(id);
@@ -3964,7 +4009,9 @@ async function scan(cachedMilestones,discoveryCount){
     const {rows:recentLive}=await pool.query(`SELECT id,signals FROM game_snapshots
       WHERE status='live' AND scanned_at>now()-interval '30 minutes'
         AND sport_family ~* '^(basketball|hockey|soccer|football)_'`);
-    ms=scanMilestones(ms,new Set([...recentLive.map(row=>row.id),...propWatchIds]));
+    const refreshed=await refreshStaleMilestones(ms);
+    ms=scanMilestones(refreshed.milestones,new Set([
+      ...recentLive.map(row=>row.id),...propWatchIds,...refreshed.recoveredIds]));
     await upgradeTables();
     await ensureScanStatus();const liveMap=await liveBatch(ms);
     const games=ms.map(m=>({milestone:m,state:gameState(m,liveMap.get(m.id))})).filter(g=>
