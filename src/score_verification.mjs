@@ -2,6 +2,7 @@ import {playerValueQualifies,externalScoresQualify} from './external_values.mjs'
 import {espnScoreboardUrls} from './espn_scoreboards.mjs';
 import { alternateCheck } from './alternate_scores.mjs';
 import { teamAbbreviationVariants } from './team_identity.mjs';
+import { relaxedTeamCompatibility } from './fixture_aliases.mjs';
 import { loadSportradar, sportradarPlayerValue } from './sportradar.mjs';
 // ESPN and FOX publish the scoreboards used by their sites. These endpoints
 // are not contractual data APIs; a changed schema or unavailable fixture must
@@ -90,18 +91,29 @@ function clockSeconds(clock){
 // Kalshi alone supplies entry timing; this separate source verifies fixture
 // identity and the score, never clock equality.
 function clockCompatible(){return true;}
-function sameFixture(game,milestone,home,away,time){
+function sameFixture(game,milestone,home,away,time,externalScores=null,{identityOnly=false}={}){
   const names=expectedNames(game,milestone),start=Date.parse(milestone.start_date||'');
   const other=Date.parse(time||'');
-  return Number.isFinite(start)&&Number.isFinite(other)&&Math.abs(start-other)<=3*3600000&&
-    sameTeam(names.home,home,game.sport)&&sameTeam(names.away,away,game.sport);
+  if(!Number.isFinite(start)||!Number.isFinite(other)||Math.abs(start-other)>3*3600000)return false;
+  if(sameTeam(names.home,home,game.sport)&&sameTeam(names.away,away,game.sport))return true;
+  // Relaxed names identify a possible fixture, not a confirmed score.
+  // The source still must present BOTH independently identifiable teams
+  // within fifteen minutes of Kalshi's kickoff; downstream score checks
+  // require exact home/away totals and veto disagreements (no FOX retry).
+  if(Math.abs(start-other)>15*60000||!milestone?.details?.league)return false;
+  // Relaxed names cannot verify ordinary orders with mismatched source scores.
+  if(!identityOnly&&(!Number.isInteger(externalScores?.home)||!Number.isInteger(externalScores?.away)||
+    externalScores.home!==game.home||externalScores.away!==game.away))return false;
+  return relaxedTeamCompatibility(names.home,home,game.sport)>=2&&
+    relaxedTeamCompatibility(names.away,away,game.sport)>=2;
 }
-export function espnMatches(data,game,milestone){
+export function espnMatches(data,game,milestone,{identityOnly=false}={}){
   if(!Array.isArray(data?.events))return [];
   return data.events.flatMap(e=>{
     const c=e.competitions?.[0],home=c?.competitors?.find(t=>t.homeAway==='home'),away=c?.competitors?.find(t=>t.homeAway==='away');
     const locationAliases=['CFB','NCAAB','NCAAW'].includes(game.sport)||/lacrosse/.test(game.type);
-    if(!home||!away||!sameFixture(game,milestone,teamAliases(home.team,false,locationAliases),teamAliases(away.team,false,locationAliases),e.date))return [];
+    if(!home||!away||!sameFixture(game,milestone,teamAliases(home.team,false,locationAliases),teamAliases(away.team,false,locationAliases),e.date,
+      {home:score(home.score),away:score(away.score)},{identityOnly}))return [];
     const status=c.status||e.status;
     const periods=(home.linescores||[]).map((part,i)=>({number:i+1,home:score(part.value),away:score(away.linescores?.[i]?.value)}));
     // Use the last play only when scoring events account for the full score.
@@ -185,7 +197,7 @@ export async function verifyIndependentTableTennisMatch(game,milestone,{fetcher=
       unique[0].awaySets===(t.firstIsHome?t.secondSets:t.firstSets);
   }catch{return false}
 }
-export function foxMatches(data,game,milestone){
+export function foxMatches(data,game,milestone,{identityOnly=false}={}){
   if(!Array.isArray(data?.sectionList))return [];
   return data.sectionList.flatMap(section=>(section.events||[]).flatMap(e=>{
     // The visual row order varies by sport; use the explicit team URIs.
@@ -193,7 +205,8 @@ export function foxMatches(data,game,milestone){
     const teams=[e.upperTeam,e.lowerTeam];
     const home=teams.find(t=>homeUri&&t?.uri===homeUri),away=teams.find(t=>awayUri&&t?.uri===awayUri);
     if(!homeUri||!awayUri||homeUri===awayUri||home===away)return [];
-    if(!home||!away||!sameFixture(game,milestone,teamAliases(home,true),teamAliases(away,true),e.eventTime))return [];
+    if(!home||!away||!sameFixture(game,milestone,teamAliases(home,true),teamAliases(away,true),e.eventTime,
+      {home:score(home.score),away:score(away.score)},{identityOnly}))return [];
     const eventId=String(e.entityLink?.layout?.tokens?.id||'');
     const period=String(e.statusLine||'').match(/\b([1-4])(?:ST|ND|RD|TH)\b/i);
     const reportedPeriod=period?Number(period[1]):NaN;

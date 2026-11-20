@@ -2,6 +2,10 @@ import {espnMatches,foxMatches} from './score_verification.mjs';
 import {espnScoreboardUrls} from './espn_scoreboards.mjs';
 import {espnRetryThenFox} from './source_fallback.mjs';
 
+let activeFixtureCache=null;
+export function configureIndependentFixtureCache(cache){activeFixtureCache=cache||null;}
+
+
 // These are site-facing public scoreboard formats already used by K. A source
 // with no exact fixture is unavailable, not verification. A matched fixture
 // with a conflicting score is a veto, never permission to try another source.
@@ -19,8 +23,48 @@ const pull=async(url,fetcher)=>{
   if(!response.ok)throw Error('Scoreboard unavailable');
   return response.json();
 };
-const select=(boards,game,milestone,source)=>{
-  const matches=boards.flatMap(b=>source==='ESPN'?espnMatches(b,game,milestone):foxMatches(b,game,milestone));
+// An event ID confirmed on an earlier verified score can disambiguate new
+// provider nicknames. It never supplies a cached score, clock or permission
+// to enter: provider scoreboard must still return the same event and current
+// matching home/away scores on every check.
+const cachedEvent=(boards,source,id,game,milestone)=>{
+  if(!id)return null;
+  const items=source==='ESPN'?boards.flatMap(b=>b?.events||[])
+    .filter(e=>String(e?.id)===id)
+    .map(e=>{
+      const c=e.competitions?.[0],home=c?.competitors?.find(t=>t.homeAway==='home'),away=c?.competitors?.find(t=>t.homeAway==='away');
+      if(!home||!away)return null;
+      const periods=(home.linescores||[]).map((p,i)=>({number:i+1,home:Number(p.value),away:Number(away.linescores?.[i]?.value)}));
+      return {eventId:id,time:e.date,home:Number(home.score),away:Number(away.score),
+        periods,period:Number(c.status?.period||e.status?.period),live:c.status?.type?.state==='in'};
+    }):boards.flatMap(b=>b?.sectionList||[]).flatMap(section=>section?.events||[])
+    .filter(e=>String(e.entityLink?.layout?.tokens?.id||'')===id)
+    .map(e=>{
+      const token=e.entityLink?.layout?.tokens||{},teams=[e.upperTeam,e.lowerTeam];
+      const home=teams.find(t=>token.homeUri&&t?.uri===token.homeUri),
+        away=teams.find(t=>token.awayUri&&t?.uri===token.awayUri);
+      if(!home||!away||home===away)return null;
+      return {eventId:id,time:e.eventTime,home:Number(home.score),away:Number(away.score),
+        periods:[],period:NaN,live:e.eventStatus===1};
+    });
+  const valid=items.filter(Boolean);
+  if(!valid.length)return null;
+  const start=Date.parse(milestone?.start_date||'');
+  if(!Number.isFinite(start)||valid.some(m=>!Number.isFinite(Date.parse(m.time))||
+    Math.abs(start-Date.parse(m.time))>3*3600_000)||
+    valid.some(m=>m.home!==valid[0].home||m.away!==valid[0].away))return false;
+  if(!scorePairMatches({...valid[0],source,eventId:id},game))return false;
+  return {source,eventId:id,gameId:game.id,home:valid[0].home,away:valid[0].away,
+    periods:valid[0].periods,period:valid[0].period,live:valid[0].live,
+    seconds:NaN,elapsedMinute:NaN,
+    period3:valid[0].periods?.[2]?
+      {home:valid[0].periods[2].home,away:valid[0].periods[2].away}:null};
+};
+const select=(boards,game,milestone,source,knownId=null)=>{
+  const cached=cachedEvent(boards,source,knownId,game,milestone);
+  if(cached!==null)return cached;
+  const matches=boards.flatMap(b=>source==='ESPN'?espnMatches(b,game,milestone,{identityOnly:true}):
+    foxMatches(b,game,milestone,{identityOnly:true}));
   if(!matches.length)return null;
   const unique=new Map();
   for(const m of matches){
@@ -42,13 +86,25 @@ const select=(boards,game,milestone,source)=>{
 
 // Returns verified reading, false for matched score contradiction/ambiguous
 // identity, or null for coverage/unavailability. Never authorizes a trade.
-export async function fetchIndependentMatchScore(game,milestone,{fetcher=fetch,espnFeed,foxFeed=null}={}){
+export async function fetchIndependentMatchScore(game,milestone,{fetcher=fetch,espnFeed,foxFeed=null,fixtureCache=activeFixtureCache}={}){
   if(!game?.verifiedLive||!Number.isInteger(game.home)||!Number.isInteger(game.away)||
     !espnFeed||!Number.isFinite(Date.parse(milestone?.start_date||'')))return null;
   const dates=daysFor(Date.parse(milestone.start_date));
+  const known=new Map();
   const query=async(urls,source)=>{
+    let id=known.get(source);
+    if(!known.has(source)){
+      try{id=fixtureCache?await fixtureCache.get(game,milestone,source):null}
+      catch{id=null} // A cache outage cannot fabricate verification or block fresh source matching.
+      known.set(source,id||null);
+    }
     const results=await Promise.allSettled(urls.map(u=>pull(u,fetcher)));
-    return select(results.filter(r=>r.status==='fulfilled').map(r=>r.value),game,milestone,source);
+    const reading=select(results.filter(r=>r.status==='fulfilled').map(r=>r.value),game,milestone,source,id);
+    if(reading&&reading!==false&&fixtureCache){
+      try{if(await fixtureCache.put(game,milestone,source,reading.eventId)===false)return false}
+      catch{} // The current independently matched scoreboard remains authoritative.
+    }
+    return reading;
   };
   const espn=()=>query(espnScoreboardUrls(espnFeed,game,milestone,dates),'ESPN');
   const fox=async()=>{
