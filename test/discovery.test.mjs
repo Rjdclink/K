@@ -25,18 +25,18 @@ test('international basketball is excluded from new market scanning',()=>{
 });
 
 test('fast over queue reuses only executable over tickets awaiting independent verification from the last scan',()=>{
-  const rows=[{milestone:{id:'a'},signals:[
+  const rows=[{milestone:{id:'a',type:'basketball_game',details:{league:'NBA'}},signals:[
     {ticker:'A',strategy:'over',execution:'Awaiting score verification',ask:'.96',ask_size:'8'},
     {ticker:'B',strategy:'over',execution:'No ask liquidity',ask:'1.0000',ask_size:'0'},
     {ticker:'C',strategy:'over',execution:'Awaiting score verification',ask:'1.0000',ask_size:'10'},
     {ticker:'D',strategy:'lead',execution:'Awaiting score verification',ask:'.90',ask_size:'10'}
-  ]},{milestone:{id:'b'},signals:[{ticker:'E',strategy:'over',execution:'Awaiting score verification',ask:'.98',ask_size:'1'}]}];
+  ]},{milestone:{id:'b',type:'basketball_game',details:{league:'NBA'}},signals:[{ticker:'E',strategy:'over',execution:'Awaiting score verification',ask:'.98',ask_size:'1'}]}];
   assert.deepEqual(readyOverTickets(rows,1).map(item=>item.signal.ticker),['A']);
   assert.deepEqual(readyOverTickets(rows).map(item=>item.signal.ticker),['A','E']);
 });
 
 test('fast over queue retains active seller-backed windows despite a changed dashboard status',()=>{
-  const rows=[{milestone:{id:'a'},signals:[
+  const rows=[{milestone:{id:'a',type:'basketball_game',details:{league:'NBA'}},signals:[
     {ticker:'ACTIVE',strategy:'over',execution:'Verification pending; shard transfer needed if confirmed',ask:'.96',ask_size:'8'},
     {ticker:'COLD',strategy:'over',execution:'Verification pending; shard transfer needed if confirmed',ask:'.96',ask_size:'8'},
     {ticker:'NOASK',strategy:'over',execution:'Verification pending; shard transfer needed if confirmed',ask:'1.00',ask_size:'0'}
@@ -54,12 +54,12 @@ test('sports discovery traverses pages and excludes esports and retains supporte
       {id:'finished',start_date:at(-2),end_date:at(-2)},
       {id:'completed-with-future-end',start_date:at(-2),end_date:at(1),details:{status:'completed'}}],cursor:'next'};
     if(category==='Sports'&&cursor==='future')return {milestones:[{id:'later',start_date:at(3)}],cursor:'unused'};
-    if(category==='Sports')return {milestones:[{id:'live-baseball',type:'baseball_game',start_date:at(-.1)},
+    if(category==='Sports')return {milestones:[{id:'live-soccer',type:'soccer_match',start_date:at(-.1)},
       {id:'upcoming',start_date:at(2)}],cursor:'future'};
     return {milestones:[{id:'live-esports',start_date:at(-.1)}],cursor:''};
   };
   const games=await discoverCurrentMilestones(get,now);
-  assert.deepEqual(games.map(m=>m.id),['old-golf','live-baseball']);
+  assert.deepEqual(games.map(m=>m.id),['live-soccer']);
   assert.deepEqual(requests.map(([category,cursor])=>[category,cursor]).sort(),[['Sports',null],['Sports','next'],['Sports','future']].sort());
   assert.ok(requests.every(([, ,min])=>min===at(-7)));
 });
@@ -70,42 +70,39 @@ test('live scan omits old inactive milestones while retaining active and long-ru
     {id:'old-idle',type:'football_game',start_date:at(-72),details:{status:'scheduled'}},
     {id:'new',type:'football_game',start_date:at(-2),details:{status:'scheduled'}},
     {id:'old-inactive',type:'football_game',start_date:at(-12),details:{status:'scheduled'}},
-    {id:'long-live',type:'baseball_game',start_date:at(-12),details:{status:'scheduled'}},
+    {id:'long-live',type:'hockey_match',start_date:at(-12),details:{status:'scheduled'}},
     {id:'old-live-flag',type:'football_game',start_date:at(-50),details:{status:'live'}},
     {id:'previously-live',type:'soccer_game',start_date:at(-48),details:{status:'scheduled'}},
     {id:'golf',type:'golf_tournament',start_date:at(-96),details:{status:'scheduled',tour:'pga'}},
     {id:'cricket',type:'cricket_match',start_date:at(-96),details:{status:'scheduled'}}
   ];
   assert.deepEqual(scanMilestones(games,new Set(['previously-live','long-live']),now).map(m=>m.id),
-    ['new','long-live','previously-live','golf','cricket']);
+    ['new','long-live','previously-live']);
 });
 
-test('market pass prioritizes entry windows across sports and rotates early games',()=>{
-  const game=(id,type,period,remainingSeconds,sport='')=>({milestone:{id},state:{type,period,remainingSeconds,sport}});
-  const games=[
-    game('cfb-early','football_game',2,120,'CFB'),game('nba-early','basketball_game',2,120,'NBA'),
-    game('nhl-early','hockey_game',1,120,'NHL'),game('soccer-early','soccer_game',1,120,'Soccer'),
-    game('mlb-early','baseball_game',5,120,'MLB'),
-    {...game('cfb-late','football_game',4,240,'CFB'),state:{type:'football_game',sport:'CFB',period:4,remainingSeconds:240,homeUnits:32,awayUnits:20}},game('nba-close','basketball_game',3,90,'NBA'),
-    game('nhl-close','hockey_game',2,90,'NHL'),
-    {...game('soccer-late','soccer_game',2,120,'Soccer'),state:{type:'soccer_game',period:2,soccerMinute:85}},
-    {...game('mlb-late','baseball_game',8,120,'MLB'),state:{type:'baseball_game',period:8,inningHalf:2,outs:2}},
-    {...game('tennis','tennis_match',2,0,'ATP'),state:{type:'tennis_match',tennis:{bestOf:3,firstSets:1,secondSets:0}}}
-  ];
-  assert.equal(nearEntryPhase(games[0].state),true);
-  assert.equal(nearEntryPhase(games[1].state),true,'NBA Q2 at 2:00 stays on the priority list');
-  assert.equal(nearEntryPhase(games[2].state),true,'NHL P1 at 2:00 stays on the priority list');
-  assert.equal(nearEntryPhase({type:'golf_tournament',period:3,golf:{board:[{current_round_thru:18}]}}),false);
-  assert.equal(nearEntryPhase({type:'golf_tournament',period:4,golf:{board:[{current_round_thru:16}]}}),true);
-  assert.equal(nearEntryPhase({type:'tennis_match',tennis:{bestOf:3,firstSets:1,secondSets:0}}),true);
-  assert.equal(nearEntryPhase({type:'cricket_match',cricket:{innings:2,ballsRemaining:19}}),true);
-  assert.deepEqual(prioritizeMarketGames(games,{cycle:0,lowBudget:2}).map(g=>g.milestone.id),
-    ['cfb-early','nba-early','nhl-early','cfb-late','nba-close','nhl-close',
-      'soccer-late','mlb-late','tennis','soccer-early','mlb-early']);
-  assert.deepEqual(prioritizeMarketGames(games,{cycle:1,lowBudget:2}).slice(-2).map(g=>g.milestone.id),
-    ['soccer-early','mlb-early']);
-  const urgent=prioritizeMarketGames(games,{cycle:0,lowBudget:0,heldIds:new Set(['cfb-early']),signaledIds:new Set(['nba-early'])});
-  assert.deepEqual(urgent.slice(0,2).map(g=>g.milestone.id),['cfb-early','nba-early']);
+test('market pass prioritizes imminent entry windows across all four allowed sports',()=>{
+ const game=(id,type,period,remainingSeconds,sport='',extra={})=>({
+  milestone:{id,type,details:{league:sport}},state:{type,period,remainingSeconds,sport,...extra}});
+ const games=[
+  game('soccer-near','soccer_match',2,NaN,'Soccer',{soccerMinute:82}),
+  game('nba-near','basketball_game',2,125,'NBA'),
+  game('nhl-near','hockey_match',1,160,'NHL'),
+  game('cfb-near','football_game',4,400,'CFB'),
+  game('wnba-far','basketball_game',1,690,'WNBA'),
+  game('nfl-far','football_game',2,1400,'NFL'),
+  game('baseball-blocked','baseball_game',9,0,'MLB'),
+  game('tennis-blocked','tennis_match',3,0,'ATP')
+ ];
+ for(const id of ['nba-near','nhl-near','cfb-near','soccer-near']){
+  const item=games.find(g=>g.milestone.id===id);
+  assert.equal(nearEntryPhase(item.state),true,id);
+ }
+ const selected=prioritizeMarketGames(games,{cycle:0,lowBudget:2});
+ assert.deepEqual(selected.map(g=>g.milestone.id),[
+  'nba-near','nhl-near','cfb-near','soccer-near','wnba-far','nfl-far']);
+ assert.ok(!selected.some(g=>/blocked/.test(g.milestone.id)));
+ const none=prioritizeMarketGames(games,{lowBudget:0});
+ assert.deepEqual(none.map(g=>g.milestone.id),['nba-near','nhl-near','cfb-near','soccer-near']);
 });
 
 test('ready over watcher revisits oldest active windows before newer tickets',()=>{
@@ -131,7 +128,7 @@ test('fast market checks start near each sport entry rather than at the start of
   assert.equal(nearEntryPhase({type:'basketball_game',sport:'NCAAB',period:1,remainingSeconds:290}),true);
   assert.equal(nearEntryPhase({type:'basketball_game',sport:'NCAAW',period:2,remainingSeconds:290}),true);
   assert.equal(nearEntryPhase({type:'rugby_match',period:2,remainingSeconds:1900}),false);
-  assert.equal(nearEntryPhase({type:'rugby_match',period:2,remainingSeconds:170}),true);
+  assert.equal(nearEntryPhase({type:'rugby_match',period:2,remainingSeconds:170}),false);
   assert.equal(nearEntryPhase({type:'soccer_game',period:2,soccerMinute:46,homeUnits:3,awayUnits:0}),true);
   assert.equal(nearEntryPhase({type:'soccer_game',period:2,soccerMinute:46,homeUnits:2,awayUnits:0}),false);
   assert.equal(nearEntryPhase({type:'soccer_game',period:2,soccerMinute:74}),false);
@@ -151,9 +148,10 @@ test('find game and both total families from a game-only milestone',()=>{
   assert.equal(new Set(discovered).size,discovered.length);
   assert.deepEqual(linkedEventTickers({...m,related_event_tickers:[...m.related_event_tickers,'KXNBATOTAL-26OCT28BOSBKN']}),discovered);
 });
-test('fast lead watch finds actual linked winner events without a main event field',()=>{
+test('historic baseball event links remain parseable but are excluded from automatic winner scanning',()=>{
   const m={type:'baseball_game',related_event_tickers:['KXMLBGAME-26OCT31AB','KXMLBTOTAL-26OCT31AB','KXMLB1INNINGGAME-26OCT31AB']};
-  assert.deepEqual(winnerEventTickers(m),['KXMLBGAME-26OCT31AB']);
+  assert.ok(linkedEventTickers(m).includes('KXMLBGAME-26OCT31AB'));
+  assert.deepEqual(winnerEventTickers(m),[]);
 });
 
 test('closed player-prop entries stop catalog lookups while third-quarter yardage NO remains eligible',()=>{
@@ -198,10 +196,11 @@ test('esports match event discovers only live exchange-confirmed whole-match tot
   assert.ok(tickers.includes('KXESOCCTOTAL-DATE'));
   assert.ok(tickers.includes('KXESOCCTEAMTOTAL-DATE'));
 });
-test('limited-over cricket discovers team-run markets from match events without a game clock',()=>{
+test('archival cricket ticker metadata remains parseable but is excluded from automatic markets',()=>{
   const milestone={id:'ipl',type:'cricket_match',title:'Ajman vs Abu Dhabi',details:{league:'IPL'},related_event_tickers:['KXIPLGAME-DATE']};
   const game=gameState(milestone,{details:{status:'live',home_score:170,away_score:0,inning:1}});
-  assert.equal(eligibleForMarkets(game),true);
+  assert.equal(eligibleForMarkets(game),false);
+  assert.deepEqual(entryEventTickers(milestone,game),[]);
   assert.ok(linkedEventTickers(milestone).includes('KXIPLTEAMTOTAL-DATE'));
   assert.ok(linkedEventTickers({...milestone,related_event_tickers:['KXCPLMATCH-DATE']}).includes('KXCPLTEAMTOTAL-DATE'));
   assert.equal(gameTimeLabel(game),'Innings 1');
@@ -247,7 +246,7 @@ test('table tennis live set points come from period_scores with competitor orien
   assert.equal(gameTimeLabel(first),'Set 1');
   const reversed=gameState(milestone,{details:{...details,competitor1_is_home:false}});
   assert.equal(reversed.home,7);assert.equal(reversed.away,3);
-  assert.equal(eligibleForMarkets(first),true);
+  assert.equal(eligibleForMarkets(first),false);
   const missing=gameState(milestone,{details:{status:'live',period_scores:[]}});
   assert.equal(missing.scoreKnown,false);
   assert.equal(gameTimeLabel(missing),'Set number unavailable');
@@ -257,7 +256,7 @@ test('darts overall scores and esports phase display without an invented clock',
   const darts=gameState({id:'dart',type:'darts_match',title:'Tricole vs Lovely'},{details:{status:'live',competitor1_is_home:true,competitor1_overall_score:1,competitor2_overall_score:2,match_status:'1st set',period_scores:[]}});
   assert.equal(darts.sport,'Darts');assert.equal(darts.home,1);assert.equal(darts.away,2);
   assert.equal(gameTimeLabel(darts),'1st set · no countdown clock');
-  assert.equal(eligibleForMarkets(darts),true);
+  assert.equal(eligibleForMarkets(darts),false);
   const esports=gameState({id:'esports',type:'esports_match',title:'Fede vs Eder',details:{league:'eSoccer'}},{details:{status:'live',home_score:3,away_score:3,period_unit:'half',home_periods:{period_1:3,period_2:0},away_periods:{period_1:2,period_2:1}}});
   assert.equal(gameTimeLabel(esports),'Half 2 · score periods verified');
   assert.equal(esports.scoreKnown,true);assert.equal(eligibleForMarkets(esports),false);
@@ -273,11 +272,15 @@ test('unsupported sports and esports stay excluded even in retained caches and r
   .map(type=>({id:type,type,start_date:at,details:{league:'eSoccer'}}));
  excluded.push({id:'foreign',type:'basketball_game',start_date:at,details:{league:'Japan B League'}});
  excluded.push({id:'unsupported-golf',type:'golf_tournament',start_date:at,details:{tour:'unknown'}});
- const supported=['baseball_game','football_game','hockey_match','soccer_match','tennis_tournament_singles',
-  'tennis_tournament_doubles','table_tennis_match','handball_match','rugby_match','lacrosse_match','volleyball_match','darts_match','cricket_match']
+ const supported=['football_game','hockey_match','soccer_match']
   .map(type=>({id:type,type,start_date:at}));
+ for(const type of ['baseball_game','tennis_tournament_singles','tennis_tournament_doubles',
+   'handball_match','rugby_match','lacrosse_match','volleyball_match'])
+  excluded.push({id:type,type,start_date:at});
  supported.push({id:'college',type:'basketball_game',start_date:at,details:{league:'NCAAWB'}});
- supported.push({id:'golf',type:'golf_tournament',start_date:at,details:{tour:'pga'}});
+ for(const type of ['table_tennis_match','darts_match','cricket_match'])
+  excluded.push({id:type,type,start_date:at});
+ excluded.push({id:'golf',type:'golf_tournament',start_date:at,details:{tour:'pga'}});
  for(const m of excluded)assert.equal(supportedScannerSport(m),false,m.type);
  for(const m of supported)assert.equal(supportedScannerSport(m),true,m.type);
  const all=[...excluded,...supported],recent=new Set(all.map(m=>m.id));

@@ -48,7 +48,7 @@ test('Test cricket winner entries stay disabled without a finite number of balls
   const board={home:'Bangladesh',away:'West Indies','Current Innings':'4','Current Batting Team':'West Indies','batting.1':'Bangladesh','batting.2':'West Indies','batting.3':'Bangladesh','batting.4':'West Indies','runs.1':'272','runs.2':'245','runs.3':'79','runs.4':'40'};
   const state=(time,innings=4,changes={})=>gameState(m,{milestone_id:m.id,_observed_at:new Date(time).toISOString(),details:{status:'live',current_inning:innings,home_score:79,away_score:40,batting:'away',home_total_runs:351,away_total_runs:285,cricket_result:{scoreboard:{...board,'Current Innings':String(innings),...changes}}}});
   const first=state(at-12000),second=state(at);
-  assert.equal(eligibleForMarkets(first),true);
+  assert.equal(eligibleForMarkets(first),false,'all cricket formats are removed from active scanning');
   assert.deepEqual([first.cricket.homeTotal,first.cricket.awayTotal],[351,285]);
   assert.equal(cricketLeadSignal(first,market),null);
   assert.equal(kalshiOnlyLead(first,second,market),false);

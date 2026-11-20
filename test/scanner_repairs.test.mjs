@@ -75,7 +75,7 @@ test('incremental discovery preserves old tournaments and periodically reconcile
   const get=async url=>{queries.push(new URL(url,'https://test').searchParams);return {milestones:[fresh]}};
   const previous={milestones:[old,{id:'expired',start_date:'2026-11-02T22:00:00Z'}],full_discovered_at:new Date(now-60000).toISOString()};
   const recent=await discovery.refreshDiscovery(get,previous,now);
-  assert.deepEqual(recent.milestones.map(m=>m.id),['golf','new']);
+  assert.deepEqual(recent.milestones.map(m=>m.id),['new'],'disabled golf must not survive cached discovery');
   assert.ok(queries.every(q=>q.get('minimum_start_date')==='2026-11-02T16:00:00.000Z'));
   queries.length=0;
   const full=await discovery.refreshDiscovery(get,previous,now+15*60000);

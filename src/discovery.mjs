@@ -2,14 +2,24 @@ import {basketballTotalNoSupported} from './basketball_no_leagues.mjs';
 // Only fetch event families used by the two entry strategies and comeback exits.
 // The exchange remains authoritative: a guessed ticker is ignored unless an
 // open event and its market are actually returned by Kalshi.
-import { cricketOneInningsFormat, cfbLeadApproaching, basketballLeadProfile, sportName } from './strategy.mjs';
-// Only families with implemented entry rules belong in discovery or saved watches.
+import { cfbLeadApproaching, basketballLeadProfile, sportName } from './strategy.mjs';
+// Exactly four sport families have automated scanning. Historical positions,
+// settlements and user-directed account actions remain available separately.
+// When the type is missing, only unambiguous four-sport league identifiers
+// may pass; unknown leagues never authorize a new automated scan.
+export function isScannerExcludedSport(item){
+  const type=String(item?.type||item?.sport_family||'').toLowerCase().replaceAll('-','_');
+  if(type)return !/^(?:basketball|hockey|soccer|football)_/.test(type);
+  const league=String(item?.sport||item?.details?.league||'').trim().toUpperCase();
+  return !/^(?:NBA|WNBA|NCAAB|NCAAW|NCAAMB|NCAAWB|NHL|SOCCER|NFL|CFB|NCAAF|NCAAFB)$/.test(league);
+}
+// Only families with implemented, currently enabled entries belong in scans.
 export function supportedScannerSport(item){
+  if(isScannerExcludedSport(item))return false;
   const type=String(item?.type||'').toLowerCase();
-  if(!/^(?:basketball|baseball|football|hockey|soccer|tennis|table_tennis|golf|handball|rugby|lacrosse|volleyball|darts|cricket)_/.test(type))return false;
+  if(!/^(?:basketball|football|hockey|soccer)_/.test(type))return false;
   if(/esports/i.test(`${type} ${item?.sport||''} ${item?.details?.league||''}`))return false;
   if(type.startsWith('basketball_'))return basketballTotalNoSupported(item.sport)||basketballTotalNoSupported(sportName(item));
-  if(type.startsWith('golf_'))return ['pga','lpga','euro'].includes(item.tour||item.details?.tour);
   return true;
 }
 
@@ -23,8 +33,7 @@ export async function mapBatches(items,limit,task){
 
 export const internationalBasketball=game=>/basketball/.test(String(game?.type||''))&&
   !['NBA','WNBA','NCAAB','NCAAW'].includes(game?.sport);
-export function eligibleForMarkets(game){return game?.verifiedLive && game.scoreKnown && supportedScannerSport(game) && !internationalBasketball(game) &&
-  (game.type!=='cricket_match'||cricketOneInningsFormat(game.competition)||game.cricket?.innings===4)}
+export function eligibleForMarkets(game){return game?.verifiedLive && game.scoreKnown && supportedScannerSport(game) && !internationalBasketball(game)}
 
 export async function discoverCurrentMilestones(get,now=Date.now(),lookbackMs=7*86400000){
   const cutoff=now+3600000,min=new Date(now-lookbackMs).toISOString();
@@ -57,8 +66,8 @@ export async function refreshDiscovery(get,previous,now=Date.now()){
   const fullAt=Date.parse(previous?.full_discovered_at||'');
   const full=!Array.isArray(previous?.milestones)||!Number.isFinite(fullAt)||now-fullAt>=15*60000;
   const found=await discoverCurrentMilestones(get,now,full?7*86400000:8*3600000);
-  // Keep long-running events and refresh their scores independently. The
-  // periodic full pass also finds late-published or rescheduled older games.
+  // Refresh retained events while excluding disabled sports even when the
+  // existing cached catalog still contains them.
   const retained=full?[]:previous.milestones.filter(m=>supportedScannerSport(m)&&Date.parse(m.start_date||'')<now-8*3600000);
   return {milestones:[...new Map([...retained,...found].map(m=>[m.id,m])).values()],
     full_discovered_at:full?new Date(now).toISOString():previous.full_discovered_at};
@@ -73,7 +82,7 @@ export function scanMilestones(milestones,recentLiveIds=new Set(),now=Date.now()
   return milestones.filter(m=>{
     const started=Date.parse(m.start_date||'');
     return supportedScannerSport(m)&&(recentLiveIds.has(m.id)||
-      /golf|cricket/.test(String(m.type||''))||!Number.isFinite(started)||started>=now-8*3600000);
+      !Number.isFinite(started)||started>=now-8*3600000);
   });
 }
 
@@ -81,20 +90,29 @@ export function scanMilestones(milestones,recentLiveIds=new Set(),now=Date.now()
 // rotating check. Give the frequent market pass to games near a winner window,
 // games with a recent signal, and games with a held position needing exits.
 export function nearEntryPhase(game){
+  if(isScannerExcludedSport(game))return false;
   const type=String(game?.type||''),period=Number(game?.period),seconds=Number(game?.remainingSeconds);
   if(/football/.test(type))return game.sport==='CFB'?
     cfbLeadApproaching(game)||[2,4].includes(period)&&seconds>=0&&seconds<=420:period>=4&&seconds>=0&&seconds<=480;
   if(/basketball/.test(type)){
     const profile=basketballLeadProfile(game);
-    return ['NBA','WNBA'].includes(game.sport)&&period>=1&&period<=3&&
-      seconds>0&&seconds<=180||Boolean(profile)&&seconds>=0&&(
-      period>=profile.period&&seconds<=profile.tiers[0][1]+90||
-      ['NCAAB','NCAAW'].includes(game.sport)&&period===(game.sport==='NCAAB'?1:2)&&seconds<=360);
+    const pro=['NBA','WNBA'].includes(game.sport);
+    const college=['NCAAB','NCAAW'].includes(game.sport);
+    const firstHalf=game.sport==='NCAAB'?1:2;
+    const fullGame=game.sport==='NCAAB'?2:4;
+    // Start priority checks minutes ahead of the first ESPN preflight, not
+    // only when a period/quarter is nearly over. This also allows a paused
+    // clock to finish a full 60 seconds of real-time verification.
+    return Number.isFinite(seconds)&&seconds>0&&(
+      pro&&period>=1&&period<=3&&seconds<=360||
+      college&&period===firstHalf&&seconds<=480||
+      college&&period===fullGame&&seconds<=600||
+      Boolean(profile)&&period>=profile.period&&seconds<=profile.tiers[0][1]+90);
   }
-  if(/hockey/.test(type))return (period===1||period===2)&&seconds>0&&seconds<=270||
-    period>=3&&seconds>=0&&seconds<=690;
+  if(/hockey/.test(type))return (period===1||period===2)&&seconds>0&&seconds<=360||
+    period>=3&&seconds>=0&&seconds<=900;
   if(/soccer/.test(type))return period===1&&!game.soccerExtraTime&&
-    Number.isFinite(game.soccerMinute)&&game.soccerMinute>=40.5&&game.soccerMinute<45||
+    Number.isFinite(game.soccerMinute)&&game.soccerMinute>=38&&game.soccerMinute<45||
     period===2&&!game.soccerExtraTime&&Number.isFinite(game.soccerMinute)&&
     game.soccerMinute<90&&
     (game.soccerMinute>=75||game.soccerMinute>=45&&
@@ -106,28 +124,72 @@ export function nearEntryPhase(game){
     return period===final&&seconds>=0&&seconds<=buffer||
       !/rugby/.test(type)&&period===final-1&&seconds>=0&&seconds<=60;
   }
-  if(/golf/.test(type))return period===4&&game.golf?.board?.some(player=>Number(player.current_round_thru)>=16);
-  if(/cricket/.test(type))return game.cricket?.innings===2&&Number(game.cricket.ballsRemaining)<=24;
-  if(/table_tennis/.test(type))return game.tableTennis?.setNumber>=game.tableTennis?.bestOf-1;
   if(/tennis/.test(type))return Boolean(game.tennis)&&
     (game.tennis.firstSets>=Math.floor(game.tennis.bestOf/2)||
       game.tennis.secondSets>=Math.floor(game.tennis.bestOf/2));
   // Clock-free sports and unfamiliar formats remain on the frequent pass.
   return true;
 }
+// Time until the first verification / impending entry threshold, expressed in
+// seconds. Once a live market is inside its verification window, it outranks
+// approaching games. Unknown clocks get no timing priority (never guessed).
+export function marketEntryProximity(game){
+  if(isScannerExcludedSport(game))return Infinity;
+  const type=String(game?.type||''),period=Number(game?.period);
+  let remaining=Number(game?.remainingSeconds),target=NaN;
+  const margin=Number.isFinite(game?.homeUnits)&&Number.isFinite(game?.awayUnits)?
+    Math.abs(game.homeUnits-game.awayUnits):0;
+  if(/soccer/.test(type)){
+    if(game.soccerExtraTime||!Number.isFinite(game.soccerMinute))return Infinity;
+    if(period===1){remaining=(45-game.soccerMinute)*60;target=240;}
+    else if(period===2){remaining=(90-game.soccerMinute)*60;target=margin>=3?600:540;}
+    else return Infinity;
+  }else if(/hockey/.test(type)){
+    if([1,2].includes(period))target=240;
+    else if(period===3)target=margin>=3?600:margin>=2?360:300;
+  }else if(/basketball/.test(type)){
+    if(['NBA','WNBA'].includes(game.sport)){
+      if([1,2,3].includes(period))target=150;
+      else if(period===4)target=270;
+    }else if(['NCAAB','NCAAW'].includes(game.sport)){
+      const first=game.sport==='NCAAB'?1:2,final=game.sport==='NCAAB'?2:4;
+      if(period===first)target=150;
+      else if(period===final)target=margin>=14?270:120;
+    }
+  }else if(/football/.test(type)&&period===4){
+    target=450;
+  }
+  if(!Number.isFinite(remaining)||remaining<=0||!Number.isFinite(target))return Infinity;
+  return remaining<=target?-10000+remaining:remaining-target;
+}
+
 export function prioritizeMarketGames(games,{signaledIds=new Set(),heldIds=new Set(),cycle=Math.floor(Date.now()/60000),lowBudget=12}={}){
   const urgent=[],early=[];
   for(const game of games){
+    if(isScannerExcludedSport(game.milestone)||isScannerExcludedSport(game.state))continue;
     const id=game.milestone.id;
     (heldIds.has(id)||signaledIds.has(id)||game.watchable||nearEntryPhase(game.state)?urgent:early).push(game);
   }
-  const selected=[];
-  for(let i=0;i<Math.min(lowBudget,early.length);i++)selected.push(early[(cycle*lowBudget+i)%early.length]);
+  const order=(a,b)=>marketEntryProximity(a.state)-marketEntryProximity(b.state);
+  urgent.sort(order);early.sort(order);
+  const available=Math.max(0,Math.floor(lowBudget));
+  if(available===0||early.length===0)return urgent;
+  if(early.length<=available)return [...urgent,...early];
+  // Preserve discovery fairness: most slots go to near-threshold games; the
+  // remainder rotate across all other live markets instead of starving them.
+  if(available===1&&cycle%4===3)return [...urgent,early[Math.floor(cycle/4)%early.length]];
+  const priorityCount=available===1?1:Math.max(1,Math.floor(available*.7));
+  const selected=early.slice(0,priorityCount),rotating=early.slice(priorityCount);
+  const rotatingCount=available-selected.length;
+  if(rotatingCount&&rotating.length){
+    const start=((Math.floor(cycle)*rotatingCount)%rotating.length+rotating.length)%rotating.length;
+    for(let i=0;i<Math.min(rotatingCount,rotating.length);i++)selected.push(rotating[(start+i)%rotating.length]);
+  }
   return [...urgent,...selected];
 }
 
 export function readyOverTickets(rows,limit=12,activeTickers=new Set()){
-  return rows.flatMap(({milestone,signals})=>(signals||[])
+  return rows.flatMap(({milestone,signals})=>isScannerExcludedSport(milestone)?[]:(signals||[])
     .filter(signal=>signal.strategy==='over'&&
       (activeTickers.has(signal.ticker)||/^(?:Awaiting score verification|Waiting for first external check|First external check passed; waiting for paired checks|External score matched)/.test(signal.execution||''))&&
       signal.ticker&&Number(signal.ask)>0&&Number(signal.ask)<1&&Number(signal.ask_size)>0)
@@ -183,6 +245,7 @@ export function playerPropEntryClosed(game){
 }
 
 export function entryEventTickers(milestone,game){
+  if(isScannerExcludedSport(milestone)||isScannerExcludedSport(game))return [];
   const tickers=linkedEventTickers(milestone);
   if(!playerPropEntryClosed(game))return tickers;
   return tickers.filter(ticker=>{
@@ -193,6 +256,7 @@ export function entryEventTickers(milestone,game){
 }
 
 export function winnerEventTickers(milestone){
+  if(isScannerExcludedSport(milestone))return [];
   return linkedEventTickers(milestone).filter(ticker=>/GAME$/.test(String(ticker).split('-')[0]));
 }
 

@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {isScannerExcludedSport} from '../src/discovery.mjs';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
@@ -51,14 +52,14 @@ test('the immediate check reloads held fills, bypasses the retry timer, and uses
   const rows=['OLD','NEW'].map((ticker,i)=>({...order,id:'id-'+i,market_ticker:ticker,event_ticker:'E'+i,game_id:'G'+i,
     fill_count:2,status:'filled',combo_legs:null,sport:'NFL',updated_at:new Date()}));
   let execution,claim,positionReads=0,executions=0;const claims=new Set();
-  const context=vm.createContext({console,Date,JSON,Number,Set,Map,Promise,setTimeout,
+  const context=vm.createContext({console,Date,JSON,Number,Set,Map,Promise,setTimeout,isScannerExcludedSport,
     live:()=>true,upgradeTables:async()=>{},ensureScoreTime:async()=>{},
     allOpenPositions:async()=>({market_positions:(++positionReads===1?rows.slice(0,1):rows).map(r=>({ticker:r.market_ticker,position_fp:'2'}))}),
     availableComboFills,filledComboWindow,heldComboLeg,comboAllocation,
     accountBalance:async()=>({balance:1000,portfolio_value:500}),
     kalshi:async path=>{const row=rows.find(r=>path.endsWith(r.market_ticker));return {market:{ticker:row.market_ticker,event_ticker:row.event_ticker,status:'active'}}},
     pool:{query:async(sql,args)=>{
-      if(sql.includes("FROM trade_attempts a WHERE a.status='filled'"))return {rows};
+      if(sql.includes('FROM trade_attempts a')&&sql.includes("WHERE a.status='filled'"))return {rows};
       if(sql.startsWith('SELECT started_at'))return {rows:[{started_at:new Date()}]};
       if(sql.includes('INSERT INTO combo_fill_triggers')){claim=args[0];const exists=claims.has(claim);claims.add(claim);return {rows:exists?[]:[{}],rowCount:exists?0:1}}
       if(sql.includes("interval '2 minutes'"))throw Error('Immediate fill must bypass scheduled retry delay');
@@ -72,6 +73,27 @@ test('the immediate check reloads held fills, bypasses the retry timer, and uses
   await context.checkCurrentHeldCombinations({id:'id-1',market_ticker:'NEW'},{verifiedSince:new Date(),superseded:()=>false});
   assert.equal(executions,1,'a repeated confirmed fill cannot launch a second ticket attempt');
 });
+test('historical fills from cricket, darts, golf or table tennis cannot become new combo-buy legs',async()=>{
+  const rows=[
+    {market_ticker:'CRICKET',game_family:'cricket_match',sport:'ODI (M)'},
+    {market_ticker:'DARTS',game_family:'darts_match',sport:'Darts'},
+    {market_ticker:'GOLF',game_family:'golf_tournament',sport:'Golf'},
+    {market_ticker:'TABLE',game_family:'table_tennis_match',sport:'Table tennis'},
+    {market_ticker:'NHL',game_family:'hockey_match',sport:'NHL'},
+    {market_ticker:'NBA',game_family:'basketball_game',sport:'NBA'}
+  ];
+  let seen;
+  const context=vm.createContext({isScannerExcludedSport,live:()=>true,console,
+    upgradeTables:async()=>{},pool:{query:async()=>({rows})},
+    checkHeldCombinations:async filtered=>{
+      seen=filtered;return {filled:false,pending:false};
+    }});
+  vm.runInContext(source.slice(source.indexOf('async function checkCurrentHeldCombinations('),
+    source.indexOf('async function checkHeldCombinations(')),context);
+  await context.checkCurrentHeldCombinations(null,{verifiedSince:new Date(),superseded:()=>false});
+  assert.deepEqual(seen.map(row=>row.market_ticker),['NHL','NBA']);
+});
+
 test('immediate planner includes the newly filled leg even at a high historical rotation',()=>{
   const legs=Array.from({length:30},(_,i)=>({market:{ticker:'M'+i},event:{event_ticker:'E'+i}}));
   const collections=[{collection_ticker:'C',is_all_yes:true,size_min:2,size_max:4,is_single_market_per_event:true,
