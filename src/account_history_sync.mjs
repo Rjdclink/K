@@ -18,7 +18,9 @@ export async function ensureAccountHistoryTables(query){
  await query(`CREATE TABLE IF NOT EXISTS account_history_sync (
    id integer PRIMARY KEY,phase text NOT NULL DEFAULT 'live_fills',
    cursor text NOT NULL DEFAULT '',last_completed timestamptz,
-   last_error text,updated_at timestamptz NOT NULL DEFAULT now())`);
+   last_error text,unresolved_markets integer NOT NULL DEFAULT 0,
+   updated_at timestamptz NOT NULL DEFAULT now())`);
+ await query('ALTER TABLE account_history_sync ADD COLUMN IF NOT EXISTS unresolved_markets integer NOT NULL DEFAULT 0');
  await query("INSERT INTO account_history_sync(id,phase,cursor) VALUES(1,'live_fills','') ON CONFLICT DO NOTHING");
 }
 const validDate=value=>{if(value===null||value===undefined||value==='')return null;
@@ -106,7 +108,7 @@ export async function syncAccountHistory({query,fetchPage,now=Date.now(),maxPage
  for(let page=0;page<Math.max(1,Math.floor(maxPages));page++){
   if(phase==='reconcile'){
    const result=await publish(query);
-   await query("UPDATE account_history_sync SET phase='complete',cursor='',last_completed=now(),last_error=NULL,updated_at=now() WHERE id=1");
+   await query("UPDATE account_history_sync SET phase='complete',cursor='',last_completed=now(),last_error=NULL,unresolved_markets=$1,updated_at=now() WHERE id=1",[result.unresolved]);
    return {phase:'complete',imported,...result};
   }
   const source=sources[phase];
