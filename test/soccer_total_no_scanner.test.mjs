@@ -14,7 +14,7 @@ const milestone={id:'soccer-scanner',title:'Away at Home',type:'soccer_match',
 const state=(seconds=540,home=2,away=1)=>gameState(milestone,{
   milestone_id:milestone.id,_observed_at:new Date().toISOString(),
   details:{status:'inprogress',home_score:home,away_score:away,half:'2nd',
-    time:Math.floor(90-seconds/60)+"'",match_remaining_seconds:seconds,
+    time:Math.floor((5400-seconds)/60)+':'+String((5400-seconds)%60).padStart(2,'0')+"'",
     home_team_name:'Home',away_team_name:'Away',last_updated_ts:Date.now()/1000}});
 const market={ticker:'KXEPLTOTAL-26NOV20AWAYHOME-5',
   event_ticker:'KXEPLTOTAL-26NOV20AWAYHOME',
@@ -62,7 +62,7 @@ function harness({canVerify=true,hasSeller=true,initialAgeMs=0,existingExposure=
     liveMilestone:async()=>({
       milestone_id:milestone.id,_observed_at:new Date().toISOString(),
       details:{status:'inprogress',home_score:afterRefreshScore===3?2:3,away_score:1,half:'2nd',
-        time:"82'",match_remaining_seconds:missingClock?undefined:479,
+        time:missingClock?'garbled':"82:01'",
         home_team_name:'Home',away_team_name:'Away',last_updated_ts:Date.now()/1000}}),
     gameState,
     kalshi:async(path,opts)=>{
@@ -174,7 +174,7 @@ test('soccer NO signals are published to the dashboard without removing other st
   const hockeyNoSignals=new Map([['game',[{strategy:'no',ticker:'NHL',execution:'NHL state'}]]]);
   const basketballNoSignals=new Map([['game',[{strategy:'watch',execution:'Basketball state'}]]]);
   vm.runInNewContext(src.slice(begin,end),{
-    snapshotRows,snapshotCandidates,soccerNoSignals,hockeyNoSignals,basketballNoSignals,
+    snapshotRows,snapshotCandidates,soccerNoSignals,hockeyNoSignals,basketballNoSignals,variableOverSignals:new Map(),
     crossingRows:[],filled:new Set(),account:{},balance:0,bankroll:0,signalExecution:()=>''});
   assert.deepEqual(JSON.parse(row[14]).map(s=>s.ticker||s.execution).slice(0,3),[market.ticker,'NHL','Basketball state']);
 });

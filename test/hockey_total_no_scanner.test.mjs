@@ -10,7 +10,7 @@ import {rememberIndependentEntry} from '../src/entry_verification.mjs';
 
 const milestone={id:'nhl-scanner',title:'Away at Home',type:'hockey_match',start_date:'2026-11-19T23:00:00Z',
   details:{league:'NHL',home_team_id:'home-id',away_team_id:'away-id',main_game_event_ticker:'KXNHLGAME-TEST'}};
-const state=(clock='2:15',h=2,a=1)=>gameState(milestone,{milestone_id:milestone.id,_observed_at:new Date().toISOString(),
+const state=(clock='5:00',h=2,a=1)=>gameState(milestone,{milestone_id:milestone.id,_observed_at:new Date().toISOString(),
   details:{status:'inprogress',home_points:h,away_points:a,period:3,period_remaining_time:clock,
     last_updated_ts:Date.now()/1000,home_team_name:'Home',away_team_name:'Away'}});
 const market=(period,line)=>({
@@ -47,8 +47,8 @@ function harness({ageMs=46000,canVerify=true,hasSeller=true,existingExposure=fal
     },
     overContractKey,sameSportsContract,
     pool:{query:async(sql,args=[])=>{
-      if(sql.startsWith('SELECT * FROM hockey_total_no_windows'))return {rows:windows.has(args[0])?[windows.get(args[0])]:[]};
-      if(sql.startsWith('INSERT INTO hockey_total_no_windows')){
+      if(sql.startsWith('SELECT * FROM hockey_total_no_windows_v2'))return {rows:windows.has(args[0])?[windows.get(args[0])]:[]};
+      if(sql.startsWith('INSERT INTO hockey_total_no_windows_v2')){
         windows.set(args[0],{market_ticker:args[0],game_id:args[1],contract_key:args[2],period:args[3],
           first_clock:args[4],first_evidence:JSON.parse(args[5]),first_at:new Date(Date.now()-ageMs)});
         return {rows:[],rowCount:1};
@@ -59,7 +59,7 @@ function harness({ageMs=46000,canVerify=true,hasSeller=true,existingExposure=fal
     }},
     liveMilestone:async()=>({milestone_id:milestone.id,_observed_at:new Date().toISOString(),
       details:{status:'inprogress',home_points:2,away_points:1,period:3,
-        period_remaining_time:'1:29',last_updated_ts:Date.now()/1000,
+        period_remaining_time:'4:29',last_updated_ts:Date.now()/1000,
         home_team_name:'Home',away_team_name:'Away'}}),
     gameState,
     kalshi:async(path,opts)=>{
@@ -95,16 +95,16 @@ function harness({ageMs=46000,canVerify=true,hasSeller=true,existingExposure=fal
   };
 }
 
-test('NHL NO checks both full-game and P3, with independent 2:15 preflight then one fresh proof per entry under 1:30',async()=>{
+test('NHL NO checks both full-game and P3, with independent 5:00 preflight then one fresh proof per entry under 4:30',async()=>{
   const h=harness();
-  assert.equal(await h.scan('2:16'),0);
+  assert.equal(await h.scan('5:01'),0);
   assert.equal(h.verifications,0);
-  assert.equal(await h.scan('2:15'),0);
+  assert.equal(await h.scan('5:00'),0);
   assert.equal(h.windows.size,2,'track separate windows for game and third period');
   assert.equal(h.orders,0);
-  assert.equal(await h.scan('1:30'),0);
-  assert.equal(h.orders,0,'strictly under 90s required');
-  assert.equal(await h.scan('1:29'),2);
+  assert.equal(await h.scan('4:30'),0);
+  assert.equal(h.orders,0,'strictly under 270s required');
+  assert.equal(await h.scan('4:29'),2);
   assert.equal(h.orders,2,'both distinct markets can qualify');
   assert.equal(h.allocation,.05);
   assert.ok(h.trace.lastIndexOf('external')<h.trace.lastIndexOf('reserve'),'external immediately precedes reservation');
@@ -115,9 +115,9 @@ test('NHL NO checks both full-game and P3, with independent 2:15 preflight then 
 
 test('NHL total NO enters after its first external proof without a 45-second wait',async()=>{
   const h=harness({ageMs:1000});
-  await h.scan('2:15');
+  await h.scan('5:00');
   assert.equal(h.windows.size,2);
-  assert.equal(await h.scan('1:29'),2);
+  assert.equal(await h.scan('4:29'),2);
   assert.equal(h.orders,2,'no arbitrary wall-clock dwell after preflight');
   assert.ok((h.dashboard.get(milestone.id)||[]).every(s=>!/45-second/.test(s.execution)));
   assert.ok(h.trace.lastIndexOf('external')<h.trace.lastIndexOf('reserve'));
@@ -125,31 +125,31 @@ test('NHL total NO enters after its first external proof without a 45-second wai
 
 test('NHL total NO rejects a preflight timestamp from the future',async()=>{
   const h=harness({ageMs:-1000});
-  await h.scan('2:15');
-  assert.equal(await h.scan('1:29'),0);
+  await h.scan('5:00');
+  assert.equal(await h.scan('4:29'),0);
   assert.equal(h.orders,0);
 });
 
 test('NHL total NO requires verifiable period linescores and declines missing independent evidence',async()=>{
   const h=harness({canVerify:false});
-  await h.scan('2:15');
+  await h.scan('5:00');
   assert.equal(h.windows.size,0);
-  assert.equal(await h.scan('1:29'),0);
+  assert.equal(await h.scan('4:29'),0);
   assert.equal(h.orders,0);
 });
 
 test('NHL NO never enters without an executable NO seller',async()=>{
   const h=harness({hasSeller:false});
-  await h.scan('2:15');
-  assert.equal(await h.scan('1:29'),0);
+  await h.scan('5:00');
+  assert.equal(await h.scan('4:29'),0);
   assert.equal(h.orders,0);
   assert.ok((h.dashboard.get(milestone.id)||[]).some(s=>/NO seller/i.test(s.execution)));
 });
 
 test('NHL total NO caps full-game and P3 entries in one shared fee-inclusive 5% pool',async()=>{
   const h=harness({existingExposure:true});
-  await h.scan('2:15');
-  await h.scan('1:29');
+  await h.scan('5:00');
+  await h.scan('4:29');
   assert.equal(h.allocation,.05);
   assert.equal(h.availablePool,50,'$5 total cap minus existing $4 exposure and $0.50 fees leaves $0.50');
 });
@@ -167,7 +167,7 @@ test('hockey NO dashboard signals are persisted alongside existing strategies, w
   const snapshotCandidates=new Map([['game',[]]]);
   const hockeyNoSignals=new Map([['game',[{strategy:'no',ticker:markets[0].ticker,title:'Over 5.5 goals',execution:'Preflight scheduled'}]]]);
   const basketballNoSignals=new Map();
-  vm.runInNewContext(src.slice(begin,end),{snapshotRows,snapshotCandidates,hockeyNoSignals,basketballNoSignals,soccerNoSignals:new Map(),
+  vm.runInNewContext(src.slice(begin,end),{snapshotRows,snapshotCandidates,hockeyNoSignals,basketballNoSignals,soccerNoSignals:new Map(),variableOverSignals:new Map(),
     crossingRows:[],filled:new Set(),account:{},balance:0,bankroll:0,signalExecution:()=>''});
   assert.equal(JSON.parse(row[14])[0].strategy,'no');
   assert.equal(JSON.parse(row[14])[0].ticker,markets[0].ticker);

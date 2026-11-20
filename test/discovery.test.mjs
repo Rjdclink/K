@@ -134,7 +134,7 @@ test('fast market checks start near each sport entry rather than at the start of
   assert.equal(nearEntryPhase({type:'soccer_game',period:2,soccerMinute:74}),false);
   assert.equal(nearEntryPhase({type:'soccer_game',period:2,soccerMinute:77,homeUnits:3,awayUnits:0}),true);
   assert.equal(nearEntryPhase({type:'soccer_game',period:2,soccerMinute:75}),true);
-  assert.equal(nearEntryPhase({type:'soccer_game',period:2,soccerMinute:93}),true);
+  assert.equal(nearEntryPhase({type:'soccer_game',period:2,soccerMinute:93}),false);
   assert.equal(nearEntryPhase({type:'soccer_game',period:2,soccerMinute:93,soccerExtraTime:true}),false);
 });
 

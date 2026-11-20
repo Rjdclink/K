@@ -1,3 +1,4 @@
+import {soccerRegulationSeconds} from './strategy.mjs';
 import {espnMatches} from './score_verification.mjs';
 import {espnScoreboardUrls} from './espn_scoreboards.mjs';
 
@@ -23,7 +24,7 @@ const currentExternal=(reading,game)=>Boolean(
 );
 
 export function soccerNoMarketSpec(game,market,{beforeWindow=false}={}){
-  const seconds=game?.matchRemainingSeconds;
+  const seconds=soccerRegulationSeconds(game);
   if(game?.sport!=='Soccer'||!/^soccer_/.test(String(game.type||''))||
     !game.verifiedLive||!game.scoreKnown||!game.scoreConsistent||!game.periodConsistent||
     game.feedId!==game.id||!Number.isFinite(game.observedAt)||
@@ -58,7 +59,7 @@ export function soccerTotalNo(game,market,{beforeWindow=false,external=null}={})
   if(spec.line-total<1.5)return null;
   return {...spec,total,reason:
     'Soccer full-game total NO over '+spec.line+'; '+total+
-    ' goals scored, '+game.matchRemainingSeconds+'s to end of regulation plus stoppage'};
+    ' goals scored, '+soccerRegulationSeconds(game)+'s to the 90-minute regulation clock'};
 }
 
 // Independent scoreboard verifies score, second-half status, exact fixture,

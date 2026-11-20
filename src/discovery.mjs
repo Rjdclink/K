@@ -93,6 +93,7 @@ export function nearEntryPhase(game){
   if(/hockey/.test(type))return period>=3&&seconds>=0&&seconds<=465;
   if(/soccer/.test(type))return period===2&&!game.soccerExtraTime&&
     Number.isFinite(game.soccerMinute)&&
+    game.soccerMinute<90&&
     (game.soccerMinute>=75||game.soccerMinute>=45&&
       Number.isFinite(game.homeUnits)&&Number.isFinite(game.awayUnits)&&
       Math.abs(game.homeUnits-game.awayUnits)>=3);
