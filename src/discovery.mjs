@@ -107,6 +107,7 @@ export function nearEntryPhase(game){
       pro&&period>=1&&period<=3&&seconds<=360||
       college&&period===firstHalf&&seconds<=480||
       college&&period===fullGame&&seconds<=600||
+      pro&&period===4&&seconds<=300||
       Boolean(profile)&&period>=profile.period&&seconds<=profile.tiers[0][1]+90);
   }
   if(/hockey/.test(type))return (period===1||period===2)&&seconds>0&&seconds<=360||
@@ -154,7 +155,7 @@ export function marketEntryProximity(game){
     }else if(['NCAAB','NCAAW'].includes(game.sport)){
       const first=game.sport==='NCAAB'?1:2,final=game.sport==='NCAAB'?2:4;
       if(period===first)target=150;
-      else if(period===final)target=margin>=14?270:120;
+      else if(period===final)target=game.sport==='NCAAB'?margin>=14?270:240:margin>=14?270:120;
     }
   }else if(/football/.test(type)&&period===4){
     target=450;
