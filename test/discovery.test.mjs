@@ -93,12 +93,15 @@ test('market pass prioritizes entry windows across sports and rotates early game
     {...game('tennis','tennis_match',2,0,'ATP'),state:{type:'tennis_match',tennis:{bestOf:3,firstSets:1,secondSets:0}}}
   ];
   assert.equal(nearEntryPhase(games[0].state),true);
+  assert.equal(nearEntryPhase(games[1].state),true,'NBA Q2 at 2:00 stays on the priority list');
+  assert.equal(nearEntryPhase(games[2].state),true,'NHL P1 at 2:00 stays on the priority list');
   assert.equal(nearEntryPhase({type:'golf_tournament',period:3,golf:{board:[{current_round_thru:18}]}}),false);
   assert.equal(nearEntryPhase({type:'golf_tournament',period:4,golf:{board:[{current_round_thru:16}]}}),true);
   assert.equal(nearEntryPhase({type:'tennis_match',tennis:{bestOf:3,firstSets:1,secondSets:0}}),true);
   assert.equal(nearEntryPhase({type:'cricket_match',cricket:{innings:2,ballsRemaining:19}}),true);
   assert.deepEqual(prioritizeMarketGames(games,{cycle:0,lowBudget:2}).map(g=>g.milestone.id),
-    ['cfb-early','cfb-late','soccer-late','mlb-late','tennis','nba-early','nhl-early']);
+    ['cfb-early','nba-early','nhl-early','cfb-late','nba-close','nhl-close',
+      'soccer-late','mlb-late','tennis','soccer-early','mlb-early']);
   assert.deepEqual(prioritizeMarketGames(games,{cycle:1,lowBudget:2}).slice(-2).map(g=>g.milestone.id),
     ['soccer-early','mlb-early']);
   const urgent=prioritizeMarketGames(games,{cycle:0,lowBudget:0,heldIds:new Set(['cfb-early']),signaledIds:new Set(['nba-early'])});

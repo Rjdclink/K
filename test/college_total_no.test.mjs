@@ -8,6 +8,7 @@ import {sameSportsContract,overContractKey} from '../src/over_verification.mjs';
 import {rememberIndependentEntry} from '../src/entry_verification.mjs';
 import {bestNoAsk,noDepthAtAsk} from '../src/no_strategy.mjs';
 import vm from 'node:vm';
+import {tagNoPreflight,validNoPreflight,lateNoPreflightProgress} from '../src/late_no_preflight.mjs';
 import {readFileSync} from 'node:fs';
 
 const milestone={id:'ohio-akron',title:'Ohio at Akron',type:'football_game',start_date:'2026-11-04T00:00:00Z',
@@ -98,7 +99,7 @@ test('the independent CFB check requires exact ESPN score and matching fourth-qu
   assert.equal(independentCollegeTotalNoReading({...scoreboard,events:[{...scoreboard.events[0],competitions:[{...scoreboard.events[0].competitions[0],competitors:[{...scoreboard.events[0].competitions[0].competitors[0],score:'10'},scoreboard.events[0].competitions[0].competitors[1]]}]}]},game,milestone,full),false);
   assert.equal(independentCollegeTotalNoReading({...scoreboard,events:[{...scoreboard.events[0],competitions:[{...scoreboard.events[0].competitions[0],status:{period:4,displayClock:'1:30',type:{state:'in'}}}]}]},game,milestone,full),false);
 });
-test('college basketball NO separates 30-second first-half and 90-second full-game windows with a 20-point cushion',()=>{
+test('college basketball NO first-half uses 12 points and under 1:30; full-game keeps 20 points',()=>{
   for(const [league,prefix,halfPeriod,gamePeriod] of [
     ['NCAAMB','KXNCAAMB',1,2],['NCAAWB','KXNCAAWB',2,4]]){
     const fixture={...milestone,type:'basketball_game',title:'Away at Home',details:{league,home_team_id:'home',away_team_id:'away',
@@ -117,14 +118,15 @@ test('college basketball NO separates 30-second first-half and 90-second full-ga
       rules_primary:'If over 75.5 total points are scored in the Away vs Home college basketball game, then the market resolves to Yes.'}));
     assert.ok(collegeBasketballTotalNo(stateAt(halfPeriod,'0:29'),{
       ...half,title:'1st Half: Over 70.5 points scored',yes_sub_title:'Over 70.5 points'}));
-    assert.equal(collegeBasketballTotalNo(stateAt(halfPeriod,'0:30'),half),null);
+    assert.equal(collegeBasketballTotalNo(stateAt(halfPeriod,'1:30'),half),null);
     assert.ok(collegeBasketballTotalNo(stateAt(halfPeriod,'4:30'),half,{beforeWindow:true}));
     for(const half of [true,false]){
       const period=half?halfPeriod:gamePeriod;
-      assert.ok(collegeBasketballTotalNo(stateAt(period,'0:29'),contract(half,70)),'an exact 20-point gap qualifies');
-      assert.equal(collegeBasketballTotalNo(stateAt(period,'0:29'),contract(half,69.5)),null,'less than 20 points blocks entry');
-      assert.ok(collegeBasketballTotalNo(stateAt(period,'0:29'),contract(half,75.5)),'a larger cushion qualifies');
-      assert.equal(collegeBasketballTotalNo(stateAt(period,half?'0:30':'1:30'),contract(half,70)),null);
+      const cutoff=half?62:70;
+      assert.ok(collegeBasketballTotalNo(stateAt(period,'1:29'),contract(half,cutoff)),'exact minimum cushion qualifies');
+      assert.equal(collegeBasketballTotalNo(stateAt(period,'1:29'),contract(half,cutoff-.5)),null,'below required gap blocks entry');
+      assert.ok(collegeBasketballTotalNo(stateAt(period,'1:29'),contract(half,75.5)),'a larger cushion qualifies');
+      assert.equal(collegeBasketballTotalNo(stateAt(period,'1:30'),contract(half,70)),null);
       assert.ok(collegeBasketballTotalNo(stateAt(period,'4:59'),contract(half,70),{beforeWindow:true}));
       assert.equal(collegeBasketballTotalNo(stateAt(period,'5:00'),contract(half,70),{beforeWindow:true}),null);
     }
@@ -145,7 +147,7 @@ test('football Q4 total NO enters with a single immediately preceding external c
   const code=source.slice(source.indexOf('async function scanCollegeTotalNos('),source.indexOf('async function scan(cachedMilestones'));
   const half=market(false),event={event_ticker:half.event_ticker,category:'Sports',markets:[half]};
   let window=null,checks=0,orders=0;const first=state(4,'5:30'),last=state(4,'4:59');
-  const context=vm.createContext({Date,JSON,Number,Math,Promise,console,live:()=>true,
+  const context=vm.createContext({tagNoPreflight,validNoPreflight,lateNoPreflightProgress,Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),
     linkedEventTickers:()=>[half.event_ticker],collegeFootballTotalNo,collegeBasketballTotalNo,overContractKey,sameSportsContract,
     verifyIndependentCollegeTotalNo:async()=>{checks++;return {source:'ESPN',seconds:299}},

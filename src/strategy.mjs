@@ -266,13 +266,27 @@ export function periodValue(game,market){
   if(!parts.length||parts.some(p=>!p))return null;
   return {home:parts.reduce((s,p)=>s+p.home,0),away:parts.reduce((s,p)=>s+p.away,0),number:n,unit};
 }
+// Sole commanding-winner threshold for NHL regulation P3 and soccer regulation P2.
+// Scans, dispatch and all allocation levels must use exactly this rule.
+export function goalCommandingLeadEntry(game){
+  const type=String(game?.type||''),soccer=/soccer/.test(type),hockey=/hockey/.test(type);
+  if(!soccer&&!hockey||!game.verifiedLive||!game.scoreKnown||
+    !game.scoreConsistent||!game.periodConsistent||
+    !Number.isFinite(game.homeUnits)||!Number.isFinite(game.awayUnits))return false;
+  const margin=Math.abs(game.homeUnits-game.awayUnits);
+  const seconds=hockey?game.remainingSeconds:soccerRegulationSeconds(game);
+  if(hockey&&game.period!==3||soccer&&(game.period!==2||game.soccerExtraTime||
+    game.clockRunning===false))return false;
+  return Number.isFinite(seconds)&&seconds>0&&
+    (margin>=3&&seconds<600||margin>=2&&seconds<360);
+}
 export function endWindow(game){
   if(!game.verifiedLive||!game.scoreKnown||!game.periodConsistent)return false;
   if(/basketball/.test(game.type))return Boolean(basketballEntryTier(game));
   if(/football/.test(game.type))return game.sport==='CFB'?cfbLeadWindow(game):game.period===4 && game.remainingSeconds>0 && game.remainingSeconds<=450;
-  if(/hockey/.test(game.type))return game.period===3 && game.remainingSeconds>0 && game.remainingSeconds<=405;
+  if(/hockey/.test(game.type))return goalCommandingLeadEntry(game);
   if(/baseball/.test(game.type))return game.period===8&&game.inningHalf===2&&game.outs===2;
-  if(/soccer/.test(game.type))return soccerLeadClock(game,900);
+  if(/soccer/.test(game.type))return goalCommandingLeadEntry(game);
   return false;
 }
 // Keep a small, fast-polled set of games near a winner-entry window. This is
@@ -306,8 +320,8 @@ export function leadWatchReason(game){
     }
   }
   if(/hockey/.test(type)){
-    if(game.period===3&&Number.isFinite(seconds)&&seconds>0&&seconds<=465&&margin>=2)
-      return `Tracking ${margin}-goal lead; entry requires 3+ at 6:45 or less, or 2+ at 3:45 or less in period 3; ${seconds<=225||margin>=3&&seconds<=405?'score and clock qualify; checking seller':'waiting for clock threshold'}`;
+    if(game.period===3&&Number.isFinite(seconds)&&seconds>0&&seconds<=690&&margin>=2)
+      return `Tracking ${margin}-goal lead; entry requires +3 strictly under 10:00 or +2 strictly under 6:00 in period 3; ${goalCommandingLeadEntry(game)?'score and clock qualify; checking seller':'waiting for clock threshold'}`;
   }
   if(/baseball/.test(type)&&
     game.period===8&&game.inningHalf===2&&game.outs>=1&&margin>=5)
@@ -318,13 +332,10 @@ export function leadWatchReason(game){
       return `Tracking ${margin}-point lead; waiting for final winner window`;
   }
   if(/soccer/.test(type)&&game.period===2&&!game.soccerExtraTime&&
-    Number.isFinite(game.soccerMinute)&&game.soccerMinute>=60&&
-    soccerRegulationSeconds(game)>0&&
-    (margin>=3||game.soccerMinute>=80&&margin>=2))
-    return `Tracking ${margin}-goal lead; ${margin>=3&&soccerLeadClock(game,900)||soccerLeadClock(game,210)&&margin>=2?
-      'late winner rule reached; checking winner market and ask':
-      margin>=3?'entry requires +3 strictly under 15:00 remaining':
-      'entry requires +2 strictly under 3:30 remaining'}`;
+    Number.isFinite(game.soccerMinute)&&game.soccerMinute>=79&&
+    soccerRegulationSeconds(game)>0&&margin>=2)
+    return `Tracking ${margin}-goal lead; entry requires +3 strictly under 10:00 or +2 strictly under 6:00 regulation remaining; ${goalCommandingLeadEntry(game)?
+      'late winner rule reached; checking winner market and ask':'waiting for score and clock threshold'}`;
   return null;
 }
 export function playerPropEarlyWindow(game){
@@ -653,18 +664,11 @@ export function strongKalshiOnlyLead(first,second,market){
   const margin=Math.abs(second.homeUnits-second.awayUnits);
   if(/soccer/.test(type))return first.period===2&&second.period===2&&
     first.clockRunning&&second.clockRunning&&
-    (Number.isFinite(first.matchRemainingSeconds)&&first.matchRemainingSeconds>0&&
-      first.matchRemainingSeconds<300&&second.matchRemainingSeconds<first.matchRemainingSeconds&&
-      Number.isFinite(second.matchRemainingSeconds)&&second.matchRemainingSeconds>0&&
-      second.matchRemainingSeconds<300||
-      Number.isFinite(first.soccerMinute)&&first.soccerMinute>85&&
-      Number.isFinite(second.soccerMinute)&&second.soccerMinute>=first.soccerMinute)&&
-    margin>=3;
+    Number.isFinite(first.soccerMinute)&&Number.isFinite(second.soccerMinute)&&
+    second.soccerMinute>=first.soccerMinute&&goalCommandingLeadEntry(second);
   if(/hockey/.test(type))return first.period===3&&second.period===3&&
-    Number.isFinite(first.remainingSeconds)&&first.remainingSeconds>0&&
-    first.remainingSeconds<120&&second.remainingSeconds<first.remainingSeconds&&
-    Number.isFinite(second.remainingSeconds)&&second.remainingSeconds>0&&
-    second.remainingSeconds<120&&margin>=5;
+    Number.isFinite(first.remainingSeconds)&&Number.isFinite(second.remainingSeconds)&&
+    second.remainingSeconds<first.remainingSeconds&&goalCommandingLeadEntry(second);
   return false;
 }
 export function confirmedExternalLead(first,second,market){
@@ -724,20 +728,19 @@ export function leadSignal(game, market) {
   const segments=/baseball/.test(game.type)?9:/hockey/.test(game.type)?3:/soccer/.test(game.type)?2:basketball&&game.sport==='NCAAB'?2:/basketball|football/.test(game.type)?4:Infinity;
   const baseball=/baseball/.test(game.type);
   const seconds=game.remainingSeconds,margin=Math.abs(game.homeUnits-game.awayUnits);
-  const soccerSecondHalf=soccer&&game.periodConsistent&&soccerLeadClock(game,900);
-  const soccerLate=soccer&&game.periodConsistent&&soccerLeadClock(game,210);
+  const soccerSecondHalf=soccer&&goalCommandingLeadEntry(game);
   const baseballEighth=baseball&&game.period===8&&game.inningHalf===2&&game.outs===2;
   const finalTime=baseball?baseballEighth:soccer?soccerSecondHalf:
     game.period===segments&&game.periodConsistent&&Number.isFinite(seconds)&&seconds>0&&
     (basketball?Boolean(basketballEntryTier(game)):
-      hockey?seconds<=405:game.sport==='CFB'?cfbLeadWindow(game):seconds<=450);
+      hockey?goalCommandingLeadEntry(game):game.sport==='CFB'?cfbLeadWindow(game):seconds<=450);
   if (!game.verifiedLive || !game.scoreKnown || soccer&&!game.scoreConsistent || !finalTime || market.status!=='active' && market.status!=='open') return null;
   const h=game.homeUnits,a=game.awayUnits;
   if (!Number.isFinite(h)||!Number.isFinite(a)) return null;
   const minimum=basketball?basketballEntryTier(game)?.[0]??null:
     football?game.sport==='CFB'?(seconds<=CFB_LEAD_WINDOW_SECONDS?CFB_LEAD_MINIMUM:
       seconds<=CFB_MIDDLE_WINDOW_SECONDS?CFB_MIDDLE_MINIMUM:CFB_EARLY_MINIMUM):seconds<=120?8:11:
-    hockey?(seconds<=225?2:3):baseball?5:soccer?soccerLate?2:3:null;
+    hockey?2:baseball?5:soccer?2:null;
   if(minimum===null||margin<minimum)return null;
   const leader = h>a ? game.homeName : game.awayName;
   const trailer = h>a ? game.awayName : game.homeName;
@@ -763,7 +766,7 @@ export function leadFraction(game,margin,minimum){
     const leaderHasBall=game.possessionSide===(game.homeUnits>game.awayUnits?'home':'away');
     return Math.min(35,basePercent+(leaderHasBall?5:0))/100;
   }
-  if(/soccer/.test(game.type)&&margin>=3)return .20;
+  if(/soccer|hockey/.test(game.type))return .05;
   return .15;
 }
 // The NBA +16 Q4 route uses one recent score inside the 4:30 window.
@@ -827,7 +830,7 @@ export function confirmedDrawClock(first,second,market){
 }
 export function soccerWinnerWindowOpen(game,now=Date.now()){
   if(!/soccer/.test(game.type)||Math.abs(game.home-game.away)<2)return true;
-  if(!soccerLeadClock(game,Math.abs(game.home-game.away)===2?210:900))return false;
+  if(!goalCommandingLeadEntry(game))return false;
   const regulation=Number.isFinite(game.soccerMinute)?(90-game.soccerMinute)*60:NaN;
   if(Number.isFinite(game.matchRemainingSeconds)&&game.matchRemainingSeconds<=0)return false;
   const remaining=Number.isFinite(game.matchRemainingSeconds)&&game.matchRemainingSeconds>0?

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
+import {tagNoPreflight,validNoPreflight,lateNoPreflightProgress} from '../src/late_no_preflight.mjs';
 import {readFileSync} from 'node:fs';
 import {gameState} from '../src/strategy.mjs';
 import {collegeFootballTotalNo,collegeBasketballTotalNo,bestNoAsk,noDepthAtAsk} from '../src/no_strategy.mjs';
@@ -83,15 +84,15 @@ test('multiple qualifying NO lines receive independent tracked windows and dashb
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
   const code=source.slice(source.indexOf('async function scanCollegeTotalNos('),source.indexOf('async function scan(cachedMilestones'));
   const windows=new Map(),sink=new Map();let verificationCalls=0,orders=0,marketReads=0;
-  const context=vm.createContext({Date,JSON,Number,Math,Promise,console,live:()=>true,
+  const context=vm.createContext({tagNoPreflight,validNoPreflight,lateNoPreflightProgress,Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),linkedEventTickers:()=>[contracts[0].event_ticker],
     collegeFootballTotalNo,collegeBasketballTotalNo,overContractKey,sameSportsContract,
-    verifyIndependentCollegeTotalNo:async()=>{verificationCalls++;return {source:'ESPN',seconds:269};},
+    verifyIndependentCollegeTotalNo:async()=>{verificationCalls++;return {source:'ESPN',eventId:'espn-matched-game',seconds:269};},
     pool:{query:async(sql,args=[])=>{
       if(sql.startsWith('SELECT * FROM college_total_no_windows'))return {rows:windows.has(args[0])?[windows.get(args[0])]:[]};
       if(sql.startsWith('INSERT INTO college_total_no_windows')){
         windows.set(args[0],{market_ticker:args[0],game_id:args[1],contract_key:args[2],period:args[3],
-          first_clock:args[4],first_evidence:JSON.parse(args[5]),first_at:new Date(Date.now()-1000)});
+          first_clock:args[4],first_evidence:JSON.parse(args[5]),first_at:new Date(Date.now()-61000)});
         return {rows:[]};
       }
       if(sql.startsWith('SELECT 1 FROM trade_attempts'))return {rows:[],rowCount:0};
@@ -181,12 +182,12 @@ test('all basketball NO leagues share one 5% fee-inclusive pool without affectin
   const src=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
   const code=src.slice(src.indexOf('async function scanCollegeTotalNos('),src.indexOf('async function scan(cachedMilestones'));
   const window={market_ticker:m.ticker,game_id:f.state.id,contract_key:overContractKey(f.state,m),
-    period:4,first_clock:120,first_evidence:{source:'ESPN'},first_at:new Date(Date.now()-1000)};
+    period:4,first_clock:120,first_evidence:tagNoPreflight({source:'ESPN',eventId:'espn-matched-game'}),first_at:new Date(Date.now()-61000)};
   let allocated=null,budget=null,orders=0,patterns=null;
-  const ctx=vm.createContext({Date,JSON,Number,Math,Promise,console,live:()=>true,
+  const ctx=vm.createContext({tagNoPreflight,validNoPreflight,lateNoPreflightProgress,Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),linkedEventTickers:()=>[m.event_ticker],
     collegeFootballTotalNo,collegeBasketballTotalNo,overContractKey,sameSportsContract,
-    verifyIndependentCollegeTotalNo:async()=>({source:'ESPN',seconds:29}),
+    verifyIndependentCollegeTotalNo:async()=>({source:'ESPN',eventId:'espn-matched-game',seconds:29}),
     pool:{query:async(sql,args=[])=>{
       if(sql.startsWith('SELECT * FROM college_total_no_windows'))return {rows:[window]};
       if(sql.startsWith('SELECT 1 FROM trade_attempts')){if(sql.includes('reason LIKE ANY'))patterns=args[0];return {rows:[],rowCount:0};}

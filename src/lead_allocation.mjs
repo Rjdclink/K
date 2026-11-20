@@ -1,13 +1,13 @@
-import { KALSHI_ONLY_FRACTION,strongKalshiOnlyLead,proBasketballLeadRules,leadSignal,playerOverSpec,playerPropMaxFraction,basketballCloseoutEntry } from './strategy.mjs';
+import { KALSHI_ONLY_FRACTION,strongKalshiOnlyLead,proBasketballLeadRules,leadSignal,playerOverSpec,playerPropMaxFraction,basketballCloseoutEntry,goalCommandingLeadEntry } from './strategy.mjs';
 import { timedOverEntryValid } from './over_verification.mjs';
 import {externalOverExposureValid} from './over_exposure.mjs';
 export function threeGoalWinner(game,signal,market){
   return Boolean(market&&signal?.strategy==='lead'&&/hockey|soccer/.test(game?.type||'')&&
     Math.abs(game.homeUnits-game.awayUnits)>=3&&leadSignal(game,market));
 }
-export const minimumThreeGoalSpend=(game,signal,market,bankroll)=>
-  signal?.strategy==='lead'&&/hockey|soccer/.test(game?.type||'')&&Math.abs(game.homeUnits-game.awayUnits)>=3?
-    threeGoalWinner(game,signal,market)?Math.ceil(bankroll*.15):Infinity:0;
+// Legacy 15% purchase minimum conflicts with the new 5% hockey/soccer ceiling.
+// Eligibility stays at the exact winner/clock gate; no separate minimum spend.
+export const minimumThreeGoalSpend=()=>0;
 
 export function verifiedOverFraction(signal,game,market){
   if(signal?.strategy!=='over')return signal?.fraction;
@@ -25,12 +25,13 @@ export function lateCommandingLead(game,market){
   const margin=Math.abs(game.homeUnits-game.awayUnits),seconds=game.remainingSeconds;
   if(/basketball/.test(game.type||''))return game.period===(game.sport==='NCAAB'?2:4)&&
     Number.isFinite(seconds)&&seconds>0&&seconds<105&&margin>=(game.sport==='NBA'?20:16);
-  if(/hockey/.test(game.type||''))return game.period===3&&seconds>0&&seconds<120&&margin>=5;
+  if(/hockey|soccer/.test(game.type||''))return goalCommandingLeadEntry(game);
   if(/football/.test(game.type||''))return game.period===4&&seconds>0&&seconds<90&&margin>=21;
-  if(/soccer/.test(game.type||''))return game.period===2&&game.soccerMinute>85&&margin>=3;
+
   return false;
 }
 export function independentlyVerifiedLeadFraction(game,market){
+  if(/hockey|soccer/.test(game?.type||''))return .05;
   if(!lateCommandingLead(game,market))return .20;
   const margin=Math.abs(game.homeUnits-game.awayUnits),type=game.type||'';
   const top=/basketball/.test(type)?game.sport==='NBA'?30:25:/hockey/.test(type)?7:/football/.test(type)?28:/soccer/.test(type)?4:Infinity;
@@ -38,6 +39,7 @@ export function independentlyVerifiedLeadFraction(game,market){
 }
 
 export function directLeadFraction(game,signal,market){
+  if(signal?.strategy==='lead'&&/hockey|soccer/.test(game?.type||''))return .05;
   if(threeGoalWinner(game,signal,market))return .20;
   return signal?.strategy==='lead'&&lateCommandingLead(game,market)?.20:
     Math.min(.15,signal?.fraction??.15);
@@ -66,6 +68,7 @@ export function finalLeadFraction(first,second,signal,externallyVerified,market)
   if(basketballCloseoutEntry(second)||second.basketballVerification)return .15;
   if(/^Restricted 5% draw\b/.test(signal.reason||''))return .05;
   if(/^Restricted 2% lead\b/.test(signal.reason||''))return .02;
+  if(/hockey|soccer/.test(second?.type||''))return .05;
   if(externallyVerified&&lateCommandingLead(second,market))return independentlyVerifiedLeadFraction(second,market);
   if(proBasketballLeadRules(second)){
     const margin=Math.abs(second.homeUnits-second.awayUnits),seconds=second.remainingSeconds;
