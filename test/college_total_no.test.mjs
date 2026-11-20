@@ -98,7 +98,7 @@ test('the independent CFB check requires exact ESPN score and matching fourth-qu
   assert.equal(independentCollegeTotalNoReading({...scoreboard,events:[{...scoreboard.events[0],competitions:[{...scoreboard.events[0].competitions[0],competitors:[{...scoreboard.events[0].competitions[0].competitors[0],score:'10'},scoreboard.events[0].competitions[0].competitors[1]]}]}]},game,milestone,full),false);
   assert.equal(independentCollegeTotalNoReading({...scoreboard,events:[{...scoreboard.events[0],competitions:[{...scoreboard.events[0].competitions[0],status:{period:4,displayClock:'1:30',type:{state:'in'}}}]}]},game,milestone,full),false);
 });
-test('college basketball NO uses distinct half and game contracts, 25-point cushion and final 30-second window',()=>{
+test('college basketball NO uses distinct half and game contracts, 20-point cushion and final 30-second window',()=>{
   for(const [league,prefix,halfPeriod,gamePeriod] of [
     ['NCAAMB','KXNCAAMB',1,2],['NCAAWB','KXNCAAWB',2,4]]){
     const fixture={...milestone,type:'basketball_game',title:'Away at Home',details:{league,home_team_id:'home',away_team_id:'away',
@@ -106,27 +106,27 @@ test('college basketball NO uses distinct half and game contracts, 25-point cush
     const stateAt=(period,clock)=>gameState(fixture,{milestone_id:fixture.id,_observed_at:new Date().toISOString(),
       details:{status:'live',home_points:30,away_points:20,period,clock,last_updated_ts:Date.now()/1000,
         home_team_name:'Home',away_team_name:'Away'}});
-    const contract=(half,line=75.5)=>({ticker:`${prefix}${half?'1H':''}TOTAL-TEST-${line}`,
+    const contract=(half,line=70.5)=>({ticker:`${prefix}${half?'1H':''}TOTAL-TEST-${line}`,
       event_ticker:`${prefix}${half?'1H':''}TOTAL-TEST`,status:'active',title:`Over ${line} points`,
       floor_strike:line,strike_type:'greater',rules_primary:`Resolves Yes if over ${line} total points are scored in ${half?'the 1st half of ':''}the Away vs Home college basketball game.`});
     const half=contract(true),full=contract(false);
     assert.equal(collegeBasketballTotalNo(stateAt(halfPeriod,'0:29'),half)?.period,'first_half');
     assert.equal(collegeBasketballTotalNo(stateAt(gamePeriod,'0:29'),full)?.period,'full_game');
     assert.ok(collegeBasketballTotalNo(stateAt(gamePeriod,'0:29'),{
-      ...full,title:'Full Game: Over 75.5 points scored',yes_sub_title:'Over 75.5 points',
+      ...full,title:'Full Game: Over 70.5 points scored',yes_sub_title:'Over 70.5 points',
       rules_primary:'If over 75.5 total points are scored in the Away vs Home college basketball game, then the market resolves to Yes.'}));
     assert.ok(collegeBasketballTotalNo(stateAt(halfPeriod,'0:29'),{
-      ...half,title:'1st Half: Over 75.5 points scored',yes_sub_title:'Over 75.5 points'}));
+      ...half,title:'1st Half: Over 70.5 points scored',yes_sub_title:'Over 70.5 points'}));
     assert.equal(collegeBasketballTotalNo(stateAt(halfPeriod,'0:30'),half),null);
     assert.ok(collegeBasketballTotalNo(stateAt(halfPeriod,'4:30'),half,{beforeWindow:true}));
     for(const half of [true,false]){
       const period=half?halfPeriod:gamePeriod;
-      assert.ok(collegeBasketballTotalNo(stateAt(period,'0:29'),contract(half,75)),'an exact 25-point gap qualifies');
-      assert.equal(collegeBasketballTotalNo(stateAt(period,'0:29'),contract(half,74.5)),null,'less than 25 points blocks entry');
-      assert.ok(collegeBasketballTotalNo(stateAt(period,'0:29'),contract(half,80.5)),'a larger cushion qualifies');
-      assert.equal(collegeBasketballTotalNo(stateAt(period,'0:30'),contract(half,75)),null);
-      assert.ok(collegeBasketballTotalNo(stateAt(period,'4:59'),contract(half,75),{beforeWindow:true}));
-      assert.equal(collegeBasketballTotalNo(stateAt(period,'5:00'),contract(half,75),{beforeWindow:true}),null);
+      assert.ok(collegeBasketballTotalNo(stateAt(period,'0:29'),contract(half,70)),'an exact 20-point gap qualifies');
+      assert.equal(collegeBasketballTotalNo(stateAt(period,'0:29'),contract(half,69.5)),null,'less than 20 points blocks entry');
+      assert.ok(collegeBasketballTotalNo(stateAt(period,'0:29'),contract(half,75.5)),'a larger cushion qualifies');
+      assert.equal(collegeBasketballTotalNo(stateAt(period,'0:30'),contract(half,70)),null);
+      assert.ok(collegeBasketballTotalNo(stateAt(period,'4:59'),contract(half,70),{beforeWindow:true}));
+      assert.equal(collegeBasketballTotalNo(stateAt(period,'5:00'),contract(half,70),{beforeWindow:true}),null);
     }
     assert.equal(collegeBasketballTotalNo(stateAt(halfPeriod,'0:29'),full),null);
     assert.equal(collegeBasketballTotalNo(stateAt(gamePeriod,'0:29'),half),null);
@@ -140,7 +140,7 @@ test('college basketball NO uses distinct half and game contracts, 25-point cush
     assert.equal(independentCollegeTotalNoReading(board,stateAt(halfPeriod,'0:29'),fixture,half)?.seconds,29);
   }
 });
-test('the scanner starts before 5:00 and only submits after a second fresh check and executable NO seller',async()=>{
+test('football Q4 total NO enters with a single immediately preceding external check and executable NO seller',async()=>{
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
   const code=source.slice(source.indexOf('async function scanCollegeTotalNos('),source.indexOf('async function scan(cachedMilestones'));
   const half=market(false),event={event_ticker:half.event_ticker,category:'Sports',markets:[half]};
@@ -172,13 +172,8 @@ test('the scanner starts before 5:00 and only submits after a second fresh check
     invalidateBalance:async()=>{}});
   vm.runInContext(code,context);
   const args=g=>[[{milestone,state:g}],new Map([[half.event_ticker,event]])];
-  assert.equal(await context.scanCollegeTotalNos(...args(last),'football'),0,'no first check after the window opens');
-  assert.equal(checks,0);
-  const tooLate={...state(4,'5:05'),observedAt:Date.now()-6000};
-  assert.equal(await context.scanCollegeTotalNos(...args(tooLate),'football'),0,'the first check must finish before the window');
-  assert.equal(window,null);
-  assert.equal(await context.scanCollegeTotalNos(...args(first),'football'),0);
-  assert.equal(checks,2);assert.equal(orders,0);assert.equal(window.first_clock,330);
-  assert.equal(await context.scanCollegeTotalNos(...args(last),'football'),1);
-  assert.equal(checks,3);assert.equal(orders,1);
+  assert.equal(await context.scanCollegeTotalNos(...args(last),'football'),1,'a single external check may authorize entry immediately under 5:00');
+  assert.equal(checks,1);assert.equal(orders,1);
+  assert.equal(await context.scanCollegeTotalNos(...args(first),'football'),0,'5:30 remains outside the entry window');
+  assert.equal(checks,1);assert.equal(window,null,'football no longer creates a first-check window');
 });
