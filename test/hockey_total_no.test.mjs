@@ -34,23 +34,43 @@ const scoreboard=(clock='1:29',home3=0,away3=0)=>{
   }]}]};
 };
 
-test('NHL total NO needs at least 2.5-goal cushion separately for full game and third period',()=>{
+test('NHL NO requires a 2.5-goal full-game cushion and a separate 1.5-goal P3 cushion',()=>{
   const state=game('1:29',3,2,1);
   assert.equal(hockeyTotalNo(state,market('full_game',5.5))?.total,3,'game score 3 qualifies at line 5.5');
   assert.equal(hockeyTotalNo(state,market('full_game',5.0)),null,'exactly 2.0-goal gap must be rejected');
   assert.equal(hockeyTotalNo(state,market('full_game',4.5)),null,'1.5-goal gap must be rejected');
   assert.equal(hockeyTotalNo(state,market('third_period',2.5))?.total,0,'third period 0 qualifies at 2.5');
-  assert.equal(hockeyTotalNo(state,market('third_period',2.0)),null,'2.0-goal gap is not enough');
+  assert.equal(hockeyTotalNo(state,market('third_period',1.5))?.total,0,'exact 1.5-goal P3 cushion qualifies');
+  assert.equal(hockeyTotalNo(state,market('third_period',1.0)),null,'1.0-goal P3 cushion fails');
   assert.equal(hockeyTotalNo(game('1:29',3,3,1),market('third_period',3.5))?.total,1);
-  assert.equal(hockeyTotalNo(game('1:29',3,3,1),market('third_period',3.0)),null);
+  assert.equal(hockeyTotalNo(game('1:29',3,3,1),market('third_period',2.5))?.total,1);
+  assert.equal(hockeyTotalNo(game('1:29',3,3,1),market('third_period',2.0)),null);
 });
 
 test('NHL example: 4 combined game goals requires an Over 6.5 line, and P3 compares P3 goals only',()=>{
+  const twoGoals=gameState(milestone,{milestone_id:milestone.id,
+    _observed_at:new Date().toISOString(),details:{
+      status:'inprogress',home_points:1,away_points:1,period:3,
+      period_remaining_time:'1:29',last_updated_ts:Date.now()/1000,
+      home_team_name:'Home',away_team_name:'Away',
+      period_scores:[{number:1,home_score:1,away_score:1},
+        {number:2,home_score:0,away_score:0},
+        {number:3,home_score:0,away_score:0}]
+    }});
+  assert.equal(hockeyTotalNo(twoGoals,market('full_game',4.5))?.total,2,
+    '2 total game goals means minimum full-game Over 4.5');
+  assert.equal(hockeyTotalNo(twoGoals,market('full_game',4.0)),null,
+    'full-game Over 4.0 has only a 2-goal cushion');
   const atFour=game('1:29',3,3,1);
   assert.equal(hockeyTotalNo(atFour,market('full_game',6.5))?.total,4);
   assert.equal(hockeyTotalNo(atFour,market('full_game',6.0)),null,'two goals is below the requested 2.5');
   assert.equal(hockeyTotalNo(atFour,market('third_period',3.5))?.total,1);
-  assert.equal(hockeyTotalNo(atFour,market('third_period',3.0)),null);
+  assert.equal(hockeyTotalNo(atFour,market('third_period',2.5))?.total,1);
+  assert.equal(hockeyTotalNo(atFour,market('third_period',2.0)),null);
+  const twoP3Goals=game('1:29',3,4,1);
+  assert.equal(hockeyTotalNo(twoP3Goals,market('third_period',3.5))?.total,2,
+    'when P3 has 2 goals, its minimum NO line is Over 3.5');
+  assert.equal(hockeyTotalNo(twoP3Goals,market('third_period',3.0)),null);
 });
 
 test('NHL NO enters strictly under 1:30 in period three only, and watches from 2:15',()=>{
