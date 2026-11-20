@@ -4928,7 +4928,7 @@ async function handleRequest(req){const url=new URL(req.url);
       const [{rows},{rows:[summary]},{rows:[coverage]}]=await Promise.all([
         pool.query(accountHistoryListSQL(cutoff),[beforeTime||null,beforeId||null,filter,view]),
         pool.query(accountHistorySummarySQL(cutoff),[view]),
-        pool.query(`SELECT phase,last_completed,last_error,
+        pool.query(`SELECT phase,last_completed,last_error,unresolved_markets,
           (SELECT count(*) FROM account_history_fills) AS imported_fills,
           (SELECT count(*) FROM account_realized_history) AS account_markets
           FROM account_history_sync WHERE id=1`)
