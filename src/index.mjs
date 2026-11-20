@@ -3484,7 +3484,7 @@ async function scanEarlyPeriodNos(games,events,signalSink=null,sport='NHL'){
 }
 
 async function scanSoccerTotalNos(games,events,signalSink=null){
-  const allocation=.05,entry=600,start=660,reasonPattern='Soccer %total NO %';
+  const allocation=.05,entry=480,start=660,reasonPattern='Soccer %total NO %';
   const noDiagnostics=new Map();
   const auditNoCandidate=(candidate,execution,quote=null)=>{
     if(!candidate?.market?.ticker||!candidate?.state||!execution)return;
@@ -3599,7 +3599,7 @@ async function scanSoccerTotalNos(games,events,signalSink=null){
         continue;
       }
       if(game.matchRemainingSeconds>=entry){
-        report(c,'First ESPN check saved; awaiting strictly under 10:00');continue;
+        report(c,'First ESPN check saved; awaiting strictly under 8:00');continue;
       }
       const spacing=lateNoPreflightProgress(window);
       if(!spacing.ready){
