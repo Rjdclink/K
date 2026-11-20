@@ -232,7 +232,7 @@ test('soccer NO requires executable NO liquidity and refuses a future-dated init
   }
   const paused=harness({initialAgeMs:1000000});
   await paused.scan(660);
-  assert.equal(await paused.scan(599),1,'a prolonged stoppage does not invalidate a matching fresh final check');
+  assert.equal(await paused.scan(479),1,'a prolonged stoppage does not invalidate a matching fresh final check');
 });
 
 test('pending soccer NO order does not prevent first independent preflight of another market',async()=>{
