@@ -1,5 +1,6 @@
+import {noFinalCheckpoint,pairedExternalMatch} from './support/no_final_checkpoint_mock.mjs';
 import {noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey} from './support/no_ask_mock.mjs';
-import {pairedExternalMatch} from '../src/independent_match_score.mjs';
+
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -39,7 +40,7 @@ function harness({ageMs=61000,canVerify=true,hasSeller=true,existingExposure=fal
   let n=0,verifications=0,orders=0,allocation=null,availablePool=null;
   const windows=new Map(),dashboard=new Map(),trace=[];
   const held={ticker:'KXNHLTOTAL-OLD',position_fp:-1,market_exposure_dollars:'4.00',fees_paid_dollars:'0.50'};
-  const context=vm.createContext({noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async()=>{},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
+  const context=vm.createContext({noFinalCheckpoint,noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async()=>{},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
     Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),
     linkedEventTickers:()=>markets.map(x=>x.event_ticker),
@@ -111,7 +112,8 @@ test('NHL NO checks both full-game and P3, with independent 5:00 preflight then 
   assert.equal(h.orders,2,'both distinct markets can qualify');
   assert.equal(h.allocation,.05);
   assert.ok(h.trace.lastIndexOf('external')<h.trace.lastIndexOf('reserve'),'external immediately precedes reservation');
-  assert.ok(h.trace.indexOf('orderbook')<h.trace.lastIndexOf('external'),'final check after NO quote');
+  assert.ok(h.trace.indexOf('external',h.trace.indexOf('external')+1)<h.trace.indexOf('orderbook'),'first eligible final check precedes first NO book probe');
+  assert.ok(h.trace.lastIndexOf('external')<h.trace.lastIndexOf('orderbook'),'last contract also has independent evidence before its seller quote');
   assert.deepEqual(new Set((h.dashboard.get(milestone.id)||[]).filter(x=>x.strategy==='no').map(x=>x.ticker)),
     new Set(markets.map(x=>x.ticker)));
 });

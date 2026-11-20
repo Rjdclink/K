@@ -1,5 +1,6 @@
+import {noFinalCheckpoint,pairedExternalMatch} from './support/no_final_checkpoint_mock.mjs';
 import {noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey} from './support/no_ask_mock.mjs';
-import {pairedExternalMatch} from '../src/independent_match_score.mjs';
+
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -91,7 +92,7 @@ function harness(sport,period=1,{firstUnavail=false,finalUnavail=false,wrongFina
  };
  const table=sport==='NHL'?'nhl_early_period_no_windows':sport==='Soccer'?
    'soccer_first_half_no_windows':'basketball_early_quarter_no_windows';
- const context=vm.createContext({noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async()=>{},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
+ const context=vm.createContext({noFinalCheckpoint,noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async()=>{},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
    Date,JSON,Math,Number,Promise,console,
    live:()=>true,liveBatch:async()=>new Map(),linkedEventTickers:()=>[f.market.event_ticker],
    hockeyEarlyNoMarketSpec,hockeyEarlyPeriodNo,
@@ -163,7 +164,8 @@ test('NHL P1/P2, soccer 1H and NBA quarter NO each require initial and final ver
    assert.equal(h.verified,2,sport+' '+period+' both independent checks');
    assert.equal(h.orders,1,sport+' '+period+' exactly one order');
    assert.equal(h.fraction,.05);
-   assert.ok(h.trace.indexOf('orderbook')<h.trace.lastIndexOf('external'));
+   assert.ok(h.trace.lastIndexOf('external')<h.trace.indexOf('orderbook'),
+     'final independent score check must occur BEFORE liquidity evaluation');
    assert.ok(h.trace.lastIndexOf('external')<h.trace.indexOf('reserve'));
  }
 });

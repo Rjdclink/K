@@ -4,15 +4,17 @@ import {readFileSync} from 'node:fs';
 import {NO_ASK_GRACE_MS,NO_ASK_RETIRED} from '../src/no_ask_timeout.mjs';
 const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
 const region=(first,last)=>source.slice(source.indexOf(first),source.indexOf(last,source.indexOf(first)));
-test('all four NO total scanners skip the retired market before expensive external checks and orderbook fetches',()=>{
+test('all four NO total scanners complete eligible final score verification before no-ask retirement and orderbook checks',()=>{
  for(const [begin,end] of [
   ['async function scanCollegeTotalNos(','async function scanHockeyTotalNos('],
   ['async function scanHockeyTotalNos(','async function scanEarlyPeriodNos('],
   ['async function scanEarlyPeriodNos(','async function scanSoccerTotalNos('],
   ['async function scanSoccerTotalNos(','async function scanVariablePlayerOvers(']]){
   const code=region(begin,end);
-  assert.ok(code.indexOf("noAskTimeout.isRetired(c,'no')")<code.indexOf('const {orderbook_fp}=await kalshi('),begin);
-  assert.ok(code.indexOf("noAskTimeout.isRetired(c,'no')")<code.indexOf('policy.verify(')||!code.includes('policy.verify('),begin);
+  assert.ok(code.indexOf('const finalCheck=')>=0,begin+' must actually attempt final verification');
+  assert.ok(code.indexOf('const finalCheck=')<code.indexOf("noAskTimeout.isRetired(c,'no')"),begin+' final first');
+  assert.ok(code.indexOf("noAskTimeout.isRetired(c,'no')")<code.indexOf('const {orderbook_fp}=await kalshi('),begin+' skip empty book');
+  assert.match(code,/noAskTimeout\.claimRecovery\(c,'no'\)/,begin+' recovered ask may recheck');
   assert.match(code,/noAskTimeout\.observeMissing\(c,'no'\)/,begin);
   assert.match(code,/noAskTimeout\.available\(\[c\],'no'\)/,begin);
   assert.match(code,/NO_ASK_RETIRED/,begin);
@@ -36,7 +38,7 @@ test('normal winner/over purchases are skipped but retained positions still have
  assert.match(scan,/opportunities\.push\(\.\.\.allCandidates\.filter\(stillEligible\)\)/);
  assert.match(scan,/const activeYesCandidates=allCandidates\.filter\(stillEligible\)/);
  assert.match(scan,/retiredYes\.has\(noAskKey\(c\)\)\?NO_ASK_RETIRED/);
- assert.match(source,/async function verifiedEntryQuote\([\s\S]*?if\(await noAskTimeout\.isRetired\(\{market,game\},'yes'\)\)return null/);
+ assert.match(source,/async function verifiedEntryQuote\([\s\S]*?noAskTimeout\.claimRecovery\(\{market,game\},'yes'\)/);
  assert.equal(NO_ASK_GRACE_MS,30_000);
  assert.match(NO_ASK_RETIRED,/candidate skipped/);
  const sell=readFileSync(new URL('../src/sell.mjs',import.meta.url),'utf8');

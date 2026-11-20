@@ -1,5 +1,6 @@
+import {noFinalCheckpoint,pairedExternalMatch} from './support/no_final_checkpoint_mock.mjs';
 import {noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey} from './support/no_ask_mock.mjs';
-import {pairedExternalMatch} from '../src/independent_match_score.mjs';
+
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -86,7 +87,7 @@ test('multiple qualifying NO lines receive independent tracked windows and dashb
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
   const code=source.slice(source.indexOf('async function scanCollegeTotalNos('),source.indexOf('async function scan(cachedMilestones'));
   const windows=new Map(),sink=new Map();let verificationCalls=0,orders=0,marketReads=0;
-  const context=vm.createContext({noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async()=>{},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,Date,JSON,Number,Math,Promise,console,live:()=>true,
+  const context=vm.createContext({noFinalCheckpoint,noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async()=>{},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),linkedEventTickers:()=>[contracts[0].event_ticker],
     collegeFootballTotalNo,collegeBasketballTotalNo,overContractKey,sameSportsContract,
     verifyIndependentCollegeTotalNo:async()=>{verificationCalls++;return {source:'ESPN',eventId:'espn-matched-game',seconds:269};},
@@ -170,7 +171,9 @@ test('dashboard serializes actual NO signals alongside existing strategies in pe
   const basketballNoSignals=new Map([['game',[{strategy:'no',ticker:'KXNBATOTAL-X',title:'Over 250 points',execution:'No NO seller'}]]]);
   vm.runInNewContext(src.slice(begin,end),{snapshotRows,snapshotCandidates,basketballNoSignals,hockeyNoSignals:new Map(),soccerNoSignals:new Map(),variableOverSignals:new Map(),
     crossingRows:[],playerOverSpec:()=>null,filled:new Set(),account:{},balance:0,bankroll:0,
-    retiredYes:new Set(),emptyAge:new Map(),noAskKey,NO_ASK_RETIRED,waitingOnAsk,executableSummaryAsk:()=>false,signalExecution:()=> 'Original strategy unchanged'});
+    retiredYes:new Set(),emptyAge:new Map(),noAskKey,NO_ASK_RETIRED,waitingOnAsk,
+    leadFinalResults:new Map(),finalLeadKey:()=> 'none',executableSummaryAsk:()=>false,
+    signalExecution:()=> 'Original strategy unchanged'});
   const signals=JSON.parse(row[14]);
   assert.equal(signals.length,2);
   assert.equal(signals[0].strategy,'no');
@@ -187,7 +190,7 @@ test('all basketball NO leagues share one 5% fee-inclusive pool without affectin
   const window={market_ticker:m.ticker,game_id:f.state.id,contract_key:overContractKey(f.state,m),
     period:4,first_clock:120,first_evidence:tagNoPreflight({source:'ESPN',eventId:'espn-matched-game'}),first_at:new Date(Date.now()-61000)};
   let allocated=null,budget=null,orders=0,patterns=null;
-  const ctx=vm.createContext({noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async()=>{},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,Date,JSON,Number,Math,Promise,console,live:()=>true,
+  const ctx=vm.createContext({noFinalCheckpoint,noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async()=>{},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),linkedEventTickers:()=>[m.event_ticker],
     collegeFootballTotalNo,collegeBasketballTotalNo,overContractKey,sameSportsContract,
     verifyIndependentCollegeTotalNo:async()=>({source:'ESPN',eventId:'espn-matched-game',seconds:29}),

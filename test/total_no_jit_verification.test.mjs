@@ -1,5 +1,6 @@
+import {noFinalCheckpoint,pairedExternalMatch} from './support/no_final_checkpoint_mock.mjs';
 import {noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey} from './support/no_ask_mock.mjs';
-import {pairedExternalMatch} from '../src/independent_match_score.mjs';
+
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -37,7 +38,7 @@ function harness(sport,{ageMs=61000,failSecond=false,legacyFirstClock=null,final
   const trace=[];
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
   const code=source.slice(source.indexOf('async function scanCollegeTotalNos('),source.indexOf('async function scan(cachedMilestones'));
-  const context=vm.createContext({noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async()=>{},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
+  const context=vm.createContext({noFinalCheckpoint,noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async()=>{},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
     Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),
     linkedEventTickers:()=>[market.event_ticker],
@@ -109,7 +110,7 @@ test('basketball full-game first ESPN check starts at 2:00 and fresh second proo
   assert.equal(await h.scan('1:29'),1);
   assert.equal(h.proofs,2,'exactly two independent readings total');
   assert.equal(h.orders,1);
-  assert.ok(h.trace.indexOf('external2')>h.trace.indexOf('orderbook'),'second verification must occur AFTER quote/size checks');
+  assert.ok(h.trace.indexOf('external2')<h.trace.indexOf('orderbook'),'second external verification MUST happen BEFORE liquidity checks');
   assert.ok(h.trace.indexOf('external2')<h.trace.indexOf('reserve'),'second verification must occur immediately BEFORE reservation');
 });
 
@@ -136,8 +137,8 @@ test('basketball NO accepts a verified same-game preflight older than five real 
   assert.equal(await h.scan('1:29'),1,'preflight age alone must not block an eligible same-game trade');
   assert.equal(h.proofs,2,'initial proof plus fresh independent final proof must both occur');
   assert.equal(h.orders,1);
-  assert.ok(h.trace.indexOf('orderbook')<h.trace.indexOf('external2'),
-    'final external proof must follow the executable seller quote');
+  assert.ok(h.trace.indexOf('external2')<h.trace.indexOf('orderbook'),
+    'eligible final external proof occurs whether or not any seller is available');
   assert.ok(h.trace.indexOf('external2')<h.trace.indexOf('reserve'),
     'final independent evidence must precede the order reservation');
 });

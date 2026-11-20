@@ -4,9 +4,18 @@ import {createNoAskTimeout,NO_ASK_GRACE_MS,NO_ASK_RETIRED} from '../src/no_ask_t
 
 function database(){
  let now=0,create=0,read=0,writes=0;
- const records=new Map(),key=x=>[x.ticker||x.market_ticker,x.game_id,x.side].join(':');
+ const records=new Map(),recovery=new Map(),key=x=>[x.ticker||x.market_ticker,x.game_id,x.side].join(':');
  const query=async(sql,args=[])=>{
   if(sql.startsWith('CREATE TABLE')){create++;return {rows:[]}};
+  if(sql.startsWith('ALTER TABLE'))return {rows:[]};
+  if(sql.startsWith('UPDATE no_ask_timeouts')){
+    const [ticker,gameId,side,updated]=args,id=key({ticker,game_id:gameId,side});
+    const first=records.get(id),last=recovery.get(id),timestamp=updated?Date.parse(updated):null;
+    if(first===undefined||now-first<30000)return {rows:[]};
+    if(timestamp!==null&&timestamp<=first)return {rows:[]};
+    if(last&&(timestamp!==null?timestamp<=last.market:now-last.checked<60000))return {rows:[]};
+    recovery.set(id,{checked:now,market:timestamp??0});return {rows:[{market_ticker:ticker}]};
+  }
   const [raw,side]=args;const items=JSON.parse(raw);
   if(sql.startsWith('SELECT')){read++;return {rows:items.filter(x=>{
    const t=records.get(key({...x,side}));return t!==undefined&&now-t>=30_000;
@@ -18,7 +27,7 @@ function database(){
       elapsed_ms:Math.min(30_000,elapsed)};
   })};}
   if(sql.startsWith('DELETE')){writes++;for(const x of items){const id=key({...x,side});
-    if(records.has(id)&&now-records.get(id)<30_000)records.delete(id);
+    records.delete(id);recovery.delete(id);
   }return {rows:[]};}
   throw Error('Unexpected SQL '+sql);
  };
@@ -64,9 +73,9 @@ test('a quote arriving before thirty seconds cancels only that candidate timeout
  assert.equal(await gate.isRetired(b,'yes'),true);
  assert.equal((await gate.observeMissing(a,'yes')).retired,false,'new empty period begins after recovery');
  db.advance(30_000);
- await gate.available([a,b],'yes');
- assert.equal(await gate.isRetired(a,'yes'),true,'quote after the deadline cannot revive a retired trade');
- assert.equal(await gate.isRetired(b,'yes'),true);
+ await gate.available([a],'yes'); // Only after actual executable seller depth is confirmed.
+ assert.equal(await gate.isRetired(a,'yes'),false,'a confirmed live quote never expires because of an older missing-liquidity timer');
+ assert.equal(await gate.isRetired(b,'yes'),true,'the genuinely empty other market remains retired');
 });
 test('dedupe multi-scan candidates and ignore invalid game IDs and sides',async()=>{
  const db=database(),gate=createNoAskTimeout(db.query),m=market();
@@ -75,4 +84,15 @@ test('dedupe multi-scan candidates and ignore invalid game IDs and sides',async(
  assert.equal((await gate.retired([m,m,{ticker:'BAD'}],'no')).size,0);
  assert.equal((await gate.missing([m],'invalid')).size,0);
  assert.equal(db.records.size,1);
+});
+test('an expired absent-ask candidate is rechecked only on new potential seller evidence',async()=>{
+ const db=database(),gate=createNoAskTimeout(db.query),c=market('SOC-NO','game-42');
+ await gate.observeMissing(c,'no');db.advance(30_000);
+ assert.equal(await gate.isRetired(c,'no'),true);
+ assert.equal(await gate.claimRecovery(c,'no'),false,'no new summary ask means no book scan');
+ const offered={...c,market:{...c.market,no_ask_dollars:'0.2500',updated_time:'2026-11-20T20:35:00Z'}};
+ assert.equal(await gate.claimRecovery(offered,'no'),true,'new provider ask may trigger a live book recheck');
+ assert.equal(await gate.claimRecovery(offered,'no'),false,'unchanged market update must not cause endless rechecks');
+ await gate.available([offered],'no');
+ assert.equal(await gate.isRetired(offered,'no'),false,'the live NO book, not elapsed timer, decides if the quote is executable');
 });

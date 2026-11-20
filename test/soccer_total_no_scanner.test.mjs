@@ -1,5 +1,6 @@
+import {noFinalCheckpoint,pairedExternalMatch} from './support/no_final_checkpoint_mock.mjs';
 import {noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey} from './support/no_ask_mock.mjs';
-import {pairedExternalMatch} from '../src/independent_match_score.mjs';
+
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -35,7 +36,7 @@ function harness({canVerify=true,hasSeller=true,initialAgeMs=61000,existingExpos
   const windows=new Map(),dashboard=new Map(),trace=[],diagnostics=[];
   let verified=0,orders=0,lastBudget=null,lastFraction=null,lastQuantity=null;
   const held={ticker:'KXEPLTOTAL-OLDER',position_fp:-1,market_exposure_dollars:'4.00',fees_paid_dollars:'0.50'};
-  const context=vm.createContext({noAskTimeout:noAskPolicy,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async decision=>{diagnostics.push(decision)},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
+  const context=vm.createContext({noFinalCheckpoint,noAskTimeout:noAskPolicy,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async decision=>{diagnostics.push(decision)},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
     Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),
     linkedEventTickers:()=>[market.event_ticker],
@@ -118,6 +119,7 @@ function harness({canVerify=true,hasSeller=true,initialAgeMs=61000,existingExpos
 test('NO book probes stop at 30 elapsed seconds of absent asks, even when game clock is stopped',async()=>{
  let elapsed=0,firstAt=null;
  const gate={
+  claimRecovery:async()=>false,
   isRetired:async()=>firstAt!==null&&elapsed-firstAt>=30_000,
   observeMissing:async()=>{
    if(firstAt===null)firstAt=elapsed;
@@ -138,10 +140,31 @@ test('NO book probes stop at 30 elapsed seconds of absent asks, even when game c
  assert.equal(await h.scan(479),0,'same contract is retired after 30 seconds');
  assert.equal(h.trace.filter(t=>t==='orderbook').length,2,
    'no more orderbook calls for a retired market');
- assert.equal(h.verifications,1,'retired market also avoids further independent score calls');
- assert.equal((h.dashboard.get(milestone.id)||[]).find(x=>x.ticker===market.ticker)?.execution,
-   NO_ASK_RETIRED);
+ assert.equal(h.verifications,2,'expired ask cannot block the mandatory final external score check');
+ assert.match((h.dashboard.get(milestone.id)||[]).find(x=>x.ticker===market.ticker)?.execution||'',
+   /No executable ask after 30 seconds.*final score verification already completed/);
  assert.equal(h.orders,0);
+});
+
+test('a valid live NO quote remains tradable after a previous empty-book timer expires',async()=>{
+ let retired=true,claims=0,clears=0;
+ const gate={
+  isRetired:async()=>retired,
+  claimRecovery:async()=>{claims++;return true},
+  available:async()=>{retired=false;clears++},
+  observeMissing:async()=>({retired:false,elapsedMs:0}),
+  retired:async()=>new Set(),missing:async()=>new Map()
+ };
+ const h=harness({noAskPolicy:gate});
+ assert.equal(await h.scan(540),0,'first independent ESPN proof is never blocked by an old no-ask timer');
+ assert.equal(await h.scan(479),1,'confirmed executable NO quote does not expire at the 30-second limit');
+ assert.equal(h.verifications,2);
+ assert.equal(h.orders,1);
+ assert.ok(claims>=1,'updated ask information must trigger one book recheck');
+ assert.ok(clears>=1,'live orderbook depth clears the previous missing-ask record');
+ assert.equal(retired,false);
+ const final=(h.dashboard.get(milestone.id)||[]).find(x=>x.ticker===market.ticker);
+ assert.equal(final?.final_verification_passed,true,'final verification remains visible even after later trade gates');
 });
 
 test('a qualifying soccer NO cushion is not mislabeled when external score coverage is unavailable',async()=>{
@@ -175,7 +198,8 @@ test('soccer NO checks once near 9:00 and once just before entry strictly under 
   assert.equal(h.orders,1);
   assert.equal(h.lastFraction,.05);
   assert.ok(h.lastQuantity>0);
-  assert.ok(h.trace.indexOf('orderbook')<h.trace.lastIndexOf('external'));
+  assert.ok(h.trace.lastIndexOf('external')<h.trace.indexOf('orderbook'),
+     'final independent score check must occur BEFORE liquidity evaluation');
   assert.ok(h.trace.lastIndexOf('external')<h.trace.lastIndexOf('reserve'));
   assert.ok((h.dashboard.get(milestone.id)||[]).some(s=>s.strategy==='no'&&s.ticker===market.ticker));
 });
