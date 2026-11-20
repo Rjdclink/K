@@ -141,12 +141,12 @@ export function marketEntryProximity(game){
     Math.abs(game.homeUnits-game.awayUnits):0;
   if(/soccer/.test(type)){
     if(game.soccerExtraTime||!Number.isFinite(game.soccerMinute))return Infinity;
-    if(period===1){remaining=(45-game.soccerMinute)*60;target=240;}
-    else if(period===2){remaining=(90-game.soccerMinute)*60;target=margin>=3?600:540;}
+    if(period===1){remaining=(45-game.soccerMinute)*60;target=360;}
+    else if(period===2){remaining=(90-game.soccerMinute)*60;target=margin>=3?600:660;}
     else return Infinity;
   }else if(/hockey/.test(type)){
-    if([1,2].includes(period))target=240;
-    else if(period===3)target=margin>=3?600:margin>=2?360:300;
+    if([1,2].includes(period))target=360;
+    else if(period===3)target=margin>=3?600:margin>=2?360:420;
   }else if(/basketball/.test(type)){
     if(['NBA','WNBA'].includes(game.sport)){
       if([1,2,3].includes(period))target=150;

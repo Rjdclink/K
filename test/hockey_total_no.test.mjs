@@ -75,11 +75,12 @@ test('NHL example: 4 combined goals requires an Over 6.5 line, and P3 compares P
   assert.equal(hockeyTotalNo(twoP3Goals,market('third_period',3.0)),null);
 });
 
-test('NHL NO enters strictly under 4:30 in period three only, and watches from 5:00',()=>{
+test('NHL NO enters strictly under 6:00 in period three only, and watches from 7:00',()=>{
   for(const p of ['full_game','third_period']){
-    assert.ok(hockeyNoMarketSpec(game('5:00'),market(p,5.5),{beforeWindow:true}));
-    assert.equal(hockeyNoMarketSpec(game('5:01'),market(p,5.5),{beforeWindow:true}),null);
-    assert.equal(hockeyTotalNo(game('4:30'),market(p,5.5)),null);
+    assert.ok(hockeyNoMarketSpec(game('7:00'),market(p,5.5),{beforeWindow:true}));
+    assert.equal(hockeyNoMarketSpec(game('7:01'),market(p,5.5),{beforeWindow:true}),null);
+    assert.equal(hockeyTotalNo(game('6:00'),market(p,5.5)),null);
+    assert.ok(hockeyTotalNo(game('5:59'),market(p,5.5)));
     assert.ok(hockeyTotalNo(game('1:29'),market(p,5.5)));
     assert.equal(hockeyTotalNo(game('0:00'),market(p,5.5)),null);
     assert.equal(hockeyTotalNo(game('1:29',2),market(p,5.5)),null);

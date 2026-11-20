@@ -14,7 +14,7 @@ import {rememberIndependentEntry} from '../src/entry_verification.mjs';
 
 const milestone={id:'nhl-scanner',title:'Away at Home',type:'hockey_match',start_date:'2026-11-19T23:00:00Z',
   details:{league:'NHL',home_team_id:'home-id',away_team_id:'away-id',main_game_event_ticker:'KXNHLGAME-TEST'}};
-const state=(clock='5:00',h=2,a=1)=>gameState(milestone,{milestone_id:milestone.id,_observed_at:new Date().toISOString(),
+const state=(clock='7:00',h=2,a=1)=>gameState(milestone,{milestone_id:milestone.id,_observed_at:new Date().toISOString(),
   details:{status:'inprogress',home_points:h,away_points:a,period:3,period_remaining_time:clock,
     last_updated_ts:Date.now()/1000,home_team_name:'Home',away_team_name:'Away'}});
 const market=(period,line)=>({
@@ -63,7 +63,7 @@ function harness({ageMs=61000,canVerify=true,hasSeller=true,existingExposure=fal
     }},
     liveMilestone:async()=>({milestone_id:milestone.id,_observed_at:new Date().toISOString(),
       details:{status:'inprogress',home_points:2,away_points:1,period:3,
-        period_remaining_time:'4:29',last_updated_ts:Date.now()/1000,
+        period_remaining_time:'5:59',last_updated_ts:Date.now()/1000,
         home_team_name:'Home',away_team_name:'Away'}}),
     gameState,
     kalshi:async(path,opts)=>{
@@ -99,16 +99,16 @@ function harness({ageMs=61000,canVerify=true,hasSeller=true,existingExposure=fal
   };
 }
 
-test('NHL NO checks both full-game and P3, with independent 5:00 preflight then one fresh proof per entry under 4:30',async()=>{
+test('NHL NO checks both full-game and P3, with independent 7:00 preflight then one fresh proof per entry under 6:00',async()=>{
   const h=harness();
-  assert.equal(await h.scan('5:01'),0);
+  assert.equal(await h.scan('7:01'),0);
   assert.equal(h.verifications,0);
-  assert.equal(await h.scan('5:00'),0);
+  assert.equal(await h.scan('7:00'),0);
   assert.equal(h.windows.size,2,'track separate windows for game and third period');
   assert.equal(h.orders,0);
-  assert.equal(await h.scan('4:30'),0);
-  assert.equal(h.orders,0,'strictly under 270s required');
-  assert.equal(await h.scan('4:29'),2);
+  assert.equal(await h.scan('6:00'),0);
+  assert.equal(h.orders,0,'strictly under 360s required');
+  assert.equal(await h.scan('5:59'),2);
   assert.equal(h.orders,2,'both distinct markets can qualify');
   assert.equal(h.allocation,.05);
   assert.ok(h.trace.lastIndexOf('external')<h.trace.lastIndexOf('reserve'),'external immediately precedes reservation');
@@ -120,60 +120,60 @@ test('NHL NO checks both full-game and P3, with independent 5:00 preflight then 
 
 test('NHL total NO waits 60 real seconds, even when its period clock moves faster',async()=>{
   const waiting=harness({ageMs:1000});
-  await waiting.scan('5:00');
-  assert.equal(await waiting.scan('4:29'),0);
+  await waiting.scan('7:00');
+  assert.equal(await waiting.scan('5:59'),0);
   assert.equal(waiting.orders,0);
   const eligible=harness({ageMs:61000});
-  await eligible.scan('5:00');
-  assert.equal(await eligible.scan('4:29'),2);
+  await eligible.scan('7:00');
+  assert.equal(await eligible.scan('5:59'),2);
   assert.equal(eligible.orders,2);
   assert.ok(eligible.trace.lastIndexOf('external')<eligible.trace.lastIndexOf('reserve'));
 });
 
-test('NHL NO permits a late first proof under 4:30, then a second check one real minute later on an unchanged stopped clock',async()=>{
+test('NHL NO permits a late first proof under 6:00, then a second check one real minute later on an unchanged stopped clock',async()=>{
   const h=harness({ageMs:61000});
-  assert.equal(await h.scan('4:29'),0,'first check may occur inside the entry window');
+  assert.equal(await h.scan('5:59'),0,'first check may occur inside the entry window');
   assert.equal(h.windows.size,2);
   assert.equal(h.verifications,1);
-  assert.equal(await h.scan('4:29'),2,'unchanged clock cannot block a second check after 60 real seconds');
+  assert.equal(await h.scan('5:59'),2,'unchanged clock cannot block a second check after 60 real seconds');
   assert.equal(h.orders,2);
 });
 
 test('NHL total NO rejects a preflight timestamp from the future',async()=>{
   const h=harness({ageMs:-1000});
-  await h.scan('5:00');
-  assert.equal(await h.scan('4:29'),0);
+  await h.scan('7:00');
+  assert.equal(await h.scan('5:59'),0);
   assert.equal(h.orders,0);
 });
 
 test('NHL total NO requires verifiable period linescores and declines missing independent evidence',async()=>{
   const h=harness({canVerify:false});
-  await h.scan('5:00');
+  await h.scan('7:00');
   assert.equal(h.windows.size,0);
-  assert.equal(await h.scan('4:29'),0);
+  assert.equal(await h.scan('5:59'),0);
   assert.equal(h.orders,0);
 });
 
 test('NHL NO never enters without an executable NO seller',async()=>{
   const h=harness({hasSeller:false});
-  await h.scan('5:00');
-  assert.equal(await h.scan('4:29'),0);
+  await h.scan('7:00');
+  assert.equal(await h.scan('5:59'),0);
   assert.equal(h.orders,0);
   assert.ok((h.dashboard.get(milestone.id)||[]).some(s=>/No executable ask/i.test(s.execution)));
 });
 
 test('pending NHL order cannot suppress the first independent check for another total',async()=>{
  const h=harness({globalPending:true});
- assert.equal(await h.scan('5:00'),0);
+ assert.equal(await h.scan('7:00'),0);
  assert.equal(h.windows.size,2);
- assert.equal(await h.scan('4:29'),0,'new order remains forbidden');
+ assert.equal(await h.scan('5:59'),0,'new order remains forbidden');
  assert.equal(h.orders,0);
 });
 
 test('NHL total NO caps full-game and P3 entries in one shared fee-inclusive 5% pool',async()=>{
   const h=harness({existingExposure:true});
-  await h.scan('5:00');
-  await h.scan('4:29');
+  await h.scan('7:00');
+  await h.scan('5:59');
   assert.equal(h.allocation,.05);
   assert.equal(h.availablePool,50,'$5 total cap minus existing $4 exposure and $0.50 fees leaves $0.50');
 });

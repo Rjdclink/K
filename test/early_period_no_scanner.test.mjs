@@ -118,7 +118,7 @@ function harness(sport,period=1,{firstUnavail=false,finalUnavail=false,wrongFina
      return {rows:[],rowCount:1};
    }},
    liveMilestone:async()=>({milestone_id:f.milestone.id,_observed_at:new Date().toISOString(),
-     details:f.details(sport==='Basketball'?89:209,finalScoreChanged?1:0)}),
+     details:f.details(sport==='Basketball'?89:299,finalScoreChanged?1:0)}),
    gameState,
    kalshi:async(path,opts)=>{
      if(path.endsWith('/orderbook')){trace.push('orderbook');return {orderbook_fp:{yes_dollars:noSeller?[]:[['0.50','100']]}}}
@@ -153,8 +153,8 @@ function harness(sport,period=1,{firstUnavail=false,finalUnavail=false,wrongFina
 
 test('NHL P1/P2, soccer 1H and NBA quarter NO each require initial and final verification',async()=>{
  for(const [sport,period,first,boundary] of [
-   ['NHL',1,240,210],['NHL',2,240,210],
-   ['Soccer',1,240,210],['Basketball',2,120,90]
+   ['NHL',1,360,300],['NHL',2,360,300],
+   ['Soccer',1,360,300],['Basketball',2,120,90]
  ]){
    const h=harness(sport,period);
    assert.equal(await h.scan(first),0,sport+' '+period+' first');
@@ -172,7 +172,7 @@ test('NHL P1/P2, soccer 1H and NBA quarter NO each require initial and final ver
 test('early NHL, soccer and NBA NO permit a late first proof with an unchanged clock after 60 seconds elapsed',async()=>{
   for(const sport of ['NHL','Soccer','Basketball']){
     const h=harness(sport,1,{firstAgeMs:61000});
-    const clock=sport==='Basketball'?89:209;
+    const clock=sport==='Basketball'?89:299;
     assert.equal(await h.scan(clock),0,sport+' late initial proof');
     assert.equal(h.verified,1,sport+' first check');
     assert.equal(await h.scan(clock),1,sport+' final check without match-clock progression');
@@ -183,7 +183,7 @@ test('early NHL, soccer and NBA NO permit a late first proof with an unchanged c
 test('early NHL, soccer and NBA NO block a second check until one minute of elapsed time',async()=>{
   for(const sport of ['NHL','Soccer','Basketball']){
     const h=harness(sport,1,{firstAgeMs:59000});
-    const clock=sport==='Basketball'?89:209;
+    const clock=sport==='Basketball'?89:299;
     assert.equal(await h.scan(clock),0);
     assert.equal(await h.scan(clock),0,sport+' must not assume game-clock movement is elapsed real time');
     assert.equal(h.orders,0);
@@ -192,7 +192,7 @@ test('early NHL, soccer and NBA NO block a second check until one minute of elap
 
 test('missing initial preflight or a final check failure always blocks early-period NO orders',async()=>{
  for(const sport of ['NHL','Soccer','Basketball']){
-   const boundary=sport==='Basketball'?90:210,first=sport==='Basketball'?120:240;
+   const boundary=sport==='Basketball'?90:300,first=sport==='Basketball'?120:360;
    const missed=harness(sport);
    assert.equal(await missed.scan(boundary-1),0);
    assert.equal(missed.orders,0);
@@ -216,8 +216,8 @@ test('NBA quarterly NO may start its first proof late at 1:59 but cannot order i
 });
 test('global unresolved NO orders block execution but not independent early-period preflights',async()=>{
  for(const sport of ['NHL','Soccer','Basketball']){
-  const h=harness(sport,1,{globalPending:true}),first=sport==='Basketball'?120:240;
-  const cutoff=sport==='Basketball'?89:209;
+  const h=harness(sport,1,{globalPending:true}),first=sport==='Basketball'?120:360;
+  const cutoff=sport==='Basketball'?89:299;
   assert.equal(await h.scan(first),0);
   assert.equal(h.windows.size,1,sport+' preflight should be recorded');
   assert.equal(await h.scan(cutoff),0);
@@ -228,7 +228,7 @@ test('global unresolved NO orders block execution but not independent early-peri
 test('existing held NO position and paid fees reduce the new 5% allocation',async()=>{
  for(const sport of ['NHL','Soccer','Basketball']){
   const h=harness(sport,1,{existingExposure:true});
-  const first=sport==='Basketball'?120:240,boundary=sport==='Basketball'?90:210;
+  const first=sport==='Basketball'?120:360,boundary=sport==='Basketball'?90:300;
   await h.scan(first);await h.scan(boundary-1);
   assert.equal(h.fraction,.05);
   assert.equal(h.budget,50,'$5.00 budget less $4.00 exposure and 50 cents fees leaves 50 cents');

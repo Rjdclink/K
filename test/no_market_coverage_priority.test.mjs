@@ -77,7 +77,7 @@ test('priority allocates limited catalog checks to games closest to preflight ra
   make('nhl-near','hockey_match','NHL',1,500),
  ];
  const selected=prioritizeMarketGames(rows,{lowBudget:2,cycle:0});
- assert.deepEqual(selected.map(g=>g.milestone.id),['nhl-near','nba-near']);
+ assert.deepEqual(selected.map(g=>g.milestone.id),['nhl-near','soccer-far']);
 });
 test('already eligible games are checked ahead of approaching threshold games',()=>{
  const rows=[

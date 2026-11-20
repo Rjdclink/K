@@ -2882,7 +2882,7 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null){
   return filled;
 }
 async function scanHockeyTotalNos(games,events,signalSink=null){
-  const allocation=.05,entry=270,start=300,reasonPattern='NHL hockey total NO %';
+  const allocation=.05,entry=360,start=420,reasonPattern='NHL hockey total NO %';
   const noDiagnostics=new Map();
   const auditNoCandidate=(c,execution,quote=null)=>{
     const candidate=c;
@@ -3001,7 +3001,7 @@ async function scanHockeyTotalNos(games,events,signalSink=null){
         continue;
       }
       if(game.remainingSeconds>=entry){
-        report(c,'First ESPN proof saved; awaiting less than 4:30');continue;
+        report(c,'First ESPN proof saved; awaiting less than 6:00');continue;
       }
       const spacing=lateNoPreflightProgress(window);
       if(!spacing.ready){
@@ -3162,7 +3162,7 @@ async function scanHockeyTotalNos(games,events,signalSink=null){
 // fee-inclusive bankroll cap and the normal exchange order safeguards.
 async function scanEarlyPeriodNos(games,events,signalSink=null,sport='NHL'){
   const hockey=sport==='NHL',basketball=sport==='Basketball',allocation=.05,
-    entry=basketball?90:210,start=basketball?150:240,minFirst=basketball?120:210;
+    entry=basketball?90:300,start=basketball?150:360,minFirst=basketball?120:210;
   const policy=hockey?{
     spec:hockeyEarlyNoMarketSpec,signal:hockeyEarlyPeriodNo,
     verify:verifyIndependentEarlyHockeyNo,
@@ -3484,7 +3484,7 @@ async function scanEarlyPeriodNos(games,events,signalSink=null,sport='NHL'){
 }
 
 async function scanSoccerTotalNos(games,events,signalSink=null){
-  const allocation=.05,entry=480,start=540,reasonPattern='Soccer %total NO %';
+  const allocation=.05,entry=480,start=660,reasonPattern='Soccer %total NO %';
   const noDiagnostics=new Map();
   const auditNoCandidate=(candidate,execution,quote=null)=>{
     if(!candidate?.market?.ticker||!candidate?.state||!execution)return;
@@ -3545,7 +3545,7 @@ async function scanSoccerTotalNos(games,events,signalSink=null){
         candidates.push(c);found++;
         report(c,state.matchRemainingSeconds>=entry?
           'Initial independent soccer score and clock verification pending':
-          'First independent ESPN check can begin after 9:00; second follows after 60 real seconds');
+          'First independent ESPN check can begin after 11:00; second follows after 60 real seconds');
       }
     }
     if(!found&&signalSink)signalSink.set(state.id,[{
