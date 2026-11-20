@@ -15,8 +15,8 @@ function harness(sport,{ageMs=61000,failSecond=false,legacyFirstClock=null,final
   const basketball=sport==='NCAAB',league=basketball?'NCAAMB':sport;
   const prefix=basketball?'KXNCAAMB':sport==='NFL'?'KXNFL':'KXNCAAF';
   const period=basketball?2:4,home=basketball?65:20,away=basketball?65:17;
-  const line=basketball?150:sport==='CFB'?57:52;
-  const firstClock=basketball?'2:00':'5:30',entryClock=basketball?'1:29':'4:59';
+  const line=basketball?156:sport==='CFB'?57:52;
+  const firstClock=basketball?'4:00':'5:30',entryClock=basketball?'2:59':'4:59';
   const milestone={id:'jit-'+sport,title:'Away at Home',
     type:basketball?'basketball_game':'football_game',start_date:'2026-11-19T12:00:00Z',
     details:{league,home_team_id:'home',away_team_id:'away',main_game_event_ticker:prefix+'GAME-TEST'}};
@@ -31,7 +31,7 @@ function harness(sport,{ageMs=61000,failSecond=false,legacyFirstClock=null,final
       'The teams collectively score more than '+line+' points in the full Away vs Home football game.'};
   let window=legacyFirstClock===null?null:{
     market_ticker:market.ticker,game_id:milestone.id,
-    contract_key:overContractKey(state('2:00'),market),period,
+    contract_key:overContractKey(state('4:00'),market),period,
     first_clock:legacyFirstClock,first_evidence:{source:'ESPN',eventId:'jit-espn-game',seconds:legacyFirstClock},
     first_at:new Date(Date.now()-ageMs)
   },proofs=0,orders=0,blocked=false;
@@ -97,17 +97,17 @@ function harness(sport,{ageMs=61000,failSecond=false,legacyFirstClock=null,final
   };
 }
 
-test('basketball full-game first ESPN check starts at 2:00 and fresh second proof permits entry strictly under 1:30',async()=>{
+test('basketball full-game first ESPN check starts at 4:00 and fresh second proof permits entry strictly under 3:00',async()=>{
   const h=harness('NCAAB');
-  assert.equal(await h.scan('2:01'),0,'do not start preflight before 2:00');
+  assert.equal(await h.scan('4:01'),0,'do not start preflight before 2:00');
   assert.equal(h.proofs,0);
-  assert.equal(await h.scan('2:00'),0);
+  assert.equal(await h.scan('4:00'),0);
   assert.equal(h.proofs,1);
-  assert.equal(h.window?.first_clock,120);
+  assert.equal(h.window?.first_clock,240);
   assert.equal(h.orders,0);
-  assert.equal(await h.scan('1:30'),0,'no entry at exactly ninety seconds');
+  assert.equal(await h.scan('3:00'),0,'no entry at exactly three minutes');
   assert.equal(h.proofs,1);
-  assert.equal(await h.scan('1:29'),1);
+  assert.equal(await h.scan('2:59'),1);
   assert.equal(h.proofs,2,'exactly two independent readings total');
   assert.equal(h.orders,1);
   assert.ok(h.trace.indexOf('external2')<h.trace.indexOf('orderbook'),'second external verification MUST happen BEFORE liquidity checks');
@@ -116,13 +116,13 @@ test('basketball full-game first ESPN check starts at 2:00 and fresh second proo
 
 test('basketball NO requires at least 60 seconds elapsed after its first independent verification',async()=>{
   const early=harness('NCAAB',{ageMs:1000});
-  assert.equal(await early.scan('2:00'),0);
-  assert.equal(await early.scan('1:29'),0,'one second is not enough, regardless of match clock');
+  assert.equal(await early.scan('4:00'),0);
+  assert.equal(await early.scan('2:59'),0,'one second is not enough, regardless of match clock');
   assert.equal(early.proofs,1);
   assert.equal(early.orders,0);
   const ready=harness('NCAAB',{ageMs:61000});
-  assert.equal(await ready.scan('2:00'),0);
-  assert.equal(await ready.scan('1:29'),1);
+  assert.equal(await ready.scan('4:00'),0);
+  assert.equal(await ready.scan('2:59'),1);
   assert.equal(ready.proofs,2);
   assert.equal(ready.orders,1);
 });
@@ -130,11 +130,11 @@ test('basketball NO requires at least 60 seconds elapsed after its first indepen
 
 test('basketball NO accepts a verified same-game preflight older than five real minutes after a prolonged clock stoppage',async()=>{
   const h=harness('NCAAB',{ageMs:8*60000});
-  assert.equal(await h.scan('2:00'),0,'initial independent ESPN proof recorded at 2:00');
+  assert.equal(await h.scan('4:00'),0,'initial independent ESPN proof recorded at 4:00');
   assert.equal(h.proofs,1);
-  assert.equal(h.window?.first_clock,120);
-  assert.equal(await h.scan('1:30'),0,'1:30 remains outside the entry window');
-  assert.equal(await h.scan('1:29'),1,'preflight age alone must not block an eligible same-game trade');
+  assert.equal(h.window?.first_clock,240);
+  assert.equal(await h.scan('3:00'),0,'3:00 remains outside the entry window');
+  assert.equal(await h.scan('2:59'),1,'preflight age alone must not block an eligible same-game trade');
   assert.equal(h.proofs,2,'initial proof plus fresh independent final proof must both occur');
   assert.equal(h.orders,1);
   assert.ok(h.trace.indexOf('external2')<h.trace.indexOf('orderbook'),
@@ -145,24 +145,24 @@ test('basketball NO accepts a verified same-game preflight older than five real 
 
 test('basketball NO must not combine two different ESPN game IDs even if the scores match',async()=>{
   const h=harness('NCAAB',{finalEventId:'another-espn-event'});
-  assert.equal(await h.scan('2:00'),0);
-  assert.equal(await h.scan('1:29'),0);
+  assert.equal(await h.scan('4:00'),0);
+  assert.equal(await h.scan('2:59'),0);
   assert.equal(h.proofs,2);
   assert.equal(h.orders,0);
 });
 
 test('basketball NO rejects an invalid future first-proof timestamp',async()=>{
   const h=harness('NCAAB',{ageMs:-60000});
-  assert.equal(await h.scan('2:00'),0);
-  assert.equal(await h.scan('1:29'),0);
+  assert.equal(await h.scan('4:00'),0);
+  assert.equal(await h.scan('2:59'),0);
   assert.equal(h.proofs,2,'invalid future proof forces a new independent first check, never an order');
   assert.equal(h.orders,0);
 });
 
 test('basketball NO fails closed when the immediate external lookup disagrees or is unavailable',async()=>{
   const h=harness('NCAAB',{failSecond:true});
-  assert.equal(await h.scan('2:00'),0);
-  assert.equal(await h.scan('1:29'),0);
+  assert.equal(await h.scan('4:00'),0);
+  assert.equal(await h.scan('2:59'),0);
   assert.equal(h.proofs,2);
   assert.equal(h.orders,0);
 });
@@ -191,13 +191,13 @@ test('NFL and CFB NO reject the trade when their only independent check is unava
   }
 });
 
-test('stale preflight windows from earlier policies are reverified at 2:00 instead of being trusted at 1:29',async()=>{
+test('stale preflight windows from earlier policies are reverified at 4:00 instead of being trusted at 2:59',async()=>{
   for(const oldClock of [284,25,75]){
     const h=harness('NCAAB',{legacyFirstClock:oldClock});
-    assert.equal(await h.scan('2:00'),0,'a stale preflight should be replaced, not trusted');
+    assert.equal(await h.scan('4:00'),0,'a stale preflight should be replaced, not trusted');
     assert.equal(h.proofs,1,'exactly one new first external verification');
-    assert.equal(h.window?.first_clock,120,'restart initial proof at the valid 2:00 clock');
-    assert.equal(await h.scan('1:29'),1,'entry after new first proof with fresh final independent confirmation');
+    assert.equal(h.window?.first_clock,240,'restart initial proof at the valid 2:00 clock');
+    assert.equal(await h.scan('2:59'),1,'entry after new first proof with fresh final independent confirmation');
     assert.equal(h.proofs,2);
     assert.equal(h.orders,1);
   }
