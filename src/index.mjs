@@ -14,6 +14,8 @@ import pg from 'pg';
 import { page } from './ui.mjs';
 import { historyPage } from './history_ui.mjs';
 import { completedTrade, completedNoTrade, manualSaleFill, reconcileManualSaleFills, settlementLookupCandidates } from './history.mjs';
+import {syncAccountHistory,ensureAccountHistoryTables} from './account_history_sync.mjs';
+import {accountHistoryListSQL,accountHistorySummarySQL} from './account_history_query.mjs';
 import { ensureExitLedger, recordExitFill } from './exit_ledger.mjs';
 import { gameState, overSignal, PLAYER_PROP_MAX_FRACTION, BASKETBALL_COUNT_PROP_MAX_FRACTION, BASKETBALL_WINNER_ENTRY_SECONDS, playerOverSpec, playerPropEarlyWindow, confirmedOver, fallbackScoringUnits, confirmedExternalLead, leadSignal, isTieOutcomeMarket, proBasketballLeadRules, basketballCloseoutEntry, basketballCloseoutMinimum, nbaSingleReadLead, kalshiSingleReadLead, confirmedSoccerWinnerClock, soccerWinnerWindowOpen, leadWatchReason, additionalLeadSignal, cricketLeadSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback, teamScorePosition } from './strategy.mjs';
 import { reviewMiss } from './ai.mjs';
@@ -926,6 +928,18 @@ async function syncSettlementAlerts(){
     try{await reconcilePendingManualOrders()}catch(e){console.error('Manual order reconciliation deferred:',e)}
     try{await syncTradeHistory(observedSettlements)}catch(e){console.error('Trade history reconciliation deferred:',e)}
   }catch(e){console.error('Settlement polling failed:',e);await pool.query(`UPDATE settlement_poll SET last_check=to_timestamp(0) WHERE id=1`).catch(()=>{})}
+  // Account-wide History includes purchases made directly on Kalshi, not only
+  // those in bot trade_attempts. Import both live and archived fills before
+  // publishing exchange-authoritative realized profit or loss.
+  try{
+    const progress=await syncAccountHistory({query:(...args)=>pool.query(...args),
+      fetchPage:path=>kalshi(path,{auth:true})});
+    if(!progress.skipped)console.info('Account-wide history import:',JSON.stringify(progress));
+  }catch(error){
+    console.warn('Account-wide history import deferred:',error.message);
+    await pool.query('UPDATE account_history_sync SET last_error=$1,updated_at=now() WHERE id=1',
+      [String(error.message).slice(0,250)]).catch(()=>{});
+  }
   const due=await pool.query(`SELECT d.alert_id,d.endpoint,s.subscription,a.ticker,a.profit_cents FROM push_deliveries d JOIN push_subscriptions s USING(endpoint) JOIN settlement_alerts a ON a.id=d.alert_id WHERE d.status='pending' AND d.next_attempt<=now() ORDER BY d.alert_id LIMIT 15`);
   await Promise.all(due.rows.map(async row=>{
     try{
@@ -4910,20 +4924,19 @@ async function handleRequest(req){const url=new URL(req.url);
         THEN (now() AT TIME ZONE 'America/Chicago')::date-1 ELSE (now() AT TIME ZONE 'America/Chicago')::date
         END)+time '12:15') AT TIME ZONE 'America/Chicago',
         COALESCE((SELECT reset_at FROM history_view_config WHERE id=1),'-infinity'::timestamptz)) AS starts_at`;
-      const [{rows},{rows:[summary]}]=await Promise.all([
-        pool.query(`WITH cutoff AS (${cutoff}) SELECT id,sport,teams,occurred_at,profit_cents FROM trade_history
-          WHERE ($1::timestamptz IS NULL OR (occurred_at,id)<($1::timestamptz,$2::uuid))
-            AND ($3::text='all' OR $3::text='profit' AND profit_cents>0 OR $3::text='loss' AND profit_cents<0)
-            AND ($4::text='full' OR occurred_at>=(SELECT starts_at FROM cutoff))
-          ORDER BY occurred_at DESC,id DESC LIMIT 51`,[beforeTime||null,beforeId||null,filter,view]),
-        pool.query(`WITH cutoff AS (${cutoff}) SELECT count(*) FILTER (WHERE profit_cents>0) AS profit_count,
-          count(*) FILTER (WHERE profit_cents<0) AS loss_count,
-          COALESCE(sum(profit_cents) FILTER (WHERE profit_cents>0),0) AS profit_cents,
-          COALESCE(sum(profit_cents) FILTER (WHERE profit_cents<0),0) AS loss_cents
-          FROM trade_history WHERE ($1::text='full' OR occurred_at>=(SELECT starts_at FROM cutoff))`,[view])
+      await ensureAccountHistoryTables((...args)=>pool.query(...args));
+      const [{rows},{rows:[summary]},{rows:[coverage]}]=await Promise.all([
+        pool.query(accountHistoryListSQL(cutoff),[beforeTime||null,beforeId||null,filter,view]),
+        pool.query(accountHistorySummarySQL(cutoff),[view]),
+        pool.query(`SELECT phase,last_completed,last_error,unresolved_markets,
+          (SELECT count(*) FROM account_history_fills) AS imported_fills,
+          (SELECT count(*) FROM account_realized_history) AS account_markets
+          FROM account_history_sync WHERE id=1`)
       ]);
       const history=rows.slice(0,50),last=history.at(-1);
-      return json({history:history.map(({sport,teams,occurred_at,profit_cents})=>({sport,teams,occurred_at,profit_cents})),summary,next:rows.length>50?{before_time:last.occurred_at,before_id:last.id}:null});
+      return json({history:history.map(({sport,teams,occurred_at,profit_cents})=>({sport,teams,occurred_at,profit_cents})),
+        summary,coverage:coverage||{phase:'pending'},
+        next:rows.length>50?{before_time:last.occurred_at,before_id:last.id}:null});
     }
     if(req.method==='GET'&&url.pathname==='/history')return new Response(historyPage,{headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store','content-security-policy':"default-src 'self'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'",'x-content-type-options':'nosniff'}});
     if(req.method==='GET'&&url.pathname==='/')return new Response(page,{headers:{'content-type':'text/html; charset=utf-8','cache-control':'no-store','content-security-policy':"default-src 'self'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self'; manifest-src 'self'; base-uri 'none'; frame-ancestors 'none'",'x-content-type-options':'nosniff'}})
