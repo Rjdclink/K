@@ -29,12 +29,12 @@ const scoreboard=(minute="83'",home=2,away=1)=>({events:[{
   }]
 }]});
 
-test('soccer NO entry is strictly below 8 minutes after the initial 9-minute check',()=>{
-  assert.ok(soccerNoMarketSpec(game(540,2,1,81),market(),{beforeWindow:true}));
-  assert.equal(soccerNoMarketSpec(game(541,2,1,'80:59'),market(),{beforeWindow:true}),null);
-  assert.equal(soccerTotalNo(game(480,2,1,82),market()),null);
-  assert.equal(soccerTotalNo(game(540,2,1,81),market()),null);
-  assert.ok(soccerTotalNo(game(479,2,1,83),market()));
+test('soccer NO entry is strictly below 10 minutes after the initial 11-minute check',()=>{
+  assert.ok(soccerNoMarketSpec(game(660,2,1,79),market(),{beforeWindow:true}));
+  assert.equal(soccerNoMarketSpec(game(661,2,1,'78:59'),market(),{beforeWindow:true}),null);
+  assert.equal(soccerTotalNo(game(600,2,1,80),market()),null);
+  assert.equal(soccerTotalNo(game(660,2,1,79),market()),null);
+  assert.ok(soccerTotalNo(game(599,2,1,'80:01'),market()));
   assert.equal(soccerTotalNo(game(0,2,1,90),market()),null);
   assert.ok(soccerTotalNo({...game(),matchRemainingSeconds:NaN},market()),'missing feed countdown must not block a verified regulation clock');
   assert.equal(soccerTotalNo(game(479,2,1,'garbled'),market()),null);
