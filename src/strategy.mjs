@@ -391,7 +391,7 @@ export function overSignal(game, market, {allowUncrossed=false}={}) {
   }
   if (!Number.isFinite(strike) || strike<0 || !Number.isFinite(scored) || scored<=strike&&!allowUncrossed) return null;
   // Player props stop when fewer than ten regulation minutes remain; the
-  // shared over verifier requires a removable cushion and two external reads.
+  // shared over verifier requires a removable cushion and fresh independent proof.
   // Only an independently verified, complete play list identifies the last
   // team score precisely enough for the 40% tier. Do not guess its size.
   const lastPlay=game.lastScoringPlay;
@@ -1043,4 +1043,3 @@ export function overBudget(balanceCents, portfolioValueCents) {
   // reduce another trade's limit; cash availability is checked separately.
   return Math.floor((cash+value)*0.15);
 }
-

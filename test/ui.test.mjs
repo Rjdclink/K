@@ -525,3 +525,17 @@ test('untracked Kalshi positions show their side without offering an unverified 
  assert.equal(card.children.some(child=>child.ariaLabel==='Sell position'),false);
  assert.equal(requests.filter(url=>url.startsWith('/api/sell-quotes')).length,0);
 });
+
+test('a stale player-prop wait marker does not render a verification countdown',()=>{
+  const context=vm.createContext({document:{getElementById:()=>({classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){}}),
+    createElement:()=>({append(){}}),querySelectorAll:()=>[]},window:{addEventListener(){}},navigator:{},
+    localStorage:{getItem(){return null}},fetch:()=>new Promise(()=>{}),AbortSignal,setInterval(){}});
+  vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],context);
+  const outcome=vm.runInContext('verificationExecution',context)({
+    ticker:'KXNBAREB-TEST',strategy:'over',player_prop:true,ask:'.95',ask_size:'12',
+    execution:'Waiting for first external check (20s; minimum 20s)',
+    verification_wait:{dueAt:Date.now()+20000,updatedAt:Date.now()}
+  });
+  assert.match(outcome,/immediate|entry/i);
+  assert.doesNotMatch(outcome,/in 20s|first external check pending/i);
+});

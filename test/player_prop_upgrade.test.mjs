@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
-import {gameState,overSignal,PLAYER_PROP_MAX_FRACTION,BASKETBALL_COUNT_PROP_MAX_FRACTION,orderSize,estimatedCostCents,profitableCount,minimumProfitCents,netSettlementProfitCents} from '../src/strategy.mjs';
+import {gameState,overSignal,playerOverSpec,PLAYER_PROP_MAX_FRACTION,BASKETBALL_COUNT_PROP_MAX_FRACTION,orderSize,estimatedCostCents,profitableCount,minimumProfitCents,netSettlementProfitCents} from '../src/strategy.mjs';
 import {overContractKey,timedOverEntryValid,assertTimedOverEntry,sameSportsContract} from '../src/over_verification.mjs';
 import {assertOverExposure} from '../src/over_exposure.mjs';
 import {verifiedOverFraction} from '../src/lead_allocation.mjs';
@@ -21,12 +21,12 @@ test('a held basketball count prop tops up within 10% only when the new purchase
     const state=gameState(milestone,{milestone_id:'g',_observed_at:new Date(now).toISOString(),details:{
       status:'live',home_score:30,away_score:20,period,clock:'08:00',player_stats:{p:{rebounds:7}}}});
     state.verificationId='verified';rememberIndependentEntry(state,market,'verified',now);
-    state.overVerification={route:'cushion',contractKey:overContractKey(state,market),initialAt:now-110000,firstExternalAt:now-90000,firstExternalId:'first',pairedAt:now,pairedExternalId:'second'};
+    state.overVerification={route:'seller_cushion',contractKey:overContractKey(state,market),sellerAt:now,cushionUnits:1};
     const position={ticker:market.ticker,position_fp:String(exposure),market_exposure_dollars:String(exposure),fees_paid_dollars:'0'};
     const original={id:'original',status:'filled',strategy:'over',market_ticker:market.ticker,event_ticker:market.event_ticker,game_id:'g'};
-    const sent=[];
+    const sent=[];let immediateChecks=0;
     const client={query:async sql=>({rows:sql.includes('pg_try_advisory_xact_lock')?[{acquired:true}]:[]}),release(){}};
-    const context=vm.createContext({ensureManualCombos:async()=>{},console,setTimeout,PLAYER_PROP_MAX_FRACTION,BASKETBALL_COUNT_PROP_MAX_FRACTION,overSignal,timedOverEntryValid,assertTimedOverEntry,assertOverExposure,
+    const context=vm.createContext({ensureManualCombos:async()=>{},console,setTimeout,PLAYER_PROP_MAX_FRACTION,BASKETBALL_COUNT_PROP_MAX_FRACTION,overSignal,playerOverSpec,freshPlayerPropForEntry:async state=>{immediateChecks++;return state},timedOverEntryValid,assertTimedOverEntry,assertOverExposure,
       sameSportsContract,verifiedOverFraction,remainingVerifiedOverCents,upgradeEligible,estimatedCostCents,profitableCount,
       minimumProfitCents,netSettlementProfitCents,filledOrderGateCount,singleSpendableCash,randomUUID:()=> 'upgrade',
       upgradeTables:async()=>{},recoverSummaryAsk:async m=>m,hasAsk:()=>true,executableQuote:async m=>m,
@@ -45,6 +45,7 @@ test('a held basketball count prop tops up within 10% only when the new purchase
     assert.equal(result.verified,true);
     assert.equal(result.filled,allowed,`Q${period}, price ${price}, held $${exposure}`);
     assert.equal(sent.length,allowed?1:0);
+    assert.equal(immediateChecks,allowed?1:0,'add-on verifies externally only at the final qualifying entry gate');
     if(allowed){
       const count=Number(sent[0].count);
       assert.ok(estimatedCostCents(count,price,2)+exposure*100<=1000);

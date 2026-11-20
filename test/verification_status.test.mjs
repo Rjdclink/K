@@ -91,3 +91,14 @@ test('the dashboard state pipeline preserves no-seller status and surfaces faile
   assert.equal(signals[1].verification_checked_at,records[0].created_at);
   assert.equal(signals[2].verification_wait.dueAt,windows[2].initial_at+20000);
 });
+
+test('legacy countdown windows never reappear on a player-prop signal',()=>{
+  const now=200000,signal={ticker:'KXNBAREB-TEST',player_prop:true,strategy:'over',
+    execution:'Waiting for first external check (15s; minimum 20s)',
+    verification_wait:{dueAt:now+15000,updatedAt:now}};
+  const old={initial_at:now-5000,last_seen:now,first_external_at:null};
+  const result=verificationWindowStatus(signal,old,{stage:'first_wait',remainingMs:15000,minimumMs:110000},now);
+  assert.match(result.execution,/immediate|entry/i);
+  assert.doesNotMatch(result.execution,/wait.*\d+s|countdown/i);
+  assert.equal(result.wait,undefined);
+});

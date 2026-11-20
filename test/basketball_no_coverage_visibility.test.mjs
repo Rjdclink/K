@@ -166,7 +166,7 @@ test('dashboard serializes actual NO signals alongside existing strategies in pe
   const snapshotCandidates=new Map([['game',[{signal:{strategy:'lead',reason:'original lead'},market:{ticker:'LEAD',title:'Lead winner'}}]]]);
   const basketballNoSignals=new Map([['game',[{strategy:'no',ticker:'KXNBATOTAL-X',title:'Over 250 points',execution:'No NO seller'}]]]);
   vm.runInNewContext(src.slice(begin,end),{snapshotRows,snapshotCandidates,basketballNoSignals,hockeyNoSignals:new Map(),
-    crossingRows:[],filled:new Set(),account:{},balance:0,bankroll:0,signalExecution:()=> 'Original strategy unchanged'});
+    crossingRows:[],playerOverSpec:()=>null,filled:new Set(),account:{},balance:0,bankroll:0,signalExecution:()=> 'Original strategy unchanged'});
   const signals=JSON.parse(row[14]);
   assert.equal(signals.length,2);
   assert.equal(signals[0].strategy,'no');

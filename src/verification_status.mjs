@@ -20,6 +20,12 @@ export function completedOverWait(signal,record){
 }
 export function verificationWindowStatus(signal,window,timing,now=Date.now(),record=null){
   if(!signal?.verification_wait)return null;
+  // A legacy persisted window must not resurrect a player-prop countdown.
+  if(signal.player_prop){
+    const current=String(signal.execution||'').replace(/^Last market result: /,'');
+    const oldWait=/^(?:Awaiting score verification|Waiting for first external check|First external check passed; waiting for paired checks|Verification window recheck pending)/.test(current);
+    return {execution:oldWait?'Independent player-stat check immediately before entry':signal.execution};
+  }
   const execution=String(signal.execution||'').replace(/^Last market result: /,'');
   // A durable timer is not evidence that there is still a seller, cash, or an
   // eligible contract. Never overwrite the scanner's actual blocking gate.
