@@ -1,0 +1,97 @@
+import {espnMatches} from './score_verification.mjs';
+import {espnScoreboardUrls} from './espn_scoreboards.mjs';
+
+// Whole-game soccer totals settle after regulation plus stoppage time;
+// extra time, shootouts, halves, team totals and player totals are different contracts.
+const lineFrom=(value,kind)=>{
+  const text=String(value||'');
+  const match=kind==='title'
+    ?text.match(/^(?:Will over (\d+(?:\.\d+)?) goals be scored\?|Full Game: Over (\d+(?:\.\d+)?) goals scored)$/i)
+    :text.match(/^Over (\d+(?:\.\d+)?) goals scored$/i);
+  return match?Number(match[1]||match[2]):NaN;
+};
+const clockMinute=clock=>{
+  const match=String(clock||'').trim().match(/^(\d{1,3})(?::([0-5]\d))?(?:\+(\d{1,2}))?['′]?$/);
+  if(!match)return NaN;
+  return Number(match[1])+Number(match[3]||0)+Number(match[2]||0)/60;
+};
+const currentExternal=(reading,game)=>Boolean(
+  reading?.source==='ESPN'&&reading.eventId&&reading.live===true&&reading.period===2&&
+  reading.home===game.home&&reading.away===game.away&&
+  Number.isFinite(reading.elapsedMinute)&&Number.isFinite(game.soccerMinute)&&
+  Math.abs(reading.elapsedMinute-game.soccerMinute)<=1
+);
+
+export function soccerNoMarketSpec(game,market,{beforeWindow=false}={}){
+  const seconds=game?.matchRemainingSeconds;
+  if(game?.sport!=='Soccer'||!/^soccer_/.test(String(game.type||''))||
+    !game.verifiedLive||!game.scoreKnown||!game.scoreConsistent||!game.periodConsistent||
+    game.feedId!==game.id||!Number.isFinite(game.observedAt)||
+    Date.now()<game.observedAt||Date.now()-game.observedAt>10000||
+    game.period!==2||game.soccerExtraTime||game.soccerOvertime||game.clockRunning===false||
+    !Number.isFinite(game.soccerMinute)||!Number.isFinite(seconds)||seconds<=0||
+    (beforeWindow?seconds>540:seconds>=480)||
+    !Number.isInteger(game.home)||game.home<0||!Number.isInteger(game.away)||game.away<0||
+    !['active','open'].includes(market?.status)||
+    market.result&&!['','not_determined'].includes(String(market.result)))return null;
+  const [series,...suffix]=String(market.event_ticker||'').split('-');
+  const [gameSeries,...gameSuffix]=String(game.mainEvent||'').split('-');
+  if(!/^KX[A-Z0-9]+TOTAL$/.test(series)||/(?:TEAM|[1-4][HQPS]|HALF|PERIOD)TOTAL$/.test(series)||
+    !/^KX[A-Z0-9]+GAME$/.test(gameSeries)||suffix.length===0||
+    series!==gameSeries.slice(0,-4)+'TOTAL'||suffix.join('-')!==gameSuffix.join('-')||
+    !['greater','greater_than'].includes(market.strike_type))return null;
+  const line=Number(market.floor_strike);
+  const title=lineFrom(market.title,'title'),subtitle=lineFrom(market.yes_sub_title,'subtitle');
+  const rules=String(market.rules_primary||'');
+  const ruleLine=Number(rules.match(/^If over (\d+(?:\.\d+)?) goals are scored in the /i)?.[1]);
+  if(!Number.isFinite(line)||line!==title||line!==subtitle||line!==ruleLine||
+    !/\bsoccer game originally scheduled\b/i.test(rules)||
+    !/after 90 minutes plus stoppage time \(does not include extra time or penalties\), then the market resolves to Yes\./i.test(rules)||
+    /\b(?:first half|second half|1st half|2nd half|team total|player total)\b/i.test(rules))return null;
+  return {strategy:'no',period:'full_game',line,series};
+}
+
+export function soccerTotalNo(game,market,{beforeWindow=false,external=null}={}){
+  const spec=soccerNoMarketSpec(game,market,{beforeWindow});
+  if(!spec||external&&!currentExternal(external,game))return null;
+  const total=game.home+game.away;
+  if(spec.line-total<1.5)return null;
+  return {...spec,total,reason:
+    'Soccer full-game total NO over '+spec.line+'; '+total+
+    ' goals scored, '+game.matchRemainingSeconds+'s to end of regulation plus stoppage'};
+}
+
+// Independent scoreboard verifies score, second-half status, exact fixture,
+// and displayed elapsed match minute; the exchange supplies final-whistle countdown.
+export function independentSoccerTotalNoReading(scoreboard,game,milestone,market){
+  if(!soccerNoMarketSpec(game,market,{beforeWindow:true}))return null;
+  const matches=espnMatches(scoreboard,game,milestone);
+  if(matches.length!==1)return null;
+  const match=matches[0],event=scoreboard.events.find(e=>e.id===match.eventId);
+  const status=event?.competitions?.[0]?.status||event?.status;
+  const elapsedMinute=clockMinute(status?.displayClock);
+  const reading={source:'ESPN',eventId:match.eventId,home:match.home,away:match.away,
+    period:match.period,elapsedMinute,live:match.live};
+  return match.clockOk&&currentExternal(reading,game)?reading:null;
+}
+
+export async function verifyIndependentSoccerTotalNo(game,milestone,market,{fetcher=fetch}={}){
+  if(!soccerNoMarketSpec(game,market,{beforeWindow:true}))return null;
+  const start=Date.parse(milestone.start_date||'');
+  if(!Number.isFinite(start))return null;
+  const dates=[start,start-86400000,start+86400000]
+    .map(t=>new Date(t).toISOString().slice(0,10).replaceAll('-',''));
+  for(const day of new Set(dates)){
+    const results=await Promise.allSettled(espnScoreboardUrls('soccer/all',game,milestone,[day])
+      .map(async url=>{
+        const response=await fetcher(url,{signal:AbortSignal.timeout(6000)});
+        return response.ok?await response.json():null;
+      }));
+    for(const result of results){
+      if(result.status!=='fulfilled'||!result.value)continue;
+      const matches=espnMatches(result.value,game,milestone);
+      if(matches.length)return independentSoccerTotalNoReading(result.value,game,milestone,market);
+    }
+  }
+  return null;
+}

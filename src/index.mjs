@@ -41,6 +41,7 @@ import { filledOrderGateCount } from './entry_floor.mjs';
 import {thirdQuarterYardageNo,collegeFootballTotalNo,collegeBasketballTotalNo,highestYardageNos,bestNoAsk,noDepthAtAsk} from './no_strategy.mjs';
 import {verifyIndependentCollegeTotalNo} from './college_total_no.mjs';
 import {hockeyNoMarketSpec,hockeyTotalNo,verifyIndependentHockeyTotalNo} from './hockey_total_no.mjs';
+import {soccerNoMarketSpec,soccerTotalNo,verifyIndependentSoccerTotalNo} from './soccer_total_no.mjs';
 import {verifyIndependentYardageZero} from './score_verification.mjs';
 import {mentionContract,mentionDay,mentionEventTime,mentionEntryPrice,pairedMentionProof,remainingMentionCents} from './mentions.mjs';
 import {officialMentionSources,fetchOfficialMentionTranscript} from './mentions_source.mjs';
@@ -2986,6 +2987,223 @@ async function scanHockeyTotalNos(games,events,signalSink=null){
   return filled;
 }
 
+async function scanSoccerTotalNos(games,events,signalSink=null){
+  const allocation=.05,entry=480,start=540,reasonPattern='Soccer full-game total NO %';
+  const report=(candidate,execution,signal=null,ask=null)=>{
+    if(!signalSink)return;
+    const list=signalSink.get(candidate.state.id)||[];
+    const item={strategy:'no',ticker:candidate.market.ticker,
+      title:candidate.market.title||candidate.market.yes_sub_title||candidate.market.ticker,
+      reason:signal?.reason||'Soccer full-game total NO: 1.5-goal minimum cushion',
+      execution,...(ask?{ask:ask.price.toFixed(4),ask_size:ask.size.toFixed(2)}:{})};
+    const i=list.findIndex(row=>row.ticker===item.ticker);
+    if(i<0)list.push(item);else list[i]=item;
+    signalSink.set(candidate.state.id,list);
+  };
+  const watching=games.filter(({state})=>state.sport==='Soccer'&&
+    /^soccer_/.test(state.type)&&state.period===2&&!state.soccerExtraTime&&
+    Number.isFinite(state.matchRemainingSeconds)&&state.matchRemainingSeconds>0&&
+    state.matchRemainingSeconds<=start);
+  if(!live()||!watching.length)return 0;
+  const latest=await liveBatch(watching.map(g=>g.milestone));
+  for(const game of watching){
+    const fresh=latest.get(game.milestone.id);
+    if(fresh)game.state=gameState(game.milestone,fresh);
+  }
+  const pending=await pool.query(
+    "SELECT 1 FROM trade_attempts WHERE strategy='no' AND reason LIKE $1 AND status IN ('reserved','check_order','retrying') LIMIT 1",
+    [reasonPattern]);
+  if(pending.rowCount)return 0;
+  await pool.query('CREATE TABLE IF NOT EXISTS soccer_total_no_windows ('+
+    'market_ticker text PRIMARY KEY,game_id text NOT NULL,contract_key text NOT NULL,'+
+    'period integer NOT NULL,first_clock numeric NOT NULL,first_evidence jsonb NOT NULL,'+
+    'first_at timestamptz NOT NULL)');
+  const candidates=[];
+  for(const {milestone,state} of watching){
+    let found=0;
+    for(const ticker of linkedEventTickers(milestone)){
+      const event=events.get(ticker);
+      if(event?.category!=='Sports')continue;
+      for(const market of event.markets||[]){
+        const spec=soccerNoMarketSpec(state,market,{beforeWindow:true});
+        if(!spec||market.event_ticker!==ticker)continue;
+        const c={milestone,state,event,market,spec};
+        candidates.push(c);found++;
+        report(c,state.matchRemainingSeconds>=entry?
+          'Initial independent soccer score and clock verification pending':
+          'Awaiting a preflight verified at 9:00 before entry');
+      }
+    }
+    if(!found&&signalSink)signalSink.set(state.id,[{
+      strategy:'watch',title:'Soccer total NO',
+      reason:'No matching active full-game soccer total contract with a 1.5-goal cushion',
+      execution:'No soccer total-NO contract to verify in this scan'
+    }]);
+  }
+  candidates.sort((a,b)=>a.spec.line-b.spec.line);
+  const firstProofs=new Map();
+  let filled=0;
+  for(const c of candidates){
+    try{
+      const game=c.state,key=overContractKey(game,c.market);
+      const {rows:[window]}=await pool.query(
+        'SELECT * FROM soccer_total_no_windows WHERE market_ticker=$1',[c.market.ticker]);
+      const invalidWindow=!window||window.game_id!==game.id||
+        window.contract_key!==key||window.period!==game.period||
+        !Number.isFinite(Number(window.first_clock))||
+        Number(window.first_clock)>start||Number(window.first_clock)<=entry||
+        !window.first_evidence;
+      if(invalidWindow){
+        if(game.matchRemainingSeconds<=entry){
+          report(c,'Entry blocked: independent preflight missing before 8:00');continue;
+        }
+        let proof;
+        if(firstProofs.has(game.id))proof=firstProofs.get(game.id);
+        else{
+          proof=await verifyIndependentSoccerTotalNo(game,c.milestone,c.market);
+          firstProofs.set(game.id,proof);
+        }
+        const signal=proof&&soccerTotalNo(game,c.market,{beforeWindow:true,external:proof});
+        if(!signal||game.matchRemainingSeconds*1000-(Date.now()-game.observedAt)<=entry*1000){
+          report(c,'First independent soccer score/clock check or goal cushion unavailable');continue;
+        }
+        await pool.query('INSERT INTO soccer_total_no_windows '+
+          '(market_ticker,game_id,contract_key,period,first_clock,first_evidence,first_at) '+
+          'VALUES($1,$2,$3,$4,$5,$6,clock_timestamp()) '+
+          'ON CONFLICT(market_ticker) DO UPDATE SET game_id=EXCLUDED.game_id,'+
+          'contract_key=EXCLUDED.contract_key,period=EXCLUDED.period,'+
+          'first_clock=EXCLUDED.first_clock,first_evidence=EXCLUDED.first_evidence,'+
+          'first_at=EXCLUDED.first_at',
+          [c.market.ticker,game.id,key,game.period,game.matchRemainingSeconds,JSON.stringify(proof)]);
+        report(c,'First ESPN verification passed near 9:00; awaiting under 8:00',signal);
+        continue;
+      }
+      if(game.matchRemainingSeconds>=entry){
+        report(c,'First external check saved; awaiting less than 8:00');continue;
+      }
+      const age=Date.now()-new Date(window.first_at).getTime();
+      if(!Number.isFinite(age)||age<0||age>15*60000){
+        report(c,'Entry blocked: initial external soccer preflight expired');continue;
+      }
+      const raw=await liveMilestone(c.milestone.id);
+      if(!raw){report(c,'Entry blocked: fresh Kalshi soccer score unavailable');continue;}
+      raw._observed_at=new Date().toISOString();
+      const fresh=gameState(c.milestone,raw);
+      const current=(await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market;
+      if(!sameSportsContract(current,c.market)||!soccerNoMarketSpec(fresh,current)){
+        report(c,'Entry blocked: soccer total contract or final match clock changed');continue;
+      }
+      const {orderbook_fp}=await kalshi('/markets/'+encodeURIComponent(current.ticker)+'/orderbook');
+      const ask=bestNoAsk(orderbook_fp);
+      if(!ask||ask.size<minimumCount(current)||
+        noDepthAtAsk(orderbook_fp,ask.price,ask.size)<minimumCount(current)){
+        report(c,'Entry blocked: no executable NO seller depth');continue;
+      }
+      const prior=await pool.query(
+        "SELECT 1 FROM trade_attempts WHERE market_ticker=$1 AND status IN ('filled','reserved','check_order','retrying','combo_pending') LIMIT 1",
+        [current.ticker]);
+      if(prior.rowCount){report(c,'Entry blocked: existing order',null,ask);continue;}
+      const position=(await allOpenPositions()).market_positions?.find(p=>p.ticker===current.ticker);
+      if(Number(position?.position_fp??position?.position??0)!==0){
+        report(c,'Entry blocked: existing held position',null,ask);continue;
+      }
+      const account=await accountBalance({fresh:true});
+      const bankroll=Number(account.balance)+Number(account.portfolio_value);
+      const local=shardCash(account,marketShard(c.event,current));
+      if(!Number.isFinite(bankroll)||bankroll<=0||local===null||local<=0){
+        report(c,'Entry blocked: bankroll or exchange cash unavailable',null,ask);continue;
+      }
+      const {rows:managed}=await pool.query(
+        "SELECT market_ticker,fill_count,limit_price,updated_at FROM trade_attempts WHERE strategy='no' AND reason LIKE $1 AND status='filled'",
+        [reasonPattern]);
+      const tickers=new Set(managed.map(row=>row.market_ticker));
+      const positions=await allOpenPositions({strict:true});
+      const negative=(positions.market_positions||[]).filter(p=>
+        tickers.has(p.ticker)&&Number(p.position_fp??p.position)<0);
+      if(negative.some(p=>![p.market_exposure_dollars,p.fees_paid_dollars]
+        .every(v=>v!=null&&Number.isFinite(Number(v))))){
+        report(c,'Entry blocked: existing soccer NO exposure unknown',null,ask);continue;
+      }
+      const held=negative.reduce((sum,p)=>sum+
+        Math.ceil(100*Number(p.market_exposure_dollars))+
+        Math.ceil(100*Number(p.fees_paid_dollars)),0);
+      const visible=new Set(negative.map(p=>p.ticker));
+      const awaiting=managed.filter(row=>!visible.has(row.market_ticker)&&
+        Date.now()-new Date(row.updated_at).getTime()<5*60000);
+      if(awaiting.some(row=>!Number.isFinite(Number(row.fill_count))||
+        !Number.isFinite(Number(row.limit_price)))){
+        report(c,'Entry blocked: unreported soccer NO exposure unknown',null,ask);continue;
+      }
+      const unreported=awaiting.reduce((sum,row)=>sum+
+        estimatedCostCents(Number(row.fill_count),Number(row.limit_price)),0);
+      const budget=Math.max(0,Math.floor(bankroll*allocation)-held-unreported);
+      const fees=feeReserve(c.event,current);
+      const count=orderSize(Math.min(singleSpendableCash(account.balance),local),
+        ask.price,ask.size,allocation,1,bankroll,budget,fees);
+      const quantity=current.fractional_trading_enabled===false?Math.floor(count):count;
+      if(quantity<minimumCount(current)||!profitableCount(quantity,ask.price,fees,
+        'no',bankroll,fresh.type,fresh.matchRemainingSeconds,{game:fresh,market:current})){
+        report(c,'Entry blocked: shared 5% soccer total-NO cap, fees or net profit',null,ask);continue;
+      }
+      await auditTable();
+      const proof=await verifyIndependentSoccerTotalNo(fresh,c.milestone,current);
+      const externalCheckedAt=Date.now();
+      const signal=proof&&soccerTotalNo(fresh,current,{external:proof});
+      if(!signal||externalCheckedAt-fresh.observedAt>10000){
+        report(c,'Entry blocked: final independent ESPN soccer score/clock unavailable',null,ask);
+        continue;
+      }
+      const verificationId=randomUUID();
+      await pool.query('INSERT INTO verification_records(id,market_ticker,passed,evidence) VALUES($1,$2,true,$3)',
+        [verificationId,current.ticker,JSON.stringify({
+          mode:'independent_soccer_full_game_total_no',game:fresh,milestone:c.milestone,
+          firstAt:window.first_at,firstClock:window.first_clock,firstExternal:window.first_evidence,
+          finalAt:new Date(externalCheckedAt),finalExternal:proof,period:signal.period,ask:ask.price
+        })]);
+      fresh.verificationId=verificationId;
+      rememberIndependentEntry(fresh,current,verificationId,externalCheckedAt);
+      const id=await reserve({strategy:'no',fraction:allocation,reason:signal.reason},
+        fresh,c.event,current,quantity,ask.price,account.balance);
+      if(!id){report(c,'Entry blocked: duplicate or pending order',signal,ask);continue;}
+      try{
+        const result=await withEntryProfitFloor({
+          ticker:current.ticker,count:quantity,price:ask.price,fees,
+          strategy:'no',fraction:allocation,bankroll,game:fresh,market:current
+        },()=>kalshi('/portfolio/events/orders',{method:'POST',auth:true,
+          entryVerifications:[{game:fresh,market:current}],
+          beforeDispatch:()=>{
+            if(!soccerTotalNo(fresh,current,{external:proof})||
+              Date.now()-fresh.observedAt>10000||Date.now()-externalCheckedAt>10000)
+              throw Object.assign(Error('Soccer total NO external proof expired'),
+                {code:'LOCAL_EXTERNAL_VERIFICATION_REQUIRED'});
+          },
+          body:{ticker:current.ticker,client_order_id:id,side:'ask',count:quantity.toFixed(2),
+            price:(1-ask.price).toFixed(4),time_in_force:'fill_or_kill',
+            self_trade_prevention_type:'taker_at_cross',post_only:false,reduce_only:false}
+        }));
+        const amount=Number(result?.fill_count_fp??result?.fill_count??result?.order?.fill_count_fp??0);
+        await pool.query('UPDATE trade_attempts SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE id=$1',
+          [id,amount>0?'filled':'unfilled',result?.order_id||result?.order?.order_id||null,amount]);
+        if(amount>0){filled++;await invalidateBalance()}
+        report(c,amount>0?'Soccer total NO order filled':'Soccer total NO returned unfilled',signal,ask);
+      }catch(e){
+        const terminal=e.code==='LOCAL_EXTERNAL_VERIFICATION_REQUIRED'||
+          /^Kalshi (400|401|403|404|409|422) /.test(String(e.message));
+        await pool.query('UPDATE trade_attempts SET status=$2,error=$3,updated_at=now() WHERE id=$1',
+          [id,terminal?'unfilled':'check_order',String(e.message).slice(0,250)]);
+        console.warn('Soccer total NO order deferred:',current.ticker,e.message);
+        report(c,'Entry blocked: '+String(e.message).slice(0,90),signal,ask);
+        if(!terminal)break;
+      }
+    }catch(e){
+      console.warn('Soccer total NO deferred:',c.market.ticker,e.message);
+      report(c,'Entry blocked: '+String(e.message).slice(0,100));
+    }
+  }
+  await pool.query("DELETE FROM soccer_total_no_windows WHERE first_at<now()-interval '1 day'");
+  return filled;
+}
+
 async function scan(cachedMilestones,discoveryCount){
   // A transaction-scoped lock is released by Postgres even if an invocation is terminated.
   // Snapshot writes use other pool connections so the dashboard sees each completed cycle.
@@ -3132,6 +3350,8 @@ async function scan(cachedMilestones,discoveryCount){
       new Map([...events,...noOnlyEvents]),'basketball',basketballNoSignals);
     const hockeyNoSignals=new Map();
     submitted+=await scanHockeyTotalNos(marketGames,events,hockeyNoSignals);
+    const soccerNoSignals=new Map();
+    submitted+=await scanSoccerTotalNos(marketGames,events,soccerNoSignals);
     submitted+=await scanThirdQuarterNos(marketGames,events);
     await candidateTable();
     const opportunities=[],snapshotRows=new Map(),scoreboardCache=new Map();
@@ -3182,6 +3402,7 @@ async function scan(cachedMilestones,discoveryCount){
     }
     for(const [id,candidates] of snapshotCandidates){
       snapshotRows.get(id)[14]=JSON.stringify([
+        ...(soccerNoSignals.get(id)||[]),
         ...(hockeyNoSignals.get(id)||[]),
         ...(basketballNoSignals.get(id)||[]),
         ...candidates.map(c=>({strategy:c.signal.strategy,reason:c.signal.reason,ticker:c.market.ticker,title:c.market.title||c.market.yes_sub_title||'',
