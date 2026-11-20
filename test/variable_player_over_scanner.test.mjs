@@ -1,3 +1,4 @@
+import {noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey} from './support/no_ask_mock.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -29,7 +30,7 @@ function harness({ageMs=211000,initialUnavailable=false,finalUnavailable=false,
   assert.ok(a>0&&b>a,'scanner has a dedicated function');
   const stored=new Map(),dashboard=new Map(),trace=[];
   let verified=0,orders=0,spentFraction=null;
-  const source=vm.createContext({
+  const source=vm.createContext({noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,
     Date,Math,Number,JSON,Promise,console,process:{env:{}},
     live:()=>true,playerPropEarlyWindow,linkedEventTickers:()=>[market.event_ticker],
     variablePlayerOverSpec,variableProofValid,VARIABLE_CONFIRM_DELAY_MS,

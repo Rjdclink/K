@@ -471,7 +471,7 @@ test('entry submissions use full fills and ordinary profit targets remain policy
   assert.match(source,/leadPosition\?halfPotentialProfitExitEligible\(position,sale\):oneAndHalfExitEligible\(position,sale\)/);
   assert.match(source,/if\(!leadExit&&!targetReached&&!corrected\)continue;/);
   assert.match(source,/if\(live\(\)\|\|exitOnly\(\)\)await exitComebacks/);
-  assert.match(source,/for\(const c of \[\.\.\.opportunities,\.\.\.upgradeCandidates\]\)[^]*?if\(!live\(\)\)continue/);
+  assert.match(source,/for\(const c of \[\.\.\.opportunities,\.\.\.upgradeCandidates\.filter\(stillEligible\)\]\)[^]*?if\(!live\(\)\)continue/);
   assert.match(source,/if\(a\.signal\.strategy!==b\.signal\.strategy\)return a\.signal\.strategy==='over'\?-1:1/);
   assert.match(source,/return profit\(b\)-profit\(a\)/);
 });
@@ -529,4 +529,3 @@ test('basketball positive exit cannot bypass tie and trailing clock windows',()=
   assert.equal(timedProfitExitAllowed(at(101,100,4,'03:00'),market),true);
   assert.equal(timedProfitExitAllowed(at(100,101,3,'00:10'),market),false);
 });
-

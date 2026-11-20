@@ -1,3 +1,4 @@
+import {noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey} from './support/no_ask_mock.mjs';
 import {pairedExternalMatch} from '../src/independent_match_score.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -38,7 +39,7 @@ function harness({ageMs=61000,canVerify=true,hasSeller=true,existingExposure=fal
   let n=0,verifications=0,orders=0,allocation=null,availablePool=null;
   const windows=new Map(),dashboard=new Map(),trace=[];
   const held={ticker:'KXNHLTOTAL-OLD',position_fp:-1,market_exposure_dollars:'4.00',fees_paid_dollars:'0.50'};
-  const context=vm.createContext({recordDecision:async()=>{},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
+  const context=vm.createContext({noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async()=>{},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
     Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),
     linkedEventTickers:()=>markets.map(x=>x.event_ticker),
@@ -156,7 +157,7 @@ test('NHL NO never enters without an executable NO seller',async()=>{
   await h.scan('5:00');
   assert.equal(await h.scan('4:29'),0);
   assert.equal(h.orders,0);
-  assert.ok((h.dashboard.get(milestone.id)||[]).some(s=>/NO seller/i.test(s.execution)));
+  assert.ok((h.dashboard.get(milestone.id)||[]).some(s=>/No executable ask/i.test(s.execution)));
 });
 
 test('pending NHL order cannot suppress the first independent check for another total',async()=>{

@@ -1,3 +1,4 @@
+import {noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey} from './support/no_ask_mock.mjs';
 import {rememberIndependentEntry} from '../src/entry_verification.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -21,7 +22,7 @@ const runtime=source.slice(source.indexOf('let overWindowsReady;'),source.indexO
 function harness({home=70,away=70,seller=true,decisions=[],contract=market,playerStats}={}){
  let time=start,window=null,ids=0,externalCount=0,kalshiCount=0;const events=[],proofs=[],verifiedIds=new Set();let firstProof=true;
  class Clock extends Date{constructor(...args){super(...(args.length?args:[time]))}static now(){return time}}
- const context=vm.createContext({Date:Clock,Number,JSON,Math,Promise,console,
+ const context=vm.createContext({noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,Date:Clock,Number,JSON,Math,Promise,console,
   overContractKey,overCushion,playerOverSpec,fallbackScoringUnits,freshOverObservation:g=>freshOverObservation(g,time),freshOverState:(g,m)=>freshOverState(g,m,time),overTiming:(w,g,m,at=time)=>overTiming(w,g,m,at),sameOverReading,timedOverEntryValid:(g,m)=>timedOverEntryValid(g,m,time),OVER_FRESH_MS,
   OVER_EXTERNAL_DELAY_MS,verifyExternalOverExposure,rememberIndependentEntry,gameState:liveState,confirmedOver,overSignal,randomUUID:()=>`id-${++ids}`,auditTable:async()=>{},
   pool:{query:async(sql,args=[])=>{
