@@ -22,6 +22,8 @@ test('scanner checks old fixtures, recovers fresh live games, prunes only confir
    return {rows:args[0].filter(id=>reviews.has(id)).map(id=>reviews.get(id))};
   }
   if(sql.startsWith('INSERT INTO sports_stale_reviews')){
+   assert.match(sql,/VALUES \(\$1,\$2::timestamptz,\$3\)/,'bound timestamps must use placeholders, not numeric SQL values');
+   assert.equal(args.length,9,'all three outcomes retain their exact bound values');
    for(let i=0;i<args.length;i+=3)reviews.set(args[i],
     {game_id:args[i],checked_at:args[i+1],outcome:args[i+2]});
    return {rows:[]};

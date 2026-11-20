@@ -1070,7 +1070,8 @@ async function refreshStaleMilestones(milestones){
   }
   const checkedAt=new Date(),outcomes=batch.map(m=>({game_id:m.id,
     checked_at:checkedAt.toISOString(),outcome:classifyStaleLive(m,fresh.get(m.id),checkedAt.getTime())}));
-  const values=outcomes.map((_,i)=>`(${i*3+1},${i*3+2}::timestamptz,${i*3+3})`).join(',');
+  const placeholder=n=>String.fromCharCode(36)+n;
+  const values=outcomes.map((_,i)=>'('+placeholder(i*3+1)+','+placeholder(i*3+2)+'::timestamptz,'+placeholder(i*3+3)+')').join(',');
   await pool.query('INSERT INTO sports_stale_reviews(game_id,checked_at,outcome) VALUES '+values+
     ' ON CONFLICT(game_id) DO UPDATE SET checked_at=EXCLUDED.checked_at,outcome=EXCLUDED.outcome',
     outcomes.flatMap(r=>[r.game_id,r.checked_at,r.outcome]));
