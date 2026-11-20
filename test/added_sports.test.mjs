@@ -6,7 +6,7 @@ import {eligibleForMarkets,linkedEventTickers} from '../src/discovery.mjs';
 const winner=(family,team='home')=>({status:'active',event_ticker:`KX${family.toUpperCase()}GAME-26OCT29`,title:'Home wins',yes_sub_title:'Home',custom_strike:{[`${family}_team`]:team}});
 const clockGame=(family,lead,clock,period)=>gameState({id:family,type:`${family}_match`,title:'Away at Home',details:{home_team_id:'home',away_team_id:'away'}},{details:{status:'live',home_score:lead,away_score:0,period,period_remaining_time:clock}});
 for(const [family,needed,very,window,period] of [['handball',5,8,'03:00',2],['rugby',15,27,'02:59',2],['lacrosse',4,7,'03:00',4]])test(`${family} final period lead tiers and clock boundary`,()=>{
-  assert.equal(eligibleForMarkets(clockGame(family,needed,window,period)),true);
+  assert.equal(eligibleForMarkets(clockGame(family,needed,window,period)),false,'historical scoring logic retained, automatic scanning disabled');
   assert.equal(additionalLeadSignal(clockGame(family,needed,window,period),winner(family))?.fraction,family==='rugby'?.15:.10);
   assert.equal(additionalLeadSignal(clockGame(family,very,window,period),winner(family))?.fraction,.15);
   assert.equal(additionalLeadSignal(clockGame(family,needed-1,window,period),winner(family)),null);

@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {isScannerExcludedSport} from '../src/discovery.mjs';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
@@ -71,7 +72,7 @@ async function runExit({owner=original,position=held,price='.99',count='10',pend
   const orders=[],now=Date.now();
   const first=fixtureOverride||fixture({games:[5,6],points:[30,40],server:'lew',at:now-1000});
   const second=fixture({games:[5,6],points:[30,40],server:'lew',at:now}).game;
-  const context=vm.createContext({console,Date,Number,Math,Map,Set,JSON,...exits,sellQuote,
+  const context=vm.createContext({isScannerExcludedSport,console,Date,Number,Math,Map,Set,JSON,...exits,sellQuote,
     ensureExitFills:async()=>{},reconcilePendingExit:async()=>!pending,minimumCount:()=>.01,
     randomUUID:()=> 'exit-id',comeback,teamScorePosition,linkedEventTickers:()=>[first.market.event_ticker],
     auditedOver:async()=>true,liveMilestone:async()=>({}),gameState:()=>second,
@@ -107,8 +108,8 @@ test('the live exit path never takes tennis profit at ten percent, half-profit, 
 });
 
 test('other sports and combinations retain their existing profitable exits and uncertain-sell protection',async()=>{
-  for(const owner of [{...original,sport:'Table tennis'},{...original,sport:'NBA'},
-    {...original,combo_legs:[{sport:'Tennis'},{sport:'NBA'}]}]){
+  for(const owner of [{...original,sport:'NBA'},
+    {...original,sport:'NBA',combo_legs:[{sport:'NFL'},{sport:'NBA'}]}]){
     const orders=await runExit({owner});assert.equal(orders.length,1,JSON.stringify(owner));
     assert.equal(orders[0].time_in_force,'immediate_or_cancel');
     assert.equal(orders[0].reduce_only,true);
@@ -117,12 +118,17 @@ test('other sports and combinations retain their existing profitable exits and u
   assert.deepEqual(await runExit({owner:{...original,sport:'NBA'},pending:true}),[]);
 });
 
-test('tennis independently confirmed comeback protection remains available after profit exits are removed',async()=>{
+test('disabled table tennis, cricket, darts and golf fills never initiate automatic exit scans',async()=>{
+  for(const [game_family,sport] of [
+    ['table_tennis_match','Table tennis'],['cricket_match','ODI (M)'],
+    ['darts_match','Darts'],['golf_tournament','Golf']]){
+    const owner={...original,sport,game_family};
+    assert.deepEqual(await runExit({owner,price:'.99'}),[],game_family);
+  }
+});
+test('disabled tennis automatic comeback exits do not execute, while account records remain untouched',async()=>{
   const orders=await runExit({reversal:true,price:'.73'});
-  assert.equal(orders.length,1);
-  assert.equal(orders[0].ticker,held.ticker);
-  assert.equal(orders[0].time_in_force,'immediate_or_cancel');
-  assert.equal(orders[0].reduce_only,true);
+  assert.deepEqual(orders,[]);
 });
 
 test('the removed tennis profit watcher cannot run alongside scans',()=>{

@@ -24,7 +24,7 @@ import { manifest, worker } from './pwa.mjs';
 import { vapidIdentity, validateSubscription, deliverPush } from './push.mjs';
 import { favorableSettlement } from './settlements.mjs';
 import { authorized, checkCredentials, sessionCookie, loginPage } from './dashboard_auth.mjs';
-import { refreshDiscovery, scanMilestones, supportedScannerSport, eligibleForMarkets, internationalBasketball, prioritizeMarketGames, linkedEventTickers, playerPropEntryClosed, entryEventTickers, winnerEventTickers, readyOverTickets, prioritizeReadyOverTickets, gameTimeLabel, storedClockSeconds, mapBatches } from './discovery.mjs';
+import { refreshDiscovery, scanMilestones, supportedScannerSport, isScannerExcludedSport, eligibleForMarkets, internationalBasketball, prioritizeMarketGames, linkedEventTickers, playerPropEntryClosed, entryEventTickers, winnerEventTickers, readyOverTickets, prioritizeReadyOverTickets, gameTimeLabel, storedClockSeconds, mapBatches } from './discovery.mjs';
 import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOverDecision, verifySportradarOver, verifyIndependentTableTennisLeadDecision, verifyIndependentTableTennisMatch } from './score_verification.mjs';
 import { verificationStatus, completedOverWait, verificationWindowStatus } from './verification_status.mjs';
@@ -1757,12 +1757,14 @@ async function recordComboRejection(legs,collection,status,detail){
 async function checkCurrentHeldCombinations(fill,{verifiedSince,superseded}){
   if(!live())return {filled:false,pending:false};
   await upgradeTables();
-  const {rows}=await pool.query(`SELECT a.id,a.market_ticker,a.event_ticker,a.game_id,a.sport,a.strategy,a.reason,a.fraction,a.fill_count,a.limit_price,a.created_at,a.updated_at,a.combo_legs,
+  const {rows}=await pool.query(`SELECT a.id,a.market_ticker,a.event_ticker,a.game_id,a.sport,a.strategy,a.reason,a.fraction,a.fill_count,a.limit_price,a.created_at,a.updated_at,a.combo_legs,g.sport_family AS game_family,
     EXISTS(SELECT 1 FROM fallback_verifications f WHERE f.market_ticker=a.market_ticker AND f.original_id=a.id AND f.verified_at >= $1) AS externally_verified
-    FROM trade_attempts a WHERE a.status='filled'`,[verifiedSince]);
-  console.info('Combo check started:',fill?.market_ticker||'held-position retry','confirmed singles',rows.filter(r=>!r.combo_legs).length);
+    FROM trade_attempts a LEFT JOIN game_snapshots g ON g.id=a.game_id
+    WHERE a.status='filled' AND (g.sport_family IS NULL OR g.sport_family ~* '^(basketball|hockey|soccer|football)_')`,[verifiedSince]);
+  const allowed=rows.filter(row=>!isScannerExcludedSport({type:row.game_family,sport:row.sport}));
+  console.info('Combo check started:',fill?.market_ticker||'held-position retry','confirmed singles',allowed.filter(r=>!r.combo_legs).length);
   for(let attempt=0;attempt<3;attempt++){
-    const result=await checkHeldCombinations(rows,{requestedFill:fill,superseded});
+    const result=await checkHeldCombinations(allowed,{requestedFill:fill,superseded});
     if(!fill||!result.deferred||superseded()||attempt===2)return result;
     // Account positions can trail the confirmed order response briefly.
     await new Promise(resolve=>setTimeout(resolve,attempt===0?100:250));
@@ -1782,6 +1784,8 @@ async function checkHeldCombinations(fills,{requestedFill=null,superseded=()=>fa
     return {filled:false,pending:false,deferred:'New single is not yet in confirmed held positions'};
   const available=availableComboFills(fills);
   const singles=filledComboWindow(available,held,null);
+  const allowedHeld=[...held].filter(ticker=>fills.some(row=>
+    row.market_ticker===ticker&&!row.combo_legs));
   await pool.query(`CREATE TABLE IF NOT EXISTS combo_fill_triggers (
     fill_id uuid PRIMARY KEY, attempted_at timestamptz, completed_at timestamptz, combo_ticker text)`);
   await pool.query('ALTER TABLE combo_fill_triggers ADD COLUMN IF NOT EXISTS combo_ticker text');
@@ -1791,7 +1795,7 @@ async function checkHeldCombinations(fills,{requestedFill=null,superseded=()=>fa
     LEFT JOIN combo_fill_triggers t ON t.fill_id=a.id
     WHERE a.status='filled' AND a.combo_legs IS NULL AND a.market_ticker=ANY($1::text[])
       AND a.updated_at>=$2 AND t.fill_id IS NULL
-    ORDER BY a.created_at ASC LIMIT 25`,[[...held],baseline.started_at]);
+    ORDER BY a.created_at ASC LIMIT 25`,[allowedHeld,baseline.started_at]);
   const trigger=requestedFill||ready.rows[0]||null;
   if(trigger){
     const claimed=await pool.query(`INSERT INTO combo_fill_triggers(fill_id,attempted_at)
@@ -1875,13 +1879,16 @@ async function exitComebacks(games,events,positions){
   const unresolved=new Set();
   for(const row of pendingExits)if(!await reconcilePendingExit(row.market_ticker))unresolved.add(row.market_ticker);
   if(!held.length)return;
-  const recorded=await pool.query(`SELECT DISTINCT ON (market_ticker) market_ticker,game_id,sport,strategy,reason,status,combo_legs FROM trade_attempts WHERE status='filled' ORDER BY market_ticker,updated_at DESC`);
+  const recorded=await pool.query(`SELECT DISTINCT ON (market_ticker) market_ticker,game_id,a.sport AS sport,strategy,reason,a.status AS status,combo_legs,g.sport_family AS game_family
+    FROM trade_attempts a LEFT JOIN game_snapshots g ON g.id=a.game_id
+    WHERE a.status='filled' AND (g.sport_family IS NULL OR g.sport_family ~* '^(basketball|hockey|soccer|football)_') ORDER BY market_ticker,a.updated_at DESC`);
   const ownership=new Map(recorded.rows.map(r=>[r.market_ticker,r]));
   const salesTable=await pool.query("SELECT to_regclass('manual_sales') AS name");
   const manualPending=new Set(salesTable.rows[0]?.name?(await pool.query("SELECT ticker FROM manual_sales WHERE status='pending'")).rows.map(r=>r.ticker):[]);
   for(const position of held){
     const original=ownership.get(position.ticker),gameId=original?.game_id||marketGames.get(position.ticker),state=byGame.get(gameId),nested=markets.get(position.ticker);
     if(!original)continue;
+    if(isScannerExcludedSport({type:original.game_family,sport:original.sport}))continue;
     if(unresolved.has(position.ticker))continue;
     if(manualPending.has(position.ticker))continue;
     const strategy='lead';
@@ -1984,6 +1991,7 @@ async function watchCorrectedOvers(until){
           g.title,g.sport_family,g.sport AS game_sport,g.home_team_id,g.away_team_id,g.status AS game_status
           FROM trade_attempts a LEFT JOIN game_snapshots g ON g.id=a.game_id
           WHERE a.status='filled' AND (a.strategy='over' OR a.combo_legs IS NOT NULL)
+            AND (g.sport_family IS NULL OR g.sport_family ~* '^(basketball|hockey|soccer|football)_')
           ORDER BY a.market_ticker,a.updated_at DESC`);
         rows=result.rows;
         const overRows=rows.filter(row=>row.strategy==='over'&&row.game_status==='live'&&
@@ -2039,6 +2047,7 @@ async function watchLeadWindows(until){
         JOIN game_snapshots g ON g.id=w.game_id
         WHERE w.updated_at>now()-interval '15 minutes' AND g.status='live'
           AND GREATEST(g.score_observed_at,g.scanned_at)>now()-interval '15 minutes'
+          AND g.sport_family ~* '^(basketball|hockey|soccer|football)_'
         ORDER BY w.updated_at DESC LIMIT 100`);
       const watching=rows.map(row=>row.milestone).filter(supportedScannerSport);
       if(watching.length){
@@ -2157,6 +2166,7 @@ async function watchReadyOverTickets(until){
         WHERE g.status='live' AND g.score_observed_at>now()-interval '4 minutes' AND
           (active.game_id IS NOT NULL OR w.updated_at>now()-interval '4 minutes')
           AND g.signals @> '[{"strategy":"over"}]'::jsonb
+          AND g.sport_family ~* '^(basketball|hockey|soccer|football)_'
         ORDER BY (active.game_id IS NOT NULL) DESC,g.scanned_at DESC LIMIT 60`);
       const tickers=[...new Set(rows.flatMap(row=>(row.signals||[]).filter(s=>s.strategy==='over'&&s.ticker).map(s=>s.ticker)))];
       const {rows:windows}=tickers.length?await pool.query(`SELECT market_ticker,last_seen FROM over_verification_windows
@@ -3667,10 +3677,12 @@ async function scan(cachedMilestones,discoveryCount){
     ms=cachedMilestones||await milestones();discoveryCount??=ms.length;
     await ensurePropWindows();
     const {rows:propWatch}=await pool.query(`SELECT DISTINCT p.game_id FROM player_prop_windows p
-      JOIN game_snapshots g ON g.id=p.game_id WHERE g.status='live' AND g.scanned_at>now()-interval '30 minutes'`);
+      JOIN game_snapshots g ON g.id=p.game_id WHERE g.status='live' AND g.scanned_at>now()-interval '30 minutes'
+        AND g.sport_family ~* '^(basketball|hockey|soccer|football)_'`);
     const propWatchIds=new Set(propWatch.map(row=>row.game_id));
     const {rows:recentLive}=await pool.query(`SELECT id,signals FROM game_snapshots
-      WHERE status='live' AND scanned_at>now()-interval '30 minutes'`);
+      WHERE status='live' AND scanned_at>now()-interval '30 minutes'
+        AND sport_family ~* '^(basketball|hockey|soccer|football)_'`);
     ms=scanMilestones(ms,new Set([...recentLive.map(row=>row.id),...propWatchIds]));
     await upgradeTables();
     await ensureScanStatus();const liveMap=await liveBatch(ms);
@@ -3712,7 +3724,10 @@ async function scan(cachedMilestones,discoveryCount){
       signaledIds:new Set([...marketCandidates.filter(g=>propWatchIds.has(g.milestone.id)&&!playerPropEntryClosed(g.state)).map(g=>g.milestone.id),...recentLive.filter(row=>(row.signals||[]).some(signal=>
         signal.strategy!=='watch'&&Number(signal.ask)>0&&Number(signal.ask)<1&&Number(signal.ask_size)>0)).map(row=>row.id)]),
       heldIds,
-      lowBudget:earlySweep.length?12:0
+      // For the ordinary live population, cover up to 48 games per minute
+      // rather than only twelve; imminent entry windows always bypass this
+      // rotation and receive every fast scan independently.
+      lowBudget:earlySweep.length?Math.min(48,marketCandidates.length):0
     });
     console.info('Live market priority:',JSON.stringify({live:marketCandidates.length,marketChecked:marketGames.length,earlySweep:Boolean(earlySweep.length),earlyDeferred:marketCandidates.length-marketGames.length}));
     const events=await marketMap(marketGames.flatMap(g=>heldIds.has(g.milestone.id)?linkedEventTickers(g.milestone):entryEventTickers(g.milestone,g.state)));
@@ -4185,7 +4200,7 @@ async function refreshOpenClocks(){
     // Refresh the visible live scoreboard independently of the slower market
     // scan. This is bounded to four live-feed batches per dashboard refresh.
     const {rows}=await pool.query(`SELECT g.id,g.title,g.sport,g.sport_family,g.home_team_id,g.away_team_id FROM game_snapshots g
-      WHERE g.status='live' AND g.sport_family<>'weather' AND g.scanned_at>now()-interval '15 minutes'
+      WHERE g.status='live' AND g.sport_family<>'weather' AND g.sport_family ~* '^(basketball|hockey|soccer|football)_' AND g.scanned_at>now()-interval '15 minutes'
       ORDER BY g.scanned_at DESC LIMIT 80`);
     if(!rows.length)return;
     const milestones=rows.map(g=>({id:g.id,title:g.title,type:g.sport_family,details:{league:g.sport,home_team_id:g.home_team_id,away_team_id:g.away_team_id}}));
@@ -4222,6 +4237,7 @@ async function state(){
   const [snap,stats,attempts,mentionStatus]=await Promise.all([
   pool.query(`SELECT id,title,sport,home,away,possession_side,status,time_left,scanned_at,score_observed_at,signals FROM game_snapshots
     WHERE status IN ('live','inprogress','started') AND GREATEST(score_observed_at,scanned_at)>now()-interval '15 minutes'
+      AND sport_family ~* '^(basketball|hockey|soccer|football)_'
     ORDER BY jsonb_array_length(signals) DESC,title`),
   pool.query('SELECT * FROM scan_status WHERE id=1'),
   pool.query(`SELECT a.market_ticker,a.game_id,a.sport,a.strategy,a.reason,a.combo_legs,a.fill_count,a.limit_price,g.status AS game_status,g.title AS game_title,g.signals AS game_signals,g.sport_family,g.possession_side,g.home AS home_score,g.away AS away_score,GREATEST(g.score_observed_at,g.scanned_at) AS score_scanned_at,g.clock_seconds,g.clock_label,g.clock_observed_at,g.time_left,
@@ -4383,7 +4399,9 @@ async function handleRequest(req){const url=new URL(req.url);
     const {rows:knownLive}=await pool.query(`SELECT w.milestone FROM lead_watch_milestones w
       JOIN game_snapshots g ON g.id=w.game_id
       WHERE w.updated_at>now()-interval '30 minutes' AND g.status='live'
-        AND g.scanned_at>now()-interval '30 minutes' ORDER BY w.updated_at DESC`);
+        AND g.scanned_at>now()-interval '30 minutes'
+        AND g.sport_family ~* '^(basketball|hockey|soccer|football)_'
+        ORDER BY w.updated_at DESC`);
     let discovered=null,discoveryError=null,discoveryApplied=false;
     const discoveryJob=withApiPriority('background',()=>milestones())
       .then(found=>{discovered=found}).catch(error=>{discoveryError=error});
