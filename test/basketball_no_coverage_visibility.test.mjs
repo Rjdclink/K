@@ -32,13 +32,16 @@ function market(league='NBA',line=165,{half=false,team=false}={}){
       (team?'the home team total for ':'')+'the Away vs Home basketball game, then market resolves to Yes.'};
 }
 
-test('NBA, WNBA and mapped international basketball full-game NO require 20-point cushion and under 1:30',()=>{
+test('NBA 26, WNBA 25, and mapped international 20-point full-game NO cushions with sport-specific clocks',()=>{
   for(const league of ['NBA','WNBA','FIBA','NBL']){
-    const g=fixture(league),contract=market(league,160);
-    assert.equal(collegeBasketballTotalNo(g.state,contract)?.line,160,league+' exact 20-point gap');
-    assert.equal(collegeBasketballTotalNo(g.state,market(league,159.5)),null,league+' rejects 19.5-point gap');
-    assert.equal(collegeBasketballTotalNo(fixture(league,'1:30').state,contract),null);
-    assert.equal(collegeBasketballTotalNo(fixture(league,'1:29').state,contract)?.period,'full_game');
+    const cushion=league==='NBA'?26:league==='WNBA'?25:20;
+    const entry=['NBA','WNBA'].includes(league)?'2:59':'1:29';
+    const boundary=['NBA','WNBA'].includes(league)?'3:00':'1:30';
+    const g=fixture(league),contract=market(league,140+cushion);
+    assert.equal(collegeBasketballTotalNo(g.state,contract)?.line,140+cushion,league+' exact cushion');
+    assert.equal(collegeBasketballTotalNo(g.state,market(league,140+cushion-.5)),null,league+' rejects insufficient cushion');
+    assert.equal(collegeBasketballTotalNo(fixture(league,boundary).state,contract),null);
+    assert.equal(collegeBasketballTotalNo(fixture(league,entry).state,contract)?.period,'full_game');
     assert.equal(collegeBasketballTotalNo(fixture(league,'0:00').state,contract),null);
     assert.ok(collegeBasketballTotalNo(fixture(league,'4:59').state,contract,{beforeWindow:true}));
     assert.equal(collegeBasketballTotalNo(fixture(league,'5:00').state,contract,{beforeWindow:true}),null);
@@ -71,18 +74,18 @@ test('NBA, WNBA and mapped international NO independently verify exact ESPN fixt
         {homeAway:'away',score:'70',team:{displayName:'Away',abbreviation:'AWY'}}]
     }]}]};
     const urls=[];
-    const evidence=await verifyIndependentCollegeTotalNo(g.state,g.milestone,market(league),{fetcher:async url=>{
+    const evidence=await verifyIndependentCollegeTotalNo(g.state,g.milestone,market(league,league==='NBA'?166:league==='WNBA'?165:160),{fetcher:async url=>{
       urls.push(url);return {ok:true,json:async()=>board};
     }});
     assert.equal(evidence?.source,'ESPN');
     assert.ok(urls.some(url=>url.includes('/'+feed+'/scoreboard')));
     const changed=structuredClone(board);changed.events[0].competitions[0].competitors[0].score='71';
-    assert.equal(independentCollegeTotalNoReading(changed,g.state,g.milestone,market(league)),false);
+    assert.equal(independentCollegeTotalNoReading(changed,g.state,g.milestone,market(league,league==='NBA'?166:league==='WNBA'?165:160)),false);
   }
 });
 
 test('multiple qualifying NO lines receive independent tracked windows and dashboard statuses',async()=>{
-  const base=fixture('NBA','2:00'),later=fixture('NBA','1:29'),contracts=[market('NBA',160),market('NBA',165)];
+  const base=fixture('NBA','4:00'),later=fixture('NBA','2:59'),contracts=[market('NBA',166),market('NBA',167)];
   const events=new Map([[contracts[0].event_ticker,{category:'Sports',event_ticker:contracts[0].event_ticker,markets:contracts}]]);
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
   const code=source.slice(source.indexOf('async function scanCollegeTotalNos('),source.indexOf('async function scan(cachedMilestones'));
@@ -103,7 +106,7 @@ test('multiple qualifying NO lines receive independent tracked windows and dashb
       return {rows:[],rowCount:1};
     }},
     liveMilestone:async()=>({milestone_id:base.milestone.id,_observed_at:new Date().toISOString(),
-      details:{status:'live',home_points:70,away_points:70,period:4,clock:'1:29',last_updated_ts:Date.now()/1000,
+      details:{status:'live',home_points:70,away_points:70,period:4,clock:'2:59',last_updated_ts:Date.now()/1000,
         home_team_name:'Home',away_team_name:'Away'}}),gameState,
     kalshi:async path=>{
       if(path.startsWith('/markets/')&&path.endsWith('/orderbook'))return {orderbook_fp:{yes_dollars:[]}};
@@ -183,12 +186,12 @@ test('dashboard serializes actual NO signals alongside existing strategies in pe
 });
 
 test('all basketball NO leagues share one 5% fee-inclusive pool without affecting football',async()=>{
-  const f=fixture('NBA','0:29'),m=market('NBA',165);
+  const f=fixture('NBA','0:29'),m=market('NBA',166);
   const held={ticker:'KXNCAAMBTOTAL-EXISTING',position_fp:-1,market_exposure_dollars:'4.00',fees_paid_dollars:'0.50'};
   const src=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
   const code=src.slice(src.indexOf('async function scanCollegeTotalNos('),src.indexOf('async function scan(cachedMilestones'));
   const window={market_ticker:m.ticker,game_id:f.state.id,contract_key:overContractKey(f.state,m),
-    period:4,first_clock:120,first_evidence:tagNoPreflight({source:'ESPN',eventId:'espn-matched-game'}),first_at:new Date(Date.now()-61000)};
+    period:4,first_clock:240,first_evidence:tagNoPreflight({source:'ESPN',eventId:'espn-matched-game'}),first_at:new Date(Date.now()-61000)};
   let allocated=null,budget=null,orders=0,patterns=null;
   const ctx=vm.createContext({noFinalCheckpoint,noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async()=>{},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),linkedEventTickers:()=>[m.event_ticker],
@@ -201,7 +204,7 @@ test('all basketball NO leagues share one 5% fee-inclusive pool without affectin
       return {rows:[],rowCount:1};
     }},
     liveMilestone:async()=>({milestone_id:f.milestone.id,_observed_at:new Date().toISOString(),
-      details:{status:'live',home_points:70,away_points:70,period:4,clock:'1:29',last_updated_ts:Date.now()/1000,
+      details:{status:'live',home_points:70,away_points:70,period:4,clock:'2:59',last_updated_ts:Date.now()/1000,
         home_team_name:'Home',away_team_name:'Away'}}),
     gameState,bestNoAsk,noDepthAtAsk,minimumCount:()=>1,allOpenPositions:async()=>({market_positions:[held]}),
     kalshi:async(path,opts)=>{
