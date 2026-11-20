@@ -13,7 +13,7 @@ export const scorePairMatches=(reading,game)=>Boolean(
   reading.home===game.home&&reading.away===game.away);
 
 const daysFor=start=>[start,start-86400000,start+86400000]
-  .map(ms=>new Date(ms).toISOString().slice(0,10).replaceAll('-'));
+  .map(ms=>new Date(ms).toISOString().slice(0,10).replaceAll('-',''));
 const pull=async(url,fetcher)=>{
   const response=await fetcher(url,{cache:'no-store',headers:{accept:'application/json'},signal:AbortSignal.timeout(6000)});
   if(!response.ok)throw Error('Scoreboard unavailable');

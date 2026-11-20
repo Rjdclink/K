@@ -2724,7 +2724,7 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null){
           const marked=tagNoPreflight(firstProof);
           if(!marked||!qualifies(game,c.market,{beforeWindow:true})){
             report(c,firstProof===false?'Independent matched fixture score disagrees with Kalshi':
-              'Independent matchup/score unavailable after ESPN retry and FOX fallback');
+              'No matching fixture and score verified by ESPN (including retry) or FOX');
             continue;
           }
           await pool.query(
@@ -2805,7 +2805,7 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null){
       if(!proof||basketball&&(proof.source!=='ESPN'||
         !window?.first_evidence?.eventId||proof.eventId!==window.first_evidence.eventId)||
         !qualifies(fresh,current)||externalCheckedAt-fresh.observedAt>10000){
-        report(c,'Entry blocked: fresh independent score/clock confirmation unavailable',ask);
+        report(c,'Entry blocked: final independent fixture and score not verified',ask);
         continue;
       }
       report(c,'Independent external score/clock check passed immediately before entry',ask);
@@ -2953,7 +2953,7 @@ async function scanHockeyTotalNos(games,events,signalSink=null){
         const signal=marked&&hockeyTotalNo(game,c.market,{beforeWindow:true,external:marked});
         if(!signal){
           report(c,proof===false?'Independent NHL scoreboard score disagrees with Kalshi':
-            proof==null?'Independent NHL matchup/score unavailable after ESPN retry and FOX fallback':
+            proof==null?'No matching NHL fixture and score verified by ESPN (including retry) or FOX':
             'Independent NHL matchup/score validation failed');continue;
         }
         await pool.query('INSERT INTO hockey_total_no_windows_v2 '+
@@ -3050,7 +3050,7 @@ async function scanHockeyTotalNos(games,events,signalSink=null){
         hockeyTotalNo(fresh,current,{external:proof});
       if(!signal||externalCheckedAt-fresh.observedAt>10000){
         report(c,proof===false?'Entry blocked: final NHL score disagrees with independent source':
-          'Entry blocked: final independent NHL matchup/score unavailable',null,ask);
+          'Entry blocked: final ESPN/FOX NHL fixture and score not verified',null,ask);
         continue;
       }
       const verificationId=randomUUID();
@@ -3240,7 +3240,7 @@ async function scanEarlyPeriodNos(games,events,signalSink=null,sport='NHL'){
         const signal=marked&&policy.signal(game,c.market,{beforeWindow:true,external:marked});
         if(!signal){
           report(c,proof===false?'Independent source confirms a different game score':
-            proof==null?'Independent matchup/score unavailable after ESPN retry and FOX fallback':
+            proof==null?'No matching fixture and score verified by ESPN (including retry) or FOX':
             'Independent matchup/score could not be validated');continue;
         }
         await pool.query('INSERT INTO '+policy.table+' '+
@@ -3344,7 +3344,7 @@ async function scanEarlyPeriodNos(games,events,signalSink=null,sport='NHL'){
         policy.signal(fresh,current,{external:proof});
       if(!signal||externalCheckedAt-fresh.observedAt>10000){
         report(c,proof===false?'Entry blocked: final independent game score disagreement':
-          'Entry blocked: final independent matchup/score unavailable',null,ask);
+          'Entry blocked: final ESPN/FOX fixture and score not verified',null,ask);
         continue;
       }
       const verificationId=randomUUID();
@@ -3513,7 +3513,7 @@ async function scanSoccerTotalNos(games,events,signalSink=null){
         const signal=marked&&soccerTotalNo(game,c.market,{beforeWindow:true,external:marked});
         if(!signal){
           report(c,proof===false?'Independent matched fixture score disagrees with Kalshi':
-            proof==null?'Independent matchup/score unavailable: ESPN retried once, FOX fallback unavailable':
+            proof==null?'No matching fixture and score verified by ESPN (including retry) or FOX':
             'Independent matchup/score could not be validated');continue;
         }
         await pool.query('INSERT INTO soccer_total_no_windows '+
@@ -3612,7 +3612,7 @@ async function scanSoccerTotalNos(games,events,signalSink=null){
         soccerTotalNo(fresh,current,{external:proof});
       if(!signal||externalCheckedAt-fresh.observedAt>10000){
         report(c,proof===false?'Entry blocked: final independently matched score disagrees with Kalshi':
-          'Entry blocked: final independent matchup/score unavailable from ESPN and FOX',null,ask);
+          'Entry blocked: final ESPN/FOX fixture and score not verified',null,ask);
         continue;
       }
       const verificationId=randomUUID();

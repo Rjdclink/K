@@ -151,7 +151,7 @@ test('a qualifying soccer NO cushion is not mislabeled when external score cover
   assert.equal(blocked.diagnostics.length,1);
   assert.equal(blocked.diagnostics[0].source,'soccer_total_no');
   assert.equal(blocked.diagnostics[0].stage,'independent_score');
-  assert.match(blocked.diagnostics[0].detail,/Independent matchup\/score unavailable/);
+  assert.match(blocked.diagnostics[0].detail,/No matching fixture and score verified by ESPN/);
   assert.doesNotMatch(blocked.diagnostics[0].detail,/cushion/i);
   assert.equal((blocked.dashboard.get(milestone.id)||[])[0].execution,blocked.diagnostics[0].detail);
   const verified=harness();
