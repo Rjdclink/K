@@ -118,6 +118,30 @@ test('basketball NO no longer waits 45 seconds after its initial independent ver
   assert.equal(h.orders,1);
 });
 
+
+test('basketball NO accepts a verified same-game preflight older than five real minutes after a prolonged clock stoppage',async()=>{
+  const h=harness('NCAAB',{ageMs:8*60000});
+  assert.equal(await h.scan('2:00'),0,'initial independent ESPN proof recorded at 2:00');
+  assert.equal(h.proofs,1);
+  assert.equal(h.window?.first_clock,120);
+  assert.equal(await h.scan('1:30'),0,'1:30 remains outside the entry window');
+  assert.equal(await h.scan('1:29'),1,'preflight age alone must not block an eligible same-game trade');
+  assert.equal(h.proofs,2,'initial proof plus fresh independent final proof must both occur');
+  assert.equal(h.orders,1);
+  assert.ok(h.trace.indexOf('orderbook')<h.trace.indexOf('external2'),
+    'final external proof must follow the executable seller quote');
+  assert.ok(h.trace.indexOf('external2')<h.trace.indexOf('reserve'),
+    'final independent evidence must precede the order reservation');
+});
+
+test('basketball NO rejects an invalid future first-proof timestamp',async()=>{
+  const h=harness('NCAAB',{ageMs:-60000});
+  assert.equal(await h.scan('2:00'),0);
+  assert.equal(await h.scan('1:29'),0);
+  assert.equal(h.proofs,1,'future timestamp must not authorize a second verification or order');
+  assert.equal(h.orders,0);
+});
+
 test('basketball NO fails closed when the immediate external lookup disagrees or is unavailable',async()=>{
   const h=harness('NCAAB',{failSecond:true});
   assert.equal(await h.scan('2:00'),0);
