@@ -42,7 +42,8 @@ import { filledOrderGateCount } from './entry_floor.mjs';
 import {thirdQuarterYardageNo,collegeFootballTotalNo,collegeBasketballTotalNo,highestYardageNos,bestNoAsk,noDepthAtAsk} from './no_strategy.mjs';
 import {verifyIndependentCollegeTotalNo} from './college_total_no.mjs';
 import {tagNoPreflight,validNoPreflight,lateNoPreflightProgress} from './late_no_preflight.mjs';
-import {pairedExternalMatch} from './independent_match_score.mjs';
+import {pairedExternalMatch,configureIndependentFixtureCache} from './independent_match_score.mjs';
+import {createFixtureEventCache} from './fixture_event_cache.mjs';
 import {hockeyNoMarketSpec,hockeyTotalNo,verifyIndependentHockeyTotalNo} from './hockey_total_no.mjs';
 import {hockeyEarlyNoMarketSpec,hockeyEarlyPeriodNo,verifyIndependentEarlyHockeyNo} from './hockey_early_period_no.mjs';
 import {soccerFirstHalfNoSpec,soccerFirstHalfNo,verifyIndependentSoccerFirstHalfNo,soccerFirstHalfSeconds} from './soccer_first_half_no.mjs';
@@ -56,6 +57,8 @@ import {scanMentionMarkets} from './mentions_scanner.mjs';
 
 const API='https://external-api.kalshi.com/trade-api/v2';
 const pool = new pg.Pool({connectionString:process.env.DATABASE_URL, max:4, idleTimeoutMillis:15000});
+// One provider event ID per confirmed Kalshi fixture; always recheck live scores.
+configureIndependentFixtureCache(createFixtureEventCache((...args)=>pool.query(...args)));
 pool.on('error', e=>console.error('Idle database connection:',e.message));
 const comboPlanner=createComboPlanner(pool);
 let exitLedgerReady;
