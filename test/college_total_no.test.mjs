@@ -127,7 +127,7 @@ test('college first-half retains 12 points and under 1:30; men full-game uses 26
       const cutoff=half?62:league==='NCAAMB'?76:70;
       assert.ok(collegeBasketballTotalNo(stateAt(period,'1:29'),contract(half,cutoff)),'exact minimum cushion qualifies');
       assert.equal(collegeBasketballTotalNo(stateAt(period,'1:29'),contract(half,cutoff-.5)),null,'below required gap blocks entry');
-      assert.ok(collegeBasketballTotalNo(stateAt(period,'1:29'),contract(half,75.5)),'a larger cushion qualifies');
+      assert.ok(collegeBasketballTotalNo(stateAt(period,'1:29'),contract(half,!half&&league==='NCAAMB'?77.5:75.5)),'a larger cushion qualifies');
       assert.equal(collegeBasketballTotalNo(stateAt(period,half||league==='NCAAWB'?'1:30':'3:00'),contract(half,half?70:league==='NCAAMB'?76.5:70.5)),null);
       assert.ok(collegeBasketballTotalNo(stateAt(period,'4:59'),contract(half,half?70:league==='NCAAMB'?76.5:70.5),{beforeWindow:true}));
       assert.equal(collegeBasketballTotalNo(stateAt(period,'5:00'),contract(half,70),{beforeWindow:true}),null);
