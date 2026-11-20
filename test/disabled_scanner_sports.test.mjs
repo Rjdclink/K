@@ -78,7 +78,8 @@ test('live dashboard and clock refresh exclude removed sports while historical f
     src.indexOf('async function refreshOpenClocks(){'));
   assert.match(dashboard,/sport_family ~\* '\^\(basketball\|hockey\|soccer\|football\)_'/);
   assert.match(clocks,/sport_family ~\* '\^\(basketball\|hockey\|soccer\|football\)_'/);
-  assert.match(scan,/ms=scanMilestones\(ms,/);
+  assert.match(scan,/ms=scanMilestones\(refreshed\.milestones,/);
+  assert.match(scan,/refreshStaleMilestones\(ms\)/);
   assert.match(src,/function checkCurrentHeldCombinations[\s\S]*?isScannerExcludedSport\(/);
   assert.match(src,/async function exitComebacks[\s\S]*?isScannerExcludedSport\(/);
   for(const [from,to,label] of [
