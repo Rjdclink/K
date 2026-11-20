@@ -74,7 +74,8 @@ export function hockeyTotalNo(game,market,{beforeWindow=false,external=null}={})
     if(external&&(!external.period3||
       external.period3.home!==parts[2].home||external.period3.away!==parts[2].away))return null;
   }
-  if(spec.line-total<2.5)return null;
+  const minimumCushion=spec.period==='third_period'?1.5:2.5;
+  if(spec.line-total<minimumCushion)return null;
   return {...spec,total,reason:
     'NHL hockey total NO '+(spec.period==='third_period'?'third period':'full game')+
     ' over '+spec.line+'; '+total+' goals in selected period, '+game.remainingSeconds+'s left in P3'};
