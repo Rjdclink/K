@@ -1,3 +1,4 @@
+import {pairedExternalMatch} from '../src/independent_match_score.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -89,7 +90,7 @@ function harness(sport,period=1,{firstUnavail=false,finalUnavail=false,wrongFina
  };
  const table=sport==='NHL'?'nhl_early_period_no_windows':sport==='Soccer'?
    'soccer_first_half_no_windows':'basketball_early_quarter_no_windows';
- const context=vm.createContext({tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
+ const context=vm.createContext({recordDecision:async()=>{},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
    Date,JSON,Math,Number,Promise,console,
    live:()=>true,liveBatch:async()=>new Map(),linkedEventTickers:()=>[f.market.event_ticker],
    hockeyEarlyNoMarketSpec,hockeyEarlyPeriodNo,

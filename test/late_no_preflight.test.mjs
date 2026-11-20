@@ -34,8 +34,9 @@ test('obsolete policy windows, future times, wrong game/contract/period and ambi
   {...base,period:1}, {...base,first_clock:541},
   {...base,first_clock:0}, {...base,first_at:new Date(now+1)},
   {...base,first_evidence:{...base.first_evidence,eventId:''}},
-  {...base,first_evidence:{...base.first_evidence,source:'FOX Sports'}},
+  {...base,first_evidence:{...base.first_evidence,source:'Untrusted'}},
  ])assert.equal(validNoPreflight(window,{gameId:'g',contractKey:'contract',period:2,maxFirstSeconds:540,now}),false);
  assert.equal(tagNoPreflight({source:'ESPN',eventId:'espn-1'}).preflight_policy,NO_PREFLIGHT_POLICY);
  assert.equal(tagNoPreflight({source:'ESPN'}),null);
+ assert.equal(tagNoPreflight({source:'FOX Sports',eventId:'fox-88'})?.source,'FOX Sports');
 });

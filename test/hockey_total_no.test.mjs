@@ -101,14 +101,14 @@ test('NHL NO rejects mismatched titles, unsupported series, team goals and unrel
 test('third-period NO fails closed without period goals unless ESPN exactly verifies them',()=>{
   const state=game('1:29',3,2,1,false),p3=market('third_period',2.5);
   assert.equal(hockeyTotalNo(state,p3),null);
-  const proof={source:'ESPN',home:2,away:1,period:3,seconds:89,period3:{home:0,away:0},
+  const proof={source:'ESPN',eventId:'espn-nhl',home:2,away:1,period:3,seconds:89,period3:{home:0,away:0},
     periods:[{number:1,home:1,away:1},{number:2,home:1,away:0},{number:3,home:0,away:0}]};
   assert.equal(hockeyTotalNo(state,p3,{external:proof})?.total,0);
   assert.equal(hockeyTotalNo(state,p3,{external:{...proof,home:3}}),null,'external home goals must match live total');
   assert.equal(hockeyTotalNo(state,p3,{external:{...proof,period3:{home:1,away:0}}}),null,'third-period goals cannot contradict game total');
 });
 
-test('independent ESPN score-and-clock proof validates third-period linescores and exact totals',async()=>{
+test('independent ESPN proof validates the correct NHL score and period breakdown without provider clock equality',async()=>{
   const state=game('1:29',3,2,1,false),p3=market('third_period',2.5);
   const board=scoreboard();
   const direct=independentHockeyTotalNoReading(board,state,milestone,p3);
@@ -122,7 +122,7 @@ test('independent ESPN score-and-clock proof validates third-period linescores a
   const mismatched=structuredClone(board);mismatched.events[0].competitions[0].competitors[0].score='3';
   assert.equal(independentHockeyTotalNoReading(mismatched,state,milestone,p3),null);
   const late=scoreboard('1:02');
-  assert.equal(independentHockeyTotalNoReading(late,state,milestone,p3),null);
+  assert.equal(independentHockeyTotalNoReading(late,state,milestone,p3)?.home,2,'clock discrepancies do not veto score confirmation');
   const noPeriod=structuredClone(board);noPeriod.events[0].competitions[0].competitors[0].linescores=[];
   assert.equal(independentHockeyTotalNoReading(noPeriod,state,milestone,p3),null);
 });

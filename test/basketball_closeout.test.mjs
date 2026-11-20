@@ -69,14 +69,17 @@ test('proof rejects missing ask, changed contract, stale score, expired external
   assert.throws(()=>assertBasketballVerification({...game,homeUnits:95,home:95},market,now));
   assert.throws(()=>assertBasketballVerification(game,{...market,close_time:'changed'},now));
 });
-test('mandatory external basketball check needs a compatible final-period clock and a sufficient selected-team lead',()=>{
+test('mandatory external basketball check verifies team scores independently of provider clock',()=>{
   const {game,market}=fixture();
   const reading={home:97,away:90,live:true,clockOk:true,period:4,remainingSeconds:100};
   assert.equal(scoreAgreement(game,[[reading]],market),true);
   assert.equal(scoreAgreement(game,[[{...reading,home:99}]],market),true);
   assert.equal(scoreAgreement(game,[[{...reading,away:91}]],market),false);
-  for(const patch of [{period:3},{remainingSeconds:105},{remainingSeconds:80},{remainingSeconds:NaN}])
-    assert.equal(scoreAgreement(game,[[{...reading,...patch}]],market),false);
+  assert.equal(scoreAgreement(game,[[{...reading,period:3}]],market),false,
+    'the independently identified period is still needed for the winner market');
+  for(const patch of [{remainingSeconds:105},{remainingSeconds:80},{remainingSeconds:NaN}])
+    assert.equal(scoreAgreement(game,[[{...reading,...patch}]],market),true,
+      'provider clock never decides trade entry');
 });
 test('ESPN verifies the new rule end to end, including a stronger score and unavailable/ambiguous fixtures',async()=>{
   const {game,market,milestone}=fixture('NCAAB',7);
@@ -94,12 +97,14 @@ test('regular scan, fast lead watcher, funded recheck, initial order and retry s
     'verifiedEntryQuote(checked,c.milestone,c.market,scoreboardCache,c.signal.strategy)'])assert.ok(source.includes(call));
   assert.equal((source.match(/assertFreshLead\(game,market\)\},body/g)||[]).length,2);
 });
-test('official NBA closeout verification requires a valid current final-period clock',()=>{
+test('official NBA closeout scores verify without requiring the provider clock to match Kalshi',()=>{
   const {game,market,milestone}=fixture(),id='0022600001';
   const official={gameId:id,gameTimeUTC:start,gameStatus:2,period:4,gameClock:'PT01M40.00S',
     homeTeam:{teamCity:'Boston',teamName:'Celtics',score:99},awayTeam:{teamCity:'Brooklyn',teamName:'Nets',score:90}};
   assert.equal(nbaAgreement({game:official},game,milestone,market,id),true);
-  for(const patch of [{period:3},{gameClock:'PT01M45.00S'},{gameClock:'0:99'},{gameClock:null},
-    {awayTeam:{...official.awayTeam,score:94}}])
+  for(const patch of [{gameClock:'PT01M45.00S'},{gameClock:'0:99'},{gameClock:null}])
+    assert.equal(nbaAgreement({game:{...official,...patch}},game,milestone,market,id),true,
+      'provider clock is informational only');
+  for(const patch of [{period:3},{awayTeam:{...official.awayTeam,score:94}}])
     assert.equal(nbaAgreement({game:{...official,...patch}},game,milestone,market,id),false);
 });

@@ -1,11 +1,11 @@
 // The nominal first-check clock begins eligibility; it is not an expiry.
 // Paused game clocks do not delay a second proof: separation is measured only
 // using real elapsed time from successful independent verification.
-export const NO_PREFLIGHT_POLICY='late-elapsed-time-60-v2';
+export const NO_PREFLIGHT_POLICY='late-elapsed-time-60-v3';
 export const NO_PREFLIGHT_MIN_SECONDS=60;
 
 export function tagNoPreflight(reading){
-  if(reading?.source!=='ESPN'||!reading.eventId)return null;
+  if(!['ESPN','FOX Sports'].includes(reading?.source)||!reading.eventId)return null;
   return {...reading,preflight_policy:NO_PREFLIGHT_POLICY};
 }
 
@@ -16,7 +16,7 @@ export function validNoPreflight(window,{gameId,contractKey,period,maxFirstSecon
     proof=window.first_evidence,age=now-firstAt;
   return Number.isFinite(first)&&first>0&&first<=maxFirstSeconds&&
     Number.isFinite(firstAt)&&age>=0&&age<=maxAgeMs&&
-    proof?.preflight_policy===NO_PREFLIGHT_POLICY&&proof.source==='ESPN'&&
+    proof?.preflight_policy===NO_PREFLIGHT_POLICY&&['ESPN','FOX Sports'].includes(proof.source)&&
     typeof proof.eventId==='string'&&proof.eventId.length>0;
 }
 

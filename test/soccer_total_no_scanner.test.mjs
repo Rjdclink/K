@@ -1,3 +1,4 @@
+import {pairedExternalMatch} from '../src/independent_match_score.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -30,10 +31,10 @@ function harness({canVerify=true,hasSeller=true,initialAgeMs=61000,existingExpos
   const a=src.indexOf('async function scanSoccerTotalNos('),b=src.indexOf('async function scan(cachedMilestones',a);
   assert.ok(a>0&&b>a,'soccer NO scanner must be confined to a dedicated function');
   const code=src.slice(a,b);
-  const windows=new Map(),dashboard=new Map(),trace=[];
+  const windows=new Map(),dashboard=new Map(),trace=[],diagnostics=[];
   let verified=0,orders=0,lastBudget=null,lastFraction=null,lastQuantity=null;
   const held={ticker:'KXEPLTOTAL-OLDER',position_fp:-1,market_exposure_dollars:'4.00',fees_paid_dollars:'0.50'};
-  const context=vm.createContext({tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
+  const context=vm.createContext({recordDecision:async decision=>{diagnostics.push(decision)},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
     Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),
     linkedEventTickers:()=>[market.event_ticker],
@@ -107,11 +108,28 @@ function harness({canVerify=true,hasSeller=true,initialAgeMs=61000,existingExpos
   return {
     scan:seconds=>context.scanSoccerTotalNos([{milestone,state:state(seconds)}],events,dashboard),
     get windows(){return windows;},get trace(){return trace;},
-    get dashboard(){return dashboard;},get verifications(){return verified;},
+    get dashboard(){return dashboard;},get diagnostics(){return diagnostics;},get verifications(){return verified;},
     get orders(){return orders;},get lastBudget(){return lastBudget;},
     get lastFraction(){return lastFraction;},get lastQuantity(){return lastQuantity;}
   };
 }
+
+test('a qualifying soccer NO cushion is not mislabeled when external score coverage is unavailable',async()=>{
+  const blocked=harness({canVerify:false});
+  await blocked.scan(540);
+  assert.equal(blocked.orders,0);
+  assert.equal(blocked.diagnostics.length,1);
+  assert.equal(blocked.diagnostics[0].source,'soccer_total_no');
+  assert.equal(blocked.diagnostics[0].stage,'independent_score');
+  assert.match(blocked.diagnostics[0].detail,/Independent matchup\/score unavailable/);
+  assert.doesNotMatch(blocked.diagnostics[0].detail,/cushion/i);
+  assert.equal((blocked.dashboard.get(milestone.id)||[])[0].execution,blocked.diagnostics[0].detail);
+  const verified=harness();
+  await verified.scan(540);
+  assert.equal(verified.diagnostics.length,1);
+  assert.match(verified.diagnostics[0].detail,/score check recorded/);
+  assert.equal(verified.orders,0,'the first check never authorizes an immediate order');
+});
 
 test('soccer NO checks once near 9:00 and once just before entry strictly under 8:00',async()=>{
   const h=harness();

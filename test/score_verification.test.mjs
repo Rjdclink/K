@@ -154,7 +154,7 @@ test('independent scoreboards must match the exact live fixture and both team sc
   assert.equal(scoreAgreement(game,[espnMatches(espn(24,20,{date:new Date(Date.now()-86400000).toISOString()}),game,m),[]]),false,'wrong fixture time');
   assert.equal(scoreAgreement(game,[espnMatches(espn(24,20,{status:{type:{state:'pre'},period:1,displayClock:'05:00'}}),game,m),[]]),false,'scheduled score');
   assert.equal(scoreAgreement(game,[[],foxMatches(fox(24,20,{eventStatus:3}),game,m)]),false,'final score cannot confirm a live game');
-  assert.equal(scoreAgreement(game,[espnMatches(espn(24,20,{status:{type:{state:'in'},period:1,displayClock:'11:00'}}),game,m),[]]),false,'stale clock');
+  assert.equal(scoreAgreement(game,[espnMatches(espn(24,20,{status:{type:{state:'in'},period:1,displayClock:'11:00'}}),game,m),[]]),true,'provider clock differences do not veto matching team scores');
   assert.equal(scoreAgreement(game,[espnMatches({events:[...espn().events,...espn().events]},game,m),[]]),false,'ambiguous duplicate');
   assert.equal(scoreAgreement(game,[[],foxMatches(fox(24,20,{entityLink:{layout:{tokens:{homeUri:'team-bkn',awayUri:'team-bos'}}}}),game,m)]),false,'FOX row orientation cannot be guessed');
 });
@@ -268,4 +268,3 @@ test('women college basketball uses its own ESPN scoreboard for independent veri
   assert.equal(await verifyIndependentOver(state,milestone,{fetcher:async url=>{urls.push(url);return {ok:true,json:async()=>espn()}}}),true);
   assert.ok(urls.some(url=>url.includes('womens-college-basketball')));
 });
-
