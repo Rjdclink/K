@@ -101,7 +101,7 @@ test('the independent CFB check verifies the correct team scores without requiri
   assert.equal(independentCollegeTotalNoReading({...scoreboard,events:[{...scoreboard.events[0],competitions:[{...scoreboard.events[0].competitions[0],competitors:[{...scoreboard.events[0].competitions[0].competitors[0],score:'10'},scoreboard.events[0].competitions[0].competitors[1]]}]}]},game,milestone,full),false);
   assert.equal(independentCollegeTotalNoReading({...scoreboard,events:[{...scoreboard.events[0],competitions:[{...scoreboard.events[0].competitions[0],status:{period:4,displayClock:'1:30',type:{state:'in'}}}]}]},game,milestone,full)?.home,6);
 });
-test('college first-half retains 12 points and under 1:30; men full-game uses 26 and women full-game 20',()=>{
+test('college first-half retains 12 and under 1:30; both college full-game use 40 and under 7:00',()=>{
   for(const [league,prefix,halfPeriod,gamePeriod] of [
     ['NCAAMB','KXNCAAMB',1,2],['NCAAWB','KXNCAAWB',2,4]]){
     const fixture={...milestone,type:'basketball_game',title:'Away at Home',details:{league,home_team_id:'home',away_team_id:'away',
@@ -112,7 +112,7 @@ test('college first-half retains 12 points and under 1:30; men full-game uses 26
     const contract=(half,line=70.5)=>({ticker:`${prefix}${half?'1H':''}TOTAL-TEST-${line}`,
       event_ticker:`${prefix}${half?'1H':''}TOTAL-TEST`,status:'active',title:`Over ${line} points`,
       floor_strike:line,strike_type:'greater',rules_primary:`Resolves Yes if over ${line} total points are scored in ${half?'the 1st half of ':''}the Away vs Home college basketball game.`});
-    const half=contract(true),full=contract(false,league==='NCAAMB'?76.5:70.5);
+    const half=contract(true),full=contract(false,90.5);
     assert.equal(collegeBasketballTotalNo(stateAt(halfPeriod,'0:29'),half)?.period,'first_half');
     assert.equal(collegeBasketballTotalNo(stateAt(gamePeriod,'0:29'),full)?.period,'full_game');
     assert.ok(collegeBasketballTotalNo(stateAt(gamePeriod,'0:29'),{
@@ -124,13 +124,13 @@ test('college first-half retains 12 points and under 1:30; men full-game uses 26
     assert.ok(collegeBasketballTotalNo(stateAt(halfPeriod,'4:30'),half,{beforeWindow:true}));
     for(const half of [true,false]){
       const period=half?halfPeriod:gamePeriod;
-      const cutoff=half?62:league==='NCAAMB'?76:70;
+      const cutoff=half?62:90;
       assert.ok(collegeBasketballTotalNo(stateAt(period,'1:29'),contract(half,cutoff)),'exact minimum cushion qualifies');
       assert.equal(collegeBasketballTotalNo(stateAt(period,'1:29'),contract(half,cutoff-.5)),null,'below required gap blocks entry');
-      assert.ok(collegeBasketballTotalNo(stateAt(period,'1:29'),contract(half,!half&&league==='NCAAMB'?77.5:75.5)),'a larger cushion qualifies');
-      assert.equal(collegeBasketballTotalNo(stateAt(period,half||league==='NCAAWB'?'1:30':'3:00'),contract(half,half?70:league==='NCAAMB'?76.5:70.5)),null);
-      assert.ok(collegeBasketballTotalNo(stateAt(period,'4:59'),contract(half,half?70:league==='NCAAMB'?76.5:70.5),{beforeWindow:true}));
-      assert.equal(collegeBasketballTotalNo(stateAt(period,'5:00'),contract(half,70),{beforeWindow:true}),null);
+      assert.ok(collegeBasketballTotalNo(stateAt(period,'1:29'),contract(half,half?75.5:95.5)),'a larger cushion qualifies');
+      assert.equal(collegeBasketballTotalNo(stateAt(period,half?'1:30':'7:00'),contract(half,half?70:90.5)),null);
+      assert.ok(collegeBasketballTotalNo(stateAt(period,half?'4:59':'8:00'),contract(half,half?70:90.5),{beforeWindow:true}));
+      assert.equal(collegeBasketballTotalNo(stateAt(period,half?'5:00':'8:01'),contract(half,half?70:90.5),{beforeWindow:true}),null);
     }
     assert.equal(collegeBasketballTotalNo(stateAt(halfPeriod,'0:29'),full),null);
     assert.equal(collegeBasketballTotalNo(stateAt(gamePeriod,'0:29'),half),null);

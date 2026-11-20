@@ -41,7 +41,7 @@ for(const config of cases){
   assert.equal(collegeBasketballTotalNo(state('0:00'),market(87.5)),null);
  });
 }
-test('men college full-game NO requires a separate 26-point rule with an under-3:00 entry',()=>{
+test('men college full-game NO requires a separate 40-point rule with an under-7:00 entry',()=>{
  const milestone={id:'college-full',title:'Away at Home',type:'basketball_game',
    details:{league:'NCAAB',main_game_event_ticker:'KXNCAAMBGAME-TEST'}};
  const market=line=>({ticker:'KXNCAAMBTOTAL-TEST-'+line,
@@ -51,7 +51,7 @@ test('men college full-game NO requires a separate 26-point rule with an under-3
    rules_primary:'If over '+line+' total points are scored in the Away vs Home college basketball game, then the market resolves to Yes.'});
  const state=gameState(milestone,{milestone_id:milestone.id,_observed_at:new Date().toISOString(),
   details:{status:'inprogress',period:2,clock:'1:29',home_score:70,away_score:70,last_updated_ts:Date.now()/1000}});
- assert.equal(collegeBasketballTotalNo(state,market(166))?.total,140);
- assert.equal(collegeBasketballTotalNo(state,market(165.5)),null);
+ assert.equal(collegeBasketballTotalNo(state,market(180))?.total,140);
+ assert.equal(collegeBasketballTotalNo(state,market(179.5)),null);
  assert.equal(collegeBasketballTotalNo(state,market(152)),null);
 });
