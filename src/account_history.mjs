@@ -49,7 +49,7 @@ export function summarizeAccountMarkets(rawFills,settlements=[]){
  const groups=new Map(),unresolved=new Set();
  const seen=new Set();
  for(const row of rawFills){
-  const raw=row?.raw||row,fill=normalizeAccountFill(raw);
+  const raw=row?.raw||row,fill=row?.fillId?row:normalizeAccountFill(raw);
   const ticker=String(raw?.ticker||raw?.market_ticker||row?.ticker||'');
   if(!fill){if(ticker)unresolved.add(ticker);continue;}
   if(seen.has(fill.fillId))continue;seen.add(fill.fillId);
