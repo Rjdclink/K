@@ -1,13 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
+import {tagNoPreflight,validNoPreflight,lateNoPreflightProgress} from '../src/late_no_preflight.mjs';
 import {readFileSync} from 'node:fs';
 import {gameState} from '../src/strategy.mjs';
 import {collegeBasketballTotalNo,collegeFootballTotalNo,bestNoAsk,noDepthAtAsk} from '../src/no_strategy.mjs';
 import {sameSportsContract,overContractKey} from '../src/over_verification.mjs';
 import {rememberIndependentEntry} from '../src/entry_verification.mjs';
 
-function harness(sport,{ageMs=46000,failSecond=false,legacyFirstClock=null}={}){
+function harness(sport,{ageMs=61000,failSecond=false,legacyFirstClock=null,finalEventId='jit-espn-game'}={}){
   const basketball=sport==='NCAAB',league=basketball?'NCAAMB':sport;
   const prefix=basketball?'KXNCAAMB':sport==='NFL'?'KXNFL':'KXNCAAF';
   const period=basketball?2:4,home=basketball?65:20,away=basketball?65:17;
@@ -28,20 +29,20 @@ function harness(sport,{ageMs=46000,failSecond=false,legacyFirstClock=null}={}){
   let window=legacyFirstClock===null?null:{
     market_ticker:market.ticker,game_id:milestone.id,
     contract_key:overContractKey(state('2:00'),market),period,
-    first_clock:legacyFirstClock,first_evidence:{source:'ESPN',seconds:legacyFirstClock},
+    first_clock:legacyFirstClock,first_evidence:{source:'ESPN',eventId:'jit-espn-game',seconds:legacyFirstClock},
     first_at:new Date(Date.now()-ageMs)
   },proofs=0,orders=0,blocked=false;
   const trace=[];
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
   const code=source.slice(source.indexOf('async function scanCollegeTotalNos('),source.indexOf('async function scan(cachedMilestones'));
-  const context=vm.createContext({
+  const context=vm.createContext({tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
     Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),
     linkedEventTickers:()=>[market.event_ticker],
     collegeFootballTotalNo,collegeBasketballTotalNo,overContractKey,sameSportsContract,
     verifyIndependentCollegeTotalNo:async()=>{
       proofs++;trace.push('external'+proofs);
-      return blocked||failSecond&&proofs===2?null:{source:'ESPN',seconds:basketball?89:299,period};
+      return blocked||failSecond&&proofs===2?null:{source:'ESPN',eventId:proofs>=2?finalEventId:'jit-espn-game',seconds:basketball?89:299,period};
     },
     pool:{query:async(sql,args=[])=>{
       if(sql.startsWith('SELECT * FROM college_total_no_windows'))return {rows:window?[window]:[]};
@@ -110,12 +111,17 @@ test('basketball full-game first ESPN check starts at 2:00 and fresh second proo
   assert.ok(h.trace.indexOf('external2')<h.trace.indexOf('reserve'),'second verification must occur immediately BEFORE reservation');
 });
 
-test('basketball NO no longer waits 45 seconds after its initial independent verification',async()=>{
-  const h=harness('NCAAB',{ageMs:1000});
-  assert.equal(await h.scan('2:00'),0);
-  assert.equal(await h.scan('1:29'),1);
-  assert.equal(h.proofs,2,'second independent external proof is required immediately at entry');
-  assert.equal(h.orders,1);
+test('basketball NO requires at least 60 seconds elapsed after its first independent verification',async()=>{
+  const early=harness('NCAAB',{ageMs:1000});
+  assert.equal(await early.scan('2:00'),0);
+  assert.equal(await early.scan('1:29'),0,'one second is not enough, regardless of match clock');
+  assert.equal(early.proofs,1);
+  assert.equal(early.orders,0);
+  const ready=harness('NCAAB',{ageMs:61000});
+  assert.equal(await ready.scan('2:00'),0);
+  assert.equal(await ready.scan('1:29'),1);
+  assert.equal(ready.proofs,2);
+  assert.equal(ready.orders,1);
 });
 
 
@@ -134,11 +140,19 @@ test('basketball NO accepts a verified same-game preflight older than five real 
     'final independent evidence must precede the order reservation');
 });
 
+test('basketball NO must not combine two different ESPN game IDs even if the scores match',async()=>{
+  const h=harness('NCAAB',{finalEventId:'another-espn-event'});
+  assert.equal(await h.scan('2:00'),0);
+  assert.equal(await h.scan('1:29'),0);
+  assert.equal(h.proofs,2);
+  assert.equal(h.orders,0);
+});
+
 test('basketball NO rejects an invalid future first-proof timestamp',async()=>{
   const h=harness('NCAAB',{ageMs:-60000});
   assert.equal(await h.scan('2:00'),0);
   assert.equal(await h.scan('1:29'),0);
-  assert.equal(h.proofs,1,'future timestamp must not authorize a second verification or order');
+  assert.equal(h.proofs,2,'invalid future proof forces a new independent first check, never an order');
   assert.equal(h.orders,0);
 });
 

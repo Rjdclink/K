@@ -86,13 +86,16 @@ export function nearEntryPhase(game){
     cfbLeadApproaching(game)||[2,4].includes(period)&&seconds>=0&&seconds<=420:period>=4&&seconds>=0&&seconds<=480;
   if(/basketball/.test(type)){
     const profile=basketballLeadProfile(game);
-    return Boolean(profile)&&seconds>=0&&(
+    return ['NBA','WNBA'].includes(game.sport)&&period>=1&&period<=3&&
+      seconds>0&&seconds<=180||Boolean(profile)&&seconds>=0&&(
       period>=profile.period&&seconds<=profile.tiers[0][1]+90||
       ['NCAAB','NCAAW'].includes(game.sport)&&period===(game.sport==='NCAAB'?1:2)&&seconds<=360);
   }
-  if(/hockey/.test(type))return period>=3&&seconds>=0&&seconds<=465;
-  if(/soccer/.test(type))return period===2&&!game.soccerExtraTime&&
-    Number.isFinite(game.soccerMinute)&&
+  if(/hockey/.test(type))return (period===1||period===2)&&seconds>0&&seconds<=270||
+    period>=3&&seconds>=0&&seconds<=690;
+  if(/soccer/.test(type))return period===1&&!game.soccerExtraTime&&
+    Number.isFinite(game.soccerMinute)&&game.soccerMinute>=40.5&&game.soccerMinute<45||
+    period===2&&!game.soccerExtraTime&&Number.isFinite(game.soccerMinute)&&
     game.soccerMinute<90&&
     (game.soccerMinute>=75||game.soccerMinute>=45&&
       Number.isFinite(game.homeUnits)&&Number.isFinite(game.awayUnits)&&
@@ -157,7 +160,8 @@ export function linkedEventTickers(milestone){
     // These are only discovery candidates. The exchange must return an open
     // event and the contract-specific score check must still succeed.
     const family=String(milestone.type||'');
-    const segments=/basketball/.test(family)?['1Q','2Q','3Q','4Q','1H','2H']:
+    const segments=/soccer/.test(family)?['1H']:
+      /basketball/.test(family)?['1Q','2Q','3Q','4Q','1H','2H']:
       /hockey/.test(family)?['1P','2P','3P']:
       /football/.test(family)?['1Q','2Q','3Q','4Q','1H','2H']:
       /baseball/.test(family)?Array.from({length:9},(_,i)=>`${i+1}INNING`):[];

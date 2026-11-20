@@ -40,9 +40,16 @@ export function variablePlayerOverSpec(game,market,now=Date.now()){
     player.value<=player.line||!Number.isInteger(player.value))return null;
   const n=Math.round(player.line+.5),metric=rule.label;
   const title=String(market.title||''),primary=String(market.rules_primary||'');
-  if(!new RegExp('^'+escapeRx(player.name)+':\\s*'+n+'\\+\\s*'+escapeRx(metric)+'$','i').test(title)||
-    !new RegExp('^If '+escapeRx(player.name)+' records '+n+'\\+ '+escapeRx(metric)+' in the .+ then the market resolves to Yes\\.$','i').test(primary))
-    return null;
+  const verboseTitle=new RegExp('^'+escapeRx(player.name)+':\\s*'+n+'\\+\\s*'+escapeRx(metric)+'$','i').test(title);
+  const verboseRules=new RegExp('^If '+escapeRx(player.name)+' records '+n+'\\+ '+escapeRx(metric)+' in the .+ then the market resolves to Yes\\.$','i').test(primary);
+  // Kalshi's current MLB RBI contracts use '2+ RBIs?' and 'records 2+ RBIs'
+  // rather than spelling out 'runs batted in'. Preserve the exact player,
+  // strike and professional baseball settlement identity in both formats.
+  const rbiTitle=player.metric==='RBI'&&
+    new RegExp('^'+escapeRx(player.name)+':\\s*'+n+'\\+\\s*RBIs\\?$','i').test(title);
+  const rbiRules=player.metric==='RBI'&&
+    new RegExp('^If '+escapeRx(player.name)+' records '+n+'\\+ RBIs in .+ professional baseball game originally scheduled .+ then the market resolves to Yes\\.$','i').test(primary);
+  if(!(verboseTitle&&verboseRules||rbiTitle&&rbiRules))return null;
   return {strategy:'over',family,metric:player.metric,player,feed:rule.feed[game.sport],
     contractKey:sportsContractKey(game,market),fraction:.25,
     reason:player.name+' '+player.metric+' '+player.value+' independently verified after a later play and 3:30 hold'};

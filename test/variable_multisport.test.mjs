@@ -55,6 +55,22 @@ test('MLB RBI uses exact independently credited run total, not the game score',(
  assert.equal(variableProofValid(earlier,later,g,contract,later.requestedAt),true);
 });
 
+test('real Kalshi MLB RBI format accepts only the exact player, RBI strike and settlement rules',()=>{
+ const milestone=m('MLB','baseball_game'),g=game(milestone,{runs_batted_in:2},5);
+ const published={...market('MLB','RBI',2,'runs batted in'),
+  ticker:'KXMLBRBI-26OCT282000MILTB-MILSFRELICK10-2',
+  event_ticker:'KXMLBRBI-26OCT282000MILTB',
+  title:'Pat Player: 2+ RBIs?',yes_sub_title:'Pat Player: 2+',
+  rules_primary:'If Pat Player records 2+ RBIs in Milwaukee vs Tampa Bay professional baseball game originally scheduled for Oct 28, 2026 at 8:00 PM EDT, then the market resolves to Yes.'};
+ assert.equal(variablePlayerOverSpec(g,published)?.player.value,2);
+ for(const invalid of [
+  {title:'Pat Player: 2+ hits?'},{title:'Other Player: 2+ RBIs?'},
+  {floor_strike:2.5},{rules_primary:published.rules_primary.replace('RBIs','home runs')},
+  {rules_primary:published.rules_primary.replace('2+','3+')},
+  {status:'closed'}
+ ])assert.equal(variablePlayerOverSpec(g,{...published,...invalid}),null,JSON.stringify(invalid));
+});
+
 test('unsupported MLB FOX boxscore cannot authorize a fallback purchase',async()=>{
  const milestone=m('MLB','baseball_game'),g=game(milestone,{runs_batted_in:2},5);
  const contract=market('MLB','RBI',2,'runs batted in');

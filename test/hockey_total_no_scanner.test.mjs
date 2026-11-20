@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
+import {tagNoPreflight,validNoPreflight,lateNoPreflightProgress} from '../src/late_no_preflight.mjs';
 import {readFileSync} from 'node:fs';
 import {gameState} from '../src/strategy.mjs';
 import {hockeyNoMarketSpec,hockeyTotalNo,verifyIndependentHockeyTotalNo} from '../src/hockey_total_no.mjs';
@@ -28,7 +29,7 @@ const proof={source:'ESPN',eventId:'espn-game',home:2,away:1,period:3,seconds:89
   periods:[{number:1,home:1,away:1},{number:2,home:1,away:0},{number:3,home:0,away:0}],
   period3:{home:0,away:0}};
 
-function harness({ageMs=46000,canVerify=true,hasSeller=true,existingExposure=false}={}){
+function harness({ageMs=61000,canVerify=true,hasSeller=true,existingExposure=false,globalPending=false}={}){
   const src=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
   const a=src.indexOf('async function scanHockeyTotalNos('),b=src.indexOf('async function scan(cachedMilestones',a);
   assert.ok(a>0&&b>a,'hockey scanner must be an isolated function in the total-NO pipeline');
@@ -36,7 +37,7 @@ function harness({ageMs=46000,canVerify=true,hasSeller=true,existingExposure=fal
   let n=0,verifications=0,orders=0,allocation=null,availablePool=null;
   const windows=new Map(),dashboard=new Map(),trace=[];
   const held={ticker:'KXNHLTOTAL-OLD',position_fp:-1,market_exposure_dollars:'4.00',fees_paid_dollars:'0.50'};
-  const context=vm.createContext({
+  const context=vm.createContext({tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
     Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),
     linkedEventTickers:()=>markets.map(x=>x.event_ticker),
@@ -53,7 +54,7 @@ function harness({ageMs=46000,canVerify=true,hasSeller=true,existingExposure=fal
           first_clock:args[4],first_evidence:JSON.parse(args[5]),first_at:new Date(Date.now()-ageMs)});
         return {rows:[],rowCount:1};
       }
-      if(sql.startsWith('SELECT 1 FROM trade_attempts'))return {rows:[],rowCount:0};
+      if(sql.startsWith('SELECT 1 FROM trade_attempts'))return {rows:globalPending&&sql.includes("WHERE strategy='no'")?[{id:'pending'}]:[],rowCount:globalPending&&sql.includes("WHERE strategy='no'")?1:0};
       if(sql.startsWith('SELECT market_ticker,fill_count'))return {rows:existingExposure?[{market_ticker:held.ticker}]:[]};
       return {rows:[],rowCount:1};
     }},
@@ -113,14 +114,25 @@ test('NHL NO checks both full-game and P3, with independent 5:00 preflight then 
     new Set(markets.map(x=>x.ticker)));
 });
 
-test('NHL total NO enters after its first external proof without a 45-second wait',async()=>{
-  const h=harness({ageMs:1000});
-  await h.scan('5:00');
+test('NHL total NO waits 60 real seconds, even when its period clock moves faster',async()=>{
+  const waiting=harness({ageMs:1000});
+  await waiting.scan('5:00');
+  assert.equal(await waiting.scan('4:29'),0);
+  assert.equal(waiting.orders,0);
+  const eligible=harness({ageMs:61000});
+  await eligible.scan('5:00');
+  assert.equal(await eligible.scan('4:29'),2);
+  assert.equal(eligible.orders,2);
+  assert.ok(eligible.trace.lastIndexOf('external')<eligible.trace.lastIndexOf('reserve'));
+});
+
+test('NHL NO permits a late first proof under 4:30, then a second check one real minute later on an unchanged stopped clock',async()=>{
+  const h=harness({ageMs:61000});
+  assert.equal(await h.scan('4:29'),0,'first check may occur inside the entry window');
   assert.equal(h.windows.size,2);
-  assert.equal(await h.scan('4:29'),2);
-  assert.equal(h.orders,2,'no arbitrary wall-clock dwell after preflight');
-  assert.ok((h.dashboard.get(milestone.id)||[]).every(s=>!/45-second/.test(s.execution)));
-  assert.ok(h.trace.lastIndexOf('external')<h.trace.lastIndexOf('reserve'));
+  assert.equal(h.verifications,1);
+  assert.equal(await h.scan('4:29'),2,'unchanged clock cannot block a second check after 60 real seconds');
+  assert.equal(h.orders,2);
 });
 
 test('NHL total NO rejects a preflight timestamp from the future',async()=>{
@@ -144,6 +156,14 @@ test('NHL NO never enters without an executable NO seller',async()=>{
   assert.equal(await h.scan('4:29'),0);
   assert.equal(h.orders,0);
   assert.ok((h.dashboard.get(milestone.id)||[]).some(s=>/NO seller/i.test(s.execution)));
+});
+
+test('pending NHL order cannot suppress the first independent check for another total',async()=>{
+ const h=harness({globalPending:true});
+ assert.equal(await h.scan('5:00'),0);
+ assert.equal(h.windows.size,2);
+ assert.equal(await h.scan('4:29'),0,'new order remains forbidden');
+ assert.equal(h.orders,0);
 });
 
 test('NHL total NO caps full-game and P3 entries in one shared fee-inclusive 5% pool',async()=>{

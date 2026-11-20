@@ -87,7 +87,10 @@ test('basketball tiers include the stated lead and exclude the exact time bounda
 test('revised hockey and inning-based baseball winners reject superseded thresholds',()=>{
  assert.ok(signal('hockey_match','NHL',4,3,119));
  assert.equal(signal('hockey_match','NHL',1,3,119),null);
- assert.equal(signal('hockey_match','NHL',2,3,226),null);
+ assert.equal(signal('hockey_match','NHL',2,3,360),null);
+ assert.ok(signal('hockey_match','NHL',2,3,226));
+ assert.equal(signal('hockey_match','NHL',3,3,600),null);
+ assert.ok(signal('hockey_match','NHL',3,3,599));
  assert.ok(signal('hockey_match','NHL',2,3,210));
  const baseball=(margin,inning,half,outs)=>team('baseball_game','MLB',margin,inning,0,{inning,inning_half:half,outs,clock:''});
  for(const [margin,inning,half,outs,allowed] of [[5,8,'bottom',2,true],[4,8,'bottom',2,false],[5,8,'top',2,false],[4,9,'top',1,false],[20,9,'bottom',2,false],[3,9,'top',1,false],[4,9,'top',0,false]]){
@@ -96,58 +99,49 @@ test('revised hockey and inning-based baseball winners reject superseded thresho
    assert.equal(earlyLeadSignal(state,market),null);
  }
 });
-test('three-goal hockey winners target at least fifteen percent of bankroll',()=>{
+test('three-goal hockey winner has a 5% maximum with no contradictory 15% minimum',()=>{
  const {state,market}=team('hockey_match','NHL',3,3,405),winner=leadSignal(state,market);
- assert.equal(minimumThreeGoalSpend(state,winner,market,10000),1500);
- assert.equal(minimumThreeGoalSpend(state,winner,market,10001),1501,'the minimum rounds upward to a whole cent');
- assert.equal(directLeadFraction(state,winner,market),.20);
- assert.equal(finalLeadFraction(state,state,winner,false,market),.20);
- assert.equal(minimumThreeGoalSpend(state,winner,{...market,yes_ask_dollars:'.50'},10000),1500);
+ assert.ok(winner);
+ assert.equal(minimumThreeGoalSpend(state,winner,market,10000),0);
+ assert.equal(minimumThreeGoalSpend(state,winner,market,10001),0);
+ assert.equal(directLeadFraction(state,winner,market),.05);
+ assert.equal(finalLeadFraction(state,state,winner,false,market),.05);
+ assert.equal(minimumThreeGoalSpend(state,winner,{...market,yes_ask_dollars:'.50'},10000),0);
 });
-test('three-goal soccer winner has the same floor; two-goal and draw do not',()=>{
- const {state,market}=team('soccer_match','Soccer',3,2,0,{half:'2nd',time:"85'",match_remaining_seconds:299,clock:''}),winner=leadSignal(state,market);
- assert.equal(minimumThreeGoalSpend(state,winner,market,10000),1500);
- assert.equal(directLeadFraction(state,winner,market),.20);
+test('soccer commanding winners share the same 5% limit; draw remains a separate strategy',()=>{
+ const {state,market}=team('soccer_match','Soccer',3,2,0,
+   {half:'2nd',time:"85'",match_remaining_seconds:299,clock:''}),winner=leadSignal(state,market);
+ assert.ok(winner);
+ assert.equal(minimumThreeGoalSpend(state,winner,market,10000),0);
+ assert.equal(directLeadFraction(state,winner,market),.05);
+ assert.equal(finalLeadFraction(state,state,winner,true,market),.05);
  assert.equal(minimumThreeGoalSpend({...state,homeUnits:state.awayUnits+2},{...winner},market,10000),0);
 });
-test('preview, initial order, and missing-order retry share the goal-lead spend floor',()=>{
+test('preview, initial order, and retry no longer enforce an obsolete 15% commanding-lead floor',()=>{
  const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
- assert.equal((source.match(/estimatedCostCents\([^\n]+<minimumThreeGoalSpend\(/g)||[]).length,3);
+ assert.equal((source.match(/estimatedCostCents\([^\n]+<minimumThreeGoalSpend\(/g)||[]).length,0);
 });
 
-test('soccer winner uses elapsed regulation clock only: +3 under 15:00, +2 under 3:30',()=>{
+test('soccer commanding winner replaces legacy windows: +3 strictly under 10:00 or +2 strictly under 6:00',()=>{
  const soccer=(margin,minute,remaining=undefined)=>team('soccer_match','Soccer',margin,2,0,
    {half:'2nd',time:`${minute}'`,match_remaining_seconds:remaining,clock:''});
- let {state,market}=soccer(3,47);
- assert.equal(leadSignal(state,market),null);
- assert.equal(earlyLeadSignal(state,market),null);
- assert.equal(leadSignal(soccer(2,47).state,market),null);
- for(const margin of [3,4]){
-   assert.equal(leadSignal(soccer(margin,75,899).state,market),null,
-     'estimated countdown cannot permit entry at exactly 15:00');
-   assert.ok(leadSignal(soccer(margin,'75:01',NaN).state,market),
-     'elapsed 75:01 enters without a feed countdown');
-   assert.equal(soccerWinnerWindowOpen({...soccer(margin,75).state,observedAt:now},now),false);
-   assert.equal(soccerWinnerWindowOpen({...soccer(margin,'75:01').state,observedAt:now},now),true);
+ const {market}=soccer(3,47);
+ for(const [margin,time,allowed] of [
+   [3,'79:59',false],[3,80,false],[3,'80:01',true],[3,83,true],
+   [2,84,false],[2,'84:01',true],[2,87,true],[1,89,false],
+   [3,90,false],[3,93,false]]){
+  assert.equal(Boolean(leadSignal(soccer(margin,time).state,market)),allowed,`+${margin} at ${time}`);
  }
- assert.ok(leadSignal(soccer(3,76).state,market));
- assert.ok(leadSignal(soccer(3,84).state,market));
- assert.equal(leadSignal(soccer(2,'86:30',209).state,market),null);
- assert.ok(leadSignal(soccer(2,'86:31',210).state,market));
- assert.ok(leadSignal(soccer(2,87,NaN).state,market));
- assert.equal(leadSignal(soccer(2,84,299).state,market),null,
-   'a false final-whistle estimate must not override the clock');
- assert.equal(leadSignal(soccer(3,93,200).state,market),null,
-   'stoppage cannot be used to extend the regulation entry window');
- assert.equal(leadSignal(soccer(3,90,500).state,market),null);
- assert.equal(leadSignal(soccer(2,90,200).state,market),null);
- assert.equal(leadSignal(soccer(1,89).state,market),null);
- assert.ok(leadSignal(soccer(2,87).state,market),'three regulation minutes remain; +2 is eligible');
+ assert.equal(leadSignal(soccer(3,75,899).state,market),null,'no legacy fifteen-minute route');
+ assert.ok(leadSignal(soccer(3,'80:01',NaN).state,market),'entry derives from regulation clock, not a speculative feed countdown');
+ assert.equal(leadSignal(soccer(2,84,299).state,market),null,'feed countdown cannot override elapsed regulation clock');
+ assert.equal(leadSignal(soccer(3,93,200).state,market),null,'stoppage cannot extend entry');
  assert.equal(confirmedSoccerWinnerClock(soccer(2,87).state,soccer(2,'87:01').state),true);
  assert.equal(confirmedSoccerWinnerClock(soccer(2,87).state,soccer(2,87).state),false);
- assert.match(leadWatchReason(soccer(3,65).state),/strictly under 15:00/);
- assert.match(leadWatchReason(soccer(3,77).state),/late winner rule reached/);
- assert.match(leadWatchReason(soccer(2,81).state),/2-goal lead/);
+ assert.match(leadWatchReason(soccer(3,79).state),/10:00/);
+ assert.match(leadWatchReason(soccer(3,83).state),/late winner rule reached/);
+ assert.match(leadWatchReason(soccer(2,83).state),/waiting for score and clock threshold/);
+ assert.match(leadWatchReason(soccer(2,85).state),/late winner rule reached/);
  assert.equal(leadWatchReason(soccer(3,93).state),null);
  assert.equal(soccerWinnerWindowOpen({...soccer(2,93).state,observedAt:now},now),false);
  assert.equal(soccerWinnerWindowOpen({...soccer(2,87).state,observedAt:now},now),true);
@@ -160,7 +154,7 @@ test('soccer entry reuses one Kalshi score for 30 seconds on the correct contrac
   assert.equal(soccerSingleReadLead(state,market,state.observedAt+29999),true);
   assert.equal(soccerSingleReadLead(state,market,state.observedAt+30001),false);
   assert.equal(soccerSingleReadLead(soccer(2,77,NaN).state,market,now),false);
-  assert.equal(soccerSingleReadLead(soccer(3,77,NaN).state,market,now),true);
+  assert.equal(soccerSingleReadLead(soccer(3,83,NaN).state,market,now),true);
   assert.equal(soccerSingleReadLead(state,{...market,custom_strike:{soccer_team:'away'}},now),false);
   assert.equal(soccerSingleReadLead({...state,clockRunning:false},market,now),false);
   assert.equal(soccerSingleReadLead({...state,scoreConsistent:false},market,now),false);
@@ -275,9 +269,10 @@ test('college women use the fourth quarter rather than a second-half period numb
  assert.ok(signal('basketball_game','NCAAW',14,4,104));
 });
 
-test('hockey uses inclusive three-goal 6:45 and two-goal 3:45 windows across leagues',()=>{
+test('hockey commanding lead replaces legacy windows: +3 strictly under 10:00 or +2 strictly under 6:00',()=>{
  for(const league of ['NHL','Germany DEL']){
-  for(const [margin,seconds,allowed] of [[3,405,true],[3,406,false],[2,405,false],[2,226,false],[2,225,true],[1,225,false],[4,404,true],[3,0,false]]){
+  for(const [margin,seconds,allowed] of [[3,600,false],[3,599,true],[3,405,true],
+    [2,600,false],[2,360,false],[2,359,true],[2,225,true],[1,225,false],[4,0,false]]){
    const {state,market}=team('hockey_match',league,margin,3,seconds);
    assert.equal(Boolean(leadSignal(state,market)),allowed,`${league}: ${margin} at ${seconds}`);
    assert.equal(kalshiSingleReadLead(state,market,now),allowed);

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
+import {tagNoPreflight,validNoPreflight,lateNoPreflightProgress} from '../src/late_no_preflight.mjs';
 import {readFileSync} from 'node:fs';
 import {gameState,orderSize,estimatedCostCents} from '../src/strategy.mjs';
 import {soccerNoMarketSpec,soccerTotalNo} from '../src/soccer_total_no.mjs';
@@ -23,8 +24,8 @@ const market={ticker:'KXEPLTOTAL-26NOV20AWAYHOME-5',
   rules_primary:'If over 4.5 goals are scored in the Away vs Home professional EPL soccer game originally scheduled for Nov 20, 2026 after 90 minutes plus stoppage time (does not include extra time or penalties), then the market resolves to Yes.'};
 const events=new Map([[market.event_ticker,{event_ticker:market.event_ticker,category:'Sports',markets:[market]}]]);
 
-function harness({canVerify=true,hasSeller=true,initialAgeMs=0,existingExposure=false,
-  afterRefreshScore=3,missingClock=false,finalExternalFails=false,duplicate=false}={}){
+function harness({canVerify=true,hasSeller=true,initialAgeMs=61000,existingExposure=false,
+  afterRefreshScore=3,missingClock=false,finalExternalFails=false,duplicate=false,globalPending=false}={}){
   const src=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
   const a=src.indexOf('async function scanSoccerTotalNos('),b=src.indexOf('async function scan(cachedMilestones',a);
   assert.ok(a>0&&b>a,'soccer NO scanner must be confined to a dedicated function');
@@ -32,7 +33,7 @@ function harness({canVerify=true,hasSeller=true,initialAgeMs=0,existingExposure=
   const windows=new Map(),dashboard=new Map(),trace=[];
   let verified=0,orders=0,lastBudget=null,lastFraction=null,lastQuantity=null;
   const held={ticker:'KXEPLTOTAL-OLDER',position_fp:-1,market_exposure_dollars:'4.00',fees_paid_dollars:'0.50'};
-  const context=vm.createContext({
+  const context=vm.createContext({tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
     Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),
     linkedEventTickers:()=>[market.event_ticker],
@@ -53,8 +54,11 @@ function harness({canVerify=true,hasSeller=true,initialAgeMs=0,existingExposure=
           first_at:new Date(Date.now()-initialAgeMs)});
         return {rows:[],rowCount:1};
       }
-      if(sql.startsWith('SELECT 1 FROM trade_attempts'))
-        return {rows:duplicate?[{id:'existing'}]:[],rowCount:duplicate?1:0};
+      if(sql.startsWith('SELECT 1 FROM trade_attempts')){
+        const isGlobal=sql.includes("WHERE strategy='no'");
+        const blocked=isGlobal?globalPending:duplicate;
+        return {rows:blocked?[{id:'existing'}]:[],rowCount:blocked?1:0};
+      }
       if(sql.startsWith('SELECT market_ticker,fill_count'))
         return {rows:existingExposure?[{market_ticker:held.ticker}]:[]};
       return {rows:[],rowCount:1};
@@ -128,11 +132,15 @@ test('soccer NO checks once near 9:00 and once just before entry strictly under 
   assert.ok((h.dashboard.get(milestone.id)||[]).some(s=>s.strategy==='no'&&s.ticker===market.ticker));
 });
 
-test('soccer NO never enters without the original independently verified 9-minute window',async()=>{
+test('soccer NO recovers a missed 9:00 checkpoint and enters after 60 elapsed seconds even with unchanged clock',async()=>{
   const h=harness();
-  assert.equal(await h.scan(479),0);
+  assert.equal(await h.scan(479),0,'late initial check is recorded but never an immediate order');
   assert.equal(h.orders,0);
-  assert.equal(h.verifications,0);
+  assert.equal(h.verifications,1);
+  assert.equal(h.windows.size,1);
+  assert.equal(await h.scan(479),1,'same match clock is allowed after a full real minute');
+  assert.equal(h.verifications,2);
+  assert.equal(h.orders,1);
 });
 
 test('soccer NO blocks final order on a missing or contradictory external reading',async()=>{
@@ -144,12 +152,24 @@ test('soccer NO blocks final order on a missing or contradictory external readin
   }
 });
 
-test('soccer NO requires an executable NO seller and refuses stale or future-dated initial proof',async()=>{
-  for(const opts of [{hasSeller:false},{initialAgeMs:-1000},{initialAgeMs:1000000}]){
+test('soccer NO requires executable NO liquidity and refuses a future-dated initial proof',async()=>{
+  for(const opts of [{hasSeller:false},{initialAgeMs:-1000}]){
     const h=harness(opts);await h.scan(540);
     assert.equal(await h.scan(479),0,JSON.stringify(opts));
     assert.equal(h.orders,0,JSON.stringify(opts));
   }
+  const paused=harness({initialAgeMs:1000000});
+  await paused.scan(540);
+  assert.equal(await paused.scan(479),1,'a prolonged stoppage does not invalidate a matching fresh final check');
+});
+
+test('pending soccer NO order does not prevent first independent preflight of another market',async()=>{
+ const h=harness({globalPending:true});
+ assert.equal(await h.scan(540),0);
+ assert.equal(h.windows.size,1,'first proof must still be recorded');
+ assert.equal(h.verifications,1);
+ assert.equal(await h.scan(479),0,'unresolved order must still block new execution');
+ assert.equal(h.orders,0);
 });
 
 test('soccer NO cumulatively caps held exposure plus fees at five percent',async()=>{
