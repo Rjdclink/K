@@ -2616,7 +2616,8 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null){
           'SELECT * FROM college_total_no_windows WHERE market_ticker=$1',[c.market.ticker]);
         const key=overContractKey(game,c.market);
         window=priorWindow;
-        if(!window||window.game_id!==game.id||window.contract_key!==key||window.period!==game.period){
+        if(!window||window.game_id!==game.id||window.contract_key!==key||window.period!==game.period||
+          !Number.isFinite(Number(window.first_clock))||Number(window.first_clock)>75||Number(window.first_clock)<=30){
           if(game.remainingSeconds>75||game.remainingSeconds<=30){
             report(c,game.remainingSeconds>75?'First external preflight scheduled at about 1:15 remaining':
               'Entry blocked: preflight was not completed before the final 30 seconds');
