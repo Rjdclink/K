@@ -16,6 +16,7 @@ import { historyPage } from './history_ui.mjs';
 import { completedTrade, completedNoTrade, manualSaleFill, reconcileManualSaleFills, settlementLookupCandidates } from './history.mjs';
 import {syncAccountHistory,ensureAccountHistoryTables} from './account_history_sync.mjs';
 import {syncAccountPositions} from './account_positions_sync.mjs';
+import {publishVerifiedPositions,ensureVerifiedPositionTables} from './account_position_profit.mjs';
 import {accountHistoryListSQL,accountHistorySummarySQL} from './account_history_query.mjs';
 import { ensureExitLedger, recordExitFill } from './exit_ledger.mjs';
 import { gameState, overSignal, PLAYER_PROP_MAX_FRACTION, BASKETBALL_COUNT_PROP_MAX_FRACTION, BASKETBALL_WINNER_ENTRY_SECONDS, playerOverSpec, playerPropEarlyWindow, confirmedOver, fallbackScoringUnits, confirmedExternalLead, leadSignal, isTieOutcomeMarket, proBasketballLeadRules, basketballCloseoutEntry, basketballCloseoutMinimum, nbaSingleReadLead, kalshiSingleReadLead, confirmedSoccerWinnerClock, soccerWinnerWindowOpen, leadWatchReason, additionalLeadSignal, cricketLeadSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback, teamScorePosition } from './strategy.mjs';
@@ -924,6 +925,8 @@ async function syncSettlementAlerts(){
     const result=await syncAccountPositions({query:(...args)=>pool.query(...args),
       fetchPage:path=>kalshi(path,{auth:true})});
     if(!result.skipped)console.info('Kalshi settled position import:',JSON.stringify(result));
+    const published=await publishVerifiedPositions({query:(...args)=>pool.query(...args)});
+    if(published.status==='published')console.info('Calibrated Kalshi position PnL published:',JSON.stringify(published));
   }catch(error){console.warn('Kalshi settled position import deferred:',error.message)}
   try{
     const observedSettlements=[];
@@ -4933,12 +4936,21 @@ async function handleRequest(req){const url=new URL(req.url);
         END)+time '12:15') AT TIME ZONE 'America/Chicago',
         COALESCE((SELECT reset_at FROM history_view_config WHERE id=1),'-infinity'::timestamptz)) AS starts_at`;
       await ensureAccountHistoryTables((...args)=>pool.query(...args));
+      await ensureVerifiedPositionTables((...args)=>pool.query(...args));
       const [{rows},{rows:[summary]},{rows:[coverage]}]=await Promise.all([
         pool.query(accountHistoryListSQL(cutoff),[beforeTime||null,beforeId||null,filter,view]),
         pool.query(accountHistorySummarySQL(cutoff),[view]),
-        pool.query(`SELECT phase,last_completed,last_error,unresolved_markets,
+        pool.query(`SELECT phase,last_completed,last_error,
           (SELECT count(*) FROM account_history_fills) AS imported_fills,
-          (SELECT count(*) FROM account_realized_history) AS account_markets
+          (SELECT count(*) FROM account_realized_history) AS account_markets,
+          (SELECT count(*) FROM account_position_realized_history p
+             JOIN account_position_history_publish v
+               ON v.id=1 AND v.published_at=p.source_completed_at) AS verified_positions,
+          (SELECT count(*) FROM (SELECT DISTINCT ticker FROM account_history_fills f
+             WHERE NOT EXISTS(SELECT 1 FROM account_realized_history a WHERE a.ticker=f.ticker)
+               AND NOT EXISTS(SELECT 1 FROM account_position_realized_history p
+                 JOIN account_position_history_publish v ON v.id=1 AND v.published_at=p.source_completed_at
+                 WHERE p.ticker=f.ticker)) unresolved) AS unresolved_markets
           FROM account_history_sync WHERE id=1`)
       ]);
       const history=rows.slice(0,50),last=history.at(-1);
