@@ -1,3 +1,4 @@
+import {fetchIndependentMatchScore} from './independent_match_score.mjs';
 import {espnMatches} from './score_verification.mjs';
 import {espnScoreboardUrls} from './espn_scoreboards.mjs';
 
@@ -19,9 +20,8 @@ const sums=periods=>({
   away:periods.reduce((n,p)=>n+p.away,0)
 });
 const validExternal=(external,game)=>{
-  if(external?.source!=='ESPN'||external.period!==3||
-    external.home!==game.home||external.away!==game.away||
-    !Number.isFinite(external.seconds)||Math.abs(external.seconds-game.remainingSeconds)>10)return false;
+  if(!['ESPN','FOX Sports'].includes(external?.source)||!external.eventId||
+    external.home!==game.home||external.away!==game.away)return false;
   return true;
 };
 
@@ -58,7 +58,7 @@ export function hockeyTotalNo(game,market,{beforeWindow=false,external=null}={})
   if(spec.period==='third_period'){
     const providerParts=validPeriods(game.periodScores);
     const externalParts=external?validPeriods(external.periods):null;
-    if(external&&!externalParts)return null;
+    if(external&&Array.isArray(external.periods)&&external.periods.length&&!externalParts)return null;
     if(providerParts){
       const providerTotals=sums(providerParts);
       if(providerTotals.home!==game.home||providerTotals.away!==game.away)return null;
@@ -71,7 +71,7 @@ export function hockeyTotalNo(game,market,{beforeWindow=false,external=null}={})
     const parts=externalParts||providerParts;
     if(!parts)return null;
     total=parts[2].home+parts[2].away;
-    if(external&&(!external.period3||
+    if(external?.period3&&(
       external.period3.home!==parts[2].home||external.period3.away!==parts[2].away))return null;
   }
   const minimumCushion=spec.period==='third_period'?1.5:2.5;
@@ -89,15 +89,15 @@ export function independentHockeyTotalNoReading(scoreboard,game,milestone,market
   const matches=espnMatches(scoreboard,game,milestone);
   if(matches.length!==1)return null;
   const m=matches[0];
-  if(!m.live||m.period!==3||m.home!==game.home||m.away!==game.away||
-    !Number.isFinite(m.remainingSeconds)||Math.abs(m.remainingSeconds-game.remainingSeconds)>10)return null;
+  if(!m.eventId||m.home!==game.home||m.away!==game.away)return null;
   const periods=validPeriods(m.periods);
   if(spec.period==='third_period'){
-    if(!periods)return null;
-    const total=sums(periods);
+    if(Array.isArray(m.periods)&&m.periods.length&&!periods)return null;
+    if(periods){const total=sums(periods);
     if(total.home!==game.home||total.away!==game.away)return null;
     const direct=validPeriods(game.periodScores);
-    if(direct&&direct.some((p,i)=>p.home!==periods[i].home||p.away!==periods[i].away))return null;
+    if(direct&&direct.some((p,i)=>p.home!==periods[i].home||p.away!==periods[i].away))return null;}
+    if(!periods&&!validPeriods(game.periodScores))return null;
   }
   return {source:'ESPN',eventId:m.eventId,home:m.home,away:m.away,period:3,
     seconds:m.remainingSeconds,periods:periods||null,
@@ -106,36 +106,8 @@ export function independentHockeyTotalNoReading(scoreboard,game,milestone,market
 
 export async function verifyIndependentHockeyTotalNo(game,milestone,market,{fetcher=fetch}={}){
   if(!hockeyNoMarketSpec(game,market,{beforeWindow:true}))return null;
-  const start=Date.parse(milestone.start_date||'');
-  if(!Number.isFinite(start))return null;
-  const dates=[start,start-86400000].map(ms=>new Date(ms).toISOString().slice(0,10).replaceAll('-',''));
-  for(const date of new Set(dates)){
-    const results=await Promise.allSettled(espnScoreboardUrls('hockey/nhl',game,milestone,[date]).map(async url=>{
-      const response=await fetcher(url,{signal:AbortSignal.timeout(6000)});
-      return response.ok?espnMatches(await response.json(),game,milestone):[];
-    }));
-    const matches=[...new Map(results.filter(r=>r.status==='fulfilled').flatMap(r=>r.value)
-      .map(item=>[JSON.stringify(item),item])).values()];
-    // An identified disagreement must fail closed, not shop dates or sources.
-    if(matches.length){
-      if(matches.length!==1)return null;
-      const m=matches[0];
-      // Reuse the same structural checks without sending another request.
-      if(!m.live||m.period!==3||m.home!==game.home||m.away!==game.away||
-        !Number.isFinite(m.remainingSeconds)||Math.abs(m.remainingSeconds-game.remainingSeconds)>10)return null;
-      const spec=hockeyNoMarketSpec(game,market,{beforeWindow:true});
-      const periods=validPeriods(m.periods);
-      if(spec.period==='third_period'){
-        if(!periods)return null;
-        const totals=sums(periods);
-        if(totals.home!==game.home||totals.away!==game.away)return null;
-        const direct=validPeriods(game.periodScores);
-        if(direct&&direct.some((p,i)=>p.home!==periods[i].home||p.away!==periods[i].away))return null;
-      }
-      return {source:'ESPN',eventId:m.eventId,home:m.home,away:m.away,period:3,
-        seconds:m.remainingSeconds,periods:periods||null,
-        period3:periods?{home:periods[2].home,away:periods[2].away}:null};
-    }
-  }
-  return null;
+  const feed='hockey/nhl';
+  if(!feed)return null;
+  // ESPN first, retry only when unavailable, then FOX; no source clock check.
+  return fetchIndependentMatchScore(game,milestone,{fetcher,espnFeed:feed,foxFeed:'nhl'});
 }

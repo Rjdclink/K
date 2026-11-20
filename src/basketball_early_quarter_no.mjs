@@ -1,3 +1,4 @@
+import {fetchIndependentMatchScore} from './independent_match_score.mjs';
 import {espnMatches} from './score_verification.mjs';
 import {espnScoreboardUrls} from './espn_scoreboards.mjs';
 
@@ -68,16 +69,17 @@ export function basketballEarlyQuarterNoSpec(game,market,{beforeWindow=false}={}
 export function basketballEarlyQuarterNo(game,market,{beforeWindow=false,external=null}={}){
   const spec=basketballEarlyQuarterNoSpec(game,market,{beforeWindow});
   if(!spec)return null;
-  const parts=external?(
-    external.source==='ESPN'&&external.eventId&&external.live===true&&
-    external.quarter===game.period&&external.home===game.home&&
-    external.away===game.away&&Number.isFinite(external.seconds)&&
-    Math.abs(external.seconds-game.remainingSeconds)<=10?
-      currentParts(external.parts,game.period):null
-  ):currentParts(game.periodScores,game.period);
+  if(external&&(!['ESPN','FOX Sports'].includes(external.source)||
+    !external.eventId||external.home!==game.home||external.away!==game.away))return null;
+  const provider=currentParts(game.periodScores,game.period);
+  const independent=external?.parts?.length?currentParts(external.parts,game.period):null;
+  if(external?.parts?.length&&!independent)return null;
+  if(independent&&!agrees(game,independent))return null;
+  const parts=independent||provider;
   if(!parts||!agrees(game,parts))return null;
-  if(external&&(external.currentQuarter?.home!==parts[spec.quarter-1].home||
-    external.currentQuarter?.away!==parts[spec.quarter-1].away))return null;
+  if(external?.currentQuarter&&(
+    external.currentQuarter.home!==parts[spec.quarter-1].home||
+    external.currentQuarter.away!==parts[spec.quarter-1].away))return null;
   const scored=parts[spec.quarter-1].home+parts[spec.quarter-1].away;
   if(spec.line-scored<12)return null;
   return {...spec,total:scored,reason:
@@ -91,36 +93,19 @@ export function independentBasketballEarlyQuarterNoReading(board,game,milestone,
   const matches=espnMatches(board,game,milestone);
   if(matches.length!==1)return null;
   const m=matches[0];
-  if(!m.eventId||!m.live||!m.clockOk||m.period!==game.period||
-    m.home!==game.home||m.away!==game.away||
-    !Number.isFinite(m.remainingSeconds)||
-    Math.abs(m.remainingSeconds-game.remainingSeconds)>10)return null;
-  const parts=currentParts(m.periods,game.period);
+  if(!m.eventId||m.home!==game.home||m.away!==game.away)return null;
+  const parts=currentParts(m.periods,game.period)||currentParts(game.periodScores,game.period);
   if(!parts||!agrees(game,parts))return null;
+  if(m.periods?.length&&(!currentParts(m.periods,game.period)||
+    !agrees(game,currentParts(m.periods,game.period))))return null;
   return {source:'ESPN',eventId:m.eventId,home:m.home,away:m.away,
     quarter:game.period,seconds:m.remainingSeconds,live:true,parts,
     currentQuarter:{home:parts[game.period-1].home,away:parts[game.period-1].away}};
 }
 export async function verifyIndependentBasketballEarlyQuarterNo(game,milestone,market,{fetcher=fetch}={}){
   if(!basketballEarlyQuarterNoSpec(game,market,{beforeWindow:true}))return null;
-  const start=Date.parse(milestone?.start_date||'');
-  if(!Number.isFinite(start))return null;
-  const dates=[start,start-86400000,start+86400000]
-    .map(ms=>new Date(ms).toISOString().slice(0,10).replaceAll('-',''));
   const feed=feeds[game.sport];
-  for(const date of new Set(dates)){
-    const results=await Promise.allSettled(espnScoreboardUrls(feed,game,milestone,[date])
-      .map(async url=>{
-        const response=await fetcher(url,{signal:AbortSignal.timeout(6000),cache:'no-store'});
-        return response.ok?await response.json():null;
-      }));
-    const boards=results.filter(r=>r.status==='fulfilled'&&r.value).map(r=>r.value);
-    const matches=boards.flatMap(b=>espnMatches(b,game,milestone));
-    if(!matches.length)continue;
-    if(matches.length!==1)return null;
-    return independentBasketballEarlyQuarterNoReading(
-      boards.find(b=>espnMatches(b,game,milestone).some(m=>m.eventId===matches[0].eventId)),
-      game,milestone,market);
-  }
-  return null;
+  if(!feed)return null;
+  // ESPN first, retry only when unavailable, then FOX; no source clock check.
+  return fetchIndependentMatchScore(game,milestone,{fetcher,espnFeed:feed,foxFeed:game.sport==='NBA'?'nba':'wnba'});
 }

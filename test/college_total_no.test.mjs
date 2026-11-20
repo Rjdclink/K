@@ -34,8 +34,8 @@ test('college NO verification discovers FCS fixtures and refuses conflicting evi
   assert.ok(urls.every(url=>new URL(url).searchParams.get('groups')==='81'));
   let calls=0;
   const conflict=structuredClone(board);conflict.events[0].competitions[0].competitors[0].score='9';
-  assert.equal(await verifyIndependentCollegeTotalNo(game,m,full,{fetcher:async()=>({ok:true,json:async()=>++calls===1?conflict:board})}),null);
-  assert.equal(calls,1,'do not retry another date after an exact conflicting fixture');
+  assert.equal(await verifyIndependentCollegeTotalNo(game,m,full,{fetcher:async()=>({ok:true,json:async()=>++calls===1?conflict:board})}),false);
+  assert.equal(calls,3,'the first date-scoped ESPN batch is fully fetched; never retry ESPN or contact FOX on a matching score conflict');
 });
 
 test('CFB NO exclusively uses a fourth-quarter full-game market',()=>{
@@ -88,7 +88,7 @@ test('Kalshi full-game titles require exact contract matching; first-half titles
   assert.equal(collegeFootballTotalNo(state(4),{...full,title:'Full Game: Over 34.5 points scored',yes_sub_title:'Over 33.5 points'}),null);
 });
 
-test('the independent CFB check requires exact ESPN score and matching fourth-quarter clock',()=>{
+test('the independent CFB check verifies the correct team scores without requiring clock equality',()=>{
   const game=state(4),full=market(false);
   const situation={possession:'1',downDistanceText:'2nd & 12 at OHIO 16'};
   const scoreboard={events:[{id:'401866453',date:milestone.start_date,
@@ -97,7 +97,7 @@ test('the independent CFB check requires exact ESPN score and matching fourth-qu
         {id:'2',homeAway:'home',team:{displayName:'Akron Zips',shortDisplayName:'Akron',abbreviation:'AKR'},score:'6'}]}]}]};
   assert.equal(independentCollegeTotalNoReading(scoreboard,game,milestone,full)?.seconds,118);
   assert.equal(independentCollegeTotalNoReading({...scoreboard,events:[{...scoreboard.events[0],competitions:[{...scoreboard.events[0].competitions[0],competitors:[{...scoreboard.events[0].competitions[0].competitors[0],score:'10'},scoreboard.events[0].competitions[0].competitors[1]]}]}]},game,milestone,full),false);
-  assert.equal(independentCollegeTotalNoReading({...scoreboard,events:[{...scoreboard.events[0],competitions:[{...scoreboard.events[0].competitions[0],status:{period:4,displayClock:'1:30',type:{state:'in'}}}]}]},game,milestone,full),false);
+  assert.equal(independentCollegeTotalNoReading({...scoreboard,events:[{...scoreboard.events[0],competitions:[{...scoreboard.events[0].competitions[0],status:{period:4,displayClock:'1:30',type:{state:'in'}}}]}]},game,milestone,full)?.home,6);
 });
 test('college basketball NO first-half uses 12 points and under 1:30; full-game keeps 20 points',()=>{
   for(const [league,prefix,halfPeriod,gamePeriod] of [
@@ -147,7 +147,7 @@ test('football Q4 total NO enters with a single immediately preceding external c
   const code=source.slice(source.indexOf('async function scanCollegeTotalNos('),source.indexOf('async function scan(cachedMilestones'));
   const half=market(false),event={event_ticker:half.event_ticker,category:'Sports',markets:[half]};
   let window=null,checks=0,orders=0;const first=state(4,'5:30'),last=state(4,'4:59');
-  const context=vm.createContext({tagNoPreflight,validNoPreflight,lateNoPreflightProgress,Date,JSON,Number,Math,Promise,console,live:()=>true,
+  const context=vm.createContext({recordDecision:async()=>{},tagNoPreflight,validNoPreflight,lateNoPreflightProgress,Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),
     linkedEventTickers:()=>[half.event_ticker],collegeFootballTotalNo,collegeBasketballTotalNo,overContractKey,sameSportsContract,
     verifyIndependentCollegeTotalNo:async()=>{checks++;return {source:'ESPN',seconds:299}},

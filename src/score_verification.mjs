@@ -86,15 +86,10 @@ function clockSeconds(clock){
   return plain&&Number(plain[2])<60?Number(plain[1])*60+Number(plain[2]):
     iso&&Number(iso[2])<60?Number(iso[1]||0)*60+Number(iso[2]):NaN;
 }
-function clockCompatible(game,period,clock){
-  if(Number.isFinite(game.period)&&Number.isFinite(Number(period))&&Number(period)>0&&game.period!==Number(period))return false;
-  if(/soccer/.test(game.type)){
-    const minute=Number(String(clock||'').match(/^(\d{1,3})/)?.[1]);
-    return !Number.isFinite(game.soccerMinute)||!Number.isFinite(minute)||Math.abs(game.soccerMinute-minute)<=5;
-  }
-  const parts=String(clock||'').match(/^(\d{1,2}):(\d{2})$/);
-  return !Number.isFinite(game.remainingSeconds)||!parts||Math.abs(game.remainingSeconds-Number(parts[1])*60-Number(parts[2]))<=180;
-}
+// Independent providers may publish a different or absent game clock.
+// Kalshi alone supplies entry timing; this separate source verifies fixture
+// identity and the score, never clock equality.
+function clockCompatible(){return true;}
 function sameFixture(game,milestone,home,away,time){
   const names=expectedNames(game,milestone),start=Date.parse(milestone.start_date||'');
   const other=Date.parse(time||'');
@@ -218,9 +213,8 @@ export function scoreAgreement(game,bySource,market,{minimumOverValue,onOverValu
     if(matches.length>1)return false; // Ambiguous fixture identity.
     if(!matches.length)continue;
     const m=matches[0];
-    if(!m.live||!m.clockOk)return false;
-    if(closeout&&(!Number.isFinite(m.remainingSeconds)||m.remainingSeconds<=0||
-      m.remainingSeconds>=105||m.period!==game.period||Math.abs(m.remainingSeconds-game.remainingSeconds)>10))return false;
+    if(!m.live||![m.home,m.away].every(Number.isInteger))return false;
+    if(closeout&&Number.isFinite(m.period)&&m.period!==game.period)return false;
     const player=Boolean(playerOverSpec(game,market));
     let expected=game,actual=m;
     if(segment){
@@ -268,7 +262,7 @@ export async function verifyIndependentYardageZero(game,milestone,player,{fetche
   try{
     const fixtures=(await Promise.all(espnScoreboardUrls(feed,game,milestone,dateCandidates(start)).map(read)))
       .flatMap(data=>espnMatches(data,game,milestone));
-    if(!fixtures.length||fixtures.some(match=>!match.live||!match.clockOk||match.period!==game.period))return false;
+    if(!fixtures.length||fixtures.some(match=>match.period!==game.period||match.home!==game.home||match.away!==game.away))return false;
     const ids=[...new Set(fixtures.map(match=>match.eventId))];
     if(ids.length!==1)return false;
     const summary=await read(`https://site.api.espn.com/apis/site/v2/sports/${feed}/summary?event=${encodeURIComponent(ids[0])}`);
@@ -486,4 +480,3 @@ export async function verifySportradarOver(game,milestone,options={}){
 export async function verifyIndependentOver(game,milestone,options={}){
   return (await verifyIndependentOverDecision(game,milestone,options))===true;
 }
-

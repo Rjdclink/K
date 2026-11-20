@@ -12,35 +12,25 @@ const team=(type,league,home,away,extra={})=>{
   const state=(period,clock,homeScore=home,awayScore=away,other={})=>gameState(m,{milestone_id:m.id,_observed_at:new Date(at).toISOString(),details:{status:'live',period,clock,home_score:homeScore,away_score:awayScore,home_team_name:'Alpha',away_team_name:'Beta',...extra,...other}});
   return {m,market,state};
 };
-test('tied soccer enters strictly under 50 regulation seconds, never in assumed stoppage',()=>{
-  const milestone={id:'soccer-draw',type:'soccer_match',title:'Alpha vs Beta',
-    details:{league:'Soccer',main_game_event_ticker:'KXSOCCERGAME-TEST'}};
-  const market={status:'active',event_ticker:'KXSOCCERGAME-TEST',ticker:'KXSOCCERGAME-TEST-TIE',
-    title:'Tie',rules_primary:'Resolves Yes if Tie after 90 minutes plus stoppage time.',yes_ask_dollars:'.94'};
-  const state=(seconds,more={})=>gameState(milestone,{milestone_id:milestone.id,
-    _observed_at:new Date(at).toISOString(),details:{status:'live',period:2,half:'2nd',
-      time:Math.floor((5400-seconds)/60)+':'+String((5400-seconds)%60).padStart(2,'0')+"'",home_score:1,away_score:1,...more}});
-  const first=state(49),second=state(48);
-  assert.match(leadWatchReason(state(120)),/tied soccer score/);
-  assert.equal(leadWatchReason(state(121)),null);
-  const signal=drawSignal(first,market);
-  assert.equal(drawSignal(state(50),market),null);
-  assert.equal(drawSignal(state(0),market),null);
-  assert.equal(drawSignal(state(49,{time:"93'"}),market),null,'stoppage estimates cannot trigger a draw purchase');
-  assert.equal(signal?.fraction,.05);
-  assert.equal(finalLeadFraction(first,second,signal,true,market),.05);
-  assert.equal(confirmedDrawClock(first,second,market),true);
-  assert.equal(confirmedDrawClock(first,state(49),market),false);
-  assert.equal(drawSignal(state(49,{away_score:0}),market),null);
-  assert.equal(drawSignal(state(49,{match_status:'overtime'}),market),null);
-  assert.equal(drawSignal(state(49,{clock_running:false}),market),null);
-  assert.equal(drawSignal(first,{...market,title:'Alpha wins'}),null);
-  assert.equal(drawSignal(first,{...market,rules_primary:'Resolves Yes if Tie after extra time.'}),null);
-  assert.equal(drawSignal(first,{...market,event_ticker:'OTHER-GAME'}),null);
-  assert.equal(kalshiOnlyLead(first,second,market),false);
-  const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
-  assert.match(source,/!drawSignal\(first,ruleMarket\)/);
-  assert.match(source,/drawSignal\(second,quote\)/);
+test('soccer tie markets never qualify regardless of time remaining or recorded score',()=>{
+ const milestone={id:'soccer-draw',type:'soccer_match',title:'Alpha vs Beta',
+  details:{league:'Soccer',main_game_event_ticker:'KXSOCCERGAME-TEST'}};
+ const market={status:'active',event_ticker:'KXSOCCERGAME-TEST',ticker:'KXSOCCERGAME-TEST-TIE',
+  title:'Tie',rules_primary:'Resolves Yes if Tie after 90 minutes plus stoppage time.',yes_ask_dollars:'.94'};
+ const state=(seconds,more={})=>gameState(milestone,{milestone_id:milestone.id,
+  _observed_at:new Date(at).toISOString(),details:{status:'live',period:2,half:'2nd',
+    time:Math.floor((5400-seconds)/60)+':'+String((5400-seconds)%60).padStart(2,'0')+"'",
+    home_score:1,away_score:1,...more}});
+ assert.equal(leadWatchReason(state(49)),null);
+ assert.equal(leadWatchReason(state(120)),null);
+ for(const seconds of [120,50,49,20,1,0]){
+  assert.equal(drawSignal(state(seconds),market),null);
+  assert.equal(kalshiOnlyLead(state(seconds),state(Math.max(0,seconds-1)),market),false);
+ }
+ assert.equal(drawSignal(state(49,{time:"93'"}),market),null);
+ const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
+ assert.doesNotMatch(source,/drawSignal\(/);
+ assert.match(source,/if\(isTieOutcomeMarket\(market\)\)return false/);
 });
 test('Test cricket winner entries stay disabled without a finite number of balls',()=>{
   const m={id:'test',type:'cricket_match',title:'Bangladesh vs West Indies',details:{league:'Test International (M)',home_team_id:'ban',away_team_id:'wi',main_game_event_ticker:'KXTESTMATCH-TEST'}};

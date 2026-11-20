@@ -1,3 +1,4 @@
+import {fetchIndependentMatchScore} from './independent_match_score.mjs';
 import {soccerRegulationSeconds} from './strategy.mjs';
 import {espnMatches} from './score_verification.mjs';
 import {espnScoreboardUrls} from './espn_scoreboards.mjs';
@@ -16,12 +17,11 @@ const clockMinute=clock=>{
   if(!match)return NaN;
   return Number(match[1])+Number(match[3]||0)+Number(match[2]||0)/60;
 };
+// The independent check is precisely the fixture and matching scores.
+// Its countdown, period and publication status do not determine entry.
 const currentExternal=(reading,game)=>Boolean(
-  reading?.source==='ESPN'&&reading.eventId&&reading.live===true&&reading.period===2&&
-  reading.home===game.home&&reading.away===game.away&&
-  Number.isFinite(reading.elapsedMinute)&&Number.isFinite(game.soccerMinute)&&
-  Math.abs(reading.elapsedMinute-game.soccerMinute)<=1
-);
+  ['ESPN','FOX Sports'].includes(reading?.source)&&reading.eventId&&
+  reading.home===game.home&&reading.away===game.away);
 
 export function soccerNoMarketSpec(game,market,{beforeWindow=false}={}){
   const seconds=soccerRegulationSeconds(game);
@@ -73,26 +73,13 @@ export function independentSoccerTotalNoReading(scoreboard,game,milestone,market
   const elapsedMinute=clockMinute(status?.displayClock);
   const reading={source:'ESPN',eventId:match.eventId,home:match.home,away:match.away,
     period:match.period,elapsedMinute,live:match.live};
-  return match.clockOk&&currentExternal(reading,game)?reading:null;
+  return currentExternal(reading,game)?reading:null;
 }
 
 export async function verifyIndependentSoccerTotalNo(game,milestone,market,{fetcher=fetch}={}){
   if(!soccerNoMarketSpec(game,market,{beforeWindow:true}))return null;
-  const start=Date.parse(milestone.start_date||'');
-  if(!Number.isFinite(start))return null;
-  const dates=[start,start-86400000,start+86400000]
-    .map(t=>new Date(t).toISOString().slice(0,10).replaceAll('-',''));
-  for(const day of new Set(dates)){
-    const results=await Promise.allSettled(espnScoreboardUrls('soccer/all',game,milestone,[day])
-      .map(async url=>{
-        const response=await fetcher(url,{signal:AbortSignal.timeout(6000)});
-        return response.ok?await response.json():null;
-      }));
-    for(const result of results){
-      if(result.status!=='fulfilled'||!result.value)continue;
-      const matches=espnMatches(result.value,game,milestone);
-      if(matches.length)return independentSoccerTotalNoReading(result.value,game,milestone,market);
-    }
-  }
-  return null;
+  const feed='soccer/all';
+  if(!feed)return null;
+  // ESPN first, retry only when unavailable, then FOX; no source clock check.
+  return fetchIndependentMatchScore(game,milestone,{fetcher,espnFeed:feed,foxFeed:'soccer'});
 }

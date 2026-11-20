@@ -1,3 +1,4 @@
+import {pairedExternalMatch} from '../src/independent_match_score.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -37,7 +38,7 @@ function harness({ageMs=61000,canVerify=true,hasSeller=true,existingExposure=fal
   let n=0,verifications=0,orders=0,allocation=null,availablePool=null;
   const windows=new Map(),dashboard=new Map(),trace=[];
   const held={ticker:'KXNHLTOTAL-OLD',position_fp:-1,market_exposure_dollars:'4.00',fees_paid_dollars:'0.50'};
-  const context=vm.createContext({tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
+  const context=vm.createContext({recordDecision:async()=>{},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
     Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),
     linkedEventTickers:()=>markets.map(x=>x.event_ticker),

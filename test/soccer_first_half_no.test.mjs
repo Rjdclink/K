@@ -79,19 +79,19 @@ test('only the exact Kalshi first-half total identity, strike and settlement cou
  for(const variant of variations)assert.equal(soccerFirstHalfNoSpec(g,{...m,...variant}),null,JSON.stringify(variant));
 });
 
-test('independent ESPN check validates live first half, exact fixture, scores and elapsed minute',async()=>{
+test('independent ESPN check verifies teams and scores, never independent period or elapsed minute',async()=>{
  const g=state("42'",0,1),m=market(),scoreboard=board("42'");
  const proof=independentSoccerFirstHalfNoReading(scoreboard,g,milestone,m);
  assert.equal(proof?.source,'ESPN');
  assert.equal(proof?.period,1);
  assert.equal(soccerFirstHalfNo(g,m,{external:proof})?.total,1);
- assert.equal(independentSoccerFirstHalfNoReading(board("40'"),g,milestone,m),null);
+ assert.equal(independentSoccerFirstHalfNoReading(board("40'"),g,milestone,m)?.away,1);
  assert.equal(independentSoccerFirstHalfNoReading(board("42'",1,1),g,milestone,m),null);
- assert.equal(independentSoccerFirstHalfNoReading(board("42'",0,1,2),g,milestone,m),null);
+ assert.equal(independentSoccerFirstHalfNoReading(board("42'",0,1,2),g,milestone,m)?.away,1);
  const duplicate=structuredClone(scoreboard);duplicate.events.push({...duplicate.events[0],id:'other'});
  assert.equal(independentSoccerFirstHalfNoReading(duplicate,g,milestone,m),null);
  const final=structuredClone(scoreboard);final.events[0].competitions[0].status.type.state='post';
- assert.equal(independentSoccerFirstHalfNoReading(final,g,milestone,m),null);
+ assert.equal(independentSoccerFirstHalfNoReading(final,g,milestone,m)?.away,1);
  let requests=[];
  const matched=await verifyIndependentSoccerFirstHalfNo(g,milestone,m,{fetcher:async url=>{
    requests.push(url);return {ok:true,json:async()=>scoreboard};

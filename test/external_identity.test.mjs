@@ -120,11 +120,11 @@ test('FOX fallback uses league calendar segments, football week segments and the
   }
 });
 
-test('missing providers name the failing source and FOX clocks still reject delayed current-period scores',async()=>{
+test('missing providers name the failing source while FOX clock differences cannot veto team scores',async()=>{
   const game=structuredClone(captured.game);
   assert.equal(await verifyIndependentOverDecision(game,captured.milestone,{market,fetcher:async()=>({ok:false,status:404})}),null);
   assert.match(game.verificationIssue,/ESPN: Scoreboard 404/);assert.match(game.verificationIssue,/FOX Sports: Scoreboard 404/);
   const event=foxBoard.sectionList[0].events[0];
-  assert.equal(foxMatches({sectionList:[{events:[{...event,statusLine:'2ND 12:00'}]}]},captured.game,captured.milestone)[0].clockOk,false);
+  assert.equal(foxMatches({sectionList:[{events:[{...event,statusLine:'2ND 12:00'}]}]},captured.game,captured.milestone)[0].clockOk,true);
   assert.equal(foxMatches({sectionList:[{events:[{...event,statusLine:'1ST 2:31'}]}]},captured.game,captured.milestone)[0].stale,true);
 });

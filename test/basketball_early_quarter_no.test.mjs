@@ -79,7 +79,7 @@ test('exact quarter contract, strike, title and rules must match',()=>{
   {status:'closed'},
  ])assert.equal(basketballEarlyQuarterNoSpec(g,{...m,...invalid}),null,JSON.stringify(invalid));
 });
-test('ESPN quarter proof requires exact game, clock, team scores and period breakdown',async()=>{
+test('ESPN quarter proof requires the exact game and scores, not provider clock or period',async()=>{
  const g=game('NBA',2,'1:29'),m=contract('NBA',2,42.5),milestone=fixture('NBA');
  const parts=[{home:25,away:22},{home:15,away:15}];
  const score=board('NBA',2,'1:29',parts);
@@ -89,8 +89,8 @@ test('ESPN quarter proof requires exact game, clock, team scores and period brea
  assert.equal(proof?.currentQuarter?.home,15);
  assert.equal(basketballEarlyQuarterNo(g,m,{external:proof})?.total,30);
  assert.equal(independentBasketballEarlyQuarterNoReading(board('NBA',2,'1:29',[{home:25,away:22},{home:14,away:15}]),g,milestone,m),null);
- assert.equal(independentBasketballEarlyQuarterNoReading(board('NBA',2,'1:45',parts),g,milestone,m),null);
- assert.equal(independentBasketballEarlyQuarterNoReading(board('NBA',1,'1:29',parts),g,milestone,m),null);
+ assert.equal(independentBasketballEarlyQuarterNoReading(board('NBA',2,'1:45',parts),g,milestone,m)?.home,40);
+ assert.equal(independentBasketballEarlyQuarterNoReading(board('NBA',1,'1:29',parts),g,milestone,m)?.away,37);
  const dup=structuredClone(score);dup.events.push({...dup.events[0],id:'duplicate'});
  assert.equal(independentBasketballEarlyQuarterNoReading(dup,g,milestone,m),null);
  let seen=[];

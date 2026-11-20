@@ -296,9 +296,6 @@ export function leadWatchReason(game){
   if(!game?.verifiedLive||!game.scoreKnown||!game.scoreConsistent||!game.periodConsistent)return null;
   const type=String(game.type||''),margin=Math.abs(game.home-game.away),seconds=game.remainingSeconds;
   if(!Number.isFinite(margin))return null;
-  if(/soccer/.test(type)&&margin===0&&game.period===2&&!game.soccerOvertime&&game.clockRunning&&
-    Number.isFinite(game.matchRemainingSeconds)&&game.matchRemainingSeconds>0&&game.matchRemainingSeconds<=120)
-    return `Tracking tied soccer score; checking the regulation tie contract and live clock`;
   if(margin<=0)return null;
   if(/football/.test(type)){
     if(game.sport==='CFB')return cfbLeadApproaching(game)?
@@ -449,14 +446,14 @@ export function cushionedOverSignal(game,market){
 }
 // Yardage props have no safe fixed one-play bound and retain the ordinary path.
 export function singleReadCushionedOver(game,market,now=Date.now()){
-  if(!game||game.feedId!==game.id||!game.periodConsistent||
+  if(!game||isTieOutcomeMarket(market)||game.feedId!==game.id||!game.periodConsistent||
     !Number.isFinite(game.observedAt)||now<game.observedAt||now-game.observedAt>10000||
     !Number.isFinite(game.updatedAt)||game.updatedAt>game.observedAt+5000||
     game.observedAt-game.updatedAt>30000)return null;
   return cushionedOverSignal(game,market);
 }
 export function soccerSingleReadOver(game,market,now=Date.now()){
-  if(!/soccer/.test(String(game?.type||''))||game.feedId!==game.id||
+  if(isTieOutcomeMarket(market)||!/soccer/.test(String(game?.type||''))||game.feedId!==game.id||
     !game.verifiedLive||!game.scoreConsistent||!game.periodConsistent||game.soccerExtraTime||
     !Number.isFinite(game.observedAt)||now<game.observedAt||now-game.observedAt>30000||
     Number.isFinite(game.updatedAt)&&(game.updatedAt>game.observedAt+5000||game.observedAt-game.updatedAt>30000))return null;
@@ -572,9 +569,9 @@ export function kalshiOnlyOver(first,second,market){
 }
 export function kalshiOnlyLead(first,second,market){
   if(cfbEarlyLead(first)||cfbEarlyLead(second))return false;
-  const signal=s=>leadSignal(s,market)||additionalLeadSignal(s,market)||cricketLeadSignal(s,market)||drawSignal(s,market)||earlyLeadSignal(s,market)||tennisSignal(s,market)||tableTennisSignal(s,market);
+  const signal=s=>leadSignal(s,market)||additionalLeadSignal(s,market)||cricketLeadSignal(s,market)||earlyLeadSignal(s,market)||tennisSignal(s,market)||tableTennisSignal(s,market);
   if(Number.isFinite(Number(market?.yes_ask_dollars))&&Number(market.yes_ask_dollars)<.8&&
-      !drawSignal(first,market)&&!cricketLeadSignal(first,market)||
+      !cricketLeadSignal(first,market)||
     !signal(first)||!signal(second)||first.id!==second.id||first.feedId!==first.id||second.feedId!==second.id||
     !first.scoreConsistent||!second.scoreConsistent||first.home!==second.home||first.away!==second.away||
     !Object.is(first.period,second.period)||!first.periodConsistent||!second.periodConsistent||
@@ -672,7 +669,7 @@ export function strongKalshiOnlyLead(first,second,market){
   return false;
 }
 export function confirmedExternalLead(first,second,market){
-  const signal=s=>leadSignal(s,market)||additionalLeadSignal(s,market)||cricketLeadSignal(s,market)||drawSignal(s,market)||earlyLeadSignal(s,market)||tennisSignal(s,market)||tableTennisSignal(s,market);
+  const signal=s=>leadSignal(s,market)||additionalLeadSignal(s,market)||cricketLeadSignal(s,market)||earlyLeadSignal(s,market)||tennisSignal(s,market)||tableTennisSignal(s,market);
   if(!signal(first)||!signal(second)||first.id!==second.id||first.feedId!==first.id||second.feedId!==second.id||
     !first.scoreConsistent||!second.scoreConsistent||first.home!==second.home||first.away!==second.away||
     !Object.is(first.period,second.period)||!first.periodConsistent||!second.periodConsistent||
@@ -785,7 +782,7 @@ export function nbaSingleReadLead(game,market,now=Date.now()){
 // seller on the exact qualifying outcome. The orderbook is checked by the
 // caller; this predicate keeps the scoreboard and contract gates together.
 export function soccerSingleReadLead(game,market,now=Date.now()){
-  if(!/soccer/.test(String(game?.type||''))||game.feedId!==game.id||
+  if(isTieOutcomeMarket(market)||!/soccer/.test(String(game?.type||''))||game.feedId!==game.id||
     !game.verifiedLive||!game.scoreKnown||!game.scoreConsistent||!game.periodConsistent||
     game.soccerExtraTime||!game.clockRunning||
     !Number.isFinite(game.observedAt)||now<game.observedAt||now-game.observedAt>30000||
@@ -793,15 +790,15 @@ export function soccerSingleReadLead(game,market,now=Date.now()){
     !Number.isInteger(game.homeUnits)||!Number.isInteger(game.awayUnits)||
     game.homeUnits===game.awayUnits&&game.matchRemainingSeconds*1000<=now-game.observedAt||
     !soccerWinnerWindowOpen(game,now))return false;
-  return Boolean(leadSignal(game,market)||drawSignal(game,market));
+  return Boolean(leadSignal(game,market));
 }
 export function kalshiSingleReadLead(game,market,now=Date.now()){
   if(/soccer/.test(String(game?.type||'')))return soccerSingleReadLead(game,market,now);
-  if(!game||game.feedId!==game.id||!game.verifiedLive||!game.scoreKnown||!game.scoreConsistent||!game.periodConsistent||
+  if(!game||isTieOutcomeMarket(market)||game.feedId!==game.id||!game.verifiedLive||!game.scoreKnown||!game.scoreConsistent||!game.periodConsistent||
     !Number.isFinite(game.observedAt)||now<game.observedAt||now-game.observedAt>30000||
     Number.isFinite(game.updatedAt)&&(game.updatedAt>game.observedAt+5000||game.observedAt-game.updatedAt>30000))return false;
   return Boolean(golfSignal(game,market)||leadSignal(game,market)||additionalLeadSignal(game,market)||
-    cricketLeadSignal(game,market)||drawSignal(game,market)||earlyLeadSignal(game,market)||tennisSignal(game,market)||tableTennisSignal(game,market));
+    cricketLeadSignal(game,market)||earlyLeadSignal(game,market)||tennisSignal(game,market)||tableTennisSignal(game,market));
 }
 export function externallyVerifiedEarlySoccerLead(first,second,signal,firstConfirmed,secondConfirmed){
   if(!firstConfirmed||!secondConfirmed||signal?.fraction!==.02||
@@ -820,14 +817,7 @@ export function confirmedSoccerWinnerClock(first,second){
       Number.isFinite(first.soccerMinute)&&Number.isFinite(second.soccerMinute)&&
       second.soccerMinute>first.soccerMinute);
 }
-export function confirmedDrawClock(first,second,market){
-  if(!drawSignal(first,market))return true;
-  const soccer=/soccer/.test(first.type);
-  const before=soccer?first.matchRemainingSeconds:first.remainingSeconds;
-  const after=soccer?second.matchRemainingSeconds:second.remainingSeconds;
-  return first.clockRunning&&second.clockRunning&&
-    Number.isFinite(before)&&Number.isFinite(after)&&before>after&&after>0;
-}
+export function confirmedDrawClock(){return true;}
 export function soccerWinnerWindowOpen(game,now=Date.now()){
   if(!/soccer/.test(game.type)||Math.abs(game.home-game.away)<2)return true;
   if(!goalCommandingLeadEntry(game))return false;
@@ -911,23 +901,20 @@ export function earlyLeadSignal(game,market){
   if(margin<minimum||teamScorePosition(game,market)!==1)return null;
   return {strategy:'lead',fraction:.02,comboEligible:false,reason:`Restricted 2% lead: ${game.home>game.away?game.homeName:game.awayName} leads ${game.home}–${game.away} ${game.unit}; ${stage}, ${margin} ${game.unit} ahead`};
 }
-export function drawSignal(game,market){
-  const type=String(game?.type||''),soccer=/soccer/.test(type),hockey=/hockey/.test(type);
-  const basketball=/basketball/.test(type),football=/football/.test(type);
-  const final=soccer?2:hockey?3:basketball?game.sport==='NCAAB'?2:4:
-    football?4:/rugby|handball/.test(type)?2:/lacrosse/.test(type)?4:NaN;
-  const seconds=soccer?game?.matchRemainingSeconds:game?.remainingSeconds;
-  const rules=String(market?.rules_primary||'');
-  if(!game?.verifiedLive||!game.scoreKnown||!game.scoreConsistent||game.home!==game.away||
-    game.period!==final||!Number.isFinite(seconds)||seconds<=0||seconds>=(soccer?50:45)||
-    soccer&&(game.soccerOvertime||!game.periodConsistent||!game.clockRunning)||
-    !['active','open'].includes(market?.status)||
-    market.event_ticker!==game.mainEvent||!/^(?:draw|tie)(?:\b|\/)/i.test(String(market.title||market.yes_sub_title||''))||
-    !/\b(?:draw|tie)\b/i.test(rules)||!/\b(?:yes|settles|resolves)\b/i.test(rules)||
-    soccer&&!/after 90 minutes plus stoppage time/i.test(rules)||
-    (hockey||basketball||football)&&!/regulation/i.test(rules))return null;
-  return {strategy:'lead',fraction:.05,comboEligible:false,reason:`Restricted 5% draw at ${game.home}–${game.away}; final segment, ${seconds.toFixed(1)} seconds remaining`};
+// A tied result can be represented by a distinct YES market. The automated
+// scanner must never take that outcome, even if both teams are tied late.
+export function isTieOutcomeMarket(market){
+  const label=String(market?.yes_sub_title||market?.title||'').trim();
+  const title=String(market?.title||'').trim();
+  const ticker=String(market?.ticker||'');
+  const outcome=Object.entries(market?.custom_strike||{}).some(([k,v])=>
+    /(?:winner|outcome|result)/i.test(k)&&/^(?:draw|tie)$/i.test(String(v)));
+  return /^(?:tie|draw)(?:\b|\s*\()/i.test(label)||
+    /\b(?:be drawn|end in a draw|end in a tie)\??$/i.test(title)||
+    /-(?:TIE|DRAW)(?:-|$)/i.test(ticker)||outcome;
 }
+// Retained as a compatibility export for legacy account/history code.
+export function drawSignal(){return null;}
 export function tennisSignal(game,market){
   const t=game.tennis;
   if(!game.verifiedLive||!game.scoreKnown||!t||!['active','open'].includes(market.status)||market.event_ticker!==t.mainEvent||!/(?:wins?|winner).*match|wins?\b/i.test(`${market.title||''} ${market.rules_primary||''}`))return null;

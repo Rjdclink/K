@@ -65,19 +65,19 @@ test('only exchange-identified whole-game 90-minutes-plus-stoppage soccer totals
   assert.equal(soccerTotalNo(state,{...market(),status:'closed'}),null);
 });
 
-test('independent ESPN proof checks exact fixture, both goals, live second half, and elapsed minute',async()=>{
+test('independent ESPN proof verifies exact soccer fixture and goals without provider clock equality',async()=>{
   const state=game(),m=market(),board=scoreboard();
   const proof=independentSoccerTotalNoReading(board,state,milestone,m);
   assert.equal(proof?.source,'ESPN');
   assert.equal(proof?.elapsedMinute,83);
   assert.equal(soccerTotalNo(state,m,{external:proof})?.total,3);
   assert.equal(soccerTotalNo(state,m,{external:{...proof,away:2}}),null);
-  assert.equal(soccerTotalNo(state,m,{external:{...proof,elapsedMinute:80}}),null);
-  assert.equal(independentSoccerTotalNoReading(scoreboard("79'"),state,milestone,m),null);
+  assert.equal(soccerTotalNo(state,m,{external:{...proof,elapsedMinute:80}})?.total,3);
+  assert.equal(independentSoccerTotalNoReading(scoreboard("79'"),state,milestone,m)?.home,2);
   assert.equal(independentSoccerTotalNoReading(scoreboard("83'",3,1),state,milestone,m),null);
-  assert.equal(independentSoccerTotalNoReading(scoreboard("garbled"),state,milestone,m),null);
+  assert.equal(independentSoccerTotalNoReading(scoreboard("garbled"),state,milestone,m)?.away,1);
   const past=structuredClone(board);past.events[0].competitions[0].status.type.state='post';
-  assert.equal(independentSoccerTotalNoReading(past,state,milestone,m),null);
+  assert.equal(independentSoccerTotalNoReading(past,state,milestone,m)?.home,2,'provider game status is not an external score requirement');
   const duplicate=structuredClone(board);duplicate.events.push({...duplicate.events[0],id:'second-match'});
   assert.equal(independentSoccerTotalNoReading(duplicate,state,milestone,m),null);
   let urls=[];

@@ -1,3 +1,4 @@
+import {pairedExternalMatch} from '../src/independent_match_score.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -71,7 +72,7 @@ test('college football needs 20 points; NFL needs 15 points above both teams com
     'NFL full-game TOTAL event is discovered from linked GAME');
 });
 
-test('NFL total NO requires exact independent ESPN score, quarter and clock',async()=>{
+test('NFL total NO independently verifies teams and scores, not ESPN clock',async()=>{
   const f=fixture('NFL',4,'5:30'),m=market('NFL');
   const board={events:[{id:'nfl-game',date:f.milestone.start_date,competitions:[{
     status:{period:4,displayClock:'5:30',type:{state:'in'}},
@@ -88,9 +89,9 @@ test('NFL total NO requires exact independent ESPN score, quarter and clock',asy
   assert.ok(urls.length>0&&urls.every(url=>url.includes('/football/nfl/')&&!url.includes('&groups=')));
   const conflict=structuredClone(board);conflict.events[0].competitions[0].competitors[0].score='21';
   assert.equal(independentCollegeTotalNoReading(conflict,f.state,f.milestone,m),false);
-  assert.equal(await verifyIndependentCollegeTotalNo(f.state,f.milestone,m,{fetcher:async()=>({ok:true,json:async()=>conflict})}),null);
+  assert.equal(await verifyIndependentCollegeTotalNo(f.state,f.milestone,m,{fetcher:async()=>({ok:true,json:async()=>conflict})}),false);
   const clockConflict=structuredClone(board);clockConflict.events[0].competitions[0].status.displayClock='5:00';
-  assert.equal(independentCollegeTotalNoReading(clockConflict,f.state,f.milestone,m),false);
+  assert.equal(independentCollegeTotalNoReading(clockConflict,f.state,f.milestone,m)?.home,20);
 });
 
 test('football scanner handles both NFL and CFB and enforces a shared 10% cap including fees',async()=>{
@@ -101,7 +102,7 @@ test('football scanner handles both NFL and CFB and enforces a shared 10% cap in
   const events=new Map([[m.event_ticker,{category:'Sports',event_ticker:m.event_ticker,markets:[m]}]]);
   let saved=null,orders=0,checks=0,allocation=null,budget=null,patterns=[];
   const fakeHeld={ticker:'KXNCAAFTOTAL-OLD',position_fp:-2,market_exposure_dollars:'8.00',fees_paid_dollars:'1.00'};
-  const context=vm.createContext({Date,JSON,Number,Math,Promise,console,live:()=>true,
+  const context=vm.createContext({recordDecision:async()=>{},pairedExternalMatch,Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),linkedEventTickers:()=>[m.event_ticker],
     collegeFootballTotalNo,collegeBasketballTotalNo,overContractKey,sameSportsContract,
     verifyIndependentCollegeTotalNo:async()=>{checks++;return {source:'ESPN',seconds:299};},

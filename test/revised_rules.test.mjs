@@ -161,7 +161,7 @@ test('soccer entry reuses one Kalshi score for 30 seconds on the correct contrac
   assert.equal(soccerSingleReadLead({...state,feedId:'another-game'},market,now),false);
   const tie={...soccer(0,89,49).state,matchRemainingSeconds:49};
   const tieMarket={...market,title:'Tie',yes_sub_title:'Tie',rules_primary:'Tie settles Yes after 90 minutes plus stoppage time.'};
-  assert.equal(soccerSingleReadLead(tie,tieMarket,now),true);
+  assert.equal(soccerSingleReadLead(tie,tieMarket,now),false,'all automatic soccer tie entries are disabled');
   assert.equal(soccerSingleReadLead({...tie,matchRemainingSeconds:10},tieMarket,tie.observedAt+11000),false);
   assert.equal(soccerSingleReadLead({...tie,matchRemainingSeconds:50},tieMarket,now),false);
 });

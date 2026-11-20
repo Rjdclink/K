@@ -1,3 +1,4 @@
+import {pairedExternalMatch} from '../src/independent_match_score.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -60,7 +61,7 @@ test('college full-game NO verifies at 2:00 and enters below 1:30 without a 45-s
   const events=new Map([[market.event_ticker,{event_ticker:market.event_ticker,
     category:'Sports',markets:[market]}]]);
   let window=null,checks=0,orders=0,reserved=null,floor=null,orderSizing=null;
-  const context=vm.createContext({tagNoPreflight,validNoPreflight,lateNoPreflightProgress,Date,JSON,Number,Math,Promise,console,live:()=>true,
+  const context=vm.createContext({recordDecision:async()=>{},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),
     linkedEventTickers:()=>[market.event_ticker],
     collegeFootballTotalNo,collegeBasketballTotalNo,overContractKey,sameSportsContract,
@@ -131,7 +132,7 @@ test('college first-half NO requires first proof at >=2:00 and enters strictly u
   assert.ok(collegeBasketballTotalNo(early.state,market,{beforeWindow:true}),'first-half contract qualifies for initial external verification');
   const events=new Map([[market.event_ticker,{event_ticker:market.event_ticker,category:'Sports',markets:[market]}]]);
   let window=null,checks=0,orders=0;
-  const context=vm.createContext({tagNoPreflight,validNoPreflight,lateNoPreflightProgress,Date,JSON,Number,Math,Promise,console,live:()=>true,
+  const context=vm.createContext({recordDecision:async()=>{},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),linkedEventTickers:()=>[market.event_ticker],
     collegeFootballTotalNo,collegeBasketballTotalNo,overContractKey,sameSportsContract,
     verifyIndependentCollegeTotalNo:async()=>{checks++;return {source:'ESPN',eventId:'espn-basketball'};},
