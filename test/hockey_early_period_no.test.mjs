@@ -36,14 +36,14 @@ const board=(period,clock,parts)=>({events:[{id:'espn-nhl-sea-sj',date:milestone
       team:{displayName:'San Jose'},linescores:parts.map(p=>({value:p.away}))}
   ]}]}]});
 const parts=(game,period)=>game.periodScores.filter(p=>p.number<=period);
-test('both NHL early-period NO markets: initial verification from 4:00 through at least 3:30, entry strictly below 3:30',()=>{
+test('both NHL early-period NO markets: initial verification from 6:00, entry strictly below 5:00',()=>{
  for(const p of [1,2]){
   const m=market(p,p===2?2.5:1.5);
-  assert.equal(hockeyEarlyNoMarketSpec(state(p,'4:01'),m,{beforeWindow:true}),null);
-  assert.ok(hockeyEarlyNoMarketSpec(state(p,'4:00'),m,{beforeWindow:true}));
-  assert.ok(hockeyEarlyNoMarketSpec(state(p,'3:30'),m,{beforeWindow:true}));
-  assert.equal(hockeyEarlyPeriodNo(state(p,'3:30'),m),null);
-  assert.ok(hockeyEarlyPeriodNo(state(p,'3:29'),m));
+  assert.equal(hockeyEarlyNoMarketSpec(state(p,'6:01'),m,{beforeWindow:true}),null);
+  assert.ok(hockeyEarlyNoMarketSpec(state(p,'6:00'),m,{beforeWindow:true}));
+  assert.ok(hockeyEarlyNoMarketSpec(state(p,'5:00'),m,{beforeWindow:true}));
+  assert.equal(hockeyEarlyPeriodNo(state(p,'5:00'),m),null);
+  assert.ok(hockeyEarlyPeriodNo(state(p,'4:59'),m));
   assert.equal(hockeyEarlyPeriodNo(state(p,'0:00'),m),null);
   assert.equal(hockeyEarlyPeriodNo(state(p,'3:29'),market(3)),null);
   assert.equal(hockeyEarlyPeriodNo(state(3,'3:29'),m),null);
