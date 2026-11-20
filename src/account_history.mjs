@@ -2,7 +2,8 @@
 // submitted an order. Never infer a realized win from a live position or from
 // an incomplete fill/settlement record.
 const number=value=>value===null||value===undefined||value===''?NaN:Number(value);
-const date=value=>{const n=new Date(value).getTime();return Number.isFinite(n)?new Date(n):null;};
+const date=value=>{if(value===null||value===undefined||value==='')return null;
+ const n=new Date(value).getTime();return Number.isFinite(n)?new Date(n):null;};
 export function normalizeAccountFill(fill){
  if(!fill||typeof fill!=='object')return null;
  const ticker=String(fill.ticker||fill.market_ticker||'');
@@ -13,8 +14,8 @@ export function normalizeAccountFill(fill){
  const direct=number(side==='yes'?fill.yes_price_dollars:fill.no_price_dollars);
  const inverse=number(side==='yes'?fill.no_price_dollars:fill.yes_price_dollars);
  const price=Number.isFinite(direct)?direct:Number.isFinite(inverse)?1-inverse:NaN;
- const timestamp=date(fill.created_time||Number.isFinite(number(fill.ts))?
-   (fill.created_time||new Date(Number(fill.ts)*1000)):null);
+ const timestamp=date(fill.created_time||(Number.isFinite(number(fill.ts))?
+   new Date(Number(fill.ts)*1000):null));
  if(!ticker||!fillId||!orderId||!['yes','no'].includes(side)||
     !['buy','sell'].includes(action)||!Number.isFinite(count)||count<=0||
     !Number.isFinite(fee)||fee<0||!Number.isFinite(price)||price<0||price>1||!timestamp)return null;
@@ -59,7 +60,11 @@ export function summarizeAccountMarkets(rawFills,settlements=[]){
  const rows=[];
  for(const [ticker,fills]of groups){
   if(unresolved.has(ticker))continue;
-  const result=realizedAccountMarket(fills,byTicker.get(ticker));
+  const settlement=byTicker.get(ticker);
+  if(settlement&&(!['yes','no'].includes(settlement.market_result)||
+     !date(settlement.settled_time)||!Number.isFinite(number(settlement.revenue))||
+     number(settlement.revenue)<0)){unresolved.add(ticker);continue;}
+  const result=realizedAccountMarket(fills,settlement);
   if(result)rows.push({ticker,...result,fillCount:fills.length,
     firstFillAt:fills.map(f=>f.createdAt).sort()[0]});
   else unresolved.add(ticker);
