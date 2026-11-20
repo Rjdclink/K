@@ -15,6 +15,7 @@ import { page } from './ui.mjs';
 import { historyPage } from './history_ui.mjs';
 import { completedTrade, completedNoTrade, manualSaleFill, reconcileManualSaleFills, settlementLookupCandidates } from './history.mjs';
 import {syncAccountHistory,ensureAccountHistoryTables} from './account_history_sync.mjs';
+import {syncAccountPositions} from './account_positions_sync.mjs';
 import {accountHistoryListSQL,accountHistorySummarySQL} from './account_history_query.mjs';
 import { ensureExitLedger, recordExitFill } from './exit_ledger.mjs';
 import { gameState, overSignal, PLAYER_PROP_MAX_FRACTION, BASKETBALL_COUNT_PROP_MAX_FRACTION, BASKETBALL_WINNER_ENTRY_SECONDS, playerOverSpec, playerPropEarlyWindow, confirmedOver, fallbackScoringUnits, confirmedExternalLead, leadSignal, isTieOutcomeMarket, proBasketballLeadRules, basketballCloseoutEntry, basketballCloseoutMinimum, nbaSingleReadLead, kalshiSingleReadLead, confirmedSoccerWinnerClock, soccerWinnerWindowOpen, leadWatchReason, additionalLeadSignal, cricketLeadSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback, teamScorePosition } from './strategy.mjs';
@@ -917,6 +918,13 @@ async function syncSettlementAlerts(){
     await pool.query('UPDATE account_history_sync SET last_error=$1,updated_at=now() WHERE id=1',
       [String(error.message).slice(0,250)]).catch(()=>{});
   }
+  // Position accounting is read-only until its fee semantics are calibrated
+  // against actual, already verified transaction history.
+  try{
+    const result=await syncAccountPositions({query:(...args)=>pool.query(...args),
+      fetchPage:path=>kalshi(path,{auth:true})});
+    if(!result.skipped)console.info('Kalshi settled position import:',JSON.stringify(result));
+  }catch(error){console.warn('Kalshi settled position import deferred:',error.message)}
   try{
     const observedSettlements=[];
     const held=await pool.query(`SELECT DISTINCT market_ticker FROM trade_attempts WHERE status='filled' AND created_at>now()-interval '14 days'`);
