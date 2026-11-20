@@ -35,7 +35,7 @@ function harness({ageMs=46000,canVerify=true,hasSeller=true,existingExposure=fal
   const code=src.slice(a,b);
   let n=0,verifications=0,orders=0,allocation=null,availablePool=null;
   const windows=new Map(),dashboard=new Map(),trace=[];
-  const held={ticker:'KXNHLTOTAL-OLD',position_fp:-1,market_exposure_dollars:'6.00',fees_paid_dollars:'0.50'};
+  const held={ticker:'KXNHLTOTAL-OLD',position_fp:-1,market_exposure_dollars:'4.00',fees_paid_dollars:'0.50'};
   const context=vm.createContext({
     Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),
@@ -82,8 +82,8 @@ function harness({ageMs=46000,canVerify=true,hasSeller=true,existingExposure=fal
     },
     profitableCount:n=>n,estimatedCostCents:()=>0,
     auditTable:async()=>{},randomUUID:()=> 'hockey-verification',rememberIndependentEntry,
-    reserve:async signal=>{trace.push('reserve');assert.equal(signal.fraction,.10);return 'hockey-order';},
-    withEntryProfitFloor:async(options,fn)=>{assert.equal(options.fraction,.10);return fn();},
+    reserve:async signal=>{trace.push('reserve');assert.equal(signal.fraction,.05);return 'hockey-order';},
+    withEntryProfitFloor:async(options,fn)=>{assert.equal(options.fraction,.05);return fn();},
     invalidateBalance:async()=>{}
   });
   vm.runInContext(code,context);
@@ -106,7 +106,7 @@ test('NHL NO checks both full-game and P3, with independent 2:15 preflight then 
   assert.equal(h.orders,0,'strictly under 90s required');
   assert.equal(await h.scan('1:29'),2);
   assert.equal(h.orders,2,'both distinct markets can qualify');
-  assert.equal(h.allocation,.10);
+  assert.equal(h.allocation,.05);
   assert.ok(h.trace.lastIndexOf('external')<h.trace.lastIndexOf('reserve'),'external immediately precedes reservation');
   assert.ok(h.trace.indexOf('orderbook')<h.trace.lastIndexOf('external'),'final check after NO quote');
   assert.deepEqual(new Set((h.dashboard.get(milestone.id)||[]).filter(x=>x.strategy==='no').map(x=>x.ticker)),
@@ -137,12 +137,12 @@ test('NHL NO never enters without an executable NO seller',async()=>{
   assert.ok((h.dashboard.get(milestone.id)||[]).some(s=>/NO seller/i.test(s.execution)));
 });
 
-test('NHL total NO caps full-game and P3 entries in one shared fee-inclusive 10% pool',async()=>{
+test('NHL total NO caps full-game and P3 entries in one shared fee-inclusive 5% pool',async()=>{
   const h=harness({existingExposure:true});
   await h.scan('2:15');
   await h.scan('1:29');
-  assert.equal(h.allocation,.10);
-  assert.equal(h.availablePool,350,'$10 total cap minus existing $6 exposure and $0.50 fees leaves $3.50');
+  assert.equal(h.allocation,.05);
+  assert.equal(h.availablePool,50,'$5 total cap minus existing $4 exposure and $0.50 fees leaves $0.50');
 });
 
 test('hockey NO dashboard signals are persisted alongside existing strategies, without changing football or basketball scans',()=>{
