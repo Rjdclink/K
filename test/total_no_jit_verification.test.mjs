@@ -7,7 +7,7 @@ import {collegeBasketballTotalNo,collegeFootballTotalNo,bestNoAsk,noDepthAtAsk} 
 import {sameSportsContract,overContractKey} from '../src/over_verification.mjs';
 import {rememberIndependentEntry} from '../src/entry_verification.mjs';
 
-function harness(sport,{ageMs=46000,failSecond=false}={}){
+function harness(sport,{ageMs=46000,failSecond=false,legacyFirstClock=null}={}){
   const basketball=sport==='NCAAB',league=basketball?'NCAAMB':sport;
   const prefix=basketball?'KXNCAAMB':sport==='NFL'?'KXNFL':'KXNCAAF';
   const period=basketball?2:4,home=basketball?65:20,away=basketball?65:17;
@@ -25,7 +25,12 @@ function harness(sport,{ageMs=46000,failSecond=false}={}){
     rules_primary:basketball?
       'Resolves Yes if over '+line+' total points are scored in the Away vs Home college basketball game.':
       'The teams collectively score more than '+line+' points in the full Away vs Home football game.'};
-  let window=null,proofs=0,orders=0,blocked=false;
+  let window=legacyFirstClock===null?null:{
+    market_ticker:market.ticker,game_id:milestone.id,
+    contract_key:overContractKey(state('1:15'),market),period,
+    first_clock:legacyFirstClock,first_evidence:{source:'ESPN',seconds:legacyFirstClock},
+    first_at:new Date(Date.now()-ageMs)
+  },proofs=0,orders=0,blocked=false;
   const trace=[];
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
   const code=source.slice(source.indexOf('async function scanCollegeTotalNos('),source.indexOf('async function scan(cachedMilestones'));
@@ -142,5 +147,17 @@ test('NFL and CFB NO reject the trade when their only independent check is unava
     assert.equal(await h.scan('4:59'),0);
     assert.equal(h.proofs,1);
     assert.equal(h.orders,0);
+  }
+});
+
+test('stale preflight windows from earlier policies are reverified at 1:15 instead of blocking an eligible last-quarter entry',async()=>{
+  for(const oldClock of [284,25]){
+    const h=harness('NCAAB',{legacyFirstClock:oldClock});
+    assert.equal(await h.scan('1:15'),0,'a stale preflight should be replaced, not trusted');
+    assert.equal(h.proofs,1,'exactly one new first external verification');
+    assert.equal(h.window?.first_clock,75,'restart the 45-second timer from a valid 1:15 preflight');
+    assert.equal(await h.scan('0:29'),1,'entry after new 45-second countdown with fresh final proof');
+    assert.equal(h.proofs,2);
+    assert.equal(h.orders,1);
   }
 });
