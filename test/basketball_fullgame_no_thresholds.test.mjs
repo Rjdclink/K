@@ -19,22 +19,22 @@ function market(league,line,half=false){
    rules_primary:'If over '+line+' total points are scored in '+
       (half?'the 1st half of ':'')+'the Away vs Home basketball game.'};
 }
-test('NBA WNBA and men college full-game NO require exact sport-specific cushions and entry strictly under 3:00',()=>{
- for(const [league,cushion] of [['NBA',26],['WNBA',25],['NCAAMB',26]]){
+test('NBA and all three women/college full-game NO thresholds use 8:00 preflight and strictly under 7:00',()=>{
+ for(const [league,cushion] of [['NBA',45],['WNBA',40],['NCAAMB',40],['NCAAWB',40]]){
   const exact=market(league,140+cushion);
-  assert.equal(collegeBasketballTotalNo(fixture(league,'3:00'),exact),null,league+' boundary');
-  assert.equal(collegeBasketballTotalNo(fixture(league,'2:59'),exact)?.period,'full_game',league+' eligible');
-  assert.equal(collegeBasketballTotalNo(fixture(league,'2:59'),market(league,140+cushion-.5)),null,league+' below cushion');
-  assert.ok(collegeBasketballTotalNo(fixture(league,'4:00'),exact,{beforeWindow:true}),league+' preflight candidate');
+  assert.equal(collegeBasketballTotalNo(fixture(league,'7:00'),exact),null,league+' boundary');
+  assert.equal(collegeBasketballTotalNo(fixture(league,'6:59'),exact)?.period,'full_game',league+' eligible');
+  assert.equal(collegeBasketballTotalNo(fixture(league,'6:59'),market(league,140+cushion-.5)),null,league+' below cushion');
+  assert.ok(collegeBasketballTotalNo(fixture(league,'8:00'),exact,{beforeWindow:true}),league+' first ESPN at eight');
+  assert.equal(collegeBasketballTotalNo(fixture(league,'8:01'),exact,{beforeWindow:true}),null,league+' before first check');
   assert.equal(collegeBasketballTotalNo(fixture(league,'0:00'),exact),null);
  }
 });
-test('college first half, women college full game and international NO retain earlier thresholds',()=>{
- const collegeHalf=fixture('NCAAMB','1:29',1);
- assert.ok(collegeBasketballTotalNo(collegeHalf,market('NCAAMB',152,true)));
+test('college first-half and international full-game NO retain earlier thresholds',()=>{
+ assert.ok(collegeBasketballTotalNo(fixture('NCAAMB','1:29',1),market('NCAAMB',152,true)));
+ assert.ok(collegeBasketballTotalNo(fixture('NCAAWB','1:29',2),market('NCAAWB',152,true)));
  assert.equal(collegeBasketballTotalNo(fixture('NCAAMB','2:59',1),market('NCAAMB',152,true)),null);
- for(const league of ['NCAAWB','FIBA']){
-  assert.ok(collegeBasketballTotalNo(fixture(league,'1:29'),market(league,160)),league+' preserved 20');
-  assert.equal(collegeBasketballTotalNo(fixture(league,'2:59'),market(league,160)),null,league+' preserved clock');
- }
+ assert.equal(collegeBasketballTotalNo(fixture('NCAAWB','2:59',2),market('NCAAWB',152,true)),null);
+ assert.ok(collegeBasketballTotalNo(fixture('FIBA','1:29'),market('FIBA',160)));
+ assert.equal(collegeBasketballTotalNo(fixture('FIBA','2:59'),market('FIBA',160)),null);
 });
