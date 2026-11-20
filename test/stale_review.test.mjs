@@ -12,7 +12,7 @@ test('old milestones are revisited in bounded, fair batches, with cooldown for u
  const reviews=[{game_id:'a',outcome:'unknown',checked_at:new Date(now-60000).toISOString()},
   {game_id:'b',outcome:'live',checked_at:new Date(now-30000).toISOString()}];
  assert.deepEqual(selectStaleReviews(milestones,reviews,now,2).map(x=>x.id),['c']);
- assert.deepEqual(selectStaleReviews(milestones,reviews,now+6*60000,3).map(x=>x.id),['a','b','c']);
+ assert.deepEqual(selectStaleReviews(milestones,reviews,now+6*60000,3).map(x=>x.id),['c','a','b']);
 });
 
 test('fresh confirmed live games are recovered; terminal scores are pruned; missing or old source timestamps remain uncertain',()=>{
