@@ -43,6 +43,16 @@ test('unknown action, missing fees, invalid quantity and missing fill ID fail cl
   {...fill('e'),yes_price_dollars:undefined,no_price_dollars:undefined}
  ])assert.equal(normalizeAccountFill(bad),null);
 });
+test('missing exchange timestamp and conflicted settlement cannot manufacture a history win',()=>{
+ const a=fill('m');
+ delete a.created_time;
+ assert.equal(normalizeAccountFill(a),null);
+ const valid=normalizeAccountFill(fill('good'));
+ const bad={...settlement(),revenue:NaN};
+ const {rows,unresolved}=summarizeAccountMarkets([valid],[bad]);
+ assert.equal(rows.length,0);
+ assert.deepEqual(unresolved,['KXTEST-A']);
+});
 test('every market gets one realized row, each exchange fill counted once',()=>{
  const a=normalizeAccountFill(fill('manual'));
  const b=normalizeAccountFill(fill('manual'));
