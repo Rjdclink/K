@@ -2737,7 +2737,9 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null){
   const firstProofs=new Map(),finalProofs=new Map();
   const watching=games.filter(({state})=>(basketball?state.type==='basketball_game':['CFB','NFL'].includes(state.sport))&&
     (basketball?(state.sport==='NCAAB'?[1,2].includes(state.period):state.sport==='NCAAW'?[2,4].includes(state.period):state.period===4):state.period===4)&&
-    Number.isFinite(state.remainingSeconds)&&state.remainingSeconds>0&&state.remainingSeconds<prewindow);
+    Number.isFinite(state.remainingSeconds)&&state.remainingSeconds>0&&
+    state.remainingSeconds<(basketball&&['NBA','WNBA','NCAAB','NCAAW'].includes(state.sport)&&
+      state.period===(state.sport==='NCAAB'?2:4)?481:prewindow));
   if(!live()||!watching.length)return 0;
   const latest=await liveBatch(watching.map(({milestone})=>milestone));
   for(const game of watching){const raw=latest.get(game.milestone.id);
@@ -2764,18 +2766,18 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null){
       choices.push(...(basketball?eligible:[eligible[0]]));
       if(basketball)for(const candidate of eligible){
         const expandedFullGame=candidate.signal.period==='full_game'&&
-          ['NBA','WNBA','NCAAB'].includes(state.sport);
-        const initialClock=expandedFullGame?240:candidate.signal.period==='full_game'?120:150;
-        const entryClock=expandedFullGame?180:90;
-        const initialLabel=expandedFullGame?'4:00':candidate.signal.period==='full_game'?'2:00':'2:30–2:00';
+          ['NBA','WNBA','NCAAB','NCAAW'].includes(state.sport);
+        const initialClock=expandedFullGame?480:candidate.signal.period==='full_game'?120:150;
+        const entryClock=expandedFullGame?420:90;
+        const initialLabel=expandedFullGame?'8:00':candidate.signal.period==='full_game'?'2:00':'2:30–2:00';
         report(candidate,
           state.remainingSeconds<entryClock?'Initial ESPN check may begin late; final check waits 60 real seconds':
             state.remainingSeconds>initialClock?'Initial independent external verification scheduled near '+initialLabel:
               'Initial independent external verification pending');
       }
     }else if(basketball&&signalSink){
-      const fullGameCushion=state.sport==='NBA'||state.sport==='NCAAB'?26:
-        state.sport==='WNBA'?25:20;
+      const fullGameCushion=state.sport==='NBA'?45:
+        ['WNBA','NCAAB','NCAAW'].includes(state.sport)?40:20;
       signalSink.set(state.id,[{strategy:'watch',title:'Basketball total NO',
         reason:'No open matched total with the applicable 12-point first-half or '+
           fullGameCushion+'-point full-game cushion',
@@ -2789,9 +2791,9 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null){
     try{
       const game=c.state;
       const expandedFullGame=basketball&&c.signal.period==='full_game'&&
-        ['NBA','WNBA','NCAAB'].includes(game.sport);
-      const entryClock=basketball?(expandedFullGame?180:90):entry;
-      const firstClock=basketball?(expandedFullGame?240:c.signal.period==='full_game'?120:150):null;
+        ['NBA','WNBA','NCAAB','NCAAW'].includes(game.sport);
+      const entryClock=basketball?(expandedFullGame?420:90):entry;
+      const firstClock=basketball?(expandedFullGame?480:c.signal.period==='full_game'?120:150):null;
       // The initial checkpoint is a START, not a deadline. If a scanner
       // misses that nominal time, verify at the next live eligible clock.
       let window=null;
@@ -2804,7 +2806,7 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null){
           maxFirstSeconds:firstClock})){
           if(game.remainingSeconds>firstClock){
             report(c,'First independent check starts at or below '+
-              (expandedFullGame?'4:00':c.signal.period==='full_game'?'2:00':'2:30'));
+              (expandedFullGame?'8:00':c.signal.period==='full_game'?'2:00':'2:30'));
             continue;
           }
           let firstProof;
