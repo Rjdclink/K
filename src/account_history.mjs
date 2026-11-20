@@ -26,6 +26,11 @@ export function realizedAccountMarket(fills,settlement=null){
     !['yes','no'].includes(f.side)||!['buy','sell'].includes(f.action)||
     !Number.isFinite(f.count)||f.count<=0||!Number.isFinite(f.price)||
     f.price<0||f.price>1||!Number.isFinite(f.fee)||f.fee<0||!date(f.createdAt)))return null;
+ // Exchange netting can encode a sale of YES as a purchase of NO.
+ // Opposing-side fills may return collateral outside this settlement record;
+ // without that cash movement, arithmetic could manufacture a loss.
+ // Retain legacy results until an exchange-authoritative realized P&L is available.
+ if(new Set(fills.map(f=>f.side)).size>1)return null;
  let cash=0,yes=0,no=0,purchases=0;
  for(const f of fills){
    const signed=f.action==='buy'?1:-1;
