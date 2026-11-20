@@ -53,7 +53,8 @@ export function collegeBasketballTotalNo(game,market,{beforeWindow=false}={}){
   const collegeMen=game?.sport==='NCAAB',collegeWomen=game?.sport==='NCAAW';
   const firstHalf=(collegeMen&&game?.period===1)||(collegeWomen&&game?.period===2);
   const fullGame=game?.period===(collegeMen?2:4);
-  const entrySeconds=90;
+  const expandedFullGame=fullGame&&['NBA','WNBA','NCAAB'].includes(game?.sport);
+  const entrySeconds=expandedFullGame?180:90;
   if(!basketballTotalNoSupported(game?.sport)||game.type!=='basketball_game'||!game.verifiedLive||
     !game.scoreKnown||!game.scoreConsistent||!game.periodConsistent||game.feedId!==game.id||
     !Number.isFinite(game.observedAt)||Date.now()-game.observedAt>10000||
@@ -75,7 +76,8 @@ export function collegeBasketballTotalNo(game,market,{beforeWindow=false}={}){
     market.strike_type&&!['greater','greater_than'].includes(market.strike_type))return null;
   const displayed=totalLine(market);
   const line=Number(market.floor_strike),rules=String(market.rules_primary||'');
-  if(!Number.isFinite(line)||line!==displayed||line-(game.home+game.away)<(firstHalf?12:20)||
+  const cushion=firstHalf?12:expandedFullGame?(game.sport==='WNBA'?25:26):20;
+  if(!Number.isFinite(line)||line!==displayed||line-(game.home+game.away)<cushion||
     !(/over\s+\d+(?:\.\d+)?\s+total points are scored/i.test(rules)||
       /collectively score more than|combined total points scored/i.test(rules))||
     (firstHalf?!/1st half|first half/i.test(rules):

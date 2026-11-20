@@ -29,22 +29,23 @@ function totalMarket(league,half,line){
       (half?'the 1st half of ':'')+'the Away vs Home college basketball game.'};
 }
 
-test('basketball total NO full-game keeps 20-point cushion; college 1H uses 12 points under 1:30',()=>{
+test('men college full-game requires 26 points under 3:00; women full-game and first halves retain prior rules',()=>{
   for(const [league,halfPeriod,gamePeriod] of [['NCAAMB',1,2],['NCAAWB',2,4]]){
     for(const half of [true,false]){
       const period=half?halfPeriod:gamePeriod;
-      const market=totalMarket(league,half,150);
+      const expanded=!half&&league==='NCAAMB';
+      const market=totalMarket(league,half,expanded?156:150);
       const at=clock=>basketball(league,period,clock,65,65).state;
-      const qualifying='1:29',boundary='1:30';
+      const qualifying=expanded?'2:59':'1:29',boundary=expanded?'3:00':'1:30';
       assert.equal(collegeBasketballTotalNo(at(qualifying),market)?.total,130);
       assert.ok(collegeBasketballTotalNo(at('0:01'),market));
       assert.equal(collegeBasketballTotalNo(at(boundary),market),null,'entry window is strictly under its boundary');
       assert.equal(collegeBasketballTotalNo(at('0:00'),market),null,'game or period already ended');
       assert.equal(collegeBasketballTotalNo(at('3:29'),market),null,'early entry window must stay closed');
-      assert.equal(collegeBasketballTotalNo(at(qualifying),totalMarket(league,half,half?141.5:149.5)),null,
+      assert.equal(collegeBasketballTotalNo(at(qualifying),totalMarket(league,half,half?141.5:expanded?155.5:149.5)),null,
         'a cushion below the period-specific minimum is insufficient');
-      assert.ok(collegeBasketballTotalNo(at(qualifying),totalMarket(league,half,half?142:150)),
-        'first-half exact 12-point gap or full-game exact 20-point gap must qualify');
+      assert.ok(collegeBasketballTotalNo(at(qualifying),totalMarket(league,half,half?142:expanded?156:150)),
+        'the selected first-half or full-game minimum must qualify');
       assert.ok(collegeBasketballTotalNo(at('2:00'),market,{beforeWindow:true}),
         'first external check must be possible at its scheduled clock');
       assert.equal(collegeBasketballTotalNo(at('5:00'),market,{beforeWindow:true}),null);
@@ -53,13 +54,13 @@ test('basketball total NO full-game keeps 20-point cushion; college 1H uses 12 p
     }
   }
 });
-test('college full-game NO verifies at 2:00 and enters below 1:30 without a 45-second delay at 5% cap',async()=>{
+test('men college full-game NO verifies at 4:00 and enters under 3:00 after 60 real seconds at 5% cap',async()=>{
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
   const code=source.slice(source.indexOf('async function scanCollegeTotalNos('),
     source.indexOf('async function scan(cachedMilestones'));
   assert.ok(code.includes('async function scanCollegeTotalNos'));
-  const league='NCAAMB',market=totalMarket(league,false,150);
-  const first=basketball(league,2,'2:00'),last=basketball(league,2,'1:29');
+  const league='NCAAMB',market=totalMarket(league,false,156);
+  const first=basketball(league,2,'4:00'),last=basketball(league,2,'2:59');
   const events=new Map([[market.event_ticker,{event_ticker:market.event_ticker,
     category:'Sports',markets:[market]}]]);
   let window=null,checks=0,orders=0,reserved=null,floor=null,orderSizing=null;
@@ -93,7 +94,7 @@ test('college full-game NO verifies at 2:00 and enters below 1:30 without a 45-s
     },
     liveMilestone:async()=>({milestone_id:last.milestone.id,
       _observed_at:new Date().toISOString(),
-      details:{status:'live',home_points:60,away_points:65,period:2,clock:'1:29',
+      details:{status:'live',home_points:60,away_points:65,period:2,clock:'2:59',
         last_updated_ts:Date.now()/1000,home_team_name:'Home',away_team_name:'Away'}}),
     gameState,bestNoAsk,noDepthAtAsk,minimumCount:()=>1,
     allOpenPositions:async()=>({market_positions:[]}),
@@ -108,14 +109,14 @@ test('college full-game NO verifies at 2:00 and enters below 1:30 without a 45-s
   });
   vm.runInContext(code,context);
   const run=state=>context.scanCollegeTotalNos([{milestone:first.milestone,state}],events,'basketball');
-  assert.equal(await run(basketball(league,2,'2:01').state),0,'wait until 2:00 to first verify');
+  assert.equal(await run(basketball(league,2,'4:01').state),0,'wait until 4:00 to first verify');
   assert.equal(checks,0);
   assert.equal(await run(first.state),0,'first independent check only');
   assert.equal(checks,1);
-  assert.equal(window?.first_clock,120);
-  assert.equal(await run(basketball(league,2,'1:30').state),0,'1:30 is not entry eligible');
+  assert.equal(window?.first_clock,240);
+  assert.equal(await run(basketball(league,2,'3:00').state),0,'3:00 is not entry eligible');
   assert.equal(orders,0);
-  assert.equal(await run(last.state),1,'second fresh check authorizes entry immediately under 1:30');
+  assert.equal(await run(last.state),1,'second fresh check authorizes entry immediately under 3:00');
   assert.equal(checks,2);
   assert.equal(orders,1);
   assert.equal(reserved.fraction,.05,'risk reservation must use 5%');
