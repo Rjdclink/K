@@ -43,6 +43,14 @@ test('unknown action, missing fees, invalid quantity and missing fill ID fail cl
   {...fill('e'),yes_price_dollars:undefined,no_price_dollars:undefined}
  ])assert.equal(normalizeAccountFill(bad),null);
 });
+test('a canonical NO-side offset against a YES position cannot be misclassified as a new losing purchase',()=>{
+ const yes=normalizeAccountFill(fill('yes-open','buy','yes','10','0.40','0.10'));
+ const offset=normalizeAccountFill(fill('no-offset','buy','no','10','0.30','0.10'));
+ assert.equal(realizedAccountMarket([yes,offset],settlement('KXTEST-A',0,'yes')),null);
+ const result=summarizeAccountMarkets([yes,offset],[settlement('KXTEST-A',0,'yes')]);
+ assert.equal(result.rows.length,0);
+ assert.deepEqual(result.unresolved,['KXTEST-A']);
+});
 test('missing exchange timestamp and conflicted settlement cannot manufacture a history win',()=>{
  const a=fill('m');
  delete a.created_time;
