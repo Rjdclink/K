@@ -30,7 +30,7 @@ export function hockeyNoMarketSpec(game,market,{beforeWindow=false}={}){
     !game.verifiedLive||!game.scoreKnown||!game.scoreConsistent||!game.periodConsistent||
     game.feedId!==game.id||!Number.isFinite(game.observedAt)||Date.now()-game.observedAt>10000||
     game.period!==3||!Number.isFinite(game.remainingSeconds)||game.remainingSeconds<=0||
-    (beforeWindow?game.remainingSeconds>135:game.remainingSeconds>=90)||
+    (beforeWindow?game.remainingSeconds>300:game.remainingSeconds>=270)||
     !Number.isInteger(game.home)||!Number.isInteger(game.away)||game.home<0||game.away<0||
     !['active','open'].includes(market?.status)||
     market.result&&!['','not_determined'].includes(String(market.result)))return null;

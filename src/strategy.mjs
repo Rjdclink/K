@@ -201,9 +201,10 @@ export function gameState(m, live) {
     /baseball/.test(family)?d.inning_half===2||/bottom/i.test(String(d.inning_half||periodText))?'home':d.inning_half===1||/top/i.test(String(d.inning_half||periodText))?'away':null:
     (tennis||tableTennis)&&d.server===m.details?.first_competitor_id?(firstIsHome?'home':'away'):
     (tennis||tableTennis)&&d.server===m.details?.second_competitor_id?(firstIsHome?'away':'home'):null;
-  // Keep the feed's final-whistle countdown when available. Late winner
-  // entries can also use the live elapsed regulation minute.
-  const matchRemainingSeconds=/soccer/.test(family)?N(d.match_remaining_seconds):NaN;
+  // Soccer windows count down from 90:00 of regulation only. Feed-provided
+  // final-whistle/stoppage estimates must never create more entry time.
+  const matchRemainingSeconds=/soccer/.test(family)&&Number.isFinite(soccerMinute)?
+    Math.max(0,Math.round((90-soccerMinute)*60)):NaN;
   // Soccer feeds include extra-time goals in same-game scores, while the
   // matching Kalshi totals and winner markets settle on regulation only.
   const soccerOvertime=/soccer/.test(family) &&
@@ -236,6 +237,12 @@ export function gameState(m, live) {
   const tableTennisData=tableTennis?{bestOf:N(m.details?.best_of??d.best_of_sets),firstId:m.details?.first_competitor_id,secondId:m.details?.second_competitor_id,firstIsHome,firstSets:N(d.competitor1_overall_score),secondSets:N(d.competitor2_overall_score),setNumber:N(currentSet?.number),firstPoints:N(currentSet?.competitor1_score),secondPoints:N(currentSet?.competitor2_score)}:null;
   const tennisTotal=tennis?tennisGameTotal(d):NaN;
   return {id:m.id, feedId:live?.milestone_id, observedAt:Date.parse(live?._observed_at||''), updatedAt:Number.isFinite(updated)?updated*1000:NaN, title:m.title, sport, competition:String(m.details?.league||''), tour:String(m.details?.tour||''), type:family, status, home, away, homeUnits, awayUnits, unit, period, periodScores, playerStats:d.player_stats||null, tennisTotal, cricket:cricketFinalInnings(m,d), mainEvent:m.details?.main_game_event_ticker||m.primary_event_tickers?.[0], tableTennis:tableTennisData, darts:darts?{format:String(d.game_format||m.details?.format||''),bestOf:N(d.best_of_legs),firstIsHome,firstId:m.details?.first_competitor_id,secondId:m.details?.second_competitor_id,firstLegs:N(d.competitor1_overall_score),secondLegs:N(d.competitor2_overall_score),firstRemaining:N(d.competitor1_remaining_points),secondRemaining:N(d.competitor2_remaining_points),nextThrow:String(d.next_throw_competitor_id||''),firstCheckout:d.competitor1_checkout_possible===true,secondCheckout:d.competitor2_checkout_possible===true,firstDouble:d.competitor1_on_double===true,secondDouble:d.competitor2_on_double===true}:null, volleyball:volleyball?{bestOf:N(d.best_of),homeSets:home,awaySets:away,current:periodScores.find(p=>p.number===period)}:null, setNumber:N(currentSet?.number), phase, esportsPeriodsValid, periodConsistent, scoreConsistent, clock, remainingSeconds, clockRunning, soccerMinute, soccerHalf:half, soccerExtraTime, soccerOvertime, matchRemainingSeconds, possessionSide, tennis:tennisData, inningHalf:baseball?(/bottom/i.test(String(d.inning_half||''))?2:/top/i.test(String(d.inning_half||''))?1:N(d.inning_half)):N(d.inning_half), outs:N(d.outs), progress, verifiedLive, scoreKnown:Number.isFinite(home)&&Number.isFinite(away), homeName:String(d.home_team?.name||d.home_team_name||d.home?.name||(versus.length===2?versus[0]:names.length===2?names[1]:'')), awayName:String(d.away_team?.name||d.away_team_name||d.away?.name||(versus.length===2?versus[1]:names.length===2?names[0]:'')),homeTeamId:m.details?.home_team_id||(/rugby/.test(family)?m.details?.home_competitor_id:null),awayTeamId:m.details?.away_team_id||(/rugby/.test(family)?m.details?.away_competitor_id:null),eventTickers:m.related_event_tickers||m.events||[]};
+}
+// Single clock authority for all soccer entry, watch and dashboard rules.
+// Stoppage is not a guaranteed extension of the 90-minute regulation clock.
+export function soccerRegulationSeconds(game){
+  return /soccer/.test(String(game?.type||''))&&Number.isFinite(game?.soccerMinute)?
+    Math.max(0,Math.round((90-game.soccerMinute)*60)):NaN;
 }
 export function tennisGameTotal(details){
   const first=details?.competitor1_round_scores,second=details?.competitor2_round_scores;
@@ -312,6 +319,7 @@ export function leadWatchReason(game){
   }
   if(/soccer/.test(type)&&game.period===2&&!game.soccerExtraTime&&
     Number.isFinite(game.soccerMinute)&&game.soccerMinute>=60&&
+    soccerRegulationSeconds(game)>0&&
     (margin>=3||game.soccerMinute>=80&&margin>=2))
     return `Tracking ${margin}-goal lead; ${margin>=3&&soccerLeadClock(game,900)||soccerLeadClock(game,210)&&margin>=2?
       'late winner rule reached; checking winner market and ask':
