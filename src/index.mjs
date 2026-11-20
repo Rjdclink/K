@@ -2678,8 +2678,8 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null){
           continue;
         }
         const preflightAge=Date.now()-new Date(window.first_at).getTime();
-        if(!Number.isFinite(preflightAge)||preflightAge<0||preflightAge>5*60000){
-          report(c,'Entry blocked: first external preflight expired');
+        if(!Number.isFinite(preflightAge)||preflightAge<0){
+          report(c,'Entry blocked: first external preflight timestamp invalid');
           continue;
         }
       }else if(game.remainingSeconds>=entry)continue;
