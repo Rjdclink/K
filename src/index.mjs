@@ -2703,8 +2703,11 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null){
               'Initial independent external verification pending');
       }
     }else if(basketball&&signalSink){
+      const fullGameCushion=state.sport==='NBA'||state.sport==='NCAAB'?26:
+        state.sport==='WNBA'?25:20;
       signalSink.set(state.id,[{strategy:'watch',title:'Basketball total NO',
-        reason:'No open matched total with the applicable first-half or sport-specific full-game cushion',
+        reason:'No open matched total with the applicable 12-point first-half or '+
+          fullGameCushion+'-point full-game cushion',
         execution:'No qualifying NO contract in the current market scan'}]);
     }
   }
