@@ -49,3 +49,15 @@ test('external source disagreement and ambiguous proof fail closed without recor
  const missing=await final({...c,verify:async()=>null,approve:approved,validate:()=>true});
  assert.equal(missing.ok,false);assert.equal(db.saved.size,0);
 });
+test('soccer forceFresh must perform a new final verification despite an identical saved scoreboard',async()=>{
+ const db=store(),final=createNoFinalCheckpoint(db.sql);
+ let calls=0;
+ const check=async()=>({...reading,requestId:'espn-http-'+(++calls)});
+ const a=await final({...c,forceFresh:true,verify:check,approve:approved,validate:()=>true});
+ const b=await final({...c,forceFresh:true,verify:check,approve:approved,validate:()=>true});
+ assert.equal(a.newCheck,true);
+ assert.equal(b.newCheck,true,'the previous final ESPN verification may never be reused');
+ assert.equal(calls,2);
+ assert.notEqual(a.proof.requestId,b.proof.requestId);
+ assert.equal(db.history.length,2);
+});

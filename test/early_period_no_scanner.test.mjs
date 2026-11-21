@@ -9,7 +9,7 @@ import {readFileSync} from 'node:fs';
 import {gameState,orderSize,estimatedCostCents,profitableCount} from '../src/strategy.mjs';
 import {hockeyEarlyNoMarketSpec,hockeyEarlyPeriodNo} from '../src/hockey_early_period_no.mjs';
 import {soccerFirstHalfNoSpec,soccerFirstHalfNo,soccerFirstHalfSeconds} from '../src/soccer_first_half_no.mjs';
-import {validFreshEspnSoccerNo,SOCCER_ESPN_POLICY} from '../src/soccer_espn_no.mjs';
+import {validFreshEspnSoccerNo,pairedFreshEspnSoccerNo,SOCCER_ESPN_POLICY} from '../src/soccer_espn_no.mjs';
 import {basketballEarlyQuarterNoSpec,basketballEarlyQuarterNo} from '../src/basketball_early_quarter_no.mjs';
 import {bestNoAsk,noDepthAtAsk} from '../src/no_strategy.mjs';
 import {sameSportsContract,overContractKey} from '../src/over_verification.mjs';
@@ -81,7 +81,8 @@ function harness(sport,period=1,{firstUnavail=false,finalUnavail=false,wrongFina
     periods:game.periodScores,currentPeriod:{home:game.periodScores[period-1].home,
       away:game.periodScores[period-1].away}};
    if(sport==='Soccer')return {source:'ESPN',verificationPolicy:SOCCER_ESPN_POLICY,
-    checkedAt:Date.now(),gameId:game.id,eventId:'matched-espn',live:true,
+    checkedAt:Date.now(),requestId:'independent-firsthalf-espn-'+verifications,
+    gameId:game.id,eventId:'matched-espn',live:true,
     period:1,home:game.home,away:game.away,elapsedMinute:game.soccerMinute};
    return {source:'ESPN',eventId:'matched-espn',live:true,quarter:period,
     seconds:game.remainingSeconds,home:game.home,away:game.away,
@@ -101,7 +102,7 @@ function harness(sport,period=1,{firstUnavail=false,finalUnavail=false,wrongFina
    Date,JSON,Math,Number,Promise,console,
    live:()=>true,liveBatch:async()=>new Map(),linkedEventTickers:()=>[f.market.event_ticker],
    hockeyEarlyNoMarketSpec,hockeyEarlyPeriodNo,
-   soccerFirstHalfNoSpec,soccerFirstHalfNo,soccerFirstHalfSeconds,validFreshEspnSoccerNo,
+   soccerFirstHalfNoSpec,soccerFirstHalfNo,soccerFirstHalfSeconds,validFreshEspnSoccerNo,pairedFreshEspnSoccerNo,
    basketballEarlyQuarterNoSpec,basketballEarlyQuarterNo,
    verifyIndependentEarlyHockeyNo:verify,verifyIndependentSoccerFirstHalfNo:verify,
    verifyIndependentBasketballEarlyQuarterNo:verify,
@@ -155,6 +156,15 @@ function harness(sport,period=1,{firstUnavail=false,finalUnavail=false,wrongFina
    get budget(){return budget;},get fraction(){return fraction;},get sink(){return sink;}
  };
 }
+
+test('first-half soccer NO rejects a second ESPN result that reuses the initial HTTP request',async()=>{
+ const h=harness('Soccer',1,{finalProofOverride:{requestId:'independent-firsthalf-espn-1'}});
+ await h.scan(360);
+ assert.equal(h.windows.size,1);
+ assert.equal(await h.scan(299),0);
+ assert.equal(h.orders,0);
+ assert.equal(h.verified,2);
+});
 
 test('NHL P1/P2, soccer 1H and NBA quarter NO each require initial and final verification',async()=>{
  for(const [sport,period,first,boundary] of [

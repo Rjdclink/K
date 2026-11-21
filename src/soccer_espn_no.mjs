@@ -1,9 +1,10 @@
+import {randomUUID} from 'node:crypto';
 import {espnMatches} from './score_verification.mjs';
 import {espnScoreboardUrls} from './espn_scoreboards.mjs';
 
 // Soccer NO requires ESPN alone. A second fresh ESPN request remains mandatory
 // 30+ elapsed seconds later; another provider must never silently authorize it.
-export const SOCCER_ESPN_POLICY='soccer-espn-fresh-v1';
+export const SOCCER_ESPN_POLICY='soccer-espn-two-distinct-requests-v2';
 export const SOCCER_ESPN_MAX_CLOCK_SKEW_SECONDS=90;
 export const SOCCER_ESPN_MAX_HTTP_AGE_SECONDS=10;
 const clockMinute=value=>{
@@ -18,6 +19,7 @@ export function validFreshEspnSoccerNo(reading,game,now=Date.now(),{allowHistori
  const checked=Number(reading?.checkedAt);
  return Boolean(reading?.source==='ESPN'&&reading.verificationPolicy===SOCCER_ESPN_POLICY&&
   reading.gameId===game?.id&&String(reading.eventId||'').trim()&&
+  typeof reading.requestId==='string'&&reading.requestId.length>=16&&
   reading.live===true&&reading.period===game?.period&&
   Number.isInteger(reading.home)&&reading.home>=0&&
   Number.isInteger(reading.away)&&reading.away>=0&&
@@ -26,6 +28,16 @@ export function validFreshEspnSoccerNo(reading,game,now=Date.now(),{allowHistori
   Number.isFinite(reading.elapsedMinute)&&
   (allowHistorical||currentClock(reading,game)&&
    reading.home===game.home&&reading.away===game.away));
+}
+
+// The second score must come from a separate HTTP request. The first is
+// retained only as a historical score and event ID for contradiction checks.
+export function pairedFreshEspnSoccerNo(first,second,game,now=Date.now()){
+ return Boolean(validFreshEspnSoccerNo(first,game,now,{allowHistorical:true})&&
+  validFreshEspnSoccerNo(second,game,now)&&
+  String(first.eventId)===String(second.eventId)&&
+  first.requestId!==second.requestId&&first.checkedAt<=second.checkedAt&&
+  second.home>=first.home&&second.away>=first.away);
 }
 
 const daysFor=start=>[start,start-86400000,start+86400000]
@@ -44,7 +56,10 @@ export async function verifyFreshEspnSoccerNo(game,milestone,{fetcher=fetch}={})
   ![1,2].includes(game.period)||!Number.isFinite(start)||
   !Number.isFinite(game.observedAt)||Date.now()-game.observedAt>10000||
   game.observedAt>Date.now()||!Number.isInteger(game.home)||!Number.isInteger(game.away))return null;
- const urls=espnScoreboardUrls('soccer/all',game,milestone,daysFor(start));
+ const requestId=randomUUID();
+ // Cache-busting nonce plus no-store avoids replaying the first ESPN payload.
+ const urls=espnScoreboardUrls('soccer/all',game,milestone,daysFor(start))
+  .map(url=>url+'&soccer_no_request='+encodeURIComponent(requestId));
  const replies=await Promise.allSettled(urls.map(async url=>{
   const response=await fetcher(url,{cache:'no-store',
    headers:{accept:'application/json','cache-control':'no-cache'},
@@ -76,7 +91,7 @@ export async function verifyFreshEspnSoccerNo(game,milestone,{fetcher=fetch}={})
  if(eventIds.size!==1)return false;
  const at=Date.now(),first=found[0];
  const reading={source:'ESPN',verificationPolicy:SOCCER_ESPN_POLICY,
-  checkedAt:at,eventId:String(first.eventId),gameId:game.id,
+  requestId,checkedAt:at,eventId:String(first.eventId),gameId:game.id,
   home:first.home,away:first.away,period:first.period,
   elapsedMinute:first.elapsedMinute,live:true,periods:first.periods||[],
   seconds:NaN,period3:first.periods?.[2]?
