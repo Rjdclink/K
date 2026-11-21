@@ -14,7 +14,7 @@ export function createNoFinalCheckpoint(query){
       PRIMARY KEY(market_ticker,game_id))`).catch(e=>{ready=null;throw e});
     return ready;
   };
-  return async({market,game,first,verify,approve,validate})=>{
+  return async({market,game,first,verify,approve,validate,forceFresh=false})=>{
     const ticker=String(market?.ticker||''),gameId=String(game?.id||'');
     const firstAt=new Date(first?.first_at).getTime();
     if(!ticker||!gameId||!Number.isFinite(firstAt)||firstAt>Date.now()||
@@ -24,7 +24,7 @@ export function createNoFinalCheckpoint(query){
     const scoreKey=signature(game);
     const {rows:[prior]}=await query(`SELECT first_at,score_key,final_at,final_evidence
       FROM no_final_preflight_checks WHERE market_ticker=$1 AND game_id=$2`,[ticker,gameId]);
-    if(prior&&new Date(prior.first_at).getTime()===firstAt&&prior.score_key===scoreKey){
+    if(!forceFresh&&prior&&new Date(prior.first_at).getTime()===firstAt&&prior.score_key===scoreKey){
       return {ok:true,at:new Date(prior.final_at).getTime(),proof:prior.final_evidence,
         newCheck:false,scoreKey};
     }

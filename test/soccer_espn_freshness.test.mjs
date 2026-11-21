@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {verifyFreshEspnSoccerNo,validFreshEspnSoccerNo} from '../src/soccer_espn_no.mjs';
+import {verifyFreshEspnSoccerNo,validFreshEspnSoccerNo,pairedFreshEspnSoccerNo,SOCCER_ESPN_POLICY} from '../src/soccer_espn_no.mjs';
 const start=new Date(Date.now()-90*60000).toISOString();
 const milestone={id:'soccer-espn',type:'soccer_match',title:'Alpha vs Beta',start_date:start,details:{league:'League'}};
 const game=(minute=83,home=2,away=1,period=2)=>({id:milestone.id,type:'soccer_match',sport:'Soccer',
@@ -66,5 +66,28 @@ test('legacy proofs and forged ESPN origin cannot authorize new entries',()=>{
  const g=game(),p={source:'ESPN',eventId:'id',gameId:g.id,home:2,away:1,period:2,
  live:true,elapsedMinute:83,checkedAt:Date.now()};
  assert.equal(validFreshEspnSoccerNo(p,g),false);
- assert.equal(validFreshEspnSoccerNo({...p,verificationPolicy:'soccer-espn-fresh-v1',source:'FOX Sports'},g),false);
+ assert.equal(validFreshEspnSoccerNo({...p,verificationPolicy:SOCCER_ESPN_POLICY,source:'FOX Sports'},g),false);
+});
+
+test('two ESPN checks always make separate cache-busted HTTP requests and cannot accept the same result twice',async()=>{
+ const urls=[],g=game();
+ const fetcher=async(url,opts)=>{
+  urls.push({url,opts});
+  return {ok:true,headers:{get:n=>n.toLowerCase()==='age'?'0':null},
+   json:async()=>scoreboard()};
+ };
+ const first=await verifyFreshEspnSoccerNo(g,milestone,{fetcher});
+ const second=await verifyFreshEspnSoccerNo(g,milestone,{fetcher});
+ assert.equal(first?.source,'ESPN');
+ assert.equal(second?.source,'ESPN');
+ assert.equal(urls.length,6);
+ assert.ok(urls.every(x=>x.opts.cache==='no-store'&&x.opts.headers['cache-control']==='no-cache'));
+ assert.ok(urls.slice(0,3).every((x,i)=>x.url!==urls[i+3].url),'each check needs its own cache-busting URL');
+ assert.notEqual(first.requestId,second.requestId);
+ assert.equal(pairedFreshEspnSoccerNo(first,first,g),false);
+ assert.equal(pairedFreshEspnSoccerNo(first,second,g),true);
+});
+test('a legacy ESPN response without independent request identity must be rejected',async()=>{
+ const p=await verify(game(),scoreboard());
+ assert.equal(validFreshEspnSoccerNo({...p,requestId:undefined},game()),false);
 });
