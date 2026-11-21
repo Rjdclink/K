@@ -101,9 +101,8 @@ function sameFixture(game,milestone,home,away,time,externalScores=null,{identity
   // within fifteen minutes of Kalshi's kickoff; downstream score checks
   // require exact home/away totals and veto disagreements (no FOX retry).
   if(Math.abs(start-other)>15*60000||!milestone?.details?.league)return false;
-  // Relaxed names cannot verify ordinary orders with mismatched source scores.
-  if(!identityOnly&&(!Number.isInteger(externalScores?.home)||!Number.isInteger(externalScores?.away)||
-    externalScores.home!==game.home||externalScores.away!==game.away))return false;
+  // Independent fixture identity is based on identified teams and kickoff.
+  // Kalshi's displayed score must not veto an independently identified score.
   return relaxedTeamCompatibility(names.home,home,game.sport)>=2&&
     relaxedTeamCompatibility(names.away,away,game.sport)>=2;
 }
@@ -347,7 +346,7 @@ async function verifyExistingOver(game,milestone,{fetcher=fetch,cache,market,sou
     const seen=new Set(),matches=[];
     for(const result of results){
       if(result.status!=='fulfilled')continue;
-      const found=source==='ESPN'?/^tennis_/.test(game.type)?tennisMatches(result.value,game,milestone):espnMatches(result.value,game,milestone):foxMatches(result.value,game,milestone);
+      const found=source==='ESPN'?/^tennis_/.test(game.type)?tennisMatches(result.value,game,milestone):espnMatches(result.value,game,milestone,{identityOnly:true}):foxMatches(result.value,game,milestone,{identityOnly:true});
       const signature=JSON.stringify(found);
       if(seen.has(signature))continue;
       seen.add(signature);matches.push(...found.filter(m=>!m.stale));
