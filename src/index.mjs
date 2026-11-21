@@ -270,11 +270,21 @@ async function externallyScoredGame(game,milestone,{fresh=false}={}){
  return authoritativeGameState(game,reading,Date.now());
 }
 
+async function externallyScoredOverState(game,milestone,market){
+ const source=await externallyScoredGame(game,milestone,{fresh:true});
+ if(!source)return null;
+ const player=market&&playerOverSpec(source,market);
+ if(!player)return source;
+ // Variable-value props retain their own two-proof/play-sequence evaluator.
+ if(['PASSYDS','RUSHYDS','RECYDS','PTS','PRA','RBI'].includes(player.metric))return source;
+ const reading=await verifyNoncushionedPlayerStat(source,milestone,market);
+ return reading?noncushionedPlayerState(source,market,reading):null;
+}
 async function auditedOver(game,milestone,options={}){
   delete game.independentEntry;
   if(externalSportFeeds(game)){
-    const authoritative=await externallyScoredGame(game,milestone,{fresh:true});
-    if(!authoritative){game.verificationIssue='Fresh independently matched external score unavailable';return false;}
+    const authoritative=await externallyScoredOverState(game,milestone,options.market);
+    if(!authoritative){game.verificationIssue='Fresh independently verified external game/player score unavailable';return false;}
     Object.assign(game,authoritative);
   }
   const signal=options.market&&overSignal(game,options.market);
@@ -382,6 +392,11 @@ async function pairedOverRead(first,milestone,market,decorate=state=>state){
   return {state:second,pairedAt,externalId:first.verificationId,overValue:first.independentEntry?.overValue};
 }
 async function confirmedIndependentOver(first,milestone,market,{decorate=state=>state}={}){
+  if(externalSportFeeds(first)){
+    const independent=await externallyScoredOverState(first,milestone,market);
+    if(!independent)return null;
+    first=decorate(independent);
+  }
   if(await noAskTimeout.isRetired({market,game:first},'yes')&&
     !await noAskTimeout.claimRecovery({market,game:first},'yes'))return null;
   await ensureOverWindows();
@@ -413,6 +428,11 @@ async function confirmedIndependentOver(first,milestone,market,{decorate=state=>
     const raw=await liveMilestone(milestone.id);
     if(!raw)return null;
     raw._observed_at=new Date().toISOString();first=decorate(gameState(milestone,raw));
+    if(externalSportFeeds(first)){
+      const verified=await externallyScoredOverState(first,milestone,seller);
+      if(!verified)return null;
+      first=decorate(verified);
+    }
   }
   if(!freshOverState(first,seller)){
     await pool.query('DELETE FROM over_verification_windows WHERE market_ticker=$1',[market.ticker]);
