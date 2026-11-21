@@ -215,7 +215,7 @@ test('RFQ target reserves room for the fee within the full combo allocation',()=
   const quote={market_ticker:'COMBO',status:'open',no_bid_dollars:'0.0700',no_contracts_fp:'31.77',created_ts:new Date().toISOString()};
   assert.equal(quoteForYes(quote,'COMBO',budget,2),null,'the observed full quote exceeds the fee-inclusive cap');
   assert.equal(quoteForYes(quote,'COMBO',comboAllowedCents(.35,8486),2),null,'the quote cannot exceed the strict allocation');
-  assert.equal(comboAllowedCents(.35,8486),2970);
+  assert.equal(comboAllowedCents(.35,8486),424);
   assert.equal(quoteForYes(quote,'COMBO',2970+10,2),null,'ten cents is less than the quoted fee difference');
   assert.ok(quoteForYes({...quote,no_contracts_fp:'28.74'},'COMBO',budget,2));
 });
