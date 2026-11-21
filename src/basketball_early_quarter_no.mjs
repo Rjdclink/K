@@ -90,7 +90,7 @@ export function basketballEarlyQuarterNo(game,market,{beforeWindow=false,externa
 export function independentBasketballEarlyQuarterNoReading(board,game,milestone,market){
   const spec=basketballEarlyQuarterNoSpec(game,market,{beforeWindow:true});
   if(!spec)return null;
-  const matches=espnMatches(board,game,milestone);
+  const matches=espnMatches(board,game,milestone,{identityOnly:true});
   if(matches.length!==1)return null;
   const m=matches[0];
   if(!m.eventId||m.home!==game.home||m.away!==game.away)return null;
