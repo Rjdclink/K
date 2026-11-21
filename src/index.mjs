@@ -24,7 +24,7 @@ import { gameState, overSignal, PLAYER_PROP_MAX_FRACTION, BASKETBALL_COUNT_PROP_
 import {authoritativeGameState,verifiedSourceReady} from './external_authority.mjs';
 import {fetchIndependentMatchScore} from './independent_match_score.mjs';
 import {uncushionedPlayerSpec,verifyNoncushionedPlayerStat,noncushionedPlayerState,noncushionedTwoProofs,FIRST_NONCUSHIONED_CHECK_MS} from './noncushioned_player_over.mjs';
-import {mayOpenNoncushionedPlayerProp,NONCUSHIONED_PLAYER_TAG} from './noncushioned_prop_slots.mjs';
+import {openNoncushionedPlayerTickers,NONCUSHIONED_PLAYER_TAG} from './noncushioned_prop_slots.mjs';
 import { reviewMiss } from './ai.mjs';
 import { kalshiSignature } from './auth.mjs';
 import { marketShard, shardCash, transferPlan, comboShardBudget, awaitShardCash } from './funding.mjs';
@@ -1019,7 +1019,8 @@ async function withEntryProfitFloor({ticker,count,price,fees,strategy,fraction,b
       const {rows:[lock]}=await client.query('SELECT pg_try_advisory_xact_lock(83027546) AS acquired');
       if(!lock.acquired){busy=true;await client.query('ROLLBACK')}
       else{
-        const positions=await allOpenPositions({strict:manual||strategy==='over'&&fraction>=.45});
+        const noncushionedPlayer=game?.overVerification?.route==='noncushioned_player_two_proof';
+        const positions=await allOpenPositions({strict:manual||noncushionedPlayer||strategy==='over'&&fraction>=.45});
         if(manual){
           if(!positions.market_positions.some(p=>p.ticker===ticker&&Number(p.position_fp??p.position)>0)){await client.query('COMMIT');return null}
           const result=await send();await client.query('COMMIT');return result;
@@ -1037,6 +1038,20 @@ async function withEntryProfitFloor({ticker,count,price,fees,strategy,fraction,b
         const {rows}=await client.query(`SELECT market_ticker,status FROM trade_attempts
           WHERE status='filled' OR status IN ('reserved','check_order','retrying','combo_pending')
             AND updated_at>now()-interval '2 minutes'`);
+        if(noncushionedPlayer){
+          const {rows:tagged}=await client.query(
+            "SELECT market_ticker,status,reason FROM trade_attempts WHERE reason ILIKE '%Non-cushioned player prop%' AND status IN ('filled','reserved','check_order','retrying','combo_pending')");
+          const {rows:resolved}=await client.query(
+            'SELECT DISTINCT ticker FROM account_history_settlements WHERE ticker=ANY($1::text[])',
+            [tagged.map(r=>r.market_ticker)]);
+          const open=openNoncushionedPlayerTickers(positions.market_positions,tagged,
+            new Set(resolved.map(r=>r.ticker)));
+          // The current reserved order already occupies one of these slots.
+          // Another five unsettled positions must therefore reject this one.
+          if(!open||!open.has(ticker)||open.size>5){
+            await client.query('COMMIT');return null;
+          }
+        }
         const appliedFraction=automaticEntryFraction({strategy,fraction,game});
         if(!Number.isFinite(bankroll)||bankroll<=0||
           estimatedCostCents(count,price,fees)>Math.floor(bankroll*appliedFraction)){
