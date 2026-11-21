@@ -4041,7 +4041,7 @@ async function scanNoncushionedPlayerOvers(games,events,signalSink=null){
    if(!authoritative||!verifiedSourceReady(authoritative))return;
    const second=await verifyNoncushionedPlayerStat(authoritative,c.milestone,seller);
    const checkedAt=Date.now();
-   if(!noncushionedTwoProofs(first,second,authoritative,seller,checkedAt)||
+   if(!noncushionedTwoProofs(first,second,authoritative,seller,checkedAt,Date.parse(window.first_seen))||
       checkedAt-authoritative.observedAt>10000){
     show('Final independent player-stat check or same-fixture check failed');return;
    }
