@@ -18,7 +18,26 @@ const feedBySport={NBA:'basketball/nba',WNBA:'basketball/wnba',NCAAB:'basketball
  NCAAW:'basketball/womens-college-basketball',NFL:'football/nfl',CFB:'football/college-football',
  NHL:'hockey/nhl',MLB:'baseball/mlb'};
 export function uncushionedPlayerSpec(game,market){
- const player=playerOverSpec(game,market);
+ // The contract itself identifies the player and statistic, even before
+ // Kalshi publishes a player-stat snapshot. The external boxscore must still
+ // prove the named statistic; no missing Kalshi value authorizes a trade.
+ let player=playerOverSpec(game,market);
+ if(!player&&game&&market){
+  const family=String(game.type||'');
+  const metric=String(market.event_ticker||'').split('-')[0]
+    .match(/(REB|AST|3PT|STL|BLK|GOALS|SAVES|SOG|HITS|HR)$/)?.[1];
+  const fields=Object.entries(market.custom_strike||{})
+    .filter(([key,value])=>key.endsWith('_player')&&typeof value==='string'&&value);
+  const selected=fields.length===1?fields[0]:null;
+  const label=String(market.yes_sub_title||market.title||'');
+  const shown=label.match(/^([^:]+):\s*(\d+)\s*\+/);
+  const line=Number(market.floor_strike);
+  if(metric&&selected&&family.startsWith(selected[0].replace(/_player$/,'')+'_')&&
+    shown&&Number.isFinite(line)&&line>=0&&Number(shown[2])===line+.5&&
+    ['greater','greater_than'].includes(market.strike_type)&&
+    market.ticker?.startsWith(String(market.event_ticker||'')+'-'))
+    player={id:selected[1],name:shown[1].trim(),metric,line,value:0};
+ }
  if(!player||!playerPropEarlyWindow(game)||variableValuePlayerMetric(player.metric)||
   !statField[player.metric]||!feedBySport[game.sport]||
   !['active','open'].includes(market.status)||!market.ticker?.startsWith(market.event_ticker+'-'))return null;
