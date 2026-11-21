@@ -115,10 +115,11 @@ export function nearEntryPhase(game){
   if(/soccer/.test(type))return period===1&&!game.soccerExtraTime&&
     Number.isFinite(game.soccerMinute)&&game.soccerMinute>=38&&game.soccerMinute<45||
     period===2&&!game.soccerExtraTime&&Number.isFinite(game.soccerMinute)&&
-    game.soccerMinute<90&&
-    (game.soccerMinute>=75||game.soccerMinute>=45&&
-      Number.isFinite(game.homeUnits)&&Number.isFinite(game.awayUnits)&&
-      Math.abs(game.homeUnits-game.awayUnits)>=3);
+    (game.soccerMinute<90&&
+      (game.soccerMinute>=75||game.soccerMinute>=45&&
+       Number.isFinite(game.homeUnits)&&Number.isFinite(game.awayUnits)&&
+       Math.abs(game.homeUnits-game.awayUnits)>=3)||
+     game.soccerMinute>90&&game.verifiedLive===true&&game.clockRunning===true);
   if(/baseball/.test(type))return period>=9||period===8&&game.inningHalf===2&&game.outs>=1;
   if(/rugby|handball|lacrosse/.test(type)){
     const final=/lacrosse/.test(type)?4:2,buffer=/rugby/.test(type)?300:600;
@@ -142,6 +143,9 @@ export function marketEntryProximity(game){
     Math.abs(game.homeUnits-game.awayUnits):0;
   if(/soccer/.test(type)){
     if(game.soccerExtraTime||!Number.isFinite(game.soccerMinute))return Infinity;
+    // 90+ live regulation stoppage is urgent; zero alone never qualifies.
+    if(period===2&&game.soccerMinute>90&&game.verifiedLive&&game.clockRunning===true)
+      return -20000;
     if(period===1){remaining=(45-game.soccerMinute)*60;target=360;}
     else if(period===2){remaining=(90-game.soccerMinute)*60;target=margin>=3?600:660;}
     else return Infinity;

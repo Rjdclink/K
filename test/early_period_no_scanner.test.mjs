@@ -22,18 +22,18 @@ function fixture(sport,period=1){
    details:{league:sport==='Basketball'?'NBA':sport,main_game_event_ticker:prefix+'GAME-TEST'}};
  const eventTicker=sport==='NHL'?'KXNHL'+period+'PTOTAL-TEST':
    sport==='Soccer'?'KXEPL1HTOTAL-TEST':'KXNBA'+period+'QTOTAL-TEST';
- const line=sport==='Basketball'?42.5:1.5;
+ const line=sport==='Basketball'?42.5:sport==='Soccer'?2.5:1.5;
  const phrase=sport==='NHL'?(period===1?'1st Period':'2nd Period'):
    sport==='Basketball'?(period===1?'1st Quarter':'2nd Quarter'):'';
  const market={ticker:eventTicker+'-'+line,event_ticker:eventTicker,
   floor_strike:line,strike_type:'greater',status:'active',
-  title:sport==='Soccer'?'Over 1.5 1H goals scored':phrase+': Over '+line+
+  title:sport==='Soccer'?'Over 2.5 1H goals scored':phrase+': Over '+line+
     (sport==='NHL'?' goals scored':' points scored'),
-  yes_sub_title:sport==='Soccer'?'Over 1.5 1H goals scored':'Over '+line+
+  yes_sub_title:sport==='Soccer'?'Over 2.5 1H goals scored':'Over '+line+
     (sport==='NHL'?' goals':' points'),
   rules_primary:sport==='NHL'?('If the teams collectively score more than '+line+' goals in the '+phrase+
     ' of the Away vs Home NHL game originally scheduled for Nov 20, 2026, then the market resolves to Yes.'):
-    sport==='Soccer'?('If the total goals scored by Away and Home is more than 1.5 goals in the 1st Half of the Away vs Home professional EPL soccer game originally scheduled for Nov 20, 2026, then the market resolves to Yes.'):
+    sport==='Soccer'?('If the total goals scored by Away and Home is more than 2.5 goals in the 1st Half of the Away vs Home professional EPL soccer game originally scheduled for Nov 20, 2026, then the market resolves to Yes.'):
     ('If over '+line+' total points are scored in the '+phrase.toLowerCase()+
       ' of the Away vs Home Pro Basketball game originally scheduled for Nov 20, 2026, then the market resolves to Yes.')
  };

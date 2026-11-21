@@ -24,15 +24,24 @@ const currentExternal=(reading,game)=>Boolean(
   ['ESPN','FOX Sports','Sportradar'].includes(reading?.source)&&reading.eventId&&
   Boolean(externalNoScore(game,reading)));
 
+// Kalshi full-game totals include regulation stoppage, but not the separate
+// extra-time phases. Require an explicitly advancing 90+ live match clock.
+export function soccerStoppageNoWindow(game){
+ return Boolean(game?.sport==='Soccer'&&/^soccer_/.test(String(game.type||''))&&
+   game.verifiedLive&&game.period===2&&game.clockRunning===true&&
+   !game.soccerExtraTime&&!game.soccerOvertime&&
+   Number.isFinite(game.soccerMinute)&&game.soccerMinute>90&&
+   game.matchRemainingSeconds===0);
+}
 export function soccerNoMarketSpec(game,market,{beforeWindow=false}={}){
-  const seconds=soccerRegulationSeconds(game);
+  const seconds=soccerRegulationSeconds(game),stoppage=soccerStoppageNoWindow(game);
   if(game?.sport!=='Soccer'||!/^soccer_/.test(String(game.type||''))||
     !game.verifiedLive||!game.scoreKnown||!game.scoreConsistent||!game.periodConsistent||
     game.feedId!==game.id||!Number.isFinite(game.observedAt)||
     Date.now()<game.observedAt||Date.now()-game.observedAt>10000||
     game.period!==2||game.soccerExtraTime||game.soccerOvertime||game.clockRunning===false||
-    !Number.isFinite(game.soccerMinute)||!Number.isFinite(seconds)||seconds<=0||
-    (beforeWindow?seconds>660:seconds>=480)||
+    !Number.isFinite(game.soccerMinute)||!Number.isFinite(seconds)||
+    (!stoppage&&(seconds<=0||(beforeWindow?seconds>660:seconds>=480)))||
     !Number.isInteger(game.home)||game.home<0||!Number.isInteger(game.away)||game.away<0||
     !['active','open'].includes(market?.status)||
     market.result&&!['','not_determined'].includes(String(market.result)))return null;
@@ -59,10 +68,15 @@ export function soccerTotalNo(game,market,{beforeWindow=false,external=null}={})
   const score=external?externalNoScore(game,external):{home:game.home,away:game.away};
   if(!score)return null;
   const total=score.home+score.away;
-  if(total>=4||spec.line-total<1.5)return null;
+  // 0–3 scored: 2.5-goal cushion. 4+: 3.5-goal cushion.
+  // Only confirmed live stoppage AFTER 90 minutes returns to 1.5.
+  const required=soccerStoppageNoWindow(game)?1.5:total>=4?3.5:2.5;
+  if(spec.line-total<required)return null;
   return {...spec,total,reason:
     'Soccer full-game total NO over '+spec.line+'; '+total+
-    ' goals scored, '+soccerRegulationSeconds(game)+'s to the 90-minute regulation clock'};
+    ' goals scored, '+(soccerStoppageNoWindow(game)?
+      'live regulation stoppage at '+game.soccerMinute+' minutes':
+      soccerRegulationSeconds(game)+'s to the 90-minute regulation clock')};
 }
 
 // Independent scoreboard verifies score, second-half status, exact fixture,

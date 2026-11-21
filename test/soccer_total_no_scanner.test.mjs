@@ -7,7 +7,7 @@ import vm from 'node:vm';
 import {tagNoPreflight,validNoPreflight,lateNoPreflightProgress} from '../src/late_no_preflight.mjs';
 import {readFileSync} from 'node:fs';
 import {gameState,orderSize,estimatedCostCents} from '../src/strategy.mjs';
-import {soccerNoMarketSpec,soccerTotalNo} from '../src/soccer_total_no.mjs';
+import {soccerNoMarketSpec,soccerTotalNo,soccerStoppageNoWindow} from '../src/soccer_total_no.mjs';
 import {bestNoAsk,noDepthAtAsk} from '../src/no_strategy.mjs';
 import {sameSportsContract,overContractKey} from '../src/over_verification.mjs';
 import {rememberIndependentEntry} from '../src/entry_verification.mjs';
@@ -18,13 +18,13 @@ const milestone={id:'soccer-scanner',title:'Away at Home',type:'soccer_match',
 const state=(seconds=540,home=2,away=1)=>gameState(milestone,{
   milestone_id:milestone.id,_observed_at:new Date().toISOString(),
   details:{status:'inprogress',home_score:home,away_score:away,half:'2nd',
-    time:Math.floor((5400-seconds)/60)+':'+String((5400-seconds)%60).padStart(2,'0')+"'",
+    time:seconds<0?"90+2'":Math.floor((5400-seconds)/60)+':'+String((5400-seconds)%60).padStart(2,'0')+"'",
     home_team_name:'Home',away_team_name:'Away',last_updated_ts:Date.now()/1000}});
-const market={ticker:'KXEPLTOTAL-26NOV20AWAYHOME-5',
+const market={ticker:'KXEPLTOTAL-26NOV20AWAYHOME-6',
   event_ticker:'KXEPLTOTAL-26NOV20AWAYHOME',
-  title:'Will over 4.5 goals be scored?',yes_sub_title:'Over 4.5 goals scored',
-  floor_strike:4.5,strike_type:'greater',status:'active',
-  rules_primary:'If over 4.5 goals are scored in the Away vs Home professional EPL soccer game originally scheduled for Nov 20, 2026 after 90 minutes plus stoppage time (does not include extra time or penalties), then the market resolves to Yes.'};
+  title:'Will over 5.5 goals be scored?',yes_sub_title:'Over 5.5 goals scored',
+  floor_strike:5.5,strike_type:'greater',status:'active',
+  rules_primary:'If over 5.5 goals are scored in the Away vs Home professional EPL soccer game originally scheduled for Nov 20, 2026 after 90 minutes plus stoppage time (does not include extra time or penalties), then the market resolves to Yes.'};
 const events=new Map([[market.event_ticker,{event_ticker:market.event_ticker,category:'Sports',markets:[market]}]]);
 
 function harness({canVerify=true,hasSeller=true,initialAgeMs=61000,existingExposure=false,
@@ -34,13 +34,13 @@ function harness({canVerify=true,hasSeller=true,initialAgeMs=61000,existingExpos
   assert.ok(a>0&&b>a,'soccer NO scanner must be confined to a dedicated function');
   const code=src.slice(a,b);
   const windows=new Map(),dashboard=new Map(),trace=[],diagnostics=[];
-  let verified=0,orders=0,lastBudget=null,lastFraction=null,lastQuantity=null;
+  let verified=0,orders=0,lastBudget=null,lastFraction=null,lastQuantity=null,scanSeconds=540;
   const held={ticker:'KXEPLTOTAL-OLDER',position_fp:-1,market_exposure_dollars:'4.00',fees_paid_dollars:'0.50'};
   const context=vm.createContext({noFinalCheckpoint,noAskTimeout:noAskPolicy,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async decision=>{diagnostics.push(decision)},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
     Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),
     linkedEventTickers:()=>[market.event_ticker],
-    soccerNoMarketSpec,soccerTotalNo,
+    soccerNoMarketSpec,soccerTotalNo,soccerStoppageNoWindow,
     verifyIndependentSoccerTotalNo:async game=>{
       verified++;trace.push('external');
       if(!canVerify||finalExternalFails&&verified>1)return null;
@@ -69,7 +69,7 @@ function harness({canVerify=true,hasSeller=true,initialAgeMs=61000,existingExpos
     liveMilestone:async()=>({
       milestone_id:milestone.id,_observed_at:new Date().toISOString(),
       details:{status:'inprogress',home_score:afterRefreshScore===3?2:3,away_score:1,half:'2nd',
-        time:missingClock?'garbled':"82:01'",
+        time:missingClock?'garbled':scanSeconds<0?"90+3'":"82:01'",
         home_team_name:'Home',away_team_name:'Away',last_updated_ts:Date.now()/1000}}),
     gameState,
     kalshi:async(path,opts)=>{
@@ -108,7 +108,7 @@ function harness({canVerify=true,hasSeller=true,initialAgeMs=61000,existingExpos
   });
   vm.runInContext(code,context);
   return {
-    scan:seconds=>context.scanSoccerTotalNos([{milestone,state:state(seconds)}],events,dashboard),
+    scan:seconds=>{scanSeconds=seconds;return context.scanSoccerTotalNos([{milestone,state:state(seconds)}],events,dashboard)},
     get windows(){return windows;},get trace(){return trace;},
     get dashboard(){return dashboard;},get diagnostics(){return diagnostics;},get verifications(){return verified;},
     get orders(){return orders;},get lastBudget(){return lastBudget;},
@@ -251,6 +251,25 @@ test('soccer NO cumulatively caps held exposure plus fees at five percent',async
   assert.equal(h.lastFraction,.05);
   assert.equal(h.lastBudget,50,'$5.00 cap less $4 exposure and 50-cent fees leaves 50 cents');
   assert.ok(estimatedCostCents(h.lastQuantity,.5,2)<=50,'new trade including fees fits the remaining 50 cents');
+});
+
+test('live 90+ stoppage NO still requires a first independent score check and 30 real seconds before final entry',async()=>{
+ const h=harness({initialAgeMs:29000});
+ assert.equal(await h.scan(0),0,'90:00 alone is not explicit added time');
+ assert.equal(h.verifications,0);
+ assert.equal(await h.scan(-120),0,'first check is recorded at 90+2');
+ assert.equal(h.windows.size,1);
+ assert.equal(h.verifications,1);
+ const prior=h.windows.get(market.ticker);
+ assert.equal(prior.first_clock,0,'first proof uses the actual expired regulation clock');
+ assert.equal(await h.scan(-120),0,'29 real seconds is not enough');
+ assert.equal(h.verifications,1,'second proof was not prematurely requested');
+ prior.first_at=new Date(Date.now()-31000);
+ assert.equal(await h.scan(-120),1,'new separate live verification at 90+3 authorizes profitable market entry');
+ assert.equal(h.verifications,2);
+ assert.equal(h.orders,1);
+ const trace=h.trace;
+ assert.ok(trace.indexOf('external')<trace.indexOf('orderbook'));
 });
 
 test('soccer NO signals are published to the dashboard without removing other strategies',()=>{

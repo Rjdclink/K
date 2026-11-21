@@ -62,7 +62,7 @@ import {hockeyNoMarketSpec,hockeyTotalNo,verifyIndependentHockeyTotalNo} from '.
 import {hockeyEarlyNoMarketSpec,hockeyEarlyPeriodNo,verifyIndependentEarlyHockeyNo} from './hockey_early_period_no.mjs';
 import {soccerFirstHalfNoSpec,soccerFirstHalfNo,verifyIndependentSoccerFirstHalfNo,soccerFirstHalfSeconds} from './soccer_first_half_no.mjs';
 import {basketballEarlyQuarterNoSpec,basketballEarlyQuarterNo,verifyIndependentBasketballEarlyQuarterNo} from './basketball_early_quarter_no.mjs';
-import {soccerNoMarketSpec,soccerTotalNo,verifyIndependentSoccerTotalNo} from './soccer_total_no.mjs';
+import {soccerNoMarketSpec,soccerTotalNo,soccerStoppageNoWindow,verifyIndependentSoccerTotalNo} from './soccer_total_no.mjs';
 import {VARIABLE_CONFIRM_DELAY_MS,variablePlayerOverSpec,variableProofValid,verifyIndependentVariableOver} from './variable_player_over.mjs';
 import {verifyIndependentYardageZero} from './score_verification.mjs';
 import {mentionContract,mentionDay,mentionEventTime,mentionEntryPrice,pairedMentionProof,remainingMentionCents} from './mentions.mjs';
@@ -3855,7 +3855,7 @@ async function scanSoccerTotalNos(games,events,signalSink=null){
     const list=signalSink.get(candidate.state.id)||[];
     const item={strategy:'no',ticker:candidate.market.ticker,
       title:candidate.market.title||candidate.market.yes_sub_title||candidate.market.ticker,
-      reason:signal?.reason||'Rule: soccer full-game NO requires a 1.5-goal cushion',
+      reason:signal?.reason||'Rule: soccer full-game NO requires 2.5 goals cushion (3.5 after four; 1.5 only in live 90+ stoppage)',
       execution,...(candidate.finalCheck?{final_verification_attempted:true,
         final_verification_passed:candidate.finalCheck.ok===true,
         final_verification_checked_at:new Date(candidate.finalCheck.at||candidate.finalCheck.attemptedAt).toISOString()}:{}),
@@ -3866,8 +3866,9 @@ async function scanSoccerTotalNos(games,events,signalSink=null){
   };
   const watching=games.filter(({state})=>state.sport==='Soccer'&&
     /^soccer_/.test(state.type)&&state.period===2&&!state.soccerExtraTime&&
-    Number.isFinite(state.matchRemainingSeconds)&&state.matchRemainingSeconds>0&&
-    state.matchRemainingSeconds<=start);
+    Number.isFinite(state.matchRemainingSeconds)&&
+    (state.matchRemainingSeconds>0&&state.matchRemainingSeconds<=start||
+     soccerStoppageNoWindow(state)));
   if(!live()||!watching.length)return 0;
   const latest=await liveBatch(watching.map(g=>g.milestone));
   for(const game of watching){
@@ -3893,9 +3894,11 @@ async function scanSoccerTotalNos(games,events,signalSink=null){
         if(!spec||market.event_ticker!==ticker)continue;
         const c={milestone,state,event,market,spec};
         candidates.push(c);found++;
-        report(c,state.matchRemainingSeconds>=entry?
-          'Initial independent soccer score and clock verification pending':
-          'First independent ESPN check can begin after 11:00; second follows after 30 real seconds');
+        report(c,soccerStoppageNoWindow(state)?
+          'Live 90+ stoppage: first independent score check pending; second after 30 real seconds':
+          state.matchRemainingSeconds>=entry?
+            'Initial independent soccer score and clock verification pending':
+            'First independent score check begins after 11:00; second follows after 30 real seconds');
       }
     }
     if(!found&&signalSink)signalSink.set(state.id,[{
@@ -3913,7 +3916,8 @@ async function scanSoccerTotalNos(games,events,signalSink=null){
       const {rows:[window]}=await pool.query(
         'SELECT * FROM soccer_total_no_windows WHERE market_ticker=$1',[c.market.ticker]);
       const invalidWindow=!validNoPreflight(window,{gameId:game.id,
-        contractKey:key,period:game.period,maxFirstSeconds:start});
+        contractKey:key,period:game.period,maxFirstSeconds:start,
+        allowZeroClock:soccerStoppageNoWindow(game)});
       if(invalidWindow){
         // Check the Kalshi cushion before requesting independent evidence.
         // A correctly cushioned market is never labelled as missing cushion.

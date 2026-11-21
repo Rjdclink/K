@@ -272,6 +272,8 @@ test('filled order timer is bright red, advances each second and reanchors to li
 
   assert.match(page,/Only basketball, hockey, soccer and football are scanned/);
   assert.match(page,/30 seconds of actual elapsed time/);
+  assert.match(page,/soccer first-half and full-game NO require a 2\.5-goal cushion/);
+  assert.match(page,/only live full-game regulation stoppage after 90:00 permits a 1\.5-goal cushion/);
   assert.match(page,/5% bankroll cap including fees/);
   assert.doesNotMatch(page,/Tennis requires the selected player serving on match point in the final deciding set/);
   const tennis=order({...base,sport:'Tennis',sport_family:'tennis_tournament_singles',game_title:'Berrettini vs de Minaur',strategy:'lead',selected_name:'Alex de Minaur'});

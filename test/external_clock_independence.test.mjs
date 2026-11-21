@@ -18,9 +18,9 @@ const game=(m,details)=>gameState(m,{milestone_id:m.id,_observed_at:new Date().t
 test('soccer NO external matching depends on the two teams and scores, never the external clock',()=>{
  const m=milestone('soccer-score','soccer_match','Soccer','KXEPLGAME-26NOV20ALPBET');
  const g=game(m,{home_score:2,away_score:1,period:2,half:'2nd',time:"84:00'"});
- const market={ticker:'KXEPLTOTAL-26NOV20ALPBET-5',event_ticker:'KXEPLTOTAL-26NOV20ALPBET',status:'active',strike_type:'greater',
-  title:'Will over 4.5 goals be scored?',yes_sub_title:'Over 4.5 goals scored',floor_strike:4.5,
-  rules_primary:'If over 4.5 goals are scored in the Alpha vs Beta professional EPL soccer game originally scheduled for Nov 20, 2026 after 90 minutes plus stoppage time (does not include extra time or penalties), then the market resolves to Yes.'};
+ const market={ticker:'KXEPLTOTAL-26NOV20ALPBET-6',event_ticker:'KXEPLTOTAL-26NOV20ALPBET',status:'active',strike_type:'greater',
+  title:'Will over 5.5 goals be scored?',yes_sub_title:'Over 5.5 goals scored',floor_strike:5.5,
+  rules_primary:'If over 5.5 goals are scored in the Alpha vs Beta professional EPL soccer game originally scheduled for Nov 20, 2026 after 90 minutes plus stoppage time (does not include extra time or penalties), then the market resolves to Yes.'};
  assert.equal(soccerTotalNo(g,market,{beforeWindow:true})?.total,3);
  const oldClock=scoreboard(2,"72'",2,1);
  const reading=independentSoccerTotalNoReading(oldClock,g,m,market);
