@@ -255,7 +255,34 @@ const externalSportFeeds=game=>{
   NHL:['hockey/nhl','nhl'],Soccer:['soccer/all','soccer']};
  return supported[league]||(/soccer/.test(String(game?.type||''))?supported.Soccer:null);
 };
+// Candidate discovery may reuse the same public league scoreboard for up to
+// 2 seconds. Independent preflight/final proof always bypasses this cache.
 const sourceScoreReads=new Map();
+const candidateScoreboards=new Map();
+async function sharedCandidateScoreboardFetch(url,opts={}){
+ const now=Date.now(),existing=candidateScoreboards.get(url);
+ let entry=existing&&now-existing.at>=0&&now-existing.at<=2000?existing:null;
+ if(!entry){
+  const task=(async()=>{
+   const response=await fetch(url,{...opts,cache:'no-store'});
+   if(!response.ok)throw Error('External scoreboard unavailable: '+response.status);
+   return response.json();
+  })();
+  entry={task,at:now};candidateScoreboards.set(url,entry);
+  if(candidateScoreboards.size>180){
+   for(const [key,other] of candidateScoreboards){
+    if(now-other.at>2000)candidateScoreboards.delete(key);
+   }
+  }
+ }
+ try{
+  const data=await entry.task;
+  return {ok:true,json:async()=>data};
+ }catch(error){
+  if(candidateScoreboards.get(url)===entry)candidateScoreboards.delete(url);
+  throw error;
+ }
+}
 async function externallyScoredGame(game,milestone,{fresh=false}={}){
  if(!game?.verifiedLive||!milestone?.id)return null;
  const feeds=externalSportFeeds(game);
@@ -263,7 +290,8 @@ async function externallyScoredGame(game,milestone,{fresh=false}={}){
  const cached=sourceScoreReads.get(game.id),now=Date.now();
  let reading=!fresh&&cached&&now-cached.at<2500?cached.reading:null;
  if(!reading){
-  reading=await fetchIndependentMatchScore(game,milestone,{espnFeed:feeds[0],foxFeed:feeds[1]});
+  reading=await fetchIndependentMatchScore(game,milestone,{espnFeed:feeds[0],foxFeed:feeds[1],
+   fetcher:fresh?fetch:sharedCandidateScoreboardFetch});
   if(!reading||reading===false)return null;
   sourceScoreReads.set(game.id,{reading,at:Date.now()});
  }
