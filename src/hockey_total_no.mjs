@@ -84,7 +84,7 @@ export function hockeyTotalNo(game,market,{beforeWindow=false,external=null}={})
 export function independentHockeyTotalNoReading(scoreboard,game,milestone,market){
   const spec=hockeyNoMarketSpec(game,market,{beforeWindow:true});
   if(!spec)return null;
-  const matches=espnMatches(scoreboard,game,milestone);
+  const matches=espnMatches(scoreboard,game,milestone,{identityOnly:true});
   if(matches.length!==1)return null;
   const m=matches[0];
   if(!m.eventId||m.home!==game.home||m.away!==game.away)return null;
