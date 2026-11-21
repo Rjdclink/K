@@ -1070,7 +1070,7 @@ async function withEntryProfitFloor({ticker,count,price,fees,strategy,fraction,b
             AND updated_at>now()-interval '2 minutes'`);
         if(noncushionedPlayer){
           const {rows:tagged}=await client.query(
-            "SELECT market_ticker,status,reason FROM trade_attempts WHERE reason ILIKE '%Non-cushioned player prop%' AND status IN ('filled','reserved','check_order','retrying','combo_pending')");
+            "SELECT market_ticker,status,reason FROM trade_attempts WHERE status IN ('filled','reserved','check_order','retrying','combo_pending') AND (reason ILIKE '%Non-cushioned player prop%' OR market_ticker ~* '^KX[A-Z0-9]+(REB|AST|3PT|STL|BLK|GOALS|SAVES|SOG|HITS|HR)-')");
           const {rows:resolved}=await client.query(
             'SELECT DISTINCT ticker FROM account_history_settlements WHERE ticker=ANY($1::text[])',
             [tagged.map(r=>r.market_ticker)]);
