@@ -121,7 +121,7 @@ export function espnMatches(data,game,milestone,{identityOnly=false}={}){
     const total=score(home.score)+score(away.score);
     const documentedGoals=values.every(v=>Number.isInteger(v)&&v>0)?values.reduce((a,b)=>a+b,0):NaN;
     const lastScoringPlay=values.length&&documentedGoals===total?values.at(-1):null;
-    return [{source:'ESPN',eventId:e.id,home:score(home.score),away:score(away.score),periods,period:Number(status?.period),remainingSeconds:clockSeconds(status?.displayClock),live:status?.type?.state==='in',clockOk:clockCompatible(game,status?.period,status?.displayClock),sourceClock:String(status?.displayClock||''),documentedGoals,lastScoringPlay}];
+    return [{source:'ESPN',eventId:e.id,home:score(home.score),away:score(away.score),periods,period:Number(status?.period),remainingSeconds:clockSeconds(status?.displayClock),live:status?.type?.state==='in',clockOk:clockCompatible(game,status?.period,status?.displayClock),documentedGoals,lastScoringPlay}];
   });
 }
 export function tennisMatches(data,game,milestone){
@@ -213,7 +213,7 @@ export function foxMatches(data,game,milestone,{identityOnly=false}={}){
     // A source still showing the previous period cannot veto an exact,
     // current independent scoreboard. A disagreement in the current period
     // remains a veto.
-    return [{source:'FOX Sports',eventId:/^\d+$/.test(eventId)?eventId:null,home:score(home.score),away:score(away.score),period:reportedPeriod,remainingSeconds:clockSeconds(clock),live:e.eventStatus===1,clockOk:clockCompatible(game,reportedPeriod,/soccer/.test(game.type)?e.statusLine:clock),stale:Number.isFinite(game.period)&&Number.isFinite(reportedPeriod)&&reportedPeriod<game.period,sourceClock:String(e.statusLine||'')}];
+    return [{source:'FOX Sports',eventId:/^\d+$/.test(eventId)?eventId:null,home:score(home.score),away:score(away.score),period:reportedPeriod,remainingSeconds:clockSeconds(clock),live:e.eventStatus===1,clockOk:clockCompatible(game,reportedPeriod,/soccer/.test(game.type)?e.statusLine:clock),stale:Number.isFinite(game.period)&&Number.isFinite(reportedPeriod)&&reportedPeriod<game.period}];
   }));
 }
 export function scoreAgreement(game,bySource,market,{minimumOverValue,onOverValue}={}){

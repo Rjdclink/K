@@ -95,7 +95,7 @@ export async function loadSportradar(game,milestone,{fetcher=fetch,apiKey=proces
       if(!Array.isArray(data.summaries))return null;
       const generated=Date.parse(data.generated_at||'');
       if(!Number.isFinite(generated)||Date.now()-generated>10000||generated>Date.now()+5000){unavailableReasons.push('Sportradar: stale live feed');return null;}
-      const readings=data.summaries.map(globalReading).filter(Boolean).map(reading=>({...reading,publishedAt:data.generated_at}));
+      const readings=data.summaries.map(globalReading).filter(Boolean);
       const series=String(market?.event_ticker||'').split('-')[0];
       if(product.path==='soccer'&&/TOTAL$/.test(series)&&!/TEAMTOTAL$|[1-9](?:Q|P|H|INNING)TOTAL$/.test(series)){
         const exact=readings.filter(r=>matchFixture(r.homeAliases,r.awayAliases,r.time));

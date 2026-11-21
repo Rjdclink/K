@@ -57,13 +57,13 @@ import {verifyIndependentCollegeTotalNo} from './college_total_no.mjs';
 import {tagNoPreflight,validNoPreflight,lateNoPreflightProgress} from './late_no_preflight.mjs';
 import {leadFirstProofValid,leadFirstProofReady,leadFinalProofValid} from './lead_verification_timer.mjs';
 import {pairedExternalMatch,configureIndependentFixtureCache} from './independent_match_score.mjs';
+import {validFreshEspnSoccerNo} from './soccer_espn_no.mjs';
 import {createFixtureEventCache} from './fixture_event_cache.mjs';
 import {hockeyNoMarketSpec,hockeyTotalNo,verifyIndependentHockeyTotalNo} from './hockey_total_no.mjs';
 import {hockeyEarlyNoMarketSpec,hockeyEarlyPeriodNo,verifyIndependentEarlyHockeyNo} from './hockey_early_period_no.mjs';
 import {soccerFirstHalfNoSpec,soccerFirstHalfNo,verifyIndependentSoccerFirstHalfNo,soccerFirstHalfSeconds} from './soccer_first_half_no.mjs';
 import {basketballEarlyQuarterNoSpec,basketballEarlyQuarterNo,verifyIndependentBasketballEarlyQuarterNo} from './basketball_early_quarter_no.mjs';
 import {soccerNoMarketSpec,soccerTotalNo,soccerStoppageNoWindow,verifyIndependentSoccerTotalNo} from './soccer_total_no.mjs';
-import {validSoccerNoPreflightProof} from './soccer_no_external_proof.mjs';
 import {VARIABLE_CONFIRM_DELAY_MS,variablePlayerOverSpec,variableProofValid,verifyIndependentVariableOver} from './variable_player_over.mjs';
 import {verifyIndependentYardageZero} from './score_verification.mjs';
 import {mentionContract,mentionDay,mentionEventTime,mentionEntryPrice,pairedMentionProof,remainingMentionCents} from './mentions.mjs';
@@ -3628,7 +3628,7 @@ async function scanEarlyPeriodNos(games,events,signalSink=null,sport='NHL'){
         'SELECT * FROM '+policy.table+' WHERE market_ticker=$1',[c.market.ticker]);
       const invalid=!validNoPreflight(window,{gameId:game.id,
         contractKey:key,period:game.period,maxFirstSeconds:start})||
-        !hockey&&!basketball&&!validSoccerNoPreflightProof(window?.first_evidence);
+        sport==='Soccer'&&!validFreshEspnSoccerNo(window?.first_evidence,game,Date.now(),{allowHistorical:true});
       if(invalid){
         // Independently sourced period goals/points, never Kalshi splits,
         // determine whether this selected segment meets its cushion.
@@ -3641,10 +3641,12 @@ async function scanEarlyPeriodNos(games,events,signalSink=null,sport='NHL'){
           firstProofs.set(proofKey,proof);
         }
         const marked=tagNoPreflight(proof);
-        const signal=marked&&policy.signal(game,c.market,{beforeWindow:true,external:marked});
+        const signal=marked&&(sport!=='Soccer'||validFreshEspnSoccerNo(marked,game))&&
+          policy.signal(game,c.market,{beforeWindow:true,external:marked});
         if(!signal){
           report(c,proof===false?'Independent fixture identity or period score is contradictory':
-            proof==null?'No matching fixture and score verified by ESPN (including retry) or FOX':
+            proof==null?(sport==='Soccer'?'No current live ESPN fixture, score and minute verified':
+              'No matching fixture and score verified by ESPN (including retry) or FOX'):
             'Independent matchup/score could not be validated');continue;
         }
         await pool.query('INSERT INTO '+policy.table+' '+
@@ -3689,7 +3691,8 @@ async function scanEarlyPeriodNos(games,events,signalSink=null,sport='NHL'){
           if(!finalProofs.has(scoreKey))finalProofs.set(scoreKey,policy.verify(fresh,c.milestone,current) );
           return finalProofs.get(scoreKey);
         },
-        approve:pairedExternalMatch,validate:proof=>Boolean(policy.signal(fresh,current,{external:proof}))});
+        approve:pairedExternalMatch,validate:proof=>Boolean((sport!=='Soccer'||
+          validFreshEspnSoccerNo(proof,fresh))&&policy.signal(fresh,current,{external:proof}))});
       c.finalCheck={...finalCheck,attemptedAt:Date.now()};
       if(!finalCheck.ok){report(c,'Final independent verification attempted: '+finalCheck.reason);continue;}
       report(c,'Final independent score verified; checking liquidity and order requirements');
@@ -3763,11 +3766,12 @@ async function scanEarlyPeriodNos(games,events,signalSink=null,sport='NHL'){
       const proof=finalCheck.newCheck&&Date.now()-finalCheck.at<8000?
         finalCheck.proof:await policy.verify(fresh,c.milestone,current);
       const externalCheckedAt=Date.now(),first=window.first_evidence;
-      const signal=proof&&pairedExternalMatch(first,proof,fresh)&&
-        policy.signal(fresh,current,{external:proof});
+      const signal=proof&&(sport!=='Soccer'||validFreshEspnSoccerNo(proof,fresh))&&
+        pairedExternalMatch(first,proof,fresh)&&policy.signal(fresh,current,{external:proof});
       if(!signal||externalCheckedAt-fresh.observedAt>10000){
         report(c,proof===false?'Entry blocked: final independent game score disagreement':
-          'Entry blocked: final ESPN/FOX fixture and score not verified',null,ask);
+          sport==='Soccer'?'Entry blocked: live ESPN fixture, score and minute not verified':
+            'Entry blocked: final ESPN/FOX fixture and score not verified',null,ask);
         continue;
       }
       const verificationId=randomUUID();
@@ -3794,7 +3798,8 @@ async function scanEarlyPeriodNos(games,events,signalSink=null,sport='NHL'){
         },()=>kalshi('/portfolio/events/orders',{method:'POST',auth:true,
           entryVerifications:[{game:fresh,market:current}],
           beforeDispatch:()=>{
-            if(!policy.signal(fresh,current,{external:proof})||
+            if(sport==='Soccer'&&!validFreshEspnSoccerNo(proof,fresh)||
+              !policy.signal(fresh,current,{external:proof})||
               Date.now()-fresh.observedAt>10000||
               Date.now()-externalCheckedAt>10000)
               throw Object.assign(Error('Early-period NO external proof expired'),
@@ -3920,7 +3925,7 @@ async function scanSoccerTotalNos(games,events,signalSink=null){
       const invalidWindow=!validNoPreflight(window,{gameId:game.id,
         contractKey:key,period:game.period,maxFirstSeconds:start,
         allowZeroClock:soccerStoppageNoWindow(game)})||
-        !validSoccerNoPreflightProof(window?.first_evidence);
+        !validFreshEspnSoccerNo(window?.first_evidence,game,Date.now(),{allowHistorical:true});
       if(invalidWindow){
         // Check the Kalshi cushion before requesting independent evidence.
         // A correctly cushioned market is never labelled as missing cushion.
@@ -3934,10 +3939,11 @@ async function scanSoccerTotalNos(games,events,signalSink=null){
           firstProofs.set(game.id,proof);
         }
         const marked=tagNoPreflight(proof);
-        const signal=marked&&soccerTotalNo(game,c.market,{beforeWindow:true,external:marked});
+        const signal=marked&&validFreshEspnSoccerNo(marked,game)&&
+          soccerTotalNo(game,c.market,{beforeWindow:true,external:marked});
         if(!signal){
           report(c,proof===false?'Independent matched fixture or source score is contradictory':
-            proof==null?'No matching fixture and score verified by ESPN (including retry) or FOX':
+            proof==null?'No current live ESPN fixture, score and minute verified':
             'Independent matchup/score could not be validated');continue;
         }
         await pool.query('INSERT INTO soccer_total_no_windows '+
@@ -3981,7 +3987,8 @@ async function scanSoccerTotalNos(games,events,signalSink=null){
           if(!finalProofs.has(scoreKey))finalProofs.set(scoreKey,verifyIndependentSoccerTotalNo(fresh,c.milestone,current) );
           return finalProofs.get(scoreKey);
         },
-        approve:pairedExternalMatch,validate:proof=>Boolean(soccerTotalNo(fresh,current,{external:proof}))});
+        approve:pairedExternalMatch,validate:proof=>Boolean(validFreshEspnSoccerNo(proof,fresh)&&
+          soccerTotalNo(fresh,current,{external:proof}))});
       c.finalCheck={...finalCheck,attemptedAt:Date.now()};
       if(!finalCheck.ok){report(c,'Final independent verification attempted: '+finalCheck.reason);continue;}
       report(c,'Final independent score verified; checking liquidity and order requirements');
@@ -4051,11 +4058,12 @@ async function scanSoccerTotalNos(games,events,signalSink=null){
       const proof=finalCheck.newCheck&&Date.now()-finalCheck.at<8000?
         finalCheck.proof:await verifyIndependentSoccerTotalNo(fresh,c.milestone,current);
       const externalCheckedAt=Date.now();
-      const signal=proof&&pairedExternalMatch(window.first_evidence,proof,fresh)&&
+      const signal=proof&&validFreshEspnSoccerNo(proof,fresh)&&
+        pairedExternalMatch(window.first_evidence,proof,fresh)&&
         soccerTotalNo(fresh,current,{external:proof});
       if(!signal||externalCheckedAt-fresh.observedAt>10000){
         report(c,proof===false?'Entry blocked: final independent source/fixture evidence is contradictory':
-          'Entry blocked: final ESPN/FOX fixture and score not verified',null,ask);
+          'Entry blocked: live ESPN fixture, score and minute not verified',null,ask);
         continue;
       }
       const verificationId=randomUUID();
@@ -4077,7 +4085,8 @@ async function scanSoccerTotalNos(games,events,signalSink=null){
         },()=>kalshi('/portfolio/events/orders',{method:'POST',auth:true,
           entryVerifications:[{game:fresh,market:current}],
           beforeDispatch:()=>{
-            if(!soccerTotalNo(fresh,current,{external:proof})||
+            if(!validFreshEspnSoccerNo(proof,fresh)||
+              !soccerTotalNo(fresh,current,{external:proof})||
               Date.now()-fresh.observedAt>10000||Date.now()-externalCheckedAt>10000)
               throw Object.assign(Error('Soccer total NO external proof expired'),
                 {code:'LOCAL_EXTERNAL_VERIFICATION_REQUIRED'});

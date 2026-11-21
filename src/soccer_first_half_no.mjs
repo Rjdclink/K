@@ -1,5 +1,5 @@
 import {externalNoScore} from './external_no_authority.mjs';
-import {verifyCorroboratedSoccerNo,validCorroboratedSoccerNoProof,validSoccerNoSource} from './soccer_no_external_proof.mjs';
+import {verifyFreshEspnSoccerNo} from './soccer_espn_no.mjs';
 import {espnMatches} from './score_verification.mjs';
 import {espnScoreboardUrls} from './espn_scoreboards.mjs';
 
@@ -20,7 +20,7 @@ const lineFrom=text=>{
 };
 const externalCurrent=(reading,game)=>Boolean(
   ['ESPN','FOX Sports','Sportradar'].includes(reading?.source)&&reading.eventId&&
-  Boolean(externalNoScore(game,reading))&&validCorroboratedSoccerNoProof(game,reading));
+  Boolean(externalNoScore(game,reading)));
 
 export function soccerFirstHalfNoSpec(game,market,{beforeWindow=false}={}){
   const seconds=soccerFirstHalfSeconds(game);
@@ -67,13 +67,13 @@ export function independentSoccerFirstHalfNoReading(scoreboard,game,milestone,ma
   const match=matches[0],event=scoreboard.events.find(e=>e.id===match.eventId);
   const status=event?.competitions?.[0]?.status||event?.status;
   const elapsedMinute=readClock(status?.displayClock);
-  const reading={source:'ESPN',eventId:match.eventId,gameId:game.id,
-    home:match.home,away:match.away,period:match.period,elapsedMinute,
-    live:match.live,sourceClock:String(status?.displayClock||'')};
-  return validSoccerNoSource(game,reading)?reading:null;
+  const reading={source:'ESPN',eventId:match.eventId,home:match.home,away:match.away,
+    period:match.period,elapsedMinute,live:match.live};
+  return externalCurrent(reading,game)?reading:null;
 }
 
-export async function verifyIndependentSoccerFirstHalfNo(game,milestone,market,options={}){
+export async function verifyIndependentSoccerFirstHalfNo(game,milestone,market,{fetcher=fetch}={}){
   if(!soccerFirstHalfNoSpec(game,market,{beforeWindow:true}))return null;
-  return verifyCorroboratedSoccerNo(game,milestone,options);
+  // ESPN only. The scoreboard must be live, current, and agree on the score and minute.
+  return verifyFreshEspnSoccerNo(game,milestone,{fetcher});
 }
