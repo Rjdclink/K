@@ -171,8 +171,8 @@ test('football Q4 total NO enters with a single immediately preceding external c
     accountBalance:async()=>({balance:10000,portfolio_value:0}),shardCash:()=>10000,marketShard:()=>0,
     singleSpendableCash:v=>v,feeReserve:()=>0,orderSize:()=>10,profitableCount:n=>n,
     estimatedCostCents:()=>500,auditTable:async()=>{},randomUUID:()=> 'proof',
-    rememberIndependentEntry,reserve:async signal=>{assert.equal(signal.fraction,.10);return 'order-1'},
-    withEntryProfitFloor:async(options,fn)=>{assert.equal(options.fraction,.10);return fn()},
+    rememberIndependentEntry,reserve:async signal=>{assert.equal(signal.fraction,.05);return 'order-1'}, 
+    withEntryProfitFloor:async(options,fn)=>{assert.equal(options.fraction,.05);return fn()}, 
     invalidateBalance:async()=>{}});
   vm.runInContext(code,context);
   const args=g=>[[{milestone,state:g}],new Map([[half.event_ticker,event]])];
