@@ -225,7 +225,7 @@ test('sixty percent position reads reject a malformed exchange response',async()
 test('the production audit records the independently documented cushion and erases permission after a conflicting recheck',async()=>{
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
   const {game,market,milestone}=fixture();let goals=4,documented=4;const audits=[];
-  const context=vm.createContext({console,AbortSignal,overSignal,overCushion,playerOverSpec,verifyIndependentOverDecision,rememberIndependentEntry,randomUUID:()=>String(audits.length),
+  const context=vm.createContext({console,AbortSignal,overSignal,overCushion,playerOverSpec,verifyIndependentOverDecision,rememberIndependentEntry,externalSportFeeds:()=>null,randomUUID:()=>String(audits.length),
     auditTable:async()=>{},pool:{query:async(sql,args)=>{audits.push(args);return {rows:[]}}},
     fetch:async()=>({ok:true,status:200,text:async()=>JSON.stringify({events:[{id:'external',date:start,
       status:{period:2,displayClock:"68'",type:{state:'in'}},competitions:[{competitors:[
@@ -247,7 +247,7 @@ test('external verification requires an actual fresh successful HTTP response an
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
   const {game,market,milestone}=fixture(),records=[];let requests=0,status=200,request=true;
   const cache=new Map([['raw:https://external.test/score',{at:Date.now(),value:Promise.resolve({ok:true})}]]);
-  const context=vm.createContext({console,overSignal,overCushion,playerOverSpec,rememberIndependentEntry,
+  const context=vm.createContext({console,overSignal,overCushion,playerOverSpec,rememberIndependentEntry,externalSportFeeds:()=>null,
     randomUUID:()=>String(records.length),auditTable:async()=>{},
     pool:{query:async(sql,args)=>{records.push(args);return {rows:[]}}},
     verifyIndependentOverDecision:async(g,m,options)=>{
