@@ -11,6 +11,7 @@ import {rememberIndependentEntry} from '../src/entry_verification.mjs';
 import {bestNoAsk,noDepthAtAsk} from '../src/no_strategy.mjs';
 import vm from 'node:vm';
 import {tagNoPreflight,validNoPreflight,lateNoPreflightProgress} from '../src/late_no_preflight.mjs';
+import {eligibleNoFinal,launchImmediateNoFinalFixtures,immediateNoFinalProof} from '../src/no_final_priority.mjs';
 import {readFileSync} from 'node:fs';
 
 const milestone={id:'ohio-akron',title:'Ohio at Akron',type:'football_game',start_date:'2026-11-04T00:00:00Z',
@@ -149,7 +150,7 @@ test('football Q4 total NO enters after two external checks at least 30 seconds 
   const code=source.slice(source.indexOf('async function scanCollegeTotalNos('),source.indexOf('async function scan(cachedMilestones'));
   const half=market(false),event={event_ticker:half.event_ticker,category:'Sports',markets:[half]};
   let window=null,checks=0,orders=0;const first=state(4,'5:30'),last=state(4,'4:59');
-  const context=vm.createContext({noFinalCheckpoint,pairedExternalMatch,noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async()=>{},tagNoPreflight,validNoPreflight,lateNoPreflightProgress,Date,JSON,Number,Math,Promise,console,live:()=>true,
+  const context=vm.createContext({eligibleNoFinal,launchImmediateNoFinalFixtures,immediateNoFinalProof,noFinalCheckpoint,pairedExternalMatch,noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async()=>{},tagNoPreflight,validNoPreflight,lateNoPreflightProgress,Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),
     linkedEventTickers:()=>[half.event_ticker],collegeFootballTotalNo,collegeBasketballTotalNo,overContractKey,sameSportsContract,
     verifyIndependentCollegeTotalNo:async game=>{checks++;return {source:'ESPN',eventId:'college-verified',gameId:game.id,home:game.home,away:game.away,seconds:299}}, 

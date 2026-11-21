@@ -5,6 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {tagNoPreflight,validNoPreflight,lateNoPreflightProgress} from '../src/late_no_preflight.mjs';
+import {eligibleNoFinal,launchImmediateNoFinalFixtures,immediateNoFinalProof,dueNoFinalWindows} from '../src/no_final_priority.mjs';
 import {readFileSync} from 'node:fs';
 import {gameState} from '../src/strategy.mjs';
 import {collegeBasketballTotalNo,collegeFootballTotalNo,bestNoAsk,noDepthAtAsk} from '../src/no_strategy.mjs';
@@ -38,7 +39,7 @@ function harness(sport,{ageMs=61000,failSecond=false,legacyFirstClock=null,final
   const trace=[];
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
   const code=source.slice(source.indexOf('async function scanCollegeTotalNos('),source.indexOf('async function scan(cachedMilestones'));
-  const context=vm.createContext({noFinalCheckpoint,noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async()=>{},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
+  const context=vm.createContext({eligibleNoFinal,launchImmediateNoFinalFixtures,immediateNoFinalProof,dueNoFinalWindows,noFinalCheckpoint,noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async()=>{},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
     Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),
     linkedEventTickers:()=>[market.event_ticker],
@@ -48,6 +49,9 @@ function harness(sport,{ageMs=61000,failSecond=false,legacyFirstClock=null,final
       return blocked||failSecond&&proofs===2?null:{source:'ESPN',eventId:proofs>=2?finalEventId:'jit-espn-game',gameId:game.id,home:game.home,away:game.away,seconds:basketball?89:299,period};
     },
     pool:{query:async(sql,args=[])=>{
+      if(sql.startsWith('SELECT * FROM college_total_no_windows')&&sql.includes('game_id=ANY'))
+        return {rows:window&&args[0].includes(window.game_id)&&
+          Date.now()-new Date(window.first_at).getTime()>=30000?[window]:[]};
       if(sql.startsWith('SELECT * FROM college_total_no_windows'))return {rows:window?[window]:[]};
       if(sql.startsWith('INSERT INTO college_total_no_windows')){
         window={market_ticker:args[0],game_id:args[1],contract_key:args[2],period:args[3],
@@ -88,7 +92,7 @@ function harness(sport,{ageMs=61000,failSecond=false,legacyFirstClock=null,final
   vm.runInContext(code,context);
   const eventMap=new Map([[market.event_ticker,{category:'Sports',event_ticker:market.event_ticker,markets:[market]}]]);
   return {
-    async scan(clock){return context.scanCollegeTotalNos([{milestone,state:state(clock)}],eventMap,basketball?'basketball':'football',new Map());},
+    async scan(clock,phase='all'){return context.scanCollegeTotalNos([{milestone,state:state(clock)}],eventMap,basketball?'basketball':'football',new Map(),phase);},
     get proofs(){return proofs;},
     get orders(){return orders;},
     get window(){return window;},
@@ -207,4 +211,21 @@ test('stale preflight windows from earlier policies are reverified at 8:00 inste
     assert.equal(h.proofs,2);
     assert.equal(h.orders,1);
   }
+});
+
+test('NFL, CFB and college basketball final checks preempt all new first checks',async()=>{
+ for(const [sport,initialClock,entryClock] of [
+  ['CFB','5:30','4:59'],['NFL','5:30','4:59'],['NCAAB','8:00','6:59']
+ ]){
+  const h=harness(sport);
+  assert.equal(await h.scan(initialClock,'final'),0);
+  assert.equal(h.proofs,0,sport+' cannot bypass first proof');
+  assert.equal(await h.scan(initialClock,'initial'),0);
+  assert.equal(h.proofs,1);
+  assert.equal(await h.scan(entryClock,'final'),1,sport+' runs due final independently');
+  assert.equal(h.proofs,2);
+  assert.equal(h.orders,1);
+  assert.equal(await h.scan(entryClock,'initial'),0);
+  assert.equal(h.proofs,2,'no redundant final ESPN request in first lane');
+ }
 });

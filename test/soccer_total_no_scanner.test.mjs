@@ -5,6 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {tagNoPreflight,validNoPreflight,lateNoPreflightProgress} from '../src/late_no_preflight.mjs';
+import {eligibleNoFinal,launchImmediateNoFinalFixtures,immediateNoFinalProof,dueNoFinalWindows} from '../src/no_final_priority.mjs';
 import {readFileSync} from 'node:fs';
 import {gameState,orderSize,estimatedCostCents} from '../src/strategy.mjs';
 import {soccerNoMarketSpec,soccerTotalNo,soccerStoppageNoWindow} from '../src/soccer_total_no.mjs';
@@ -38,7 +39,7 @@ function harness({canVerify=true,hasSeller=true,initialAgeMs=61000,existingExpos
   const windows=new Map(),dashboard=new Map(),trace=[],diagnostics=[];
   let verified=0,orders=0,lastBudget=null,lastFraction=null,lastQuantity=null,scanSeconds=540;
   const held={ticker:'KXEPLTOTAL-OLDER',position_fp:-1,market_exposure_dollars:'4.00',fees_paid_dollars:'0.50'};
-  const context=vm.createContext({noFinalCheckpoint,noAskTimeout:noAskPolicy,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async decision=>{diagnostics.push(decision)},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
+  const context=vm.createContext({eligibleNoFinal,launchImmediateNoFinalFixtures,immediateNoFinalProof,dueNoFinalWindows,noFinalCheckpoint,noAskTimeout:noAskPolicy,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async decision=>{diagnostics.push(decision)},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
     Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),
     linkedEventTickers:()=>[market.event_ticker],
@@ -54,6 +55,9 @@ function harness({canVerify=true,hasSeller=true,initialAgeMs=61000,existingExpos
     },
     overContractKey,sameSportsContract,
     pool:{query:async(sql,args=[])=>{
+      if(sql.startsWith('SELECT * FROM soccer_total_no_windows')&&sql.includes('game_id=ANY'))
+        return {rows:[...windows.values()].filter(w=>args[0].includes(w.game_id)&&
+          Date.now()-new Date(w.first_at).getTime()>=30000)};
       if(sql.startsWith('SELECT * FROM soccer_total_no_windows'))
         return {rows:windows.has(args[0])?[windows.get(args[0])]:[]};
       if(sql.startsWith('INSERT INTO soccer_total_no_windows')){
@@ -113,7 +117,7 @@ function harness({canVerify=true,hasSeller=true,initialAgeMs=61000,existingExpos
   });
   vm.runInContext(code,context);
   return {
-    scan:seconds=>{scanSeconds=seconds;return context.scanSoccerTotalNos([{milestone,state:state(seconds)}],events,dashboard)},
+    scan:(seconds,phase='all')=>{scanSeconds=seconds;return context.scanSoccerTotalNos([{milestone,state:state(seconds)}],events,dashboard,phase)},
     get windows(){return windows;},get trace(){return trace;},
     get dashboard(){return dashboard;},get diagnostics(){return diagnostics;},get verifications(){return verified;},
     get orders(){return orders;},get lastBudget(){return lastBudget;},
@@ -313,7 +317,8 @@ test('the second ESPN response must have a new HTTP request identity or no socce
 
 test('soccer NO signals are published to the dashboard without removing other strategies',()=>{
   const src=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
-  assert.match(src,/scanSoccerTotalNos\(marketGames,events,soccerNoSignals\)/);
+  assert.match(src,/scanSoccerTotalNos\(marketGames,events,soccerNoSignals,'final'\)/);
+  assert.match(src,/scanSoccerTotalNos\(marketGames,events,soccerNoSignals,'initial'\)/);
   const begin=src.indexOf('for(const [id,candidates] of snapshotCandidates){');
   const end=src.indexOf('// Expire only the current ten-minute attempt.',begin);
   assert.ok(begin>0&&end>begin);
@@ -327,4 +332,17 @@ test('soccer NO signals are published to the dashboard without removing other st
     snapshotRows,snapshotCandidates,soccerNoSignals,hockeyNoSignals,basketballNoSignals,variableOverSignals:new Map(),
     crossingRows:[],filled:new Set(),account:{},balance:0,bankroll:0,signalExecution:()=>''});
   assert.deepEqual(JSON.parse(row[14]).map(s=>s.ticker||s.execution).slice(0,3),[market.ticker,'NHL','Basketball state']);
+});
+
+test('due soccer final ESPN check runs before ordinary first checks',async()=>{
+ const h=harness();
+ assert.equal(await h.scan(660,'final'),0);
+ assert.equal(h.verifications,0);
+ assert.equal(await h.scan(660,'initial'),0);
+ assert.equal(h.verifications,1);
+ assert.equal(await h.scan(479,'final'),1);
+ assert.equal(h.verifications,2);
+ assert.equal(h.orders,1);
+ assert.equal(await h.scan(479,'initial'),0);
+ assert.equal(h.verifications,2,'an already-due final does not reenter initial proof processing');
 });

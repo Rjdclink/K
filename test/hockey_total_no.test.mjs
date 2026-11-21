@@ -34,21 +34,21 @@ const scoreboard=(clock='1:29',home3=0,away3=0)=>{
   }]}]};
 };
 
-test('NHL NO requires 2.5 goals for full-game and 1.5 for third-period totals',()=>{
+test('NHL full-game and third-period NO require 2.5, with 3.5 after four segment goals',()=>{
   const state=game('1:29',3,2,1);
   assert.equal(hockeyTotalNo(state,market('full_game',5.5))?.total,3,'game score 3 qualifies at line 5.5');
   assert.equal(hockeyTotalNo(state,market('full_game',5.0)),null,'2.0-goal gap does not qualify');
   assert.equal(hockeyTotalNo(state,market('full_game',4.5)),null,'1.5-goal gap does not qualify');
   assert.equal(hockeyTotalNo(state,market('full_game',4.0)),null,'1.0-goal cushion fails');
   assert.equal(hockeyTotalNo(state,market('third_period',2.5))?.total,0,'third period 0 qualifies at 2.5');
-  assert.equal(hockeyTotalNo(state,market('third_period',1.5))?.total,0,'exact 1.5-goal P3 cushion qualifies');
+  assert.equal(hockeyTotalNo(state,market('third_period',1.5)),null,'1.5 cushion is overtime full-game only');
   assert.equal(hockeyTotalNo(state,market('third_period',1.0)),null,'1.0-goal P3 cushion fails');
-  assert.equal(hockeyTotalNo(game('1:29',3,3,1),market('third_period',3.5)),null,'four goals veto P3 NO');
+  assert.equal(hockeyTotalNo(game('1:29',3,3,1),market('third_period',3.5))?.total,1,'P3 only has one goal');
   assert.equal(hockeyTotalNo(game('1:29',3,3,1),market('third_period',2.5)),null,'four goals veto P3 NO');
   assert.equal(hockeyTotalNo(game('1:29',3,3,1),market('third_period',2.0)),null);
 });
 
-test('NHL example: four or more combined goals block NO even when the selected period remains low',()=>{
+test('NHL example: four combined goals need 3.5 full-game cushion, not a blanket veto',()=>{
   const twoGoals=gameState(milestone,{milestone_id:milestone.id,
     _observed_at:new Date().toISOString(),details:{
       status:'inprogress',home_points:1,away_points:1,period:3,
@@ -63,19 +63,21 @@ test('NHL example: four or more combined goals block NO even when the selected p
   assert.equal(hockeyTotalNo(twoGoals,market('full_game',3.5)),null,
     'a 1.5-goal full-game cushion is insufficient');
   const atFour=game('1:29',3,3,1);
-  assert.equal(hockeyTotalNo(atFour,market('full_game',6.5)),null,'four goals veto full-game NO');
+  assert.equal(hockeyTotalNo(atFour,market('full_game',7.5))?.total,4,'4 + 3.5 is safe');
+  assert.equal(hockeyTotalNo(atFour,market('full_game',6.5)),null,'4 + 2.5 is insufficient');
   assert.equal(hockeyTotalNo(atFour,market('full_game',5.5)),null,'a 1.5-goal full-game cushion is insufficient');
   assert.equal(hockeyTotalNo(atFour,market('full_game',5.0)),null,'one goal is below 1.5');
-  assert.equal(hockeyTotalNo(atFour,market('third_period',3.5)),null,'four goals veto P3 NO');
+  assert.equal(hockeyTotalNo(atFour,market('third_period',3.5))?.total,1,'P3 goal count remains one');
   assert.equal(hockeyTotalNo(atFour,market('third_period',2.5)),null,'four goals veto P3 NO');
   assert.equal(hockeyTotalNo(atFour,market('third_period',2.0)),null);
   const twoP3Goals=game('1:29',3,4,1);
-  assert.equal(hockeyTotalNo(twoP3Goals,market('third_period',3.5)),null,
-    'five combined game goals veto P3 NO despite the selected period cushion');
+  assert.equal(hockeyTotalNo(twoP3Goals,market('third_period',4.5))?.total,2,
+    'five combined game goals do not veto a correctly cushioned P3 market');
+  assert.equal(hockeyTotalNo(twoP3Goals,market('third_period',3.5)),null);
   assert.equal(hockeyTotalNo(twoP3Goals,market('third_period',3.0)),null);
 });
 
-test('NHL NO enters strictly under 6:00 in period three only, and watches from 7:00',()=>{
+test('NHL NO enters strictly under 6:00 in P3; P4 permits full-game only',()=>{
   for(const p of ['full_game','third_period']){
     assert.ok(hockeyNoMarketSpec(game('7:00'),market(p,5.5),{beforeWindow:true}));
     assert.equal(hockeyNoMarketSpec(game('7:01'),market(p,5.5),{beforeWindow:true}),null);
@@ -84,7 +86,8 @@ test('NHL NO enters strictly under 6:00 in period three only, and watches from 7
     assert.ok(hockeyTotalNo(game('1:29'),market(p,5.5)));
     assert.equal(hockeyTotalNo(game('0:00'),market(p,5.5)),null);
     assert.equal(hockeyTotalNo(game('1:29',2),market(p,5.5)),null);
-    assert.equal(hockeyTotalNo(game('1:29',4),market(p,5.5)),null);
+    assert.equal(hockeyTotalNo(game('1:29',4),market(p,5.5))?.total,
+      p==='full_game'?3:undefined);
   }
 });
 
@@ -136,19 +139,23 @@ test('full-game NHL total NO verifies full score even when direct period breakou
   assert.equal(proof?.home,2);
   assert.equal(proof?.away,1);
 });
-test('NHL full-game and third-period NO block at four combined game goals',()=>{
+test('NHL four-plus goals permit NO only with the required segment cushion',()=>{
   const atThree=game('1:29',3,2,1),atFour=game('1:29',3,3,1),atFive=game('1:29',3,4,1);
   const full=market('full_game',8.5),third=market('third_period',5.5);
   assert.equal(hockeyTotalNo(atThree,full)?.total,3);
   assert.equal(hockeyTotalNo(atThree,third)?.total,0);
   for(const state of [atFour,atFive]){
-    assert.equal(hockeyTotalNo(state,full),null,'full-game NO blocks four or more');
-    assert.equal(hockeyTotalNo(state,third),null,'P3 NO must use cumulative game goals for the limit');
-    assert.equal(hockeyTotalNo(state,full,{beforeWindow:true}),null,'preflight blocks four goals');
+    assert.equal(hockeyTotalNo(state,full)?.total,state.home+state.away);
+    assert.equal(hockeyTotalNo(state,third)?.total,state.home-2);
+    assert.equal(hockeyTotalNo(state,full,{beforeWindow:true})?.total,state.home+state.away);
   }
   const reading={source:'ESPN',eventId:'nhl-match',home:3,away:1,
     periods:[{number:1,home:1,away:1},{number:2,home:1,away:0},{number:3,home:1,away:0}],
     period3:{home:1,away:0}};
-  assert.equal(hockeyTotalNo(atThree,full,{external:reading}),null,'verified four goals block if Kalshi shows three');
-  assert.equal(hockeyTotalNo(atThree,third,{external:reading}),null,'verified cumulative four block third-period NO');
+  assert.equal(hockeyTotalNo(atThree,market('full_game',6.5))?.total,3);
+  assert.equal(hockeyTotalNo(atThree,market('full_game',6.5),{external:reading}),null,
+    'verified four-goal score increases full-game cushion to 3.5');
+  assert.equal(hockeyTotalNo(atThree,market('third_period',2.5))?.total,0);
+  assert.equal(hockeyTotalNo(atThree,market('third_period',2.5),{external:reading}),null,
+    'independently attributed period-three goal increases selected score');
 });

@@ -1,7 +1,6 @@
 import {externalNoScore,externalNoPeriods} from './external_no_authority.mjs';
-import {fetchIndependentMatchScore} from './independent_match_score.mjs';
+import {verifyFreshEspnHockeyNo} from './hockey_espn_no.mjs';
 import {espnMatches} from './score_verification.mjs';
-import {espnScoreboardUrls} from './espn_scoreboards.mjs';
 
 // NHL period-one and period-two NO markets settle on goals scored in that
 // period alone. Never substitute the full-game combined score for period goals.
@@ -41,7 +40,7 @@ const agrees=(game,parts)=>{
   return true;
 };
 const validExternal=(external,game,period)=>{
-  if(!['ESPN','FOX Sports'].includes(external?.source)||!external.eventId||
+  if(external?.source!=='ESPN'||!external.eventId||
     !externalNoScore(game,external))return null;
   const parts=externalNoPeriods(game,external,period);
   if(!parts)return null;
@@ -56,6 +55,7 @@ export function hockeyEarlyNoMarketSpec(game,market,{beforeWindow=false}={}){
   if(game?.sport!=='NHL'||!['hockey_match','hockey_game'].includes(game.type)||
     ![1,2].includes(period)||!game.verifiedLive||!game.scoreKnown||
     !game.scoreConsistent||!game.periodConsistent||game.feedId!==game.id||
+    game.clockRunning===false||
     !Number.isFinite(game.observedAt)||game.observedAt>Date.now()||
     Date.now()-game.observedAt>10000||!Number.isFinite(remaining)||remaining<=0||
     (beforeWindow?remaining>360:remaining>=300)||
@@ -85,10 +85,9 @@ export function hockeyEarlyPeriodNo(game,market,{beforeWindow=false,external=nul
   const parts=external?validExternal(external,game,spec.periodNumber):
     periodParts(game.periodScores,spec.periodNumber);
   if(!parts||!external&&!agrees(game,parts))return null;
-  const gameGoals=totals(parts);
-  if(gameGoals.home+gameGoals.away>=4)return null;
   const periodTotal=parts[spec.periodNumber-1].home+parts[spec.periodNumber-1].away;
-  if(spec.line-periodTotal<1.5)return null;
+  // Match soccer first-half NO. Overtime's 1.5 exception never applies here.
+  if(spec.line-periodTotal<(periodTotal>=4?3.5:2.5))return null;
   return {...spec,total:periodTotal,reason:
     'NHL hockey total NO '+(spec.periodNumber===1?'first period':'second period')+
     ' over '+spec.line+'; '+periodTotal+' period goals, '+
@@ -111,8 +110,6 @@ export function independentEarlyHockeyNoReading(scoreboard,game,milestone,market
 
 export async function verifyIndependentEarlyHockeyNo(game,milestone,market,{fetcher=fetch}={}){
   if(!hockeyEarlyNoMarketSpec(game,market,{beforeWindow:true}))return null;
-  const feed='hockey/nhl';
-  if(!feed)return null;
-  // ESPN first, retry only when unavailable, then FOX; no source clock check.
-  return fetchIndependentMatchScore(game,milestone,{fetcher,espnFeed:feed,foxFeed:'nhl'});
+  // Same independent, cache-busted ESPN-only verification as NHL full-game NO.
+  return verifyFreshEspnHockeyNo(game,milestone,{fetcher});
 }

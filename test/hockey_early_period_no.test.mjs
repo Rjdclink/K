@@ -38,7 +38,7 @@ const board=(period,clock,parts)=>({events:[{id:'espn-nhl-sea-sj',date:milestone
 const parts=(game,period)=>game.periodScores.filter(p=>p.number<=period);
 test('both NHL early-period NO markets: initial verification from 6:00, entry strictly below 5:00',()=>{
  for(const p of [1,2]){
-  const m=market(p,p===2?2.5:1.5);
+  const m=market(p,p===2?3.5:2.5);
   assert.equal(hockeyEarlyNoMarketSpec(state(p,'6:01'),m,{beforeWindow:true}),null);
   assert.ok(hockeyEarlyNoMarketSpec(state(p,'6:00'),m,{beforeWindow:true}));
   assert.ok(hockeyEarlyNoMarketSpec(state(p,'5:00'),m,{beforeWindow:true}));
@@ -52,15 +52,15 @@ test('both NHL early-period NO markets: initial verification from 6:00, entry st
 test('the second-period NO cushion counts only second-period goals, not cumulative game goals',()=>{
  const p2=state(2,'3:29');
  assert.equal(p2.home+p2.away,3);
- assert.equal(hockeyEarlyPeriodNo(p2,market(2,2.5))?.total,1);
+ assert.equal(hockeyEarlyPeriodNo(p2,market(2,2.5)),null,'1.5 cushion must fail');
  assert.equal(hockeyEarlyPeriodNo(p2,market(2,1.5)),null);
  assert.equal(hockeyEarlyPeriodNo(p2,market(2,3.5))?.total,1);
  assert.equal(hockeyEarlyPeriodNo(state(2,'3:29',[
   {number:1,home_score:1,away_score:0},{number:2,home_score:1,away_score:1}
- ]),market(2,3.5))?.total,2);
+ ]),market(2,4.5))?.total,2);
  assert.equal(hockeyEarlyPeriodNo(state(2,'3:29',[
   {number:1,home_score:1,away_score:0},{number:2,home_score:1,away_score:1}
- ]),market(2,2.5)),null);
+ ]),market(2,3.5)),null);
 });
 test('NHL early-period total market requires exact series, 1st/2nd title, strike, rules, and game ticker',()=>{
  const g=state(1,'3:29'),m=market(1,1.5);
@@ -78,8 +78,8 @@ test('NHL early-period total market requires exact series, 1st/2nd title, strike
  ])assert.equal(hockeyEarlyNoMarketSpec(g,{...m,...change}),null,JSON.stringify(change));
 });
 test('ESPN proof validates current period linescores without requiring future periods',()=>{
- const g1=state(1,'3:29'),m1=market(1);
- const g2=state(2,'3:29'),m2=market(2,2.5);
+ const g1=state(1,'3:29'),m1=market(1,2.5);
+ const g2=state(2,'3:29'),m2=market(2,3.5);
  const score1=board(1,'3:29',[{home:0,away:0}]);
  const score2=board(2,'3:29',[{home:1,away:1},{home:0,away:1}]);
  const proof1=independentEarlyHockeyNoReading(score1,g1,milestone,m1);
@@ -100,7 +100,7 @@ test('ESPN proof validates current period linescores without requiring future pe
 test('ESPN must confirm current period goals even when Kalshi period breakdown is omitted',async()=>{
  const g=state(2,'3:29');
  const withoutParts={...g,periodScores:[]};
- const m=market(2,2.5);
+ const m=market(2,3.5);
  const score=board(2,'3:29',[{home:1,away:1},{home:0,away:1}]);
  let requests=[];
  const proof=await verifyIndependentEarlyHockeyNo(withoutParts,milestone,m,{fetcher:async url=>{
@@ -121,16 +121,19 @@ test('market priority must always include first- and second-period NHL short pre
  assert.ok(linkedEventTickers(milestone).includes(market(1).event_ticker));
  assert.ok(linkedEventTickers(milestone).includes(market(2).event_ticker));
 });
-test('NHL first- and second-period NO block four total game goals, not just period goals',()=>{
+test('NHL periods use selected-segment cushions even with four total game goals',()=>{
   const p1=state(1,'4:00',[{number:1,home_score:2,away_score:2}]),
     p2=state(2,'4:00',[{number:1,home_score:2,away_score:2},{number:2,home_score:0,away_score:0}]);
-  assert.equal(hockeyEarlyPeriodNo(p1,market(1,7.5)),null);
-  assert.equal(hockeyEarlyPeriodNo(p2,market(2,5.5)),null,'P2 has zero goals but game already has four');
-  assert.equal(hockeyEarlyPeriodNo(p2,market(2,5.5),{beforeWindow:true}),null);
+  assert.equal(hockeyEarlyPeriodNo(p1,market(1,7.5))?.total,4,'four P1 goals require 3.5');
+  assert.equal(hockeyEarlyPeriodNo(p1,market(1,6.5)),null,'only 2.5 over four P1 goals');
+  assert.equal(hockeyEarlyPeriodNo(p2,market(2,2.5))?.total,0,'P2 has zero goals even when game has four');
+  assert.equal(hockeyEarlyPeriodNo(p2,market(2,2.5),{beforeWindow:true})?.total,0);
   const p2three=state(2,'4:00',[{number:1,home_score:1,away_score:1},{number:2,home_score:1,away_score:0}]);
-  assert.equal(hockeyEarlyPeriodNo(p2three,market(2,4.5))?.total,1,'three goals can still qualify');
+  assert.equal(hockeyEarlyPeriodNo(p2three,market(2,3.5))?.total,1);
   const proof={source:'ESPN',eventId:'matched-nhl',home:2,away:2,
     periods:[{number:1,home:1,away:1},{number:2,home:1,away:1}],
     currentPeriod:{home:1,away:1}};
-  assert.equal(hockeyEarlyPeriodNo(p2three,market(2,4.5),{external:proof}),null,'independent full-game four-goal reading blocks');
+  assert.equal(hockeyEarlyPeriodNo(p2three,market(2,4.5),{external:proof})?.total,2,
+    'external period-two score determines the independent cushion');
+  assert.equal(hockeyEarlyPeriodNo(p2three,market(2,3.5),{external:proof}),null);
 });
