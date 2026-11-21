@@ -8,10 +8,10 @@ const m={id:'dewa-example',title:'Dewa United vs Persita',type:'soccer_tournamen
 const mk=(minute,extra={})=>gameState(m,{milestone_id:m.id,_observed_at:new Date().toISOString(),
   details:{status:'inprogress',home_score:0,away_score:1,half:'2nd',time:minute,home_team_name:'Dewa United',
     away_team_name:'Persita',last_updated_ts:Date.now()/1000,...extra}});
-const market={ticker:'KXIDNSLTOTAL-26NOV20DEWPER-3',event_ticker:'KXIDNSLTOTAL-26NOV20DEWPER',
-  title:'Will over 2.5 goals be scored?',yes_sub_title:'Over 2.5 goals scored',
-  floor_strike:2.5,strike_type:'greater',status:'active',
-  rules_primary:'If over 2.5 goals are scored in the Dewa United vs Persita professional Indonesia Super League soccer game originally scheduled for Nov 20, 2026 after 90 minutes plus stoppage time (does not include extra time or penalties), then the market resolves to Yes.'};
+const market={ticker:'KXIDNSLTOTAL-26NOV20DEWPER-4',event_ticker:'KXIDNSLTOTAL-26NOV20DEWPER',
+  title:'Will over 3.5 goals be scored?',yes_sub_title:'Over 3.5 goals scored',
+  floor_strike:3.5,strike_type:'greater',status:'active',
+  rules_primary:'If over 3.5 goals are scored in the Dewa United vs Persita professional Indonesia Super League soccer game originally scheduled for Nov 20, 2026 after 90 minutes plus stoppage time (does not include extra time or penalties), then the market resolves to Yes.'};
 
 test('soccer countdown derives strictly from regulation elapsed clock; no estimated stoppage',()=>{
   assert.equal(soccerRegulationSeconds(mk("81'")),540);
@@ -32,7 +32,7 @@ test('Dewa–Persita exact total is eligible for initial 9-minute check without 
   assert.equal(soccerTotalNo(mk("82'"),market),null);
   assert.equal(soccerTotalNo(mk("82:01'"),market)?.total,1);
   assert.equal(soccerTotalNo(mk("89:59'"),market)?.total,1);
-  assert.equal(soccerTotalNo(mk("90+5'"),market),null,'stoppage is not assumed to remain open for entry');
+  assert.equal(soccerTotalNo(mk("90+5'"),market)?.total,1,'explicit live 90+ stoppage permits verified NO while the market remains open');
   assert.equal(soccerTotalNo(mk("81'",{status:'final'}),market),null);
 });
 

@@ -13,7 +13,7 @@ const state=(time="41'",home=0,away=1,extra={})=>gameState(milestone,{
  details:{status:'live',half:'1st',period:1,time,home_score:home,away_score:away,
    home_team_name:'Hull City',away_team_name:'Brighton',
    last_updated_ts:Date.now()/1000,...extra}});
-const market=(line=2.5)=>({
+const market=(line=3.5)=>({
  ticker:'KXEPL1HTOTAL-26NOV22HULBRI-'+Math.ceil(line),
  event_ticker:'KXEPL1HTOTAL-26NOV22HULBRI',
  title:'Over '+line+' 1H goals scored',yes_sub_title:'Over '+line+' 1H goals scored',
@@ -56,10 +56,10 @@ test('initial independent check begins at 6:00 remaining; entry strictly under 5
  assert.equal(soccerFirstHalfNo(state("42'",0,1,{half:'2nd',period:2}),market()),null);
 });
 
-test('soccer 1H total NO requires at least 1.5 goals above current first-half score',()=>{
- assert.equal(soccerFirstHalfNo(state("42'",0,1),market(2.5))?.total,1);
+test('soccer 1H total NO requires 2.5 goals at 0–3 scored and 3.5 from four',()=>{
+ assert.equal(soccerFirstHalfNo(state("42'",0,1),market(3.5))?.total,1);
  assert.equal(soccerFirstHalfNo(state("42'",0,1),market(2.0)),null);
- assert.equal(soccerFirstHalfNo(state("42'",1,2),market(4.5))?.total,3);
+ assert.equal(soccerFirstHalfNo(state("42'",1,2),market(5.5))?.total,3);
  assert.equal(soccerFirstHalfNo(state("42'",1,2),market(3.5)),null);
 });
 
@@ -70,8 +70,8 @@ test('only the exact Kalshi first-half total identity, strike and settlement cou
   {event_ticker:m.event_ticker.replace('1HTOTAL','TOTAL')},
   {event_ticker:m.event_ticker.replace('HULBRI','OTHGAM')},
   {title:'Over 2.5 goals scored'},
-  {yes_sub_title:'Over 3.5 1H goals scored'},
-  {floor_strike:3.5},
+  {yes_sub_title:'Over 4.5 1H goals scored'},
+  {floor_strike:4.5},
   {rules_primary:m.rules_primary.replace('1st Half','2nd Half')},
   {rules_primary:m.rules_primary.replace('soccer game','team total soccer game')},
   {status:'closed'}
@@ -109,12 +109,12 @@ test('first-half soccer market discovery and fast priority include the preflight
  assert.equal(nearEntryPhase(state("45'")),false);
  assert.equal(nearEntryPhase(state("46'")),false);
 });
-test('soccer first-half NO blocks four or more goals irrespective of remaining cushion',()=>{
+test('soccer first-half NO at four or more goals requires a 3.5-goal cushion',()=>{
   const large=market(6.5),proof={source:'ESPN',eventId:'matched-first-half',home:2,away:2};
   assert.equal(soccerFirstHalfNo(state("42'",1,2),large)?.total,3);
-  assert.equal(soccerFirstHalfNo(state("42'",2,2),large),null,'exact four first-half goals block');
-  assert.equal(soccerFirstHalfNo(state("42'",3,2),large),null,'five goals block');
-  assert.equal(soccerFirstHalfNo(state("40'",2,2),large,{beforeWindow:true}),null,'early check blocks four goals');
-  assert.equal(soccerFirstHalfNo(state("42'",1,2),large,{external:proof}),null,'externally verified four goals block');
-  assert.equal(soccerFirstHalfNo(state("42'",2,2),market(4.5),{external:{...proof,away:1}})?.total,3,'external three-goal reading stays authoritative');
+  assert.equal(soccerFirstHalfNo(state("42'",2,2),large),null,'exact four first-half goals need Over 7.5');
+  assert.equal(soccerFirstHalfNo(state("42'",3,2),large),null,'five goals need Over 8.5');
+  assert.equal(soccerFirstHalfNo(state("40'",2,2),large,{beforeWindow:true}),null,'early check requires same cushion');
+  assert.equal(soccerFirstHalfNo(state("42'",1,2),large,{external:proof}),null,'independent four goals require Over 7.5');
+  assert.equal(soccerFirstHalfNo(state("42'",2,2),market(5.5),{external:{...proof,away:1}})?.total,3,'external three-goal reading stays authoritative');
 });
