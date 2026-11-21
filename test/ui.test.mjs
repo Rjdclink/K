@@ -553,3 +553,30 @@ test('final score verification is shown independently even when a no-ask or bank
  assert.doesNotMatch(format({...proven,final_verification_passed:false}),/Final external score verified/);
  assert.doesNotMatch(page,/Quote expired after 30 seconds; checking live sellers/);
 });
+test('filled soccer countdown advances between minute-based exchange clock observations but fails closed when stale',()=>{
+  const element={classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){}};
+  const document={getElementById:()=>element,querySelectorAll:()=>[],createElement:()=>({append(){}})};
+  const context=vm.createContext({document,window:{addEventListener(){}},navigator:{},
+    localStorage:{getItem(){return null}},fetch:()=>new Promise(()=>{}),AbortSignal,setInterval(){}});
+  vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],context);
+  const display=vm.runInContext('clockDisplay',context),start=1_000_000;
+  const live={game_status:'live',sport:'Soccer',sport_family:'soccer_match',
+    clock_seconds:120,clock_label:'Regulation left',
+    clock_observed_at:new Date(start).toISOString(),
+    score_scanned_at:new Date(start+22000).toISOString()};
+  assert.equal(display(live,start+15000),'01:45','existing sub-20-second behavior is preserved');
+  assert.equal(display(live,start+25000),'Est. 01:35','live soccer clock continues beyond 20-second cutoff');
+  assert.equal(display(live,start+60000),'Est. 01:00','soccer source may report the same minute for sixty seconds');
+  assert.equal(display(live,start+61000),'Est. 00:59');
+  assert.equal(display({...live,score_scanned_at:new Date(start+72000).toISOString()},start+75000),
+    'Last exchange clock 02:00 · delayed','stop extending a too-old exchange clock');
+  assert.equal(display({...live,score_scanned_at:new Date(start).toISOString()},start+60000),
+    'Last exchange clock 02:00 · delayed','do not extrapolate when the latest score itself is stale');
+  assert.equal(display({...live,clock_label:'Regulation left · paused'},start+60000),
+    '02:00 · paused','never animate a paused game');
+  assert.equal(display({...live,game_status:'final'},start+60000),'Final · awaiting settlement');
+  assert.equal(display({...live,sport:'NHL',sport_family:'hockey_game',clock_label:'Period 3 left'},start+25000),
+    'Last exchange clock 02:00 · delayed','do not extrapolate stopped clocks in other sports');
+  assert.equal(display({...live,clock_seconds:60,clock_observed_at:new Date(start+60000).toISOString()},start+61000),
+    '00:59','reanchor on a newly observed exchange minute');
+});
