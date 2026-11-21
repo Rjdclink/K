@@ -2,15 +2,21 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
-import {gameState,overSignal,minimumProfitCents,netSettlementProfitCents,profitableCount} from '../src/strategy.mjs';
+import {gameState,overSignal,minimumProfitCents,netSettlementProfitCents,profitableCount,estimatedCostCents} from '../src/strategy.mjs';
+import {automaticEntryFraction} from '../src/automatic_entry_policy.mjs';
 import {filledOrderGateCount} from '../src/entry_floor.mjs';
 
-const game=(period,sport='NBA',type='basketball_game')=>({type,sport,period,remainingSeconds:600,
+const withProof=g=>({...g,verificationId:'v',independentEntry:{verificationId:'v'},overVerification:{route:'cushion'}});
+const game=(period,sport='NBA',type='basketball_game')=>withProof({type,sport,period,remainingSeconds:600,
   playerStats:{p:{points:3,rebounds:3,receiving_yards:25,shots_on_goal:3,hits:3,goals:3}}});
 const market=(family='basketball',metric='REB')=>({ticker:'PROP',event_ticker:`KXTEST${metric}-GAME`,
   custom_strike:{[family+'_player']:'p'},floor_strike:1.5,yes_sub_title:'Pat: 2+'});
-const floor=(g,m=market(),filled=0,strategy='over')=>minimumProfitCents(strategy,5000,g.type,g.remainingSeconds,filled,{game:g,market:m});
+const floor=(g,m=market(),filled=0,strategy='over')=>minimumProfitCents(strategy,5000,g.type,g.remainingSeconds,filled,{game:strategy==='over'?withProof(g):g,market:m});
 
+test('unverified ordinary OVER requires at least fifty cents net after fees',()=>{
+ assert.equal(minimumProfitCents('over',5000,'basketball_game',600,0,{game:{},market:market()}),50);
+ assert.equal(profitableCount(1,.88,2,'over',5000,'basketball_game',600,{game:{},market:market()}),0);
+});
 test('crossed-over floor follows the entry quarter and preserves higher filled-order tiers',()=>{
   for(const sport of ['NBA','WNBA','NCAAW','International']){
     assert.equal(floor(game(1,sport)),9);
@@ -51,8 +57,8 @@ test('player props use their lower floor while game, team and period totals reta
     {...total,event_ticker:'KXNBATEAMTOTAL-TEST',title:'New York over 19.5 total points',floor_strike:19.5,custom_strike:{basketball_team:'ny'}},
     {...total,event_ticker:'KXNBA1QTOTAL-TEST',title:'Over 39.5 total points in 1st quarter'}];
   for(const period of [1,2]){
-    const g=gameState(milestone,{details:{status:'live',home_score:25,away_score:20,home_team_name:'New York',away_team_name:'Boston',
-      period,clock:'10:00',period_scores:[{number:1,home_score:25,away_score:20}],player_stats:{p:{rebounds:3}}}});
+    const g=withProof(gameState(milestone,{details:{status:'live',home_score:25,away_score:20,home_team_name:'New York',away_team_name:'Boston',
+      period,clock:'10:00',period_scores:[{number:1,home_score:25,away_score:20}],player_stats:{p:{rebounds:3}}}}));
     for(const m of markets){
       const signal=overSignal(g,m);
       assert.equal(signal?.strategy,'over');
@@ -80,11 +86,11 @@ test('the serialized final gate blocks exchange dispatch below the per-purchase 
     const rows=Array.from({length:filled},(_,i)=>({market_ticker:'HELD'+i,status:'filled'}));
     const client={query:async sql=>({rows:sql.includes('pg_try_advisory_xact_lock')?[{acquired:true}]:rows}),
       release:()=>{released=true}};
-    const context=vm.createContext({ensureManualCombos:async()=>{},setTimeout,minimumProfitCents,netSettlementProfitCents,filledOrderGateCount,
+    const context=vm.createContext({ensureManualCombos:async()=>{},setTimeout,minimumProfitCents,netSettlementProfitCents,estimatedCostCents,automaticEntryFraction,filledOrderGateCount,
       pool:{connect:async()=>client},allOpenPositions:async()=>({market_positions:rows.map(r=>({ticker:r.market_ticker,position_fp:'1'}))})});
     vm.runInContext(gate,context);
     const result=await context.withEntryProfitFloor({ticker:'PROP',count:1,price,fees:2,strategy:'over',bankroll:5000,
-      game:game(period),market:market()},async()=>{sends++;return 'sent'});
+      fraction:.05,game:game(period),market:market()},async()=>{sends++;return 'sent'});
     assert.equal(result,allowed?'sent':null);
     assert.equal(sends,allowed?1:0);
     assert.equal(released,true);
