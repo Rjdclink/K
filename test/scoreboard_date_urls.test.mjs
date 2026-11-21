@@ -45,10 +45,10 @@ test('ESPN women’s college scoreboard uses a valid division-50 date and matche
  assert.ok(calls.every(url=>url.includes('groups=50')&&/[?&]dates=\d{8}(?:&|$)/.test(url)));
 });
 
-test('an ESPN fixture with a different team or score still fails closed despite valid scoreboard dates',async()=>{
+test('independent source score overrides Kalshi, but a different team still fails closed',async()=>{
  const bad=structuredClone(soccerEvent);bad.competitions[0].competitors[0].score='2';
  const fetcher=async url=>({ok:true,json:async()=>({events:url.includes('dates=20261120')?[bad]:[]})});
- assert.equal(await fetchIndependentMatchScore(soccer,soccerM,{fetcher,espnFeed:'soccer/all',foxFeed:null}),false);
+ assert.equal((await fetchIndependentMatchScore(soccer,soccerM,{fetcher,espnFeed:'soccer/all',foxFeed:null}))?.home,2);
  const unrelated=structuredClone(soccerEvent);unrelated.competitions[0].competitors[0].team.shortDisplayName='Another Club';
  unrelated.competitions[0].competitors[0].team.displayName='Another Club';
  unrelated.competitions[0].competitors[0].team.name='Another Club';unrelated.competitions[0].competitors[0].team.abbreviation='ANX';
@@ -89,5 +89,5 @@ test('ESPN Grambling Lady Tigers at Central Arkansas Sugar Bears matches Kalshi 
  const wrong=structuredClone(record);wrong.competitions[0].competitors[1].score='76';
  const bad=await fetchIndependentMatchScore(game,milestone,{fetcher:async url=>({ok:true,json:async()=>({events:url.includes('dates=20261120')?[wrong]:[]})}),
    espnFeed:'basketball/womens-college-basketball'});
- assert.equal(bad,false,'a one-point ESPN score disagreement must still prevent entry');
+ assert.equal(bad?.away,76,'fresh independently identified source determines the actual score');
 });
