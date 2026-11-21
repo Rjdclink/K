@@ -15,10 +15,10 @@ test('over evidence may equal/exceed Kalshi or independently clear the exact con
   assert.equal(externalScoresQualify(game,{home:101,away:200},team),true);
   assert.equal(externalScoresQualify(game,{home:99,away:200},team),false,'opponent points cannot establish our team total');
 });
-test('winner evidence preserves the selected team and accepts an equal or larger lead, not a larger opponent score',()=>{
+test('winner evidence preserves the selected team and accepts external margin independently of Kalshi score',()=>{
   assert.equal(externalScoresQualify(game,{home:102,away:91},winner),true);
   assert.equal(externalScoresQualify(game,{home:102,away:92},winner),true);
-  assert.equal(externalScoresQualify(game,{home:102,away:93},winner),false);
+  assert.equal(externalScoresQualify(game,{home:102,away:93},winner),true,'independently verified home lead of nine still controls the winner');
   assert.equal(externalScoresQualify(game,{home:90,away:110},winner),false);
   assert.equal(externalScoresQualify(game,{home:102,away:91},{...winner,custom_strike:{basketball_team:'unknown'}}),false);
 });
