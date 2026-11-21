@@ -99,11 +99,9 @@ export function independentEarlyHockeyNoReading(scoreboard,game,milestone,market
   const matches=espnMatches(scoreboard,game,milestone,{identityOnly:true});
   if(matches.length!==1)return null;
   const match=matches[0],period=spec.periodNumber;
-  if(!match.eventId||match.home!==game.home||match.away!==game.away)return null;
-  const parts=periodParts(match.periods,period)||periodParts(game.periodScores,period);
-  if(!parts||!agrees(game,parts))return null;
-  if(match.periods?.length&&(!periodParts(match.periods,period)||
-    !agrees(game,periodParts(match.periods,period))))return null;
+  if(!match.eventId||!externalNoScore(game,{...match,source:'ESPN'}))return null;
+  const parts=externalNoPeriods(game,{...match,source:'ESPN'},period);
+  if(!parts)return null;
   return {source:'ESPN',eventId:match.eventId,home:match.home,away:match.away,
     period,seconds:match.remainingSeconds,live:true,
     periods:parts,currentPeriod:{home:parts[period-1].home,away:parts[period-1].away}};
