@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {uncushionedPlayerSpec,noncushionedPlayerState,noncushionedTwoProofs,FIRST_NONCUSHIONED_CHECK_MS} from '../src/noncushioned_player_over.mjs';
+import {uncushionedPlayerSpec,noncushionedPlayerState,noncushionedTwoProofs,FIRST_NONCUSHIONED_CHECK_MS,rankNoncushionedReplacements} from '../src/noncushioned_player_over.mjs';
 const now=Date.now();
 const game={id:'b1',type:'basketball_game',sport:'NBA',verifiedLive:true,scoreKnown:true,scoreConsistent:true,
  periodConsistent:true,period:1,remainingSeconds:600,feedId:'b1',observedAt:now,updatedAt:now-1000,
@@ -28,4 +28,16 @@ test('variable value props and wrong player/market identity cannot enter uncushi
  const variable={...market,event_ticker:'KXNBAPTS-TEST',ticker:'KXNBAPTS-TEST-6'};
  assert.equal(uncushionedPlayerSpec(game,variable),null);
  assert.equal(noncushionedPlayerState(game,market,{...proof(7,now),playerId:'x'}),null);
+});
+
+test('when a settlement releases a slot, highest executable total net profit ranks first, not oldest or best ROI',()=>{
+ const candidates=[
+  {ticker:'older',netProfitCents:125,costCents:450},
+  {ticker:'best',netProfitCents:390,costCents:475},
+  {ticker:'cheap',netProfitCents:40,costCents:15},
+  {ticker:'invalid',netProfitCents:Infinity,costCents:1},
+  {ticker:'middle',netProfitCents:205,costCents:480}
+ ];
+ assert.deepEqual(rankNoncushionedReplacements(candidates).map(e=>e.ticker),['best','middle','older']);
+ assert.deepEqual(rankNoncushionedReplacements([...candidates,{ticker:'equal',netProfitCents:390,costCents:475}]).map(e=>e.ticker).slice(0,2),['best','equal']);
 });
