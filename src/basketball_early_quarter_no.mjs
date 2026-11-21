@@ -93,11 +93,9 @@ export function independentBasketballEarlyQuarterNoReading(board,game,milestone,
   const matches=espnMatches(board,game,milestone,{identityOnly:true});
   if(matches.length!==1)return null;
   const m=matches[0];
-  if(!m.eventId||m.home!==game.home||m.away!==game.away)return null;
-  const parts=currentParts(m.periods,game.period)||currentParts(game.periodScores,game.period);
-  if(!parts||!agrees(game,parts))return null;
-  if(m.periods?.length&&(!currentParts(m.periods,game.period)||
-    !agrees(game,currentParts(m.periods,game.period))))return null;
+  if(!m.eventId||!externalNoScore(game,{...m,source:'ESPN'}))return null;
+  const parts=externalNoPeriods(game,{...m,source:'ESPN'},game.period);
+  if(!parts)return null;
   return {source:'ESPN',eventId:m.eventId,home:m.home,away:m.away,
     quarter:game.period,seconds:m.remainingSeconds,live:true,parts,
     currentQuarter:{home:parts[game.period-1].home,away:parts[game.period-1].away}};
