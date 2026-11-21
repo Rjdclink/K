@@ -29,7 +29,7 @@ test('independent NBA score changes lead and OVER eligibility without changing K
  assert.equal(leadSignal(game,lead),null);
  assert.equal(leadSignal(approved,lead)?.strategy,'lead');
  assert.equal(overSignal(game,over),null);
- assert.equal(overSignal(approved,over)?.strategy,null,'source score 214 does not cross 214.5');
+ assert.equal(overSignal(approved,over),null,'source score 214 does not cross 214.5');
  const approved2=authoritativeGameState(game,proof(121,94),Date.now());
  assert.equal(overSignal(approved2,over)?.scored,215);
 });
