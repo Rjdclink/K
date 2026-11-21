@@ -35,13 +35,13 @@ test('NHL full-game NO still needs 2.5 above cumulative score',()=>{
   assert.equal(hockeyTotalNo(state('4:29'),market(false,4.5)),null);
   assert.equal(hockeyTotalNo(state('4:29'),market(false,4.0)),null);
   assert.equal(hockeyTotalNo(state('4:29'),market(false,3.5)),null);
-  assert.equal(hockeyTotalNo(state('4:29',3,1),market(false,6.5))?.total,4);
+  assert.equal(hockeyTotalNo(state('4:29',3,1),market(false,6.5)),null,'four-goal games cannot enter NO');
   assert.equal(hockeyTotalNo(state('4:29',3,1),market(false,5.5)),null);
   assert.equal(hockeyTotalNo(state('4:29',3,1),market(false,4.5)),null);
 });
 test('NHL third-period market still counts only P3 goals, not game total',()=>{
   assert.equal(hockeyTotalNo(state('4:29'),market(true,1.5))?.total,0);
   assert.equal(hockeyTotalNo(state('4:29'),market(true,1.0)),null);
-  assert.equal(hockeyTotalNo(state('4:29',3,1),market(true,2.5))?.total,1);
+  assert.equal(hockeyTotalNo(state('4:29',3,1),market(true,2.5)),null,'four-goal games cannot enter third-period NO');
   assert.equal(hockeyTotalNo(state('4:29',3,1),market(true,1.5)),null);
 });

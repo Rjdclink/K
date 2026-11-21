@@ -121,3 +121,16 @@ test('market priority must always include first- and second-period NHL short pre
  assert.ok(linkedEventTickers(milestone).includes(market(1).event_ticker));
  assert.ok(linkedEventTickers(milestone).includes(market(2).event_ticker));
 });
+test('NHL first- and second-period NO block four total game goals, not just period goals',()=>{
+  const p1=state(1,'4:00',[{number:1,home_score:2,away_score:2}]),
+    p2=state(2,'4:00',[{number:1,home_score:2,away_score:2},{number:2,home_score:0,away_score:0}]);
+  assert.equal(hockeyEarlyPeriodNo(p1,market(1,7.5)),null);
+  assert.equal(hockeyEarlyPeriodNo(p2,market(2,5.5)),null,'P2 has zero goals but game already has four');
+  assert.equal(hockeyEarlyPeriodNo(p2,market(2,5.5),{beforeWindow:true}),null);
+  const p2three=state(2,'4:00',[{number:1,home_score:1,away_score:1},{number:2,home_score:1,away_score:0}]);
+  assert.equal(hockeyEarlyPeriodNo(p2three,market(2,4.5))?.total,1,'three goals can still qualify');
+  const proof={source:'ESPN',eventId:'matched-nhl',home:2,away:2,
+    periods:[{number:1,home:1,away:1},{number:2,home:1,away:1}],
+    currentPeriod:{home:1,away:1}};
+  assert.equal(hockeyEarlyPeriodNo(p2three,market(2,4.5),{external:proof}),null,'independent full-game four-goal reading blocks');
+});

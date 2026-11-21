@@ -85,6 +85,8 @@ export function hockeyEarlyPeriodNo(game,market,{beforeWindow=false,external=nul
   const parts=external?validExternal(external,game,spec.periodNumber):
     periodParts(game.periodScores,spec.periodNumber);
   if(!parts||!external&&!agrees(game,parts))return null;
+  const gameGoals=totals(parts);
+  if(gameGoals.home+gameGoals.away>=4)return null;
   const periodTotal=parts[spec.periodNumber-1].home+parts[spec.periodNumber-1].away;
   if(spec.line-periodTotal<1.5)return null;
   return {...spec,total:periodTotal,reason:

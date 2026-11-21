@@ -109,3 +109,12 @@ test('first-half soccer market discovery and fast priority include the preflight
  assert.equal(nearEntryPhase(state("45'")),false);
  assert.equal(nearEntryPhase(state("46'")),false);
 });
+test('soccer first-half NO blocks four or more goals irrespective of remaining cushion',()=>{
+  const large=market(6.5),proof={source:'ESPN',eventId:'matched-first-half',home:2,away:2};
+  assert.equal(soccerFirstHalfNo(state("42'",1,2),large)?.total,3);
+  assert.equal(soccerFirstHalfNo(state("42'",2,2),large),null,'exact four first-half goals block');
+  assert.equal(soccerFirstHalfNo(state("42'",3,2),large),null,'five goals block');
+  assert.equal(soccerFirstHalfNo(state("40'",2,2),large,{beforeWindow:true}),null,'early check blocks four goals');
+  assert.equal(soccerFirstHalfNo(state("42'",1,2),large,{external:proof}),null,'externally verified four goals block');
+  assert.equal(soccerFirstHalfNo(state("42'",2,2),market(4.5),{external:{...proof,away:1}})?.total,3,'external three-goal reading stays authoritative');
+});
