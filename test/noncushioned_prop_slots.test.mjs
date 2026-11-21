@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {MAX_UNCUSHIONED_PLAYER_PROPS,NONCUSHIONED_PLAYER_TAG,openNoncushionedPlayerTickers,mayOpenNoncushionedPlayerProp} from '../src/noncushioned_prop_slots.mjs';
+import {MAX_UNCUSHIONED_PLAYER_PROPS,NONCUSHIONED_PLAYER_TAG,openNoncushionedPlayerTickers,mayOpenNoncushionedPlayerProp,countablePlayerMarketTicker} from '../src/noncushioned_prop_slots.mjs';
 const row=(i,status='filled',reason=NONCUSHIONED_PLAYER_TAG)=>({market_ticker:'PROP-'+i,status,reason});
 const held=arr=>arr.map(i=>({ticker:'PROP-'+i,position_fp:'1.00'}));
 test('five open non-cushioned props block the sixth, but settled positions release one immediately',()=>{
@@ -24,4 +24,16 @@ test('duplicate attempts do not double count; uncertain position results fail cl
  assert.equal(openNoncushionedPlayerTickers(held([1]),a).size,1);
  assert.equal(mayOpenNoncushionedPlayerProp(null,a,'PROP-2'),false);
  assert.equal(mayOpenNoncushionedPlayerProp(held([1]),null,'PROP-2'),false);
+});
+
+test('independently placed live countable player positions consume slots, while confirmed cushioned overs and variable props do not',()=>{
+ const held=[{ticker:'KXNBAREB-TEST-7',position_fp:'1.00'},
+  {ticker:'KXNBASTL-TEST-2',position_fp:'1.00'},
+  {ticker:'KXNBAPTS-TEST-20',position_fp:'1.00'}];
+ assert.equal(countablePlayerMarketTicker('KXNBAREB-TEST-7'),true);
+ assert.equal(countablePlayerMarketTicker('KXNBAPTS-TEST-20'),false);
+ assert.deepEqual([...openNoncushionedPlayerTickers(held,[])].sort(),
+  ['KXNBAREB-TEST-7','KXNBASTL-TEST-2']);
+ const audited=[{market_ticker:'KXNBASTL-TEST-2',reason:'still crossed after removing 1 player-stat unit',status:'filled'}];
+ assert.deepEqual([...openNoncushionedPlayerTickers(held,audited)],['KXNBAREB-TEST-7']);
 });
