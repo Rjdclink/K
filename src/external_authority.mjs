@@ -31,6 +31,7 @@ export function authoritativeGameState(game,reading,now=Date.now()){
   checkedAt:now,live:true};
  const result={...game,home:score.home,away:score.away,
   homeUnits:score.home,awayUnits:score.away,scoreKnown:true,scoreConsistent:true,
+  periodConsistent:periods?true:game.periodConsistent,
   externalScore:score,kalshiScore:{home:game.home,away:game.away}};
  if(periods)result.periodScores=periods;
  return result;
