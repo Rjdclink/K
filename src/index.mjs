@@ -2757,7 +2757,7 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null){
       const event=events.get(ticker);
       if(event?.category!=='Sports')continue;
       for(const market of event.markets||[]){
-        const signal=qualifies(state,market,{beforeWindow:true});
+        const signal=qualifies(state,market,{beforeWindow:true,externalPending:true});
         if(signal&&market.event_ticker===ticker)eligible.push({milestone,state,event,market,signal});
       }
     }
@@ -2816,8 +2816,8 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null){
             firstProofs.set(game.id,firstProof);
           }
           const marked=tagNoPreflight(firstProof);
-          if(!marked||!qualifies(game,c.market,{beforeWindow:true})){
-            report(c,firstProof===false?'Independent matched fixture score disagrees with Kalshi':
+          if(!marked||!qualifies(game,c.market,{beforeWindow:true,external:marked})){
+            report(c,firstProof===false?'External fixture identity or score evidence is contradictory':
               'No matching fixture and score verified by ESPN (including retry) or FOX');
             continue;
           }
@@ -2849,7 +2849,7 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null){
         report(c,'Entry blocked: 60 seconds of elapsed time has not passed');continue;
       }
       const current=(await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market;
-      if(!sameSportsContract(current,c.market)||!qualifies(fresh,current)){
+      if(!sameSportsContract(current,c.market)||!qualifies(fresh,current,{externalPending:true})){
         report(c,'Entry blocked: market or score no longer qualifies');continue;
       }
       // A basketball candidate reaching the final-check clock MUST receive
@@ -2918,7 +2918,7 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null){
         finalCheck.proof:await verifyIndependentCollegeTotalNo(fresh,c.milestone,current);
       const externalCheckedAt=Date.now();
       if(!proof||basketball&&!pairedExternalMatch(window.first_evidence,proof,fresh)||
-        !qualifies(fresh,current)||externalCheckedAt-fresh.observedAt>10000){
+        !qualifies(fresh,current,{external:proof})||externalCheckedAt-fresh.observedAt>10000){
         report(c,'Entry blocked: final independent fixture and score not verified',ask);
         continue;
       }
@@ -2930,13 +2930,13 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null){
           firstExternal:window?.first_evidence??null,
           secondAt:new Date(verifiedAt),external:proof,ask:ask.price})]);
       fresh.verificationId=verificationId;rememberIndependentEntry(fresh,current,verificationId,verifiedAt);
-      const signal={strategy:'no',fraction:allocation,reason:qualifies(fresh,current).reason};
+      const signal={strategy:'no',fraction:allocation,reason:qualifies(fresh,current,{external:proof}).reason};
       const id=await reserve(signal,fresh,c.event,current,quantity,ask.price,account.balance);
       if(!id){report(c,'Entry blocked: existing or in-flight order',ask);continue;}
       try{
         const result=await withEntryProfitFloor({ticker:current.ticker,count:quantity,price:ask.price,fees,strategy:'no',fraction:allocation,bankroll,game:fresh,market:current},
           ()=>kalshi('/portfolio/events/orders',{method:'POST',auth:true,entryVerifications:[{game:fresh,market:current}],
-            beforeDispatch:()=>{if(!qualifies(fresh,current)||Date.now()-fresh.observedAt>10000||
+            beforeDispatch:()=>{if(!qualifies(fresh,current,{external:proof})||Date.now()-fresh.observedAt>10000||
               Date.now()-externalCheckedAt>10000)
               throw Object.assign(Error(`${label} total NO proof expired`),{code:'LOCAL_EXTERNAL_VERIFICATION_REQUIRED'})},
             body:{ticker:current.ticker,client_order_id:id,side:'ask',count:quantity.toFixed(2),
@@ -3046,16 +3046,8 @@ async function scanHockeyTotalNos(games,events,signalSink=null){
       const invalidWindow=!validNoPreflight(window,{gameId:game.id,
         contractKey:key,period:game.period,maxFirstSeconds:start});
       if(invalidWindow){
-        const local=hockeyTotalNo(game,c.market,{beforeWindow:true});
-        // A missing Kalshi P3 split is not a failed cushion: ESPN may
-        // independently supply exact period goals for that contract.
-        const hasLocalPeriod=c.spec.period==='full_game'||
-          Array.isArray(game.periodScores)&&game.periodScores.length>=3;
-        if(hasLocalPeriod&&!local){
-          report(c,'Kalshi goals do not establish the required '+
-            (c.spec.period==='full_game'?'2.5 full-game':'1.5 third-period')+
-            ' cushion or period score attribution');continue;
-        }
+        // Kalshi goals are not a preflight cushion veto. ESPN/FOX supply
+        // the authoritative total (including P3 splits when required).
         // A missed first preflight can begin later before Kalshi closes entry.
         let proof;
         if(firstProofs.has(game.id))proof=firstProofs.get(game.id);
@@ -3066,7 +3058,7 @@ async function scanHockeyTotalNos(games,events,signalSink=null){
         const marked=tagNoPreflight(proof);
         const signal=marked&&hockeyTotalNo(game,c.market,{beforeWindow:true,external:marked});
         if(!signal){
-          report(c,proof===false?'Independent NHL scoreboard score disagrees with Kalshi':
+          report(c,proof===false?'Independent NHL fixture identity or score evidence conflicts':
             proof==null?'No matching NHL fixture and score verified by ESPN (including retry) or FOX':
             'Independent NHL matchup/score validation failed');continue;
         }
@@ -3350,16 +3342,8 @@ async function scanEarlyPeriodNos(games,events,signalSink=null,sport='NHL'){
       const invalid=!validNoPreflight(window,{gameId:game.id,
         contractKey:key,period:game.period,maxFirstSeconds:start});
       if(invalid){
-        const local=policy.signal(game,c.market,{beforeWindow:true});
-        // For selected hockey periods and basketball quarters, an absent
-        // Kalshi split can be established by independently matched scoring
-        // lines; it is not proof that the required cushion is missing.
-        const locallyAttributed=!hockey&&!basketball||
-          Array.isArray(game.periodScores)&&game.periodScores.length>=game.period;
-        if(locallyAttributed&&!local){
-          report(c,'Kalshi score/period does not establish the required '+
-            (basketball?'12-point':'1.5-goal')+' cushion for this contract');continue;
-        }
+        // Independently sourced period goals/points, never Kalshi splits,
+        // determine whether this selected segment meets its cushion.
         // Late first checks are recoverable; the second is 60 real seconds later.
         const proofKey=game.id+':'+game.period;
         let proof;
@@ -3371,7 +3355,7 @@ async function scanEarlyPeriodNos(games,events,signalSink=null,sport='NHL'){
         const marked=tagNoPreflight(proof);
         const signal=marked&&policy.signal(game,c.market,{beforeWindow:true,external:marked});
         if(!signal){
-          report(c,proof===false?'Independent source confirms a different game score':
+          report(c,proof===false?'Independent fixture identity or period score is contradictory':
             proof==null?'No matching fixture and score verified by ESPN (including retry) or FOX':
             'Independent matchup/score could not be validated');continue;
         }
@@ -3647,12 +3631,8 @@ async function scanSoccerTotalNos(games,events,signalSink=null){
       if(invalidWindow){
         // Check the Kalshi cushion before requesting independent evidence.
         // A correctly cushioned market is never labelled as missing cushion.
-        const local=soccerTotalNo(game,c.market,{beforeWindow:true});
-        if(!local){
-          report(c,'Insufficient cushion: line '+c.spec.line+' minus '+
-            (game.home+game.away)+' goals is below the required 1.5 goals');
-          continue;
-        }
+        // The external verified goals, not Kalshi's displayed score,
+        // establish the preflight cushion after independently matching teams.
         // A missed nominal preflight can begin later in the entry window.
         let proof;
         if(firstProofs.has(game.id))proof=firstProofs.get(game.id);
@@ -3663,7 +3643,7 @@ async function scanSoccerTotalNos(games,events,signalSink=null){
         const marked=tagNoPreflight(proof);
         const signal=marked&&soccerTotalNo(game,c.market,{beforeWindow:true,external:marked});
         if(!signal){
-          report(c,proof===false?'Independent matched fixture score disagrees with Kalshi':
+          report(c,proof===false?'Independent matched fixture or source score is contradictory':
             proof==null?'No matching fixture and score verified by ESPN (including retry) or FOX':
             'Independent matchup/score could not be validated');continue;
         }
@@ -3781,7 +3761,7 @@ async function scanSoccerTotalNos(games,events,signalSink=null){
       const signal=proof&&pairedExternalMatch(window.first_evidence,proof,fresh)&&
         soccerTotalNo(fresh,current,{external:proof});
       if(!signal||externalCheckedAt-fresh.observedAt>10000){
-        report(c,proof===false?'Entry blocked: final independently matched score disagrees with Kalshi':
+        report(c,proof===false?'Entry blocked: final independent source/fixture evidence is contradictory':
           'Entry blocked: final ESPN/FOX fixture and score not verified',null,ask);
         continue;
       }
