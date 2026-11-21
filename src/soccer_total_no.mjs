@@ -69,7 +69,7 @@ export function soccerTotalNo(game,market,{beforeWindow=false,external=null}={})
 // and displayed elapsed match minute; the exchange supplies final-whistle countdown.
 export function independentSoccerTotalNoReading(scoreboard,game,milestone,market){
   if(!soccerNoMarketSpec(game,market,{beforeWindow:true}))return null;
-  const matches=espnMatches(scoreboard,game,milestone);
+  const matches=espnMatches(scoreboard,game,milestone,{identityOnly:true});
   if(matches.length!==1)return null;
   const match=matches[0],event=scoreboard.events.find(e=>e.id===match.eventId);
   const status=event?.competitions?.[0]?.status||event?.status;
