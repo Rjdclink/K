@@ -200,16 +200,16 @@ test('crossed player props are candidates through the ten-minute boundary',()=>{
  assert.equal(overSignal({...game(3),remainingSeconds:599},market),null);
 });
 
-test('winner allocation remains 20%; verified combos use 35%, fallback combos 15%',()=>{
+test('winner eligibility signals are unchanged, but all winner combos cap at five percent',()=>{
  const lead={strategy:'lead',fraction:.05},over={strategy:'over',fraction:.40};
  assert.equal(finalLeadFraction({}, {},lead,true),.20);
  assert.equal(finalLeadFraction({}, {},lead,false),.15);
  assert.equal(finalLeadFraction({}, {},over,true),.40);
  const verified={signal:{strategy:'lead',externallyVerified:true}},fallback={signal:{strategy:'lead',externallyVerified:false}};
- assert.equal(comboAllocation(),.35);
- assert.equal(comboLegAllocation([verified,verified],comboAllocation()),.35);
- assert.equal(comboLegAllocation([verified,fallback],comboAllocation()),.15);
- assert.equal(comboLegAllocation([verified,{signal:{strategy:'over',externallyVerified:true}}],comboAllocation()),.15);
+ assert.equal(comboAllocation(),.05);
+ assert.equal(comboLegAllocation([verified,verified],comboAllocation()),.05);
+ assert.equal(comboLegAllocation([verified,fallback],comboAllocation()),.05);
+ assert.equal(comboLegAllocation([verified,{signal:{strategy:'over',externallyVerified:true}}],comboAllocation()),.05);
 });
 
 test('active crossed-prop games join the urgent scan instead of the rotating early-game budget',()=>{
