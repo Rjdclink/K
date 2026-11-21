@@ -9,7 +9,7 @@ export const COMBO_RFQ_PLANS=12;
 export const COMBO_CASH_RESERVE_CENTS=0;
 export const singleSpendableCash=cash=>Math.max(0,Math.floor(Number(cash)||0)-COMBO_CASH_RESERVE_CENTS);
 export function comboAllocation(){return .05;}
-export function comboAllowedCents(fraction,bankrollCents){return Math.floor(fraction*bankrollCents);}
+export function comboAllowedCents(fraction,bankrollCents){return Math.floor(Math.min(.05,fraction)*bankrollCents);}
 export function comboMinimumCents(){return 0;}
 export function comboMeetsMinimum(fraction,bankrollCents,newCostCents,heldCostCents=0){
   return heldCostCents+newCostCents>=comboMinimumCents(fraction,bankrollCents);
@@ -29,7 +29,7 @@ export function remainingVerifiedComboCents(position,bankroll,fraction=.05){
   if(!Number.isFinite(held)||held<=0||position?.market_exposure_dollars==null||
     position?.fees_paid_dollars==null||!Number.isFinite(exposure)||exposure<0||
     !Number.isFinite(fees)||fees<0||!Number.isFinite(bankroll)||bankroll<=0)return 0;
-  return Math.max(0,Math.floor(bankroll*fraction)-Math.ceil(exposure*100)-Math.ceil(fees*100));
+  return Math.max(0,Math.floor(bankroll*Math.min(.05,fraction))-Math.ceil(exposure*100)-Math.ceil(fees*100));
 }
 export function availableComboFills(fills){
   return fills.filter(r=>!/Restricted 20% cricket final innings/i.test(r.reason||''));
