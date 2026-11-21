@@ -102,7 +102,7 @@ const noFinalCheckpoint=async options=>{
   const result=await coreNoFinalCheckpoint(options);
   if((result.attempted===true||result.newCheck===true)&&options.market?.ticker&&options.game?.id){
     // Never delay a valid trade merely to write retry telemetry.
-    await entryRechecks.register(options.market.ticker,options.game.id,'no')
+    void entryRechecks.register(options.market.ticker,options.game.id,'no')
       .catch(error=>console.warn('NO entry recheck registration deferred:',error.message));
   }
   return result;
@@ -127,6 +127,7 @@ const credentials=()=>({key:process.env.KALSHI_API_KEY||process.env.KALSHI_API_K
 const pushIdentity=()=>vapidIdentity(process.env.KALSHI_PRIVATE_KEY);
 const response=(body,type)=>new Response(body,{headers:{'content-type':type,'cache-control':'no-store','x-content-type-options':'nosniff'}});
 const dashboardAuth=req=>authorized(req,process.env.DASHBOARD_PASSWORD);
+const priorityLiveRead=priority=>['risk_exit','preflight_final','preflight','interactive','live'].includes(priority);
 const reserveKalshiSlot=async(method,priority)=>{
   const kind=method==='GET'?'read':'write';
   const spacing=method==='GET'?250:150;
@@ -135,13 +136,13 @@ const reserveKalshiSlot=async(method,priority)=>{
     await client.query('BEGIN');
     await client.query('SELECT pg_advisory_xact_lock(83027545)');
     await client.query('CREATE TABLE IF NOT EXISTS kalshi_rate_limits (kind text PRIMARY KEY, next_at timestamptz NOT NULL)');
-    if(method==='GET'&&['interactive','live'].includes(priority))await client.query(`INSERT INTO kalshi_rate_limits(kind,next_at)
+    if(method==='GET'&&priorityLiveRead(priority))await client.query(`INSERT INTO kalshi_rate_limits(kind,next_at)
       VALUES('read_live',clock_timestamp()+interval '250 milliseconds')
       ON CONFLICT(kind) DO UPDATE SET next_at=EXCLUDED.next_at`);
     await client.query(`INSERT INTO kalshi_rate_limits(kind,next_at) VALUES($1,clock_timestamp()) ON CONFLICT DO NOTHING`,[kind]);
     const {rows:[slot]}=await client.query(`SELECT GREATEST(0,
       EXTRACT(EPOCH FROM (next_at-clock_timestamp()))*1000,
-      CASE WHEN $1='read' AND $2 NOT IN ('interactive','live') THEN LEAST(COALESCE((SELECT EXTRACT(EPOCH FROM (next_at-clock_timestamp()))*1000
+      CASE WHEN $1='read' AND $2 NOT IN ('risk_exit','preflight_final','preflight','interactive','live') THEN LEAST(COALESCE((SELECT EXTRACT(EPOCH FROM (next_at-clock_timestamp()))*1000
         FROM kalshi_rate_limits WHERE kind='read_live'),0),
         COALESCE((SELECT EXTRACT(EPOCH FROM (next_at-clock_timestamp()))*1000
         FROM kalshi_rate_limits WHERE kind='read_deferred'),0)) ELSE 0 END) AS wait_ms
@@ -152,7 +153,7 @@ const reserveKalshiSlot=async(method,priority)=>{
     // slot even while another instance is paging through the catalog.
     if(delay<=0){
       await client.query(`UPDATE kalshi_rate_limits SET next_at=clock_timestamp()+($2 * interval '1 millisecond') WHERE kind=$1`,[kind,spacing]);
-      if(method==='GET'&&!['interactive','live'].includes(priority))await client.query(`INSERT INTO kalshi_rate_limits(kind,next_at)
+      if(method==='GET'&&!priorityLiveRead(priority))await client.query(`INSERT INTO kalshi_rate_limits(kind,next_at)
         VALUES('read_deferred',clock_timestamp()+interval '1 second')
         ON CONFLICT(kind) DO UPDATE SET next_at=EXCLUDED.next_at`);
     }
@@ -2653,12 +2654,15 @@ async function retryGroupedNoTickets(tickets){
   if(!events.size)return 'Sports events unavailable';
   const games=[{milestone,state}],sink=new Map();
   let count=0;
-  if(state.sport==='NHL')count=[1,2].includes(state.period)?
-    await scanEarlyPeriodNos(games,events,sink,'NHL','final'):
-    await scanHockeyTotalNos(games,events,sink,'final');
-  else if(state.sport==='Soccer')count=state.period===1?
-    await scanEarlyPeriodNos(games,events,sink,'Soccer','final'):
-    await scanSoccerTotalNos(games,events,sink,'final');
+  if(state.sport==='NHL'){
+    // Full-game and first/second-period contracts can coexist in one game:
+    // never drop a due full-game preflight because the live period is early.
+    count+=await scanHockeyTotalNos(games,events,sink,'final');
+    count+=await scanEarlyPeriodNos(games,events,sink,'NHL','final');
+  }else if(state.sport==='Soccer'){
+    count+=await scanSoccerTotalNos(games,events,sink,'final');
+    count+=await scanEarlyPeriodNos(games,events,sink,'Soccer','final');
+  }
   else if(['NBA','WNBA'].includes(state.sport)&&[1,2,3].includes(state.period))
     count=await scanEarlyPeriodNos(games,events,sink,'Basketball','final');
   else if(['CFB','NFL'].includes(state.sport))
@@ -4875,13 +4879,9 @@ async function scan(cachedMilestones,discoveryCount){
       openPositions=positions;
       account=currentAccount;balance=Number(account.balance);
       bankroll=balance+Number(account.portfolio_value);
-      if(live())try{await stageCashAcrossShards(account,bankroll)}catch(e){console.warn('Early shard staging deferred:',e.message)}
     }
     // Exits are assessed before any new risk is added.
     if(live()||exitOnly())await exitComebacks(games,events,openPositions);
-    // Begin held combo discovery after exits while the ordinary signal scan
-    // proceeds. The final quote acceptance rechecks held legs and cash.
-    const comboJob=live()?fillComboQueue.enqueue(null,scanStarted):Promise.resolve(null);
     const basketballNoSignals=new Map(),hockeyNoSignals=new Map(),
       soccerNoSignals=new Map();
     const collegeBasketballGames=[...marketGames,...noOnlyBasketballGames],
@@ -4890,7 +4890,7 @@ async function scan(cachedMilestones,discoveryCount){
     // Each sport starts independently; full/segment variants sharing a 5%
     // bankroll are serialized for safe order accounting. A routine initial
     // preflight must NEVER keep an eligible final ticket in a queue.
-    submitted+=await runImmediateNoFinalPass([
+    submitted+=await withApiPriority('preflight_final',()=>runImmediateNoFinalPass([
       {sport:'football',run:()=>scanCollegeTotalNos(marketGames,events,
         'football',null,'final')},
       {sport:'basketball',run:async()=>{
@@ -4911,17 +4911,23 @@ async function scan(cachedMilestones,discoveryCount){
         return full+half;
       }}
     ],{onError:(sport,error)=>console.warn('NO final fast lane deferred:',sport,
-      String(error?.message||error).slice(0,180))});
+      String(error?.message||error).slice(0,180))}));
     // Only after every independent sport has completed the due-final fast lane
     // do we start unrelated first checks for new potential positions.
-    submitted+=await scanCollegeTotalNos(marketGames,events,'football',null,'initial');
-    submitted+=await scanCollegeTotalNos(collegeBasketballGames,
-      collegeBasketballEvents,'basketball',basketballNoSignals,'initial');
-    submitted+=await scanHockeyTotalNos(marketGames,events,hockeyNoSignals,'initial');
-    submitted+=await scanEarlyPeriodNos(marketGames,events,hockeyNoSignals,'NHL','initial');
-    submitted+=await scanSoccerTotalNos(marketGames,events,soccerNoSignals,'initial');
-    submitted+=await scanEarlyPeriodNos(marketGames,events,soccerNoSignals,'Soccer','initial');
-    submitted+=await scanEarlyPeriodNos(marketGames,events,basketballNoSignals,'Basketball','initial');
+    submitted+=await withApiPriority('preflight',()=>scanCollegeTotalNos(marketGames,events,'football',null,'initial'));
+    submitted+=await withApiPriority('preflight',()=>scanCollegeTotalNos(collegeBasketballGames,
+      collegeBasketballEvents,'basketball',basketballNoSignals,'initial'));
+    submitted+=await withApiPriority('preflight',()=>scanHockeyTotalNos(marketGames,events,hockeyNoSignals,'initial'));
+    submitted+=await withApiPriority('preflight',()=>scanEarlyPeriodNos(marketGames,events,hockeyNoSignals,'NHL','initial'));
+    submitted+=await withApiPriority('preflight',()=>scanSoccerTotalNos(marketGames,events,soccerNoSignals,'initial'));
+    submitted+=await withApiPriority('preflight',()=>scanEarlyPeriodNos(marketGames,events,soccerNoSignals,'Soccer','initial'));
+    submitted+=await withApiPriority('preflight',()=>scanEarlyPeriodNos(marketGames,events,basketballNoSignals,'Basketball','initial'));
+    // Nonessential cash staging and combo discovery must never precede
+    // verification of an eligible first or final preflight. Their original
+    // account, transfer and risk checks still apply to every trade.
+    if(live())try{await stageCashAcrossShards(account,bankroll)}
+      catch(e){console.warn('Early shard staging deferred:',e.message)}
+    const comboJob=live()?fillComboQueue.enqueue(null,scanStarted):Promise.resolve(null);
     const variableOverSignals=new Map();
     submitted+=await scanVariablePlayerOvers(marketGames,events,variableOverSignals);
     submitted+=await scanNoncushionedPlayerOvers(marketGames,events,variableOverSignals);
@@ -5570,6 +5576,17 @@ async function handleRequest(req){const url=new URL(req.url);
     // Neon cron has minute resolution. Short invocations keep the three-second loop alive
     // without relying on one function instance surviving for a full quarter hour.
     const now=Date.now();const until=Math.min(now+55000,(Math.floor(now/60000)+1)*60000-2000);let cached=null,discoveryCount,cycles=0,last={};
+    // Due finals leave the gate before catalog discovery, account staging,
+    // routine live checks, and noncritical dashboard activity. Protective
+    // exits retain the same highest urgency to avoid adding risk.
+    const entryRecheckJob=withApiPriority('preflight_final',()=>watchEntryRechecks(until))
+      .catch(e=>console.error('Urgent entry rechecks failed:',e));
+    const correctionJob=withApiPriority('risk_exit',()=>watchCorrectedOvers(until))
+      .catch(e=>console.error('Fast correction watcher failed:',e));
+    const readyOverJob=withApiPriority('preflight',()=>watchReadyOverTickets(until))
+      .catch(e=>console.error('Fast over ticket watcher failed:',e));
+    const leadWatchJob=withApiPriority('preflight',()=>watchLeadWindows(until))
+      .catch(e=>console.error('Fast lead watcher failed:',e));
     await ensureLeadWatch();
     const {rows:knownLive}=await pool.query(`SELECT w.milestone FROM lead_watch_milestones w
       JOIN game_snapshots g ON g.id=w.game_id
@@ -5582,10 +5599,6 @@ async function handleRequest(req){const url=new URL(req.url);
       .then(found=>{discovered=found}).catch(error=>{discoveryError=error});
     cached=knownLive.map(row=>row.milestone);
     if(!cached.length){await discoveryJob;if(discovered){cached=discovered;discoveryCount=discovered.length;discoveryApplied=true}}
-    const correctionJob=withApiPriority('live',()=>watchCorrectedOvers(until)).catch(e=>console.error('Fast correction watcher failed:',e));
-    const leadWatchJob=withApiPriority('live',()=>watchLeadWindows(until)).catch(e=>console.error('Fast lead watcher failed:',e));
-    const readyOverJob=withApiPriority('live',()=>watchReadyOverTickets(until)).catch(e=>console.error('Fast over ticket watcher failed:',e));
-    const entryRecheckJob=withApiPriority('live',()=>watchEntryRechecks(until)).catch(e=>console.error('Urgent entry rechecks failed:',e));
     try{
       while(Date.now()<until){
         if(discovered&&!discoveryApplied&&(cycles>0||!cached.length)){
