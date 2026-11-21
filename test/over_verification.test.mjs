@@ -24,7 +24,7 @@ function harness({home=70,away=70,seller=true,decisions=[],contract=market,playe
  class Clock extends Date{constructor(...args){super(...(args.length?args:[time]))}static now(){return time}}
  const context=vm.createContext({noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,Date:Clock,Number,JSON,Math,Promise,console,
   overContractKey,overCushion,playerOverSpec,fallbackScoringUnits,freshOverObservation:g=>freshOverObservation(g,time),freshOverState:(g,m)=>freshOverState(g,m,time),overTiming:(w,g,m,at=time)=>overTiming(w,g,m,at),sameOverReading,timedOverEntryValid:(g,m)=>timedOverEntryValid(g,m,time),OVER_FRESH_MS,
-  OVER_EXTERNAL_DELAY_MS,verifyExternalOverExposure,rememberIndependentEntry,gameState:liveState,confirmedOver,overSignal,randomUUID:()=>`id-${++ids}`,auditTable:async()=>{},
+  OVER_EXTERNAL_DELAY_MS,externalSportFeeds:()=>null,verifyExternalOverExposure,rememberIndependentEntry,gameState:liveState,confirmedOver,overSignal,randomUUID:()=>`id-${++ids}`,auditTable:async()=>{},
   pool:{query:async(sql,args=[])=>{
    if(sql.startsWith('CREATE'))return {rows:[],rowCount:0};
    if(sql.startsWith('INSERT INTO over_verification_windows')){

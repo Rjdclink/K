@@ -48,7 +48,7 @@ test('wrong teams, kickoff and swapped home-away fail closed; independent source
  ];
  for(const [i,e] of conflicting.entries()){
   const matches=espnMatches({events:[e]},game,milestone);
-  if(i===1){assert.equal(matches.length,0,'ordinary relaxed verification requires exact score');
+  if(i===1){assert.equal(matches.length,1,'independently identified relaxed fixture controls the score');
     assert.equal(espnMatches({events:[e]},game,milestone,{identityOnly:true}).length,1,'dedicated preflight recognizes a mismatched fixture for veto');
     const proof=await fetchIndependentMatchScore(game,milestone,{espnFeed:'soccer/all',fetcher:fetchBoard([e])});
     assert.equal(proof?.home,3,'identified external fixture is source of truth for score');

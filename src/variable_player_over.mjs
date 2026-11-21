@@ -37,7 +37,7 @@ export function variablePlayerOverSpec(game,market,now=Date.now()){
     !['active','open'].includes(market.status)||market.result&&!['','not_determined'].includes(String(market.result))||
     !['greater','greater_than'].includes(market.strike_type)||
     !String(market.ticker||'').startsWith(String(market.event_ticker||'')+'-')||
-    player.value<=player.line||!Number.isInteger(player.value))return null;
+    !Number.isInteger(player.value))return null;
   const n=Math.round(player.line+.5),metric=rule.label;
   const title=String(market.title||''),primary=String(market.rules_primary||'');
   const verboseTitle=new RegExp('^'+escapeRx(player.name)+':\\s*'+n+'\\+\\s*'+escapeRx(metric)+'$','i').test(title);
@@ -92,7 +92,7 @@ export function variableProofValid(first,second,game,market,now=Date.now()){
     final-initial>=VARIABLE_CONFIRM_DELAY_MS&&final<=now&&now-final<=10000&&
     Number.isInteger(first.playerValue)&&first.playerValue>player.line&&
     Number.isInteger(second.playerValue)&&second.playerValue>=first.playerValue&&
-    second.playerValue>=player.value&&second.playerValue>player.line&&
+    second.playerValue>player.line&&
     laterPlayConfirmed(first,second,familyFor(game)));
 }
 
@@ -101,16 +101,16 @@ export function variableProofValid(first,second,game,market,now=Date.now()){
 export function independentVariableOverDecision(scoreboard,summary,game,milestone,market){
   const spec=variablePlayerOverSpec(game,market);
   if(!spec||!scoreboard)return null;
-  const matches=espnMatches(scoreboard,game,milestone);
+  const matches=espnMatches(scoreboard,game,milestone,{identityOnly:true});
   if(matches.length===0)return null;
   if(matches.length!==1)return false;
   const matched=matches[0];
-  if(!matched.eventId||matched.home!==game.home||matched.away!==game.away)return false;
+  if(!matched.eventId||![matched.home,matched.away].every(n=>Number.isInteger(n)&&n>=0))return false;
   if(!summary)return null;
   if(String(summary.header?.id)!==String(matched.eventId))return false;
   const value=playerStatValue(summary,spec.player);
   if(value===null)return null;
-  if(value!==spec.player.value||value<=spec.player.line)return false;
+  if(value<=spec.player.line)return false;
   const plays=summaryPlays(summary,game);
   if(!plays)return null;
   return {source:'ESPN',eventId:String(matched.eventId),gameId:game.id,
@@ -159,16 +159,16 @@ function foxPlayList(data,game){
 export function independentFoxVariableOverDecision(scoreboard,data,game,milestone,market){
   const spec=variablePlayerOverSpec(game,market);
   if(!spec||!scoreboard)return null;
-  const matches=foxMatches(scoreboard,game,milestone);
+  const matches=foxMatches(scoreboard,game,milestone,{identityOnly:true});
   if(matches.length===0)return null;
   if(matches.length!==1)return false;
   const match=matches[0];
-  if(!match.eventId||match.home!==game.home||match.away!==game.away)return false;
+  if(!match.eventId||![match.home,match.away].every(n=>Number.isInteger(n)&&n>=0))return false;
   if(!data)return null;
   if(String(data.header?.id)!==String(match.eventId))return false;
   const value=foxPlayerStat(data,spec.player,match.eventId);
   if(value===null)return null;
-  if(value!==spec.player.value||value<=spec.player.line)return false;
+  if(value<=spec.player.line)return false;
   const plays=foxPlayList(data,game);
   if(!plays)return null;
   return {source:'FOX Sports',eventId:String(match.eventId),gameId:game.id,
@@ -194,16 +194,16 @@ export async function verifyIndependentVariableOver(game,milestone,market,{fetch
     for(const day of new Set(dates)){
       const results=await Promise.allSettled(espnScoreboardUrls(spec.feed,game,milestone,[day]).map(request));
       const data=results.filter(r=>r.status==='fulfilled').map(r=>r.value);
-      const matches=data.flatMap(board=>espnMatches(board,game,milestone));
+      const matches=data.flatMap(board=>espnMatches(board,game,milestone,{identityOnly:true}));
       if(!matches.length)continue;
       if(matches.length!==1)return false;
       const selected=matches[0];
-      if(!selected.eventId||selected.home!==game.home||selected.away!==game.away)return false;
+      if(!selected.eventId||![selected.home,selected.away].every(n=>Number.isInteger(n)&&n>=0))return false;
       let summary;
       try{summary=await request('https://site.api.espn.com/apis/site/v2/sports/'+spec.feed+
         '/summary?event='+encodeURIComponent(selected.eventId))}catch{return null}
       const decision=independentVariableOverDecision(
-        data.find(board=>espnMatches(board,game,milestone).some(m=>m.eventId===selected.eventId)),
+        data.find(board=>espnMatches(board,game,milestone,{identityOnly:true}).some(m=>m.eventId===selected.eventId)),
         summary,game,milestone,market);
       return decision;
     }
@@ -227,11 +227,11 @@ export async function verifyIndependentVariableOver(game,milestone,market,{fetch
       let board;
       try{board=await request(base+'/league/scores-segment/'+day+'?'+query+
         (feed==='cbk'||feed==='cfb'?'&groupId=-4':''))}catch{continue}
-      const matches=foxMatches(board,game,milestone);
+      const matches=foxMatches(board,game,milestone,{identityOnly:true});
       if(!matches.length)continue;
       if(matches.length!==1)return false;
       const selected=matches[0];
-      if(!selected.eventId||selected.home!==game.home||selected.away!==game.away)return false;
+      if(!selected.eventId||![selected.home,selected.away].every(n=>Number.isInteger(n)&&n>=0))return false;
       let data;
       try{data=await request(base+'/event/'+encodeURIComponent(selected.eventId)+'/data?'+query)}catch{return null}
       return independentFoxVariableOverDecision(board,data,game,milestone,market);

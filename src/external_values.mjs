@@ -1,10 +1,11 @@
 // Compare evidence only after the provider's fixture/player identity is resolved.
 export function externalValueQualifies(actual,expected,line){
-  return Number.isFinite(actual)&&actual>=0&&Number.isFinite(expected)&&
-    (actual>=expected||Number.isFinite(line)&&actual>line);
+  return Number.isFinite(actual)&&actual>=0&&
+    (Number.isFinite(line)?actual>line:Number.isFinite(expected)&&actual>=expected);
 }
-export const playerValueQualifies=(value,player)=>Number.isInteger(value)&&
-  (!Number.isFinite(player.line)||value-1>player.line)&&externalValueQualifies(value,player.value,player.line);
+export const playerValueQualifies=(value,player)=>Number.isInteger(value)&&value>=0&&
+  (Number.isFinite(player?.line)?value-1>player.line:
+    Number.isFinite(player?.value)&&value>=player.value);
 const clean=s=>String(s||'').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]/g,'');
 export function selectedTeamSide(game,market){
   const id=Object.entries(market?.custom_strike||{}).find(([key,value])=>/_team$/.test(key)&&typeof value==='string')?.[1];
@@ -34,6 +35,6 @@ export function externalScoresQualify(game,reading,market,{expected=game,actual=
   if(!/win|winner|victory/i.test(`${market?.title||''} ${market?.rules_primary||''}`))return false;
   const side=selectedTeamSide(game,market);
   if(!side)return false;
-  const sign=side==='home'?1:-1,baseline=minimumMargin??sign*(expected.home-expected.away);
+  const sign=side==='home'?1:-1,baseline=minimumMargin??1;
   return baseline>0&&sign*(actual.home-actual.away)>=baseline;
 }

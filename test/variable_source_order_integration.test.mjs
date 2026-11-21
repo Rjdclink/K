@@ -51,10 +51,10 @@ test('valid ESPN proof prevents retry and FOX calls',async()=>{
  const h=fetcher();const result=await verifyIndependentVariableOver(game,milestone,market,{fetcher:h.fetcher});
  assert.equal(result?.source,'ESPN');assert.equal(h.calls.filter(x=>x.includes('foxsports.com')).length,0);
 });
-test('contradictory matched ESPN score blocks without consulting FOX',async()=>{
+test('correctly identified ESPN player statistics control even when Kalshi statistic differs',async()=>{
  const h=fetcher({espnContradicts:true});
  const result=await verifyIndependentVariableOver(game,milestone,market,{fetcher:h.fetcher});
- assert.equal(result,null);assert.equal(h.calls.filter(x=>x.includes('foxsports.com')).length,0);
+ assert.equal(result?.playerValue,22);assert.equal(h.calls.filter(x=>x.includes('foxsports.com')).length,0);
 });
 test('FOX may be queried only after the initial and retried ESPN checks are unavailable',async()=>{
  const h=fetcher({espnUnavailable:true});
