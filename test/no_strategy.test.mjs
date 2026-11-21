@@ -93,11 +93,11 @@ test('scan preserves the first verification and sends a bounded NO order after a
   const m={...market(100),event_ticker:'KXNFLRECYDS-GAME'};
   const events=new Map([[m.event_ticker,{category:'Sports',event_ticker:m.event_ticker,markets:[m]}]]);
   const games=[{milestone:fixture.milestone,state:game}];
-  let first=null,verification=0,order=null,attempt=null;
+  let first=null,verification=0,order=null,attempt=null,hasSeller=false;
   const positions={market_positions:[]},account={balance:10000,portfolio_value:0};
   const pool={query:async(sql,args=[])=>{
     if(sql.includes('FROM no_verification_windows'))return {rows:first?[first]:[],rowCount:first?1:0};
-    if(sql.includes('INSERT INTO no_verification_windows')){first={market_ticker:m.ticker,contract:m,first_at:new Date(Date.now()-21000),game_id:game.id};return {rows:[],rowCount:1}}
+    if(sql.includes('INSERT INTO no_verification_windows')){first={market_ticker:m.ticker,contract:m,first_at:new Date(Date.now()-31000),game_id:game.id};return {rows:[],rowCount:1}}
     if(sql.includes('FROM trade_attempts')&&sql.includes("strategy='no'"))return {rows:[],rowCount:0};
     if(sql.includes('FROM trade_attempts')&&sql.includes('market_ticker=$1'))return {rows:[],rowCount:0};
     if(sql.includes('UPDATE trade_attempts')){attempt=args;return {rows:[],rowCount:1}}
@@ -107,7 +107,7 @@ test('scan preserves the first verification and sends a bounded NO order after a
     linkedEventTickers:()=>[m.event_ticker],thirdQuarterYardageNo,highestYardageNos,bestNoAsk,noDepthAtAsk,
     mapBatches:async(items,_,fn)=>Promise.all(items.map(fn)),
     kalshi:async(path,options)=>options?.method==='POST'?(order=options,{fill_count_fp:'2.00',order_id:'ord'}):
-      path.endsWith('/orderbook')?{orderbook_fp:{yes_dollars:[['0.0200','2.00']]}}:{market:m},
+      path.endsWith('/orderbook')?{orderbook_fp:{yes_dollars:hasSeller?[['0.0200','2.00']]:[]}}:{market:m},
     minimumCount:()=>.01,sameSportsContract:()=>true,allOpenPositions:async()=>positions,
     verifyIndependentYardageZero:async()=>{verification++;return true},
     liveMilestone:async()=>({}),gameState:()=>({...game,observedAt:Date.now()}),
@@ -117,7 +117,13 @@ test('scan preserves the first verification and sends a bounded NO order after a
     reserve:async()=> 'id',withEntryProfitFloor:async(_,send)=>send(),invalidateBalance:async()=>{}});
   vm.runInContext(section,context);
   assert.equal(await context.scanThirdQuarterNos(games,events),0);
-  assert.equal(verification,1);assert.equal(order,null);
+  assert.equal(verification,1,'first NO proof begins before a seller appears');
+  assert.equal(order,null);
+  hasSeller=true;
+  first.first_at=new Date(Date.now()-29000);
+  assert.equal(await context.scanThirdQuarterNos(games,events),0,'29 seconds cannot enter');
+  assert.equal(verification,1);
+  first.first_at=new Date(Date.now()-31000);
   assert.equal(await context.scanThirdQuarterNos(games,events),1);
   assert.equal(verification,2);
   assert.equal(order.body.side,'ask');assert.equal(order.body.reduce_only,false);

@@ -9,10 +9,10 @@ import {filledComboWindow,availableComboFills,heldComboLeg,comboAllocation,plann
 const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
 const functionSource=(name,next)=>source.slice(source.indexOf('async function '+name+'('),source.indexOf('async function '+next+'('));
 const order={id:'fill-id',market_ticker:'NEW',strategy:'lead',count:10,limit_price:.95,created_at:new Date(Date.now()-60000),updated_at:new Date(Date.now()-30000),retries:0};
-function harness({filled=2,recovery=false,retry=false,age=0,balance=10000}={}){
+function harness({filled=2,recovery=false,retry=false,age=0,balance=10000,leadProofReady=true}={}){
   const events=[];
   const context=vm.createContext({console,Date,URLSearchParams,JSON,Math,Number,singleSpendableCash,isTieOutcomeMarket,internationalBasketball:()=>false,
-    pool:{query:async(sql,values)=>{
+    leadFinalProofValid:()=>leadProofReady,pool:{query:async(sql,values)=>{
       if(sql.startsWith('SELECT * FROM trade_attempts'))return {rows:[order]};
       if(sql.startsWith('UPDATE trade_attempts'))events.push(['ledger',values]);
       return {rows:[],rowCount:sql.includes("SET retries=1")?1:0};
@@ -48,6 +48,13 @@ test('both recovered existing fills and confirmed retry fills notify the combo c
 });
 test('a lead older than thirty seconds cannot submit or retry its order',async()=>{
  for(const recovery of [false,true]){const h=harness({recovery,retry:recovery,age:31000});assert.equal(await h.run(),false);assert.equal(h.events.length,0)}
+});
+test('missing lead verification pair blocks both new and retry dispatches',async()=>{
+ for(const recovery of [false,true]){
+  const h=harness({recovery,retry:recovery,leadProofReady:false});
+  assert.equal(await h.run(),false);
+  assert.equal(h.events.length,0);
+ }
 });
 test('the immediate check reloads held fills, bypasses the retry timer, and uses both new and old positions',async()=>{
   const rows=['OLD','NEW'].map((ticker,i)=>({...order,id:'id-'+i,market_ticker:ticker,event_ticker:'E'+i,game_id:'G'+i,

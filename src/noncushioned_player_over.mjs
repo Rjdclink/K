@@ -64,9 +64,9 @@ export function noncushionedTwoProofs(first,second,game,market,now=Date.now(),fi
   !Number.isInteger(first.playerValue)||!Number.isInteger(second.playerValue)||
   first.playerValue<=spec.player.line||second.playerValue<first.playerValue||
   !Number.isFinite(first.requestedAt)||!Number.isFinite(second.requestedAt)||
-  second.requestedAt<=first.requestedAt||second.requestedAt>now||
-  firstSeen!==null&&(!Number.isFinite(firstSeen)||
-    first.requestedAt-firstSeen<FIRST_NONCUSHIONED_CHECK_MS)||
+  second.requestedAt-first.requestedAt<FIRST_NONCUSHIONED_CHECK_MS||
+  second.requestedAt>now||
+  firstSeen!==null&&(!Number.isFinite(firstSeen)||first.requestedAt<firstSeen)||
   now-second.requestedAt>10000)return false;
  return Boolean(noncushionedPlayerState(game,market,second));
 }

@@ -49,7 +49,7 @@ test('scanner preserves football and first-half checkpoints while scheduling 8:0
  assert.match(section,/initialClock=expandedFullGame\?480:/);
  assert.match(section,/entryClock=expandedFullGame\?420:/);
  assert.match(section,/initialLabel=expandedFullGame\?'8:00'/);
- assert.match(section,/const prewindow=300,entry=300/,'football remains at its earlier scan window');
+ assert.match(section,/const prewindow=360,entry=300/,'football starts verification before unchanged entry window');
  assert.match(section,/c\.signal\.period==='full_game'\?120:150/,'unchanged other basketball verifier');
  assert.match(section,/validNoPreflight/);
  assert.match(section,/lateNoPreflightProgress/);

@@ -23,8 +23,9 @@ test('uncushioned player OVER can cross externally without Kalshi showing the cr
  assert.equal(game.playerStats.p.rebounds,6,'Kalshi raw state remains unchanged');
 });
 test('two separate independent source reads, not one or regressed statistics, authorize entry',()=>{
- const first=proof(7,now-5000),last=proof(8,now);
+ const first=proof(7,now-210000),last=proof(8,now);
  assert.equal(noncushionedTwoProofs(first,last,game,market,now),true);
+ assert.equal(noncushionedTwoProofs({...first,requestedAt:now-209999},last,game,market,now),false,'3:30 is a strict minimum');
  assert.equal(noncushionedTwoProofs(first,{...last,eventId:'other'},game,market,now),false);
  assert.equal(noncushionedTwoProofs(first,{...last,playerValue:6},game,market,now),false);
  assert.equal(noncushionedTwoProofs(first,{...last,requestedAt:first.requestedAt},game,market,now),false);
@@ -48,10 +49,10 @@ test('when a settlement releases a slot, highest executable total net profit ran
  assert.deepEqual(rankNoncushionedReplacements([...candidates,{ticker:'equal',netProfitCents:390,costCents:475}]).map(e=>e.ticker).slice(0,2),['best','equal']);
 });
 
-test('first external proof cannot precede appearance plus 3:30; same-source event ID must match the verified game',()=>{
- const first=proof(7,now-1000),last=proof(8,now);
- assert.equal(noncushionedTwoProofs(first,last,game,market,now,now-205000),false);
- assert.equal(noncushionedTwoProofs(first,last,game,market,now,now-215000),true);
+test('first external proof occurs at eligibility and second at least 3:30 later',()=>{
+ const first=proof(7,now-210000),last=proof(8,now);
+ assert.equal(noncushionedTwoProofs(first,last,game,market,now,now-210000),true);
+ assert.equal(noncushionedTwoProofs({...first,requestedAt:now-200000},last,game,market,now,now-210000),false);
  const contradictory={...game,externalScore:{source:'ESPN',eventId:'different-match'}};
  assert.equal(noncushionedPlayerState(contradictory,market,last),null);
 });

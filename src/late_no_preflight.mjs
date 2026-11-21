@@ -1,8 +1,8 @@
 // The nominal first-check clock begins eligibility; it is not an expiry.
 // Paused game clocks do not delay a second proof: separation is measured only
 // using real elapsed time from successful independent verification.
-export const NO_PREFLIGHT_POLICY='late-elapsed-time-60-v3';
-export const NO_PREFLIGHT_MIN_SECONDS=60;
+export const NO_PREFLIGHT_POLICY='late-elapsed-time-30-v4';
+export const NO_PREFLIGHT_MIN_SECONDS=30;
 
 export function tagNoPreflight(reading){
   if(!['ESPN','FOX Sports'].includes(reading?.source)||!reading.eventId)return null;

@@ -114,13 +114,13 @@ test('basketball full-game first ESPN check starts at 8:00 and fresh second proo
   assert.ok(h.trace.indexOf('external2')<h.trace.indexOf('reserve'),'second verification must occur immediately BEFORE reservation');
 });
 
-test('basketball NO requires at least 60 seconds elapsed after its first independent verification',async()=>{
+test('basketball NO requires at least 30 seconds elapsed after its first independent verification',async()=>{
   const early=harness('NCAAB',{ageMs:1000});
   assert.equal(await early.scan('8:00'),0);
   assert.equal(await early.scan('6:59'),0,'one second is not enough, regardless of match clock');
   assert.equal(early.proofs,1);
   assert.equal(early.orders,0);
-  const ready=harness('NCAAB',{ageMs:61000});
+  const ready=harness('NCAAB',{ageMs:30000});
   assert.equal(await ready.scan('8:00'),0);
   assert.equal(await ready.scan('6:59'),1);
   assert.equal(ready.proofs,2);
@@ -167,21 +167,27 @@ test('basketball NO fails closed when the immediate external lookup disagrees or
   assert.equal(h.orders,0);
 });
 
-test('NFL and CFB Q4 total NO each require just one external lookup, immediately before order',async()=>{
+test('NFL and CFB Q4 total NO require first external proof at eligibility and second after 30 seconds',async()=>{
   for(const sport of ['CFB','NFL']){
-    const h=harness(sport);
-    assert.equal(await h.scan('5:30'),0,'no football preflight trade outside 5-minute entry window');
-    assert.equal(h.proofs,0);
-    assert.equal(h.window,null);
-    assert.equal(await h.scan('4:59'),1,'first football score check can authorize under-five-minute entry');
+    const early=harness(sport,{ageMs:29000});
+    assert.equal(await early.scan('5:30'),0);
+    assert.equal(early.proofs,1);
+    assert.equal(await early.scan('4:59'),0,'29 seconds cannot enter');
+    assert.equal(early.proofs,1);
+    assert.equal(early.orders,0);
+    const h=harness(sport,{ageMs:31000});
+    assert.equal(await h.scan('5:30'),0);
     assert.equal(h.proofs,1);
+    assert.ok(h.window,'first proof persists');
+    assert.equal(await h.scan('4:59'),1);
+    assert.equal(h.proofs,2);
     assert.equal(h.orders,1);
-    assert.ok(h.trace.indexOf('external1')>h.trace.indexOf('orderbook'),sport+' external reading must follow quote/size checks');
-    assert.ok(h.trace.indexOf('external1')<h.trace.indexOf('reserve'),sport+' external reading immediately before reservation');
+    assert.ok(h.trace.indexOf('external2')<h.trace.indexOf('orderbook'));
+    assert.ok(h.trace.indexOf('external2')<h.trace.indexOf('reserve'));
   }
 });
 
-test('NFL and CFB NO reject the trade when their only independent check is unavailable',async()=>{
+test('NFL and CFB NO reject the trade when the first independent check is unavailable',async()=>{
   for(const sport of ['CFB','NFL']){
     const h=harness(sport);
     h.blockExternal();
