@@ -345,6 +345,11 @@ async function verifiedEntryQuote(game,milestone,market,cache,strategy='lead',on
   if(Date.now()-game.observedAt>5000){
     const raw=await liveMilestone(milestone.id);if(!raw)return null;
     raw._observed_at=new Date().toISOString();Object.assign(game,gameState(milestone,raw));
+    if(externalSportFeeds(game)){
+      const external=await externallyScoredGame(game,milestone,{fresh:true});
+      if(!external)return null;
+      Object.assign(game,external);
+    }
     if(!basketballCloseoutEntry(game))return null;
   }
   delete game.basketballVerification;
@@ -2305,6 +2310,11 @@ async function watchLeadWindows(until){
                 if(!raw)continue;
                 raw._observed_at=new Date().toISOString();
                 second=gameState(milestone,raw);
+                if(externalSportFeeds(second)){
+                  const verified=await externallyScoredGame(second,milestone,{fresh:true});
+                  if(!verified)continue;
+                  second=verified;
+                }
                 decision.game=second;
               }
               decision.market=quote;decision.stage='entry_rule_recheck';
@@ -4646,6 +4656,11 @@ async function scan(cachedMilestones,discoveryCount){
           gameState(c.milestone,(await liveBatch([c.milestone])).get(c.milestone.id));
         freshState=withPropWindow(freshState);
         if(!freshState)continue;
+        if(c.signal.strategy==='lead'&&externalSportFeeds(freshState)){
+          const confirmed=await externallyScoredGame(freshState,c.milestone,{fresh:true});
+          if(!confirmed)continue;
+          freshState=withPropWindow(confirmed);
+        }
         if(c.signal.strategy==='over'&&Date.now()-freshState.observedAt>10000){
           freshState=await confirmedIndependentOver(freshState,c.milestone,c.market,{decorate:withPropWindow});
           if(!freshState)continue;
@@ -4678,6 +4693,11 @@ async function scan(cachedMilestones,discoveryCount){
           if(!raw)continue;
           raw._observed_at=new Date().toISOString();
           freshState=gameState(c.milestone,raw);
+          if(externalSportFeeds(freshState)){
+            const verified=await externallyScoredGame(freshState,c.milestone,{fresh:true});
+            if(!verified)continue;
+            freshState=withPropWindow(verified);
+          }
         }
         if(kalshiOnly&&Date.now()-freshState.observedAt>(directKalshiLead||directNba?30000:10000))continue;
         stage='entry_rule_recheck';
@@ -4747,8 +4767,12 @@ async function scan(cachedMilestones,discoveryCount){
               if(!updated)continue;
               updated._observed_at=new Date().toISOString();
               let checked=withPropWindow(gameState(c.milestone,updated));
-              if(!checked.verifiedLive||checked.feedId!==c.milestone.id||
-                c.signal.strategy==='lead'&&(checked.home!==state.home||checked.away!==state.away))continue;
+              if(!checked.verifiedLive||checked.feedId!==c.milestone.id)continue;
+              if(externalSportFeeds(checked)){
+                const verified=await externallyScoredGame(checked,c.milestone,{fresh:true});
+                if(!verified)continue;
+                checked=withPropWindow(verified);
+              }
               const executable=await verifiedEntryQuote(checked,c.milestone,c.market,scoreboardCache,c.signal.strategy);
               if(!sameSportsContract(executable,c.market)||executable.event_ticker!==c.event.event_ticker)continue;
               const still=c.signal.strategy==='over'?overSignal(checked,executable):
