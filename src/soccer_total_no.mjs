@@ -21,7 +21,7 @@ const clockMinute=clock=>{
 // The independent check is precisely the fixture and matching scores.
 // Its countdown, period and publication status do not determine entry.
 const currentExternal=(reading,game)=>Boolean(
-  ['ESPN','FOX Sports'].includes(reading?.source)&&reading.eventId&&
+  ['ESPN','FOX Sports','Sportradar'].includes(reading?.source)&&reading.eventId&&
   Boolean(externalNoScore(game,reading)));
 
 export function soccerNoMarketSpec(game,market,{beforeWindow=false}={}){

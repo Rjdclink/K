@@ -73,7 +73,7 @@ async function runExit({owner=original,position=held,price='.99',count='10',pend
   const first=fixtureOverride||fixture({games:[5,6],points:[30,40],server:'lew',at:now-1000});
   const second=fixture({games:[5,6],points:[30,40],server:'lew',at:now}).game;
   const context=vm.createContext({isScannerExcludedSport,console,Date,Number,Math,Map,Set,JSON,...exits,sellQuote,
-    ensureExitFills:async()=>{},reconcilePendingExit:async()=>!pending,minimumCount:()=>.01,
+    ensureExitFills:async()=>{},exitAtRiskNos:async()=>0,reconcilePendingExit:async()=>!pending,minimumCount:()=>.01,
     randomUUID:()=> 'exit-id',comeback,teamScorePosition,linkedEventTickers:()=>[first.market.event_ticker],
     auditedOver:async()=>true,liveMilestone:async()=>({}),gameState:()=>second,
     recordExitFill:async()=>{},invalidateBalance:async()=>{},

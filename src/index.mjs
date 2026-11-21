@@ -41,6 +41,7 @@ import { verificationStatus, completedOverWait, verificationWindowStatus } from 
 import { COMBO_ATTEMPT_MS, VERIFY_DWELL_MS, COMBO_RFQ_PLANS, singleSpendableCash, comboAllocation, comboLegAllocation, comboHeldFraction, comboAllowedCents, comboMinimumCents, comboMeetsMinimum, comboRfqTargetCents, remainingVerifiedComboCents, availableComboFills, comboPairDiagnostics, comboExclusionKey, exchangeComboExclusion, comboLegs, filledComboWindow, heldComboLeg, quoteForYes, collectionsForEvents, selectedComboMarkets, liveComboMarket, missingQuoteFill, comboFillPages } from './combos.mjs';
 import { selectedTeamName, selectedTeamSide } from './selected_team.mjs';
 import { estimatedSaleProfitCents, halfPotentialProfitExitEligible, oneAndHalfExitEligible, profitTargetAllowed, overCorrectionAffects, correctionExitTargets, untrackedOpenPositions } from './positions.mjs';
+import {noNearLossScore,profitableNoReductionQuote} from './no_protective_exit.mjs';
 import { remainingVerifiedOverCents, upgradeEligible } from './upgrades.mjs';
 import { weatherContract } from './weather.mjs';
 import { sellQuote,cashoutQuote } from './sell.mjs';
@@ -2125,8 +2126,74 @@ async function reconcilePendingExit(ticker){
     return true;
   }catch(e){console.warn('Exit reconciliation deferred:',ticker,e.message);return false}
 }
+// A held NO is negative YES exposure; reduction buys back YES, never opens YES.
+async function exitAtRiskNos(games,events,positions){
+  const negative=(positions?.market_positions||[]).filter(p=>Number(p.position_fp??p.position)<0);
+  if(!negative.length)return 0;
+  const byGame=new Map(games.map(g=>[g.milestone.id,g.state]));
+  const {rows:filled}=await pool.query(`SELECT DISTINCT ON (market_ticker)
+    market_ticker,game_id FROM trade_attempts
+    WHERE status='filled' AND strategy='no' AND fill_count>0
+    ORDER BY market_ticker,updated_at DESC`);
+  const owned=new Map(filled.map(row=>[row.market_ticker,row]));
+  let reduced=0;
+  for(const position of negative){
+    const prior=owned.get(position.ticker),game=byGame.get(prior?.game_id);
+    if(!prior||!game)continue;
+    try{
+      const {market}=await kalshi('/markets/'+encodeURIComponent(position.ticker));
+      if(!market||market.ticker!==position.ticker||noNearLossScore(game,market)===null)continue;
+      if(!await reconcilePendingExit(position.ticker))continue;
+      const [{orderbook_fp},positionsNow]=await Promise.all([
+        kalshi('/markets/'+encodeURIComponent(position.ticker)+'/orderbook'),
+        allOpenPositions({strict:true})
+      ]);
+      const fresh=positionsNow.market_positions?.find(p=>p.ticker===position.ticker);
+      if(!(Number(fresh?.position_fp??fresh?.position)<0))continue;
+      const event=events.get(market.event_ticker)||
+        (await kalshi('/events/'+encodeURIComponent(market.event_ticker))).event;
+      if(!event)continue;
+      const quote=profitableNoReductionQuote(fresh,orderbook_fp,market,{
+        feeMultiplier:feeReserve(event,market),minimumCount:minimumCount(market)});
+      if(!quote)continue;
+      const id=randomUUID();
+      const claimed=await pool.query(`INSERT INTO exit_attempts(id,market_ticker,game_id,requested_count,limit_price,status)
+        VALUES($1,$2,$3,$4,$5,'pending')
+        ON CONFLICT(market_ticker) DO UPDATE SET id=EXCLUDED.id,requested_count=EXCLUDED.requested_count,
+          limit_price=EXCLUDED.limit_price,status='pending',order_id=NULL,error=NULL,created_at=now(),updated_at=now()
+        WHERE exit_attempts.status NOT IN ('pending','uncertain') AND exit_attempts.updated_at<now()-interval '2 seconds'
+        RETURNING id`,[id,position.ticker,game.id,quote.count,quote.yesPrice]);
+      if(!claimed.rowCount)continue;
+      try{
+        // Buy YES at the ask implied by resting NO bids; FOK prevents a worse
+        // execution price, reduce_only prevents opening the opposite position.
+        const result=await kalshi('/portfolio/events/orders',{method:'POST',auth:true,body:{
+          ticker:position.ticker,client_order_id:id,side:'bid',
+          count:quote.count.toFixed(2),price:quote.yesPrice.toFixed(4),
+          time_in_force:'fill_or_kill',self_trade_prevention_type:'taker_at_cross',
+          post_only:false,reduce_only:true}});
+        const n=Number(result.fill_count_fp??result.fill_count??result.order?.fill_count_fp??0);
+        if(n>0)await recordExitFill((...args)=>pool.query(...args),position.ticker,
+          result.order_id||result.order?.order_id,n);
+        await pool.query(`UPDATE exit_attempts
+          SET status=$2,order_id=$3,filled_count=$4,updated_at=now()
+          WHERE id=$1`,[id,n>0?'filled':'unfilled',
+          result.order_id||result.order?.order_id||null,n]);
+        if(n>0){reduced++;await invalidateBalance();
+          console.info('Profitable protective NO exit:',position.ticker,n,'min profit cents',quote.netProfitCents)}
+      }catch(error){
+        const terminal=/^Kalshi (400|401|403|404|409|422) /.test(String(error.message));
+        await pool.query(`UPDATE exit_attempts SET status=$2,error=$3,updated_at=now() WHERE id=$1`,
+          [id,terminal?'unfilled':'uncertain',String(error.message).slice(0,250)]);
+        console.warn('Protective NO exit deferred:',position.ticker,error.message);
+      }
+    }catch(error){console.warn('Protective NO quote unavailable:',position.ticker,error.message)}
+  }
+  return reduced;
+}
 async function exitComebacks(games,events,positions){
   await ensureExitFills();
+  await exitAtRiskNos(games,events,positions);
   const byGame=new Map(games.map(g=>[g.milestone.id,g.state]));
   const gameInfo=new Map(games.map(g=>[g.milestone.id,g]));
   const markets=new Map([...events.values()].flatMap(e=>(e.markets||[]).map(m=>[m.ticker,m])));
@@ -2247,11 +2314,11 @@ async function watchCorrectedOvers(until){
         const result=await pool.query(`SELECT DISTINCT ON (a.market_ticker) a.market_ticker,a.game_id,a.sport,a.strategy,a.reason,a.combo_legs,
           g.title,g.sport_family,g.sport AS game_sport,g.home_team_id,g.away_team_id,g.status AS game_status
           FROM trade_attempts a LEFT JOIN game_snapshots g ON g.id=a.game_id
-          WHERE a.status='filled' AND (a.strategy='over' OR a.combo_legs IS NOT NULL)
+          WHERE a.status='filled' AND (a.strategy IN ('over','no') OR a.combo_legs IS NOT NULL)
             AND (g.sport_family IS NULL OR g.sport_family ~* '^(basketball|hockey|soccer|football)_')
           ORDER BY a.market_ticker,a.updated_at DESC`);
         rows=result.rows;
-        const overRows=rows.filter(row=>row.strategy==='over'&&row.game_status==='live'&&
+        const overRows=rows.filter(row=>['over','no'].includes(row.strategy)&&row.game_status==='live'&&
           supportedScannerSport({type:row.sport_family,sport:row.game_sport}));
         const quotes=await Promise.all(overRows.map(async row=>{
           try{return [row.market_ticker,(await kalshi('/markets/'+encodeURIComponent(row.market_ticker))).market]}
@@ -2260,7 +2327,7 @@ async function watchCorrectedOvers(until){
         marketsByTicker=new Map(quotes.filter(([,market])=>market));
         nextRefresh=Date.now()+5000;
       }
-      const singles=rows.filter(row=>row.strategy==='over'&&row.game_status==='live'&&
+      const singles=rows.filter(row=>['over','no'].includes(row.strategy)&&row.game_status==='live'&&
         supportedScannerSport({type:row.sport_family,sport:row.game_sport})&&marketsByTicker.has(row.market_ticker));
       const milestones=[...new Map(singles.map(row=>[row.game_id,{id:row.game_id,title:row.title,
         type:row.sport_family,details:{league:row.game_sport,home_team_id:row.home_team_id,away_team_id:row.away_team_id}}])).values()];
@@ -2269,6 +2336,19 @@ async function watchCorrectedOvers(until){
         const games=milestones.map(milestone=>({milestone,state:gameState(milestone,data.get(milestone.id))}));
         const states=new Map(games.map(game=>[game.milestone.id,game.state]));
         const target=correctionExitTargets(rows,states,marketsByTicker);
+        const atRiskNos=new Set(singles.filter(row=>row.strategy==='no'&&
+          noNearLossScore(states.get(row.game_id),marketsByTicker.get(row.market_ticker))!==null)
+          .map(row=>row.market_ticker));
+        if(atRiskNos.size){
+          const positions=await allOpenPositions();
+          const negative=(positions.market_positions||[]).filter(p=>atRiskNos.has(p.ticker)&&
+            Number(p.position_fp??p.position)<0);
+          if(negative.length){
+            const events=new Map([...marketsByTicker.values()].map(market=>[market.event_ticker,
+              {event_ticker:market.event_ticker,markets:[...marketsByTicker.values()].filter(m=>m.event_ticker===market.event_ticker)}]));
+            await exitAtRiskNos(games,events,{market_positions:negative});
+          }
+        }
         if(target.size){
           const positions=await allOpenPositions();
           const held=(positions.market_positions||[]).filter(position=>target.has(position.ticker)&&
@@ -3279,7 +3359,7 @@ async function scanHockeyTotalNos(games,events,signalSink=null){
         continue;
       }
       if(game.remainingSeconds>=entry){
-        report(c,'First ESPN proof saved; awaiting less than 6:00');continue;
+        report(c,'First '+window.first_evidence.source+' proof saved; awaiting less than 6:00');continue;
       }
       const spacing=lateNoPreflightProgress(window);
       if(!spacing.ready){
@@ -3292,7 +3372,7 @@ async function scanHockeyTotalNos(games,events,signalSink=null){
       raw._observed_at=new Date().toISOString();
       const fresh=gameState(c.milestone,raw);
       if(!lateNoPreflightProgress(window).ready){
-        report(c,'Entry blocked: 60-second elapsed-time separation not yet met');continue;
+        report(c,'Entry blocked: 30-second elapsed-time separation not yet met');continue;
       }
       const current=(await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market;
       if(!sameSportsContract(current,c.market)||!hockeyNoMarketSpec(fresh,current)){
@@ -3577,7 +3657,7 @@ async function scanEarlyPeriodNos(games,events,signalSink=null,sport='NHL'){
         continue;
       }
       if(seconds>=entry){
-        report(c,'First ESPN verification saved; awaiting entry cutoff');continue;
+        report(c,'First '+window.first_evidence.source+' verification saved; awaiting entry cutoff');continue;
       }
       const spacing=lateNoPreflightProgress(window);
       if(!spacing.ready){
@@ -3590,7 +3670,7 @@ async function scanEarlyPeriodNos(games,events,signalSink=null,sport='NHL'){
       raw._observed_at=new Date().toISOString();
       const fresh=gameState(c.milestone,raw);
       if(!lateNoPreflightProgress(window).ready){
-        report(c,'Entry blocked: 60-second elapsed-time separation not yet met');continue;
+        report(c,'Entry blocked: 30-second elapsed-time separation not yet met');continue;
       }
       const current=(await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market;
       if(!sameSportsContract(current,c.market)||!policy.spec(fresh,current)){
@@ -3865,7 +3945,7 @@ async function scanSoccerTotalNos(games,events,signalSink=null){
         continue;
       }
       if(game.matchRemainingSeconds>=entry){
-        report(c,'First ESPN check saved; awaiting strictly under 8:00');continue;
+        report(c,'First '+window.first_evidence.source+' check saved; awaiting strictly under 8:00');continue;
       }
       const spacing=lateNoPreflightProgress(window);
       if(!spacing.ready){
@@ -3878,7 +3958,7 @@ async function scanSoccerTotalNos(games,events,signalSink=null){
       raw._observed_at=new Date().toISOString();
       const fresh=gameState(c.milestone,raw);
       if(!lateNoPreflightProgress(window).ready){
-        report(c,'Entry blocked: 60-second elapsed-time separation not yet met');continue;
+        report(c,'Entry blocked: 30-second elapsed-time separation not yet met');continue;
       }
       const current=(await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market;
       if(!sameSportsContract(current,c.market)||!soccerNoMarketSpec(fresh,current)){
