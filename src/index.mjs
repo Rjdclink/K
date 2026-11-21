@@ -1003,7 +1003,7 @@ async function withEntryProfitFloor({ticker,count,price,fees,strategy,fraction,b
         const {rows}=await client.query(`SELECT market_ticker,status FROM trade_attempts
           WHERE status='filled' OR status IN ('reserved','check_order','retrying','combo_pending')
             AND updated_at>now()-interval '2 minutes'`);
-        const required=minimumProfitCents(strategy,bankroll,'',NaN,filledOrderGateCount(positions,rows,ticker),{game,market});
+        const required=minimumProfitCents(strategy,bankroll,'',NaN,filledOrderGateCount(positions,rows,ticker),{game,market,fraction});
         if(netSettlementProfitCents(count,price,fees)<required){await client.query('COMMIT');return null}
         const result=await send();
         await client.query('COMMIT');
@@ -2908,7 +2908,7 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null){
       const budget=Math.max(0,Math.floor(bankroll*allocation)-held-unreported),fees=feeReserve(c.event,current);
       const count=orderSize(Math.min(singleSpendableCash(account.balance),local),ask.price,ask.size,allocation,1,bankroll,budget,fees);
       const quantity=current.fractional_trading_enabled===false?Math.floor(count):count;
-      if(quantity<minimumCount(current)||!profitableCount(quantity,ask.price,fees,'no',bankroll,fresh.type,fresh.remainingSeconds,{game:fresh,market:current})){
+      if(quantity<minimumCount(current)||!profitableCount(quantity,ask.price,fees,'no',bankroll,fresh.type,fresh.remainingSeconds,{game:fresh,market:current,fraction:allocation})){
         report(c,'Entry blocked: 5% bankroll pool, fees or required net profit',ask);continue;
       }
       await auditTable();
@@ -3170,7 +3170,7 @@ async function scanHockeyTotalNos(games,events,signalSink=null){
         ask.price,ask.size,allocation,1,bankroll,budget,fees);
       const quantity=current.fractional_trading_enabled===false?Math.floor(count):count;
       if(quantity<minimumCount(current)||!profitableCount(quantity,ask.price,fees,
-        'no',bankroll,fresh.type,fresh.remainingSeconds,{game:fresh,market:current})){
+        'no',bankroll,fresh.type,fresh.remainingSeconds,{game:fresh,market:current,fraction:allocation})){
         report(c,'Entry blocked: 5% shared NHL total-NO cap, fees or net profit',null,ask);continue;
       }
       await auditTable();
@@ -3482,7 +3482,7 @@ async function scanEarlyPeriodNos(games,events,signalSink=null,sport='NHL'){
         ask.price,ask.size,allocation,1,bankroll,budget,fees);
       const quantity=current.fractional_trading_enabled===false?Math.floor(count):count;
       if(quantity<minimumCount(current)||!profitableCount(quantity,ask.price,fees,
-        'no',bankroll,fresh.type,policy.seconds(fresh),{game:fresh,market:current})){
+        'no',bankroll,fresh.type,policy.seconds(fresh),{game:fresh,market:current,fraction:allocation})){
         report(c,'Entry blocked: shared 5% bankroll/fees ceiling or net-profit check',null,ask);
         continue;
       }
@@ -3771,7 +3771,7 @@ async function scanSoccerTotalNos(games,events,signalSink=null){
         ask.price,ask.size,allocation,1,bankroll,budget,fees);
       const quantity=current.fractional_trading_enabled===false?Math.floor(count):count;
       if(quantity<minimumCount(current)||!profitableCount(quantity,ask.price,fees,
-        'no',bankroll,fresh.type,fresh.matchRemainingSeconds,{game:fresh,market:current})){
+        'no',bankroll,fresh.type,fresh.matchRemainingSeconds,{game:fresh,market:current,fraction:allocation})){
         report(c,'Entry blocked: shared 5% soccer total-NO cap, fees or net profit',null,ask);continue;
       }
       await auditTable();
