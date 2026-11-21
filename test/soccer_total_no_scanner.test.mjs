@@ -7,6 +7,8 @@ import vm from 'node:vm';
 import {tagNoPreflight,validNoPreflight,lateNoPreflightProgress} from '../src/late_no_preflight.mjs';
 import {readFileSync} from 'node:fs';
 import {gameState,orderSize,estimatedCostCents} from '../src/strategy.mjs';
+import {soccerVerifiedProof} from './support/soccer_verified_proof.mjs';
+import {validSoccerNoPreflightProof} from '../src/soccer_no_external_proof.mjs';
 import {soccerNoMarketSpec,soccerTotalNo,soccerStoppageNoWindow} from '../src/soccer_total_no.mjs';
 import {bestNoAsk,noDepthAtAsk} from '../src/no_strategy.mjs';
 import {sameSportsContract,overContractKey} from '../src/over_verification.mjs';
@@ -40,12 +42,11 @@ function harness({canVerify=true,hasSeller=true,initialAgeMs=61000,existingExpos
     Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),
     linkedEventTickers:()=>[market.event_ticker],
-    soccerNoMarketSpec,soccerTotalNo,soccerStoppageNoWindow,
+    soccerNoMarketSpec,soccerTotalNo,soccerStoppageNoWindow,validSoccerNoPreflightProof,
     verifyIndependentSoccerTotalNo:async game=>{
       verified++;trace.push('external');
       if(!canVerify||finalExternalFails&&verified>1)return null;
-      return {source:'ESPN',eventId:'espn-soccer',home:game.home,away:game.away,
-        period:2,elapsedMinute:game.soccerMinute,live:true};
+      return soccerVerifiedProof(game,{eventId:'espn-soccer'});
     },
     overContractKey,sameSportsContract,
     pool:{query:async(sql,args=[])=>{
@@ -272,6 +273,17 @@ test('live 90+ stoppage NO still requires a first independent score check and 30
  assert.ok(trace.indexOf('external')<trace.indexOf('orderbook'));
 });
 
+test('pre-deployment ESPN-only first proof must be replaced before a new full-game soccer NO order',async()=>{
+ const h=harness();
+ assert.equal(await h.scan(660),0);
+ const prior=h.windows.get(market.ticker);
+ assert.ok(prior?.first_evidence?.sourcePolicy);
+ delete prior.first_evidence.sourcePolicy;
+ assert.equal(await h.scan(479),0,'old unversioned preflight is never eligible for final entry');
+ assert.equal(h.orders,0);
+ assert.equal(h.verifications,2,'second invocation starts a NEW two-provider first proof');
+ assert.ok(h.windows.get(market.ticker).first_evidence.sourcePolicy);
+});
 test('soccer NO signals are published to the dashboard without removing other strategies',()=>{
   const src=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
   assert.match(src,/scanSoccerTotalNos\(marketGames,events,soccerNoSignals\)/);

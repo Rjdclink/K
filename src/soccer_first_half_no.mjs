@@ -1,5 +1,5 @@
 import {externalNoScore} from './external_no_authority.mjs';
-import {fetchIndependentMatchScore} from './independent_match_score.mjs';
+import {verifyCorroboratedSoccerNo,validCorroboratedSoccerNoProof,validSoccerNoSource} from './soccer_no_external_proof.mjs';
 import {espnMatches} from './score_verification.mjs';
 import {espnScoreboardUrls} from './espn_scoreboards.mjs';
 
@@ -20,7 +20,7 @@ const lineFrom=text=>{
 };
 const externalCurrent=(reading,game)=>Boolean(
   ['ESPN','FOX Sports','Sportradar'].includes(reading?.source)&&reading.eventId&&
-  Boolean(externalNoScore(game,reading)));
+  Boolean(externalNoScore(game,reading))&&validCorroboratedSoccerNoProof(game,reading));
 
 export function soccerFirstHalfNoSpec(game,market,{beforeWindow=false}={}){
   const seconds=soccerFirstHalfSeconds(game);
@@ -67,15 +67,13 @@ export function independentSoccerFirstHalfNoReading(scoreboard,game,milestone,ma
   const match=matches[0],event=scoreboard.events.find(e=>e.id===match.eventId);
   const status=event?.competitions?.[0]?.status||event?.status;
   const elapsedMinute=readClock(status?.displayClock);
-  const reading={source:'ESPN',eventId:match.eventId,home:match.home,away:match.away,
-    period:match.period,elapsedMinute,live:match.live};
-  return externalCurrent(reading,game)?reading:null;
+  const reading={source:'ESPN',eventId:match.eventId,gameId:game.id,
+    home:match.home,away:match.away,period:match.period,elapsedMinute,
+    live:match.live,sourceClock:String(status?.displayClock||'')};
+  return validSoccerNoSource(game,reading)?reading:null;
 }
 
-export async function verifyIndependentSoccerFirstHalfNo(game,milestone,market,{fetcher=fetch}={}){
+export async function verifyIndependentSoccerFirstHalfNo(game,milestone,market,options={}){
   if(!soccerFirstHalfNoSpec(game,market,{beforeWindow:true}))return null;
-  const feed='soccer/all';
-  if(!feed)return null;
-  // ESPN first, retry only when unavailable, then FOX; no source clock check.
-  return fetchIndependentMatchScore(game,milestone,{fetcher,espnFeed:feed,foxFeed:'soccer'});
+  return verifyCorroboratedSoccerNo(game,milestone,options);
 }

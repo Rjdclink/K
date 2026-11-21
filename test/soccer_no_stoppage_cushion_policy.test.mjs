@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {gameState} from '../src/strategy.mjs';
+import {soccerVerifiedProof} from './support/soccer_verified_proof.mjs';
 import {nearEntryPhase,marketEntryProximity} from '../src/discovery.mjs';
 import {soccerNoMarketSpec,soccerTotalNo,soccerStoppageNoWindow} from '../src/soccer_total_no.mjs';
 import {soccerFirstHalfNo} from '../src/soccer_first_half_no.mjs';
@@ -80,9 +81,11 @@ test('confirmed 90+ regulation stoppage is urgent for frequent market discovery'
  assert.equal(nearEntryPhase({...g,verifiedLive:false}),false);
 });
 test('independently verified scores choose the required pre-90 or 90+ cushion',()=>{
- const proof={source:'ESPN',eventId:'match-id',gameId:milestone.id,home:2,away:2,live:true};
- assert.equal(soccerTotalNo(game(1,2),market(6.5),{external:proof}),null);
- assert.equal(soccerTotalNo(game(1,2),market(7.5),{external:proof})?.total,4);
- assert.equal(soccerTotalNo(game(1,2,"90+2'"),market(5.5),{external:proof})?.total,4);
- assert.equal(soccerTotalNo(game(1,2,"90+2'"),market(4.5),{external:proof}),null);
+ const earlier=game(1,2),stoppage=game(1,2,"90+2'");
+ const proof=soccerVerifiedProof(earlier,{home:2,away:2});
+ const extraProof=soccerVerifiedProof(stoppage,{home:2,away:2});
+ assert.equal(soccerTotalNo(earlier,market(6.5),{external:proof}),null);
+ assert.equal(soccerTotalNo(earlier,market(7.5),{external:proof})?.total,4);
+ assert.equal(soccerTotalNo(stoppage,market(5.5),{external:extraProof})?.total,4);
+ assert.equal(soccerTotalNo(stoppage,market(4.5),{external:extraProof}),null);
 });

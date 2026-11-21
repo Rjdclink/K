@@ -63,6 +63,7 @@ import {hockeyEarlyNoMarketSpec,hockeyEarlyPeriodNo,verifyIndependentEarlyHockey
 import {soccerFirstHalfNoSpec,soccerFirstHalfNo,verifyIndependentSoccerFirstHalfNo,soccerFirstHalfSeconds} from './soccer_first_half_no.mjs';
 import {basketballEarlyQuarterNoSpec,basketballEarlyQuarterNo,verifyIndependentBasketballEarlyQuarterNo} from './basketball_early_quarter_no.mjs';
 import {soccerNoMarketSpec,soccerTotalNo,soccerStoppageNoWindow,verifyIndependentSoccerTotalNo} from './soccer_total_no.mjs';
+import {validSoccerNoPreflightProof} from './soccer_no_external_proof.mjs';
 import {VARIABLE_CONFIRM_DELAY_MS,variablePlayerOverSpec,variableProofValid,verifyIndependentVariableOver} from './variable_player_over.mjs';
 import {verifyIndependentYardageZero} from './score_verification.mjs';
 import {mentionContract,mentionDay,mentionEventTime,mentionEntryPrice,pairedMentionProof,remainingMentionCents} from './mentions.mjs';
@@ -3626,7 +3627,8 @@ async function scanEarlyPeriodNos(games,events,signalSink=null,sport='NHL'){
       const {rows:[window]}=await pool.query(
         'SELECT * FROM '+policy.table+' WHERE market_ticker=$1',[c.market.ticker]);
       const invalid=!validNoPreflight(window,{gameId:game.id,
-        contractKey:key,period:game.period,maxFirstSeconds:start});
+        contractKey:key,period:game.period,maxFirstSeconds:start})||
+        !hockey&&!basketball&&!validSoccerNoPreflightProof(window?.first_evidence);
       if(invalid){
         // Independently sourced period goals/points, never Kalshi splits,
         // determine whether this selected segment meets its cushion.
@@ -3917,7 +3919,8 @@ async function scanSoccerTotalNos(games,events,signalSink=null){
         'SELECT * FROM soccer_total_no_windows WHERE market_ticker=$1',[c.market.ticker]);
       const invalidWindow=!validNoPreflight(window,{gameId:game.id,
         contractKey:key,period:game.period,maxFirstSeconds:start,
-        allowZeroClock:soccerStoppageNoWindow(game)});
+        allowZeroClock:soccerStoppageNoWindow(game)})||
+        !validSoccerNoPreflightProof(window?.first_evidence);
       if(invalidWindow){
         // Check the Kalshi cushion before requesting independent evidence.
         // A correctly cushioned market is never labelled as missing cushion.
