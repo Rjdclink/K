@@ -58,6 +58,7 @@ test('filled-order final gate passes the same five-percent fraction into minimum
   if(sql==='BEGIN'||sql==='COMMIT'||sql==='ROLLBACK')return {rows:[]};
   if(sql.includes('pg_try_advisory_xact_lock'))return {rows:[{acquired:true}]};
   if(sql.includes('FROM trade_attempts'))return {rows:[]};
+  if(sql.includes('FROM manual_combo_buys'))return {rowCount:0,rows:[]};
   throw Error(sql);
  };
  const context=vm.createContext({
