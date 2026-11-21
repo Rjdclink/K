@@ -202,8 +202,8 @@ test('crossed player props are candidates through the ten-minute boundary',()=>{
 
 test('winner eligibility signals are unchanged, but all winner combos cap at five percent',()=>{
  const lead={strategy:'lead',fraction:.05},over={strategy:'over',fraction:.40};
- assert.equal(finalLeadFraction({}, {},lead,true),.20);
- assert.equal(finalLeadFraction({}, {},lead,false),.15);
+ assert.equal(finalLeadFraction({}, {},lead,true),.05);
+ assert.equal(finalLeadFraction({}, {},lead,false),.05);
  assert.equal(finalLeadFraction({}, {},over,true),.40);
  const verified={signal:{strategy:'lead',externallyVerified:true}},fallback={signal:{strategy:'lead',externallyVerified:false}};
  assert.equal(comboAllocation(),.05);
