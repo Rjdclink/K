@@ -36,8 +36,8 @@ test('NBA combined points/rebounds/assists verifies exact named player and all t
  assert.equal(variablePlayerOverSpec(g,contract)?.player.value,29);
  const first=independentVariableOverDecision(board(milestone),summary({PTS:20,REB:5,AST:4},[play(100)]),g,milestone,contract);
  assert.equal(first?.playerValue,29);
- assert.equal(independentVariableOverDecision(board(milestone),summary({PTS:20,REB:4,AST:4},[play(100)]),g,milestone,contract),false,
-  'a real ESPN component disagreement vetoes FOX fallback');
+ assert.equal(independentVariableOverDecision(board(milestone),summary({PTS:20,REB:4,AST:4},[play(100)]),g,milestone,contract)?.playerValue,28,
+  'verified source component totals control the contract even if Kalshi differs');
  const late={...first,requestedAt:Date.now(),plays:[play(100),play(110,'Rebound')]};
  const earlier={...first,requestedAt:late.requestedAt-210000};
  assert.equal(variableProofValid(earlier,late,g,contract,late.requestedAt),true);
