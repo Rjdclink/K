@@ -1,3 +1,6 @@
+import {verifiedSettlementProfit,closedOffsetProfit} from './settlement_accounting.mjs';
+import {normalizeAccountFill} from './account_history.mjs';
+
 const numeric=value=>value===null||value===undefined||value===''?NaN:Number(value);
 const yesFill=fill=>fill.outcome_side==='yes'||fill.side==='yes';
 const time=value=>{const parsed=new Date(value);return Number.isFinite(parsed.getTime())?parsed:null};
@@ -74,7 +77,8 @@ export function completedTrade(entry,fills,settlement){
 
 export function completedNoTrade(entry,fills,settlement){
   if(entry?.strategy!=='no'||!entry.order_id||!time(entry.created_at)||
-    !settlement||!time(settlement.settled_time)||!Number.isFinite(numeric(settlement.revenue)))return null;
+    settlement&&(!time(settlement.settled_time)||
+      !Number.isFinite(numeric(settlement.revenue))))return null;
   const purchases=fills.filter(fill=>fill.order_id===entry.order_id&&
     (fill.outcome_side==='no'||fill.side==='no')&&
     (fill.ticker||fill.market_ticker)===entry.market_ticker);
@@ -88,7 +92,22 @@ export function completedNoTrade(entry,fills,settlement){
       !Number.isFinite(fee)||fee<0)return null;
     count+=quantity;cost+=quantity*price+fee;
   }
-  if(Math.abs(count-numeric(entry.fill_count))>.011||numeric(settlement.no_count_fp)+.011<count)return null;
+  if(Math.abs(count-numeric(entry.fill_count))>.011||
+    settlement&&numeric(settlement.no_count_fp)+.011<count)return null;
+  const source=verifiedSettlementProfit(settlement);
+  if(source)return source;
+  const all=fills.filter(fill=>(fill.ticker||fill.market_ticker)===entry.market_ticker);
+  if(all.some(fill=>fill.outcome_side==='yes'||fill.side==='yes')){
+    // A sell-YES/NO offset releases collateral before settlement. Never
+    // interpret its zero settlement revenue as losing the entire NO cost.
+    if(settlement&&numeric(settlement.revenue)!==0)return null;
+    const normalized=all.map(normalizeAccountFill);
+    if(normalized.some(fill=>!fill))return null;
+    const paired=closedOffsetProfit(normalized);
+    return paired?{...paired,...(settlement?{
+      occurredAt:time(settlement.settled_time).toISOString(),outcome:'settled'}:{})}:null;
+  }
+  if(!settlement)return null;
   return {occurredAt:time(settlement.settled_time).toISOString(),
     profitCents:Math.round(numeric(settlement.revenue)-cost*100),outcome:'settled'};
 }
