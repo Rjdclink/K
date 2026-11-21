@@ -87,15 +87,12 @@ export function independentHockeyTotalNoReading(scoreboard,game,milestone,market
   const matches=espnMatches(scoreboard,game,milestone,{identityOnly:true});
   if(matches.length!==1)return null;
   const m=matches[0];
-  if(!m.eventId||m.home!==game.home||m.away!==game.away)return null;
+  if(!m.eventId||!externalNoScore(game,{...m,source:'ESPN'}))return null;
   const periods=validPeriods(m.periods);
   if(spec.period==='third_period'){
-    if(Array.isArray(m.periods)&&m.periods.length&&!periods)return null;
-    if(periods){const total=sums(periods);
-    if(total.home!==game.home||total.away!==game.away)return null;
-    const direct=validPeriods(game.periodScores);
-    if(direct&&direct.some((p,i)=>p.home!==periods[i].home||p.away!==periods[i].away))return null;}
-    if(!periods&&!validPeriods(game.periodScores))return null;
+    if(!periods)return null;
+    const sourceTotals=sums(periods);
+    if(sourceTotals.home!==m.home||sourceTotals.away!==m.away)return null;
   }
   return {source:'ESPN',eventId:m.eventId,home:m.home,away:m.away,period:3,
     seconds:m.remainingSeconds,periods:periods||null,
