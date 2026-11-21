@@ -56,15 +56,19 @@ test('football total NO accepts only Q4 full-game contracts strictly under five 
   }
 });
 
-test('college football needs 20 points; NFL needs 15 points above both teams combined',()=>{
-  for(const [sport,line,threshold] of [['CFB',57,20],['NFL',52,15]]){
+test('college football needs 16 points; NFL retains 15 points above both teams combined',()=>{
+  for(const [sport,line,threshold] of [['CFB',53,16],['NFL',52,15]]){
     const game=fixture(sport).state;
     assert.equal(collegeFootballTotalNo(game,market(sport,line))?.total,37);
     assert.equal(collegeFootballTotalNo(game,market(sport,line))?.line,37+threshold);
     assert.equal(collegeFootballTotalNo(game,market(sport,line-.5)),null,
       sport+' rejects a cushion half a point below its minimum');
-    if(sport==='CFB')assert.equal(collegeFootballTotalNo(game,market(sport,55)),null,
-      'old 18-point college football cushion must not qualify');
+    if(sport==='CFB'){
+      assert.equal(collegeFootballTotalNo(game,market(sport,52.5)),null,
+        '15.5 points is below the new CFB minimum');
+      assert.ok(collegeFootballTotalNo(game,market(sport,55)),
+        'old 18-point and 20-point cushions still qualify under the 16-point rule');
+    }
     assert.ok(collegeFootballTotalNo(game,market(sport,line+.5)));
     assert.equal(collegeFootballTotalNo(game,market(sport,line+1,{half:true})),null);
     assert.equal(collegeFootballTotalNo(game,market(sport,line+1,{quarter:true})),null);
