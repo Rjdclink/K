@@ -28,12 +28,14 @@ export function noncushionedPlayerState(game,market,reading){
  const spec=uncushionedPlayerSpec(game,market),p=spec?.player;
  if(!p||!reading||reading.gameId!==game.id||reading.playerId!==p.id||
   reading.metric!==p.metric||!reading.eventId||!['ESPN','FOX Sports'].includes(reading.source)||
+  game?.externalScore?.source===reading.source&&
+    String(game.externalScore.eventId)!==String(reading.eventId)||
   !Number.isInteger(reading.playerValue)||reading.playerValue<=p.line)return null;
  const result={...game,playerStats:{...game.playerStats,
   [p.id]:{...game.playerStats[p.id],[statField[p.metric]]:reading.playerValue}}};
  return overSignal(result,market)?result:null;
 }
-export function noncushionedTwoProofs(first,second,game,market,now=Date.now()){
+export function noncushionedTwoProofs(first,second,game,market,now=Date.now(),firstSeen=null){
  const spec=uncushionedPlayerSpec(game,market);
  if(!spec||!first||!second||first.gameId!==game.id||second.gameId!==game.id||
   first.playerId!==spec.player.id||second.playerId!==spec.player.id||
@@ -44,6 +46,8 @@ export function noncushionedTwoProofs(first,second,game,market,now=Date.now()){
   first.playerValue<=spec.player.line||second.playerValue<first.playerValue||
   !Number.isFinite(first.requestedAt)||!Number.isFinite(second.requestedAt)||
   second.requestedAt<=first.requestedAt||second.requestedAt>now||
+  firstSeen!==null&&(!Number.isFinite(firstSeen)||
+    first.requestedAt-firstSeen<FIRST_NONCUSHIONED_CHECK_MS)||
   now-second.requestedAt>10000)return false;
  return Boolean(noncushionedPlayerState(game,market,second));
 }
