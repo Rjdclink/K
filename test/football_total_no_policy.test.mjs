@@ -107,7 +107,7 @@ test('football scanner handles both NFL and CFB and enforces a shared 10% cap in
   const context=vm.createContext({noFinalCheckpoint,noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async()=>{},pairedExternalMatch,Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),linkedEventTickers:()=>[m.event_ticker],
     collegeFootballTotalNo,collegeBasketballTotalNo,overContractKey,sameSportsContract,
-    verifyIndependentCollegeTotalNo:async()=>{checks++;return {source:'ESPN',seconds:299};},
+    verifyIndependentCollegeTotalNo:async game=>{checks++;return {source:'ESPN',eventId:'nfl-external',gameId:game.id,home:game.home,away:game.away,seconds:299};},
     pool:{query:async(sql,args=[])=>{
       if(sql.includes('strategy=')&&sql.includes('reason')&&args[0])patterns.push(args[0]);
       if(sql.startsWith('SELECT * FROM college_total_no_windows'))return {rows:saved?[saved]:[]};
@@ -136,8 +136,8 @@ test('football scanner handles both NFL and CFB and enforces a shared 10% cap in
     orderSize:(cash,price,depth,fraction,min,bankroll,b)=>{allocation=fraction;budget=b;return b>=5?1:0;},
     profitableCount:n=>n,estimatedCostCents:()=>0,auditTable:async()=>{},
     randomUUID:()=> 'proof',rememberIndependentEntry,
-    reserve:async signal=>{assert.equal(signal.fraction,.10);return 'order-1';},
-    withEntryProfitFloor:async(options,fn)=>{assert.equal(options.fraction,.10);return fn();},
+    reserve:async signal=>{assert.equal(signal.fraction,.05);return 'order-1';},
+    withEntryProfitFloor:async(options,fn)=>{assert.equal(options.fraction,.05);return fn();},
     invalidateBalance:async()=>{}
   });
   vm.runInContext(code,context);
