@@ -71,10 +71,10 @@ test('independent ESPN proof verifies exact soccer fixture and goals without pro
   assert.equal(proof?.source,'ESPN');
   assert.equal(proof?.elapsedMinute,83);
   assert.equal(soccerTotalNo(state,m,{external:proof})?.total,3);
-  assert.equal(soccerTotalNo(state,m,{external:{...proof,away:2}}),null);
+  assert.equal(soccerTotalNo(state,m,{external:{...proof,away:2}})?.total,4,'independent score is the cushion authority');
   assert.equal(soccerTotalNo(state,m,{external:{...proof,elapsedMinute:80}})?.total,3);
   assert.equal(independentSoccerTotalNoReading(scoreboard("79'"),state,milestone,m)?.home,2);
-  assert.equal(independentSoccerTotalNoReading(scoreboard("83'",3,1),state,milestone,m),null);
+  assert.equal(independentSoccerTotalNoReading(scoreboard("83'",3,1),state,milestone,m)?.home,3);
   assert.equal(independentSoccerTotalNoReading(scoreboard("garbled"),state,milestone,m)?.away,1);
   const past=structuredClone(board);past.events[0].competitions[0].status.type.state='post';
   assert.equal(independentSoccerTotalNoReading(past,state,milestone,m)?.home,2,'provider game status is not an external score requirement');
