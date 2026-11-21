@@ -88,7 +88,7 @@ test('ESPN quarter proof requires the exact game and scores, not provider clock 
  assert.equal(proof?.quarter,2);
  assert.equal(proof?.currentQuarter?.home,15);
  assert.equal(basketballEarlyQuarterNo(g,m,{external:proof})?.total,30);
- assert.equal(independentBasketballEarlyQuarterNoReading(board('NBA',2,'1:29',[{home:25,away:22},{home:14,away:15}]),g,milestone,m),null);
+ assert.equal(independentBasketballEarlyQuarterNoReading(board('NBA',2,'1:29',[{home:25,away:22},{home:14,away:15}]),g,milestone,m)?.home,39,'external team score controls quarter cushion');
  assert.equal(independentBasketballEarlyQuarterNoReading(board('NBA',2,'1:45',parts),g,milestone,m)?.home,40);
  assert.equal(independentBasketballEarlyQuarterNoReading(board('NBA',1,'1:29',parts),g,milestone,m)?.away,37);
  const dup=structuredClone(score);dup.events.push({...dup.events[0],id:'duplicate'});
