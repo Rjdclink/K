@@ -198,7 +198,7 @@ test('tennis conservative fallback cannot bypass match point after removing a po
       competitor2_current_round_score:15,server:'H',advantage:''}});
   const first=state(now-12000),second=state(now);
   assert.equal(kalshiOnlyLead(first,second,market),false);
-  assert.equal(finalLeadFraction(first,second,lead,false,market),.15);
+  assert.equal(finalLeadFraction(first,second,lead,false,market),.05);
   assert.equal(kalshiOnlyLead(state(now-12000,30),state(now,30),market),false);
-  assert.equal(finalLeadFraction(first,state(now-3000),lead,false,market),.15);
+  assert.equal(finalLeadFraction(first,state(now-3000),lead,false,market),.05);
 });
