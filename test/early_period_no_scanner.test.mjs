@@ -9,8 +9,7 @@ import {readFileSync} from 'node:fs';
 import {gameState,orderSize,estimatedCostCents,profitableCount} from '../src/strategy.mjs';
 import {hockeyEarlyNoMarketSpec,hockeyEarlyPeriodNo} from '../src/hockey_early_period_no.mjs';
 import {soccerFirstHalfNoSpec,soccerFirstHalfNo,soccerFirstHalfSeconds} from '../src/soccer_first_half_no.mjs';
-import {soccerVerifiedProof} from './support/soccer_verified_proof.mjs';
-import {validSoccerNoPreflightProof} from '../src/soccer_no_external_proof.mjs';
+import {validFreshEspnSoccerNo,SOCCER_ESPN_POLICY} from '../src/soccer_espn_no.mjs';
 import {basketballEarlyQuarterNoSpec,basketballEarlyQuarterNo} from '../src/basketball_early_quarter_no.mjs';
 import {bestNoAsk,noDepthAtAsk} from '../src/no_strategy.mjs';
 import {sameSportsContract,overContractKey} from '../src/over_verification.mjs';
@@ -67,7 +66,8 @@ function fixture(sport,period=1){
    state,details};
 }
 function harness(sport,period=1,{firstUnavail=false,finalUnavail=false,wrongFinalSource=false,
- noSeller=false,existingExposure=false,finalScoreChanged=false,firstAgeMs=61000,globalPending=false}={}){
+ noSeller=false,existingExposure=false,finalScoreChanged=false,firstAgeMs=61000,globalPending=false,
+ firstProofOverride=null,finalProofOverride=null}={}){
  const src=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
  const start=src.indexOf('async function scanEarlyPeriodNos('),end=src.indexOf('async function scanSoccerTotalNos(',start);
  assert.ok(start>0&&end>start);
@@ -80,7 +80,9 @@ function harness(sport,period=1,{firstUnavail=false,finalUnavail=false,wrongFina
     period:game.period,seconds:game.remainingSeconds,home:game.home,away:game.away,
     periods:game.periodScores,currentPeriod:{home:game.periodScores[period-1].home,
       away:game.periodScores[period-1].away}};
-   if(sport==='Soccer')return soccerVerifiedProof(game,{eventId:'matched-espn'});
+   if(sport==='Soccer')return {source:'ESPN',verificationPolicy:SOCCER_ESPN_POLICY,
+    checkedAt:Date.now(),gameId:game.id,eventId:'matched-espn',live:true,
+    period:1,home:game.home,away:game.away,elapsedMinute:game.soccerMinute};
    return {source:'ESPN',eventId:'matched-espn',live:true,quarter:period,
     seconds:game.remainingSeconds,home:game.home,away:game.away,
     parts:game.periodScores,currentQuarter:{home:game.periodScores[period-1].home,
@@ -89,7 +91,9 @@ function harness(sport,period=1,{firstUnavail=false,finalUnavail=false,wrongFina
  const verify=async game=>{
    verifications++;trace.push('external');
    if(firstUnavail&&verifications===1||finalUnavail&&verifications>=2)return null;
-   return {...proof(game),source:wrongFinalSource&&verifications>=2?'FOX Sports':'ESPN'};
+   const result=proof(game);
+   return {...result,source:wrongFinalSource&&verifications>=2?'FOX Sports':'ESPN',
+     ...(sport==='Soccer'?(verifications===1?firstProofOverride:finalProofOverride):{})};
  };
  const table=sport==='NHL'?'nhl_early_period_no_windows':sport==='Soccer'?
    'soccer_first_half_no_windows':'basketball_early_quarter_no_windows';
@@ -97,7 +101,7 @@ function harness(sport,period=1,{firstUnavail=false,finalUnavail=false,wrongFina
    Date,JSON,Math,Number,Promise,console,
    live:()=>true,liveBatch:async()=>new Map(),linkedEventTickers:()=>[f.market.event_ticker],
    hockeyEarlyNoMarketSpec,hockeyEarlyPeriodNo,
-   soccerFirstHalfNoSpec,soccerFirstHalfNo,soccerFirstHalfSeconds,validSoccerNoPreflightProof,
+   soccerFirstHalfNoSpec,soccerFirstHalfNo,soccerFirstHalfSeconds,validFreshEspnSoccerNo,
    basketballEarlyQuarterNoSpec,basketballEarlyQuarterNo,
    verifyIndependentEarlyHockeyNo:verify,verifyIndependentSoccerFirstHalfNo:verify,
    verifyIndependentBasketballEarlyQuarterNo:verify,
@@ -152,16 +156,6 @@ function harness(sport,period=1,{firstUnavail=false,finalUnavail=false,wrongFina
  };
 }
 
-test('pre-deployment single-source soccer first-half proof cannot authorize a subsequent order',async()=>{
- const h=harness('Soccer',1);
- assert.equal(await h.scan(360),0);
- const first=[...h.windows.values()][0];
- assert.ok(first?.first_evidence?.sourcePolicy);
- delete first.first_evidence.sourcePolicy;
- assert.equal(await h.scan(299),0);
- assert.equal(h.orders,0);
- assert.equal(h.verified,2,'fresh first proof is required after a migration');
-});
 test('NHL P1/P2, soccer 1H and NBA quarter NO each require initial and final verification',async()=>{
  for(const [sport,period,first,boundary] of [
    ['NHL',1,360,300],['NHL',2,360,300],
@@ -214,6 +208,21 @@ test('missing initial preflight or a final check failure always blocks early-per
       assert.equal(await h.scan(boundary-1),0,sport+JSON.stringify(opts));
       assert.equal(h.orders,0,sport+JSON.stringify(opts));
    }
+ }
+});
+test('soccer first-half NO rejects stale and inconsistent ESPN evidence at both stages',async()=>{
+ for(const bad of [
+  {checkedAt:Date.now()-23000},{source:'FOX Sports'},
+  {live:false},{period:2},{elapsedMinute:12},{home:3}
+ ]){
+  const first=harness('Soccer',1,{firstProofOverride:bad});
+  assert.equal(await first.scan(360),0);
+  assert.equal(first.windows.size,0);
+  const final=harness('Soccer',1,{finalProofOverride:bad});
+  assert.equal(await final.scan(360),0);
+  assert.equal(final.windows.size,1);
+  assert.equal(await final.scan(299),0);
+  assert.equal(final.orders,0);
  }
 });
 test('NBA quarterly NO may start its first proof late at 1:59 but cannot order immediately',async()=>{

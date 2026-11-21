@@ -7,9 +7,8 @@ import vm from 'node:vm';
 import {tagNoPreflight,validNoPreflight,lateNoPreflightProgress} from '../src/late_no_preflight.mjs';
 import {readFileSync} from 'node:fs';
 import {gameState,orderSize,estimatedCostCents} from '../src/strategy.mjs';
-import {soccerVerifiedProof} from './support/soccer_verified_proof.mjs';
-import {validSoccerNoPreflightProof} from '../src/soccer_no_external_proof.mjs';
 import {soccerNoMarketSpec,soccerTotalNo,soccerStoppageNoWindow} from '../src/soccer_total_no.mjs';
+import {validFreshEspnSoccerNo,SOCCER_ESPN_POLICY} from '../src/soccer_espn_no.mjs';
 import {bestNoAsk,noDepthAtAsk} from '../src/no_strategy.mjs';
 import {sameSportsContract,overContractKey} from '../src/over_verification.mjs';
 import {rememberIndependentEntry} from '../src/entry_verification.mjs';
@@ -30,7 +29,8 @@ const market={ticker:'KXEPLTOTAL-26NOV20AWAYHOME-6',
 const events=new Map([[market.event_ticker,{event_ticker:market.event_ticker,category:'Sports',markets:[market]}]]);
 
 function harness({canVerify=true,hasSeller=true,initialAgeMs=61000,existingExposure=false,
-  afterRefreshScore=3,missingClock=false,finalExternalFails=false,duplicate=false,globalPending=false,noAskPolicy=noAskTimeout}={}){
+  afterRefreshScore=3,missingClock=false,finalExternalFails=false,duplicate=false,globalPending=false,
+  firstProofOverride=null,finalProofOverride=null,noAskPolicy=noAskTimeout}={}){
   const src=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
   const a=src.indexOf('async function scanSoccerTotalNos('),b=src.indexOf('async function scan(cachedMilestones',a);
   assert.ok(a>0&&b>a,'soccer NO scanner must be confined to a dedicated function');
@@ -42,11 +42,14 @@ function harness({canVerify=true,hasSeller=true,initialAgeMs=61000,existingExpos
     Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),
     linkedEventTickers:()=>[market.event_ticker],
-    soccerNoMarketSpec,soccerTotalNo,soccerStoppageNoWindow,validSoccerNoPreflightProof,
+    soccerNoMarketSpec,soccerTotalNo,soccerStoppageNoWindow,validFreshEspnSoccerNo,
     verifyIndependentSoccerTotalNo:async game=>{
       verified++;trace.push('external');
       if(!canVerify||finalExternalFails&&verified>1)return null;
-      return soccerVerifiedProof(game,{eventId:'espn-soccer'});
+      const proof={source:'ESPN',verificationPolicy:SOCCER_ESPN_POLICY,checkedAt:Date.now(),
+        gameId:game.id,eventId:'espn-soccer',home:game.home,away:game.away,
+        period:2,elapsedMinute:game.soccerMinute,live:true};
+      return {...proof,...(verified===1?firstProofOverride:finalProofOverride)};
     },
     overContractKey,sameSportsContract,
     pool:{query:async(sql,args=[])=>{
@@ -175,7 +178,7 @@ test('a qualifying soccer NO cushion is not mislabeled when external score cover
   assert.equal(blocked.diagnostics.length,1);
   assert.equal(blocked.diagnostics[0].source,'soccer_total_no');
   assert.equal(blocked.diagnostics[0].stage,'independent_score');
-  assert.match(blocked.diagnostics[0].detail,/No matching fixture and score verified by ESPN/);
+  assert.match(blocked.diagnostics[0].detail,/No current live ESPN fixture, score and minute verified/);
   assert.doesNotMatch(blocked.diagnostics[0].detail,/cushion/i);
   assert.equal((blocked.dashboard.get(milestone.id)||[])[0].execution,blocked.diagnostics[0].detail);
   const verified=harness();
@@ -273,16 +276,30 @@ test('live 90+ stoppage NO still requires a first independent score check and 30
  assert.ok(trace.indexOf('external')<trace.indexOf('orderbook'));
 });
 
-test('pre-deployment ESPN-only first proof must be replaced before a new full-game soccer NO order',async()=>{
- const h=harness();
- assert.equal(await h.scan(660),0);
- const prior=h.windows.get(market.ticker);
- assert.ok(prior?.first_evidence?.sourcePolicy);
- delete prior.first_evidence.sourcePolicy;
- assert.equal(await h.scan(479),0,'old unversioned preflight is never eligible for final entry');
- assert.equal(h.orders,0);
- assert.equal(h.verifications,2,'second invocation starts a NEW two-provider first proof');
- assert.ok(h.windows.get(market.ticker).first_evidence.sourcePolicy);
+test('soccer NO never stores an untrusted ESPN preflight',async()=>{
+ for(const bad of [
+  {checkedAt:Date.now()-25000},{source:'FOX Sports'},
+  {verificationPolicy:'old'},{live:false},{period:1},
+  {elapsedMinute:50},{away:9}
+ ]){
+  const h=harness({firstProofOverride:bad});
+  assert.equal(await h.scan(660),0);
+  assert.equal(h.windows.size,0,'first ESPN evidence must be current and exact');
+  assert.equal(h.orders,0);
+ }
+});
+test('soccer NO blocks entry after invalid final ESPN evidence',async()=>{
+ for(const bad of [
+  {checkedAt:Date.now()-25000},{source:'Sportradar'},
+  {verificationPolicy:'old'},{live:false},{period:1},
+  {elapsedMinute:50},{away:9}
+ ]){
+  const h=harness({finalProofOverride:bad});
+  assert.equal(await h.scan(660),0);
+  assert.equal(h.windows.size,1,'first ESPN evidence was valid');
+  assert.equal(await h.scan(479),0);
+  assert.equal(h.orders,0,'final ESPN evidence did not authorize the order');
+ }
 });
 test('soccer NO signals are published to the dashboard without removing other strategies',()=>{
   const src=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');

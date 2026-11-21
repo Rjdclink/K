@@ -41,7 +41,7 @@ const cachedEvent=(boards,source,id,game,milestone)=>{
       if(!home||!away)return null;
       const periods=(home.linescores||[]).map((p,i)=>({number:i+1,home:Number(p.value),away:Number(away.linescores?.[i]?.value)}));
       return {eventId:id,time:e.date,home:Number(home.score),away:Number(away.score),
-        periods,period:Number(c.status?.period||e.status?.period),live:c.status?.type?.state==='in',sourceClock:String((c.status||e.status)?.displayClock||'')};
+        periods,period:Number(c.status?.period||e.status?.period),live:c.status?.type?.state==='in'};
     }):boards.flatMap(b=>b?.sectionList||[]).flatMap(section=>section?.events||[])
     .filter(e=>String(e.entityLink?.layout?.tokens?.id||'')===id)
     .map(e=>{
@@ -50,7 +50,7 @@ const cachedEvent=(boards,source,id,game,milestone)=>{
         away=teams.find(t=>token.awayUri&&t?.uri===token.awayUri);
       if(!home||!away||home===away)return null;
       return {eventId:id,time:e.eventTime,home:Number(home.score),away:Number(away.score),
-        periods:[],period:Number(String(e.statusLine||'').match(/\b([1-4])(?:ST|ND|RD|TH)\b/i)?.[1]),live:e.eventStatus===1,sourceClock:String(e.statusLine||'')};
+        periods:[],period:NaN,live:e.eventStatus===1};
     });
   const valid=items.filter(Boolean);
   if(!valid.length)return null;
@@ -61,7 +61,7 @@ const cachedEvent=(boards,source,id,game,milestone)=>{
   if(!scorePairMatches({...valid[0],source,eventId:id},game))return false;
   return {source,eventId:id,gameId:game.id,home:valid[0].home,away:valid[0].away,
     periods:valid[0].periods,period:valid[0].period,live:valid[0].live,
-    seconds:NaN,elapsedMinute:NaN,sourceClock:valid[0].sourceClock,
+    seconds:NaN,elapsedMinute:NaN,
     period3:valid[0].periods?.[2]?
       {home:valid[0].periods[2].home,away:valid[0].periods[2].away}:null};
 };
@@ -84,14 +84,14 @@ const select=(boards,game,milestone,source,knownId=null)=>{
   return {source,eventId:String(m.eventId),gameId:game.id,home:m.home,away:m.away,
     // The provider clock and period are informational, never independent
     // trade-entry requirements. Selected-period cushion uses Kalshi scores.
-    period:m.period,seconds:m.remainingSeconds,elapsedMinute:NaN,sourceClock:m.sourceClock,
+    period:m.period,seconds:m.remainingSeconds,elapsedMinute:NaN,
     live:m.live,periods:m.periods||[],
     period3:m.periods?.[2]?{home:m.periods[2].home,away:m.periods[2].away}:null};
 };
 
 // Returns verified reading, false for matched score contradiction/ambiguous
 // identity, or null for coverage/unavailability. Never authorizes a trade.
-export async function fetchIndependentMatchScore(game,milestone,{fetcher=fetch,espnFeed,foxFeed=null,fixtureCache=activeFixtureCache,sportradarLoad=loadSportradar,sourceOnly=null}={}){
+export async function fetchIndependentMatchScore(game,milestone,{fetcher=fetch,espnFeed,foxFeed=null,fixtureCache=activeFixtureCache,sportradarLoad=loadSportradar}={}){
   if(!game?.verifiedLive||!Number.isInteger(game.home)||!Number.isInteger(game.away)||
     !espnFeed||!Number.isFinite(Date.parse(milestone?.start_date||'')))return null;
   const dates=daysFor(Date.parse(milestone.start_date));
@@ -127,12 +127,7 @@ export async function fetchIndependentMatchScore(game,milestone,{fetcher=fetch,e
       `${prefix}/league/scores-segment/${day}?${foxQuery}${foxFeed==='cbk'?'&groupId=-4':''}`);
     return query(urls,'FOX Sports');
   };
-  // Source-isolated reads are for mandatory cross-provider verification.
-  // Never let an ESPN response silently stand in for missing FOX/Sportradar.
-  if(sourceOnly==='ESPN')return espn();
-  if(sourceOnly==='FOX Sports')return fox();
-  if(sourceOnly&&!['Sportradar'].includes(sourceOnly))return null;
-  const matched=sourceOnly==='Sportradar'?null:await espnRetryThenFox({espn,fox});
+  const matched=await espnRetryThenFox({espn,fox});
   // A provider contradiction remains a veto. Only unavailable ESPN/FOX
   // sources can advance to the authenticated, live Sportradar soccer feed.
   if(matched!==null||!/soccer/.test(String(game.type||'')))return matched;
@@ -155,8 +150,7 @@ export async function fetchIndependentMatchScore(game,milestone,{fetcher=fetch,e
      !Number.isInteger(reading.away)||reading.away<0)return null;
   return {source:'Sportradar',eventId,gameId:game.id,
     home:reading.home,away:reading.away,period:reading.period,
-    periods:Array.isArray(reading.periods)?reading.periods:[],live:true,
-    sourceClock:reading.clock,publishedAt:reading.publishedAt};
+    periods:Array.isArray(reading.periods)?reading.periods:[],live:true};
 
 }
 
