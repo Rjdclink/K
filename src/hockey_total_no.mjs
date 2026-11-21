@@ -1,7 +1,6 @@
 import {externalNoScore,externalNoPeriods} from './external_no_authority.mjs';
-import {fetchIndependentMatchScore} from './independent_match_score.mjs';
+import {verifyFreshEspnHockeyNo} from './hockey_espn_no.mjs';
 import {espnMatches} from './score_verification.mjs';
-import {espnScoreboardUrls} from './espn_scoreboards.mjs';
 
 // Kalshi lists game-wide NHL goals separately from goals scored in period 3.
 // Never substitute the cumulative score for a third-period total.
@@ -20,23 +19,23 @@ const sums=periods=>({
   home:periods.reduce((n,p)=>n+p.home,0),
   away:periods.reduce((n,p)=>n+p.away,0)
 });
-const validExternal=(external,game)=>{
-  if(!externalNoScore(game,external))return false;
-  return true;
-};
+const validExternal=(external,game)=>external?.source==='ESPN'&&
+  Boolean(externalNoScore(game,external));
 
 export function hockeyNoMarketSpec(game,market,{beforeWindow=false}={}){
   if(game?.sport!=='NHL'||!['hockey_match','hockey_game'].includes(game.type)||
     !game.verifiedLive||!game.scoreKnown||!game.scoreConsistent||!game.periodConsistent||
-    game.feedId!==game.id||!Number.isFinite(game.observedAt)||Date.now()-game.observedAt>10000||
-    game.period!==3||!Number.isFinite(game.remainingSeconds)||game.remainingSeconds<=0||
+    game.feedId!==game.id||game.clockRunning===false||!Number.isFinite(game.observedAt)||
+    game.observedAt>Date.now()||Date.now()-game.observedAt>10000||
+    ![3,4].includes(game.period)||!Number.isFinite(game.remainingSeconds)||game.remainingSeconds<=0||
     (beforeWindow?game.remainingSeconds>420:game.remainingSeconds>=360)||
     !Number.isInteger(game.home)||!Number.isInteger(game.away)||game.home<0||game.away<0||
     !['active','open'].includes(market?.status)||
     market.result&&!['','not_determined'].includes(String(market.result)))return null;
   const series=String(market.event_ticker||'').split('-')[0];
   const period=series==='KXNHLTOTAL'?'full_game':series==='KXNHL3PTOTAL'?'third_period':null;
-  if(!period||market.strike_type&&!['greater','greater_than'].includes(market.strike_type))return null;
+  if(!period||game.period===4&&period!=='full_game'||
+    market.strike_type&&!['greater','greater_than'].includes(market.strike_type))return null;
   const title=String(market.title||''),subtitle=String(market.yes_sub_title||'');
   if(period==='third_period'?!/^3rd Period:\s*Over\s+/i.test(title):
     !/^(?:Full Game:\s*)?Over\s+/i.test(title)||/^3rd Period:/i.test(title))return null;
@@ -56,7 +55,6 @@ export function hockeyTotalNo(game,market,{beforeWindow=false,external=null}={})
   if(external&&!validExternal(external,game))return null;
   const independent=external?externalNoScore(game,external):null;
   let total=independent?independent.home+independent.away:game.home+game.away;
-  if(total>=4)return null;
   if(spec.period==='third_period'){
     const providerParts=validPeriods(game.periodScores);
     const externalParts=external?externalNoPeriods(game,external,3):null;
@@ -73,11 +71,15 @@ export function hockeyTotalNo(game,market,{beforeWindow=false,external=null}={})
     if(external?.period3&&(
       external.period3.home!==parts[2].home||external.period3.away!==parts[2].away))return null;
   }
-  const minimumCushion=spec.period==='third_period'?1.5:2.5;
+  // Match soccer NO: 2.5 at 0-3 goals; 3.5 at 4+.
+  // The 1.5-goal exception applies ONLY to live full-game overtime (P4).
+  const minimumCushion=spec.period==='full_game'&&game.period===4?1.5:
+    total>=4?3.5:2.5;
   if(spec.line-total<minimumCushion)return null;
   return {...spec,total,reason:
     'NHL hockey total NO '+(spec.period==='third_period'?'third period':'full game')+
-    ' over '+spec.line+'; '+total+' goals in selected period, '+game.remainingSeconds+'s left in P3'};
+    ' over '+spec.line+'; '+total+' goals in selected period, '+game.remainingSeconds+
+    's left in P'+game.period};
 }
 
 // Return a fully attributed, matched ESPN reading; no fallback to Kalshi-only
@@ -95,15 +97,13 @@ export function independentHockeyTotalNoReading(scoreboard,game,milestone,market
     const sourceTotals=sums(periods);
     if(sourceTotals.home!==m.home||sourceTotals.away!==m.away)return null;
   }
-  return {source:'ESPN',eventId:m.eventId,home:m.home,away:m.away,period:3,
+  return {source:'ESPN',eventId:m.eventId,home:m.home,away:m.away,period:game.period,
     seconds:m.remainingSeconds,periods:periods||null,
     period3:periods?{home:periods[2].home,away:periods[2].away}:null};
 }
 
 export async function verifyIndependentHockeyTotalNo(game,milestone,market,{fetcher=fetch}={}){
   if(!hockeyNoMarketSpec(game,market,{beforeWindow:true}))return null;
-  const feed='hockey/nhl';
-  if(!feed)return null;
-  // ESPN first, retry only when unavailable, then FOX; no source clock check.
-  return fetchIndependentMatchScore(game,milestone,{fetcher,espnFeed:feed,foxFeed:'nhl'});
+  // ESPN alone, with exact current score, live period, clock, and response age.
+  return verifyFreshEspnHockeyNo(game,milestone,{fetcher});
 }

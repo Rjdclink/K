@@ -26,22 +26,24 @@ test('NHL NO preflight starts exactly at 7:00 remaining and entry is strictly be
     assert.equal(hockeyNoMarketSpec(state('7:01'),market(third),{beforeWindow:true}),null);
     assert.ok(hockeyNoMarketSpec(state('7:00'),market(third),{beforeWindow:true}));
     assert.equal(hockeyTotalNo(state('6:00'),market(third)),null);
-    assert.ok(hockeyTotalNo(state('5:59'),market(third,third?1.5:5.5)));
+    assert.ok(hockeyTotalNo(state('5:59'),market(third,third?2.5:5.5)));
     assert.equal(hockeyTotalNo(state('0:00'),market(third)),null);
   }
 });
-test('NHL full-game NO still needs 2.5 above cumulative score',()=>{
+test('NHL full-game NO requires 2.5 at three scored, 3.5 at four scored',()=>{
   assert.equal(hockeyTotalNo(state('4:29'),market(false,5.5))?.total,3);
   assert.equal(hockeyTotalNo(state('4:29'),market(false,4.5)),null);
   assert.equal(hockeyTotalNo(state('4:29'),market(false,4.0)),null);
   assert.equal(hockeyTotalNo(state('4:29'),market(false,3.5)),null);
-  assert.equal(hockeyTotalNo(state('4:29',3,1),market(false,6.5)),null,'four-goal games cannot enter NO');
+  assert.equal(hockeyTotalNo(state('4:29',3,1),market(false,7.5))?.total,4,'four scored need 3.5 cushion');
+  assert.equal(hockeyTotalNo(state('4:29',3,1),market(false,6.5)),null,'four scored with only 2.5 cushion fail');
   assert.equal(hockeyTotalNo(state('4:29',3,1),market(false,5.5)),null);
   assert.equal(hockeyTotalNo(state('4:29',3,1),market(false,4.5)),null);
 });
 test('NHL third-period market still counts only P3 goals, not game total',()=>{
-  assert.equal(hockeyTotalNo(state('4:29'),market(true,1.5))?.total,0);
-  assert.equal(hockeyTotalNo(state('4:29'),market(true,1.0)),null);
-  assert.equal(hockeyTotalNo(state('4:29',3,1),market(true,2.5)),null,'four-goal games cannot enter third-period NO');
-  assert.equal(hockeyTotalNo(state('4:29',3,1),market(true,1.5)),null);
+  assert.equal(hockeyTotalNo(state('4:29'),market(true,2.5))?.total,0);
+  assert.equal(hockeyTotalNo(state('4:29'),market(true,1.5)),null,'1.5 only in full-game OT');
+  assert.equal(hockeyTotalNo(state('4:29',3,1),market(true,3.5))?.total,1,
+    'P3 counts its one goal, despite four scored across the game');
+  assert.equal(hockeyTotalNo(state('4:29',3,1),market(true,2.5)),null);
 });

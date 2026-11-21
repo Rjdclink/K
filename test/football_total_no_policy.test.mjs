@@ -7,6 +7,7 @@ import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
 import {gameState} from '../src/strategy.mjs';
 import {tagNoPreflight,validNoPreflight,lateNoPreflightProgress} from '../src/late_no_preflight.mjs';
+import {eligibleNoFinal,launchImmediateNoFinalFixtures,immediateNoFinalProof} from '../src/no_final_priority.mjs';
 import {collegeFootballTotalNo,collegeBasketballTotalNo,bestNoAsk,noDepthAtAsk} from '../src/no_strategy.mjs';
 import {verifyIndependentCollegeTotalNo,independentCollegeTotalNoReading} from '../src/college_total_no.mjs';
 import {linkedEventTickers} from '../src/discovery.mjs';
@@ -105,7 +106,7 @@ test('football scanner enforces shared 5% NO pool including NFL, CFB and fees',a
   const events=new Map([[m.event_ticker,{category:'Sports',event_ticker:m.event_ticker,markets:[m]}]]);
   let saved=null,orders=0,checks=0,allocation=null,budget=null,patterns=[];
   const fakeHeld={ticker:'KXNCAAFTOTAL-OLD',position_fp:-2,market_exposure_dollars:'3.00',fees_paid_dollars:'1.00'};
-  const context=vm.createContext({noFinalCheckpoint,noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async()=>{},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,Date,JSON,Number,Math,Promise,console,live:()=>true,
+  const context=vm.createContext({eligibleNoFinal,launchImmediateNoFinalFixtures,immediateNoFinalProof,noFinalCheckpoint,noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async()=>{},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),linkedEventTickers:()=>[m.event_ticker],
     collegeFootballTotalNo,collegeBasketballTotalNo,overContractKey,sameSportsContract,
     verifyIndependentCollegeTotalNo:async game=>{checks++;return {source:'ESPN',eventId:'nfl-external',gameId:game.id,home:game.home,away:game.away,seconds:299};},

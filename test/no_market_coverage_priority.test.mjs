@@ -55,18 +55,23 @@ test('normal live games receive a market catalog sweep at least once in a minute
  assert.equal(chosen.length,40);
  assert.deepEqual(new Set(chosen.map(g=>g.milestone.id)),new Set(nonUrgent.map(g=>g.milestone.id)));
 });
-test('the scanner invokes all specialty NO and variable-player paths after the market catalog',()=>{
+test('the scanner executes all due sport NO finals before any routine first checks or player scans',()=>{
  const src=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
  const fragment=src.slice(src.indexOf('const events=await marketMap('),src.indexOf('await candidateTable();'));
- for(const pattern of [
-  /scanHockeyTotalNos\(marketGames,events,hockeyNoSignals\)/,
-  /scanEarlyPeriodNos\(marketGames,events,hockeyNoSignals,'NHL'\)/,
-  /scanSoccerTotalNos\(marketGames,events,soccerNoSignals\)/,
-  /scanEarlyPeriodNos\(marketGames,events,soccerNoSignals,'Soccer'\)/,
-  /scanEarlyPeriodNos\(marketGames,events,basketballNoSignals,'Basketball'\)/,
-  /scanCollegeTotalNos\(\[\.\.\.marketGames,\.\.\.noOnlyBasketballGames\]/,
-  /scanVariablePlayerOvers\(marketGames,events,variableOverSignals\)/
- ])assert.match(fragment,pattern);
+ const first=fragment.indexOf('submitted+=await runImmediateNoFinalPass([');
+ const initial=fragment.indexOf("scanCollegeTotalNos(marketGames,events,'football',null,'initial')");
+ const props=fragment.indexOf('scanVariablePlayerOvers(marketGames,events,variableOverSignals)');
+ assert.ok(first>=0&&initial>first&&props>initial,'due finals precede first checks and props');
+ for(const required of [
+  "'football',null,'final'", "'basketball',basketballNoSignals,'final'",
+  "hockeyNoSignals,'final'", "hockeyNoSignals,'NHL','final'",
+  "soccerNoSignals,'final'", "soccerNoSignals,'Soccer','final'",
+  "basketballNoSignals,'Basketball','final'",
+  "'football',null,'initial'", "'basketball',basketballNoSignals,'initial'",
+  "hockeyNoSignals,'initial'", "hockeyNoSignals,'NHL','initial'",
+  "soccerNoSignals,'initial'", "soccerNoSignals,'Soccer','initial'",
+  "basketballNoSignals,'Basketball','initial'"
+ ])assert.ok(fragment.includes(required),'missing due-final or initial path: '+required);
 });
 
 test('priority allocates limited catalog checks to games closest to preflight rather than discovery order',()=>{
