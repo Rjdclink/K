@@ -8,7 +8,7 @@ export function authoritativeGameState(game,reading,now=Date.now()){
  if(!game||!game.verifiedLive||!sources.has(reading?.source)||
    !String(reading?.eventId||'').trim()||reading.gameId!==game.id||
    reading.live!==true||!whole(reading.home)||!whole(reading.away)||
-   Number.isInteger(game.period)&&reading.period!==game.period)return null;
+   Number.isInteger(game.period)&&Number.isInteger(reading.period)&&reading.period!==game.period)return null;
  if(!Number.isFinite(now))return null;
  let periods=null;
  if(Array.isArray(reading.periods)&&reading.periods.length){
@@ -30,7 +30,7 @@ export function authoritativeGameState(game,reading,now=Date.now()){
   home:reading.home,away:reading.away,period:reading.period,periods,
   checkedAt:now,live:true};
  const result={...game,home:score.home,away:score.away,
-  homeUnits:score.home,awayUnits:score.away,scoreKnown:true,
+  homeUnits:score.home,awayUnits:score.away,scoreKnown:true,scoreConsistent:true,
   externalScore:score,kalshiScore:{home:game.home,away:game.away}};
  if(periods)result.periodScores=periods;
  return result;
