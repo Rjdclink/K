@@ -86,7 +86,7 @@ test('independent ESPN check verifies teams and scores, never independent period
  assert.equal(proof?.period,1);
  assert.equal(soccerFirstHalfNo(g,m,{external:proof})?.total,1);
  assert.equal(independentSoccerFirstHalfNoReading(board("40'"),g,milestone,m)?.away,1);
- assert.equal(independentSoccerFirstHalfNoReading(board("42'",1,1),g,milestone,m),null);
+ assert.equal(independentSoccerFirstHalfNoReading(board("42'",1,1),g,milestone,m)?.home,1,'external score controls eligibility');
  assert.equal(independentSoccerFirstHalfNoReading(board("42'",0,1,2),g,milestone,m)?.away,1);
  const duplicate=structuredClone(scoreboard);duplicate.events.push({...duplicate.events[0],id:'other'});
  assert.equal(independentSoccerFirstHalfNoReading(duplicate,g,milestone,m),null);
