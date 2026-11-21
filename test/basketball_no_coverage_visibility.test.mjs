@@ -92,8 +92,8 @@ test('multiple qualifying NO lines receive independent tracked windows and dashb
   const events=new Map([[contracts[0].event_ticker,{category:'Sports',event_ticker:contracts[0].event_ticker,markets:contracts}]]);
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
   const code=source.slice(source.indexOf('async function scanCollegeTotalNos('),source.indexOf('async function scan(cachedMilestones'));
-  const windows=new Map(),sink=new Map();let verificationCalls=0,orders=0,marketReads=0;
-  const context=vm.createContext({eligibleNoFinal,launchImmediateNoFinalFixtures,immediateNoFinalProof,noFinalCheckpoint,noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async()=>{},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,Date,JSON,Number,Math,Promise,console,live:()=>true,
+  const windows=new Map(),sink=new Map(),liquidityRetries=[];let verificationCalls=0,orders=0,marketReads=0;
+  const context=vm.createContext({eligibleNoFinal,launchImmediateNoFinalFixtures,immediateNoFinalProof,noFinalCheckpoint,noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,scheduleNoLiquidityRecheck:market=>{liquidityRetries.push(market.ticker)},recordDecision:async()=>{},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),linkedEventTickers:()=>[contracts[0].event_ticker],
     collegeFootballTotalNo,collegeBasketballTotalNo,overContractKey,sameSportsContract,
     verifyIndependentCollegeTotalNo:async game=>{verificationCalls++;return {source:'ESPN',eventId:'espn-matched-game',gameId:game.id,home:game.home,away:game.away,seconds:269};},
@@ -130,8 +130,11 @@ test('multiple qualifying NO lines receive independent tracked windows and dashb
   assert.equal(verificationCalls,1,'same verified scoreboard can be shared across initial per-line windows');
   assert.deepEqual(new Set((sink.get(base.state.id)||[]).map(s=>s.ticker)),new Set(contracts.map(m=>m.ticker)));
   assert.equal(await run(later),0,'no executable NO seller');
+  assert.equal(verificationCalls,1,'no executable NO orderbook means no second ESPN request');
   assert.equal(marketReads,2,'each eligible contract must receive its own final quote/contract check');
   assert.equal(orders,0);
+  assert.deepEqual(liquidityRetries,contracts.map(c=>c.ticker),
+    'each empty NO book must schedule a separate 10s/20s liquidity retry without another external request');
   assert.ok((sink.get(base.state.id)||[]).every(s=>s.strategy==='no'&&/No executable ask/i.test(s.execution)),
     'dashboard must display the precise rejection reason for both contracts');
 });
@@ -197,7 +200,7 @@ test('all basketball NO leagues share one 5% fee-inclusive pool without affectin
   const window={market_ticker:m.ticker,game_id:f.state.id,contract_key:overContractKey(f.state,m),
     period:4,first_clock:480,first_evidence:tagNoPreflight({source:'ESPN',eventId:'espn-matched-game',gameId:f.state.id,home:70,away:70}),first_at:new Date(Date.now()-61000)};
   let allocated=null,budget=null,orders=0,patterns=null;
-  const ctx=vm.createContext({eligibleNoFinal,launchImmediateNoFinalFixtures,immediateNoFinalProof,noFinalCheckpoint,noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async()=>{},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,Date,JSON,Number,Math,Promise,console,live:()=>true,
+  const ctx=vm.createContext({eligibleNoFinal,launchImmediateNoFinalFixtures,immediateNoFinalProof,noFinalCheckpoint,noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,scheduleNoLiquidityRecheck:()=>{},recordDecision:async()=>{},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),linkedEventTickers:()=>[m.event_ticker],
     collegeFootballTotalNo,collegeBasketballTotalNo,overContractKey,sameSportsContract,
     verifyIndependentCollegeTotalNo:async game=>({source:'ESPN',eventId:'espn-matched-game',gameId:game.id,home:game.home,away:game.away,seconds:29}),

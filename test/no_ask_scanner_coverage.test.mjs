@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import {NO_ASK_GRACE_MS,NO_ASK_RETIRED} from '../src/no_ask_timeout.mjs';
 const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
 const region=(first,last)=>source.slice(source.indexOf(first),source.indexOf(last,source.indexOf(first)));
-test('all four NO total scanners complete eligible final score verification before no-ask retirement and orderbook checks',()=>{
+test('all four NO total scanners check executable liquidity and profitability before final score verification',()=>{
  for(const [begin,end] of [
   ['async function scanCollegeTotalNos(','async function scanHockeyTotalNos('],
   ['async function scanHockeyTotalNos(','async function scanEarlyPeriodNos('],
@@ -12,8 +12,10 @@ test('all four NO total scanners complete eligible final score verification befo
   ['async function scanSoccerTotalNos(','async function scanVariablePlayerOvers(']]){
   const code=region(begin,end);
   assert.ok(code.indexOf('const finalCheck=')>=0,begin+' must actually attempt final verification');
-  assert.ok(code.indexOf('const finalCheck=')<code.indexOf("noAskTimeout.isRetired(c,'no')"),begin+' final first');
-  assert.ok(code.indexOf("noAskTimeout.isRetired(c,'no')")<code.indexOf('const {orderbook_fp}=await kalshi('),begin+' skip empty book');
+  assert.ok(code.indexOf("noAskTimeout.isRetired(c,'no')")<code.indexOf('const finalCheck='),begin+' executable liquidity first');
+  assert.ok(code.indexOf("noAskTimeout.isRetired(c,'no')")<code.indexOf('const {orderbook_fp}=await kalshi('),begin+' skip retired book');
+  assert.ok(code.indexOf('const {orderbook_fp}=await kalshi(')<code.indexOf('const finalCheck='),begin+' check depth before ESPN');
+  assert.ok(code.indexOf('profitableCount(quantity,ask.price,fees')<code.indexOf('const finalCheck='),begin+' check net profit before ESPN');
   assert.match(code,/noAskTimeout\.claimRecovery\(c,'no'\)/,begin+' recovered ask may recheck');
   assert.match(code,/noAskTimeout\.observeMissing\(c,'no'\)/,begin);
   assert.match(code,/noAskTimeout\.available\(\[c\],'no'\)/,begin);

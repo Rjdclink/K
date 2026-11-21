@@ -68,7 +68,7 @@ function fixture(sport,period=1){
    state,details};
 }
 function harness(sport,period=1,{firstUnavail=false,finalUnavail=false,wrongFinalSource=false,
- noSeller=false,existingExposure=false,finalScoreChanged=false,firstAgeMs=61000,globalPending=false,
+ noSeller=false,unprofitable=false,existingExposure=false,finalScoreChanged=false,firstAgeMs=61000,globalPending=false,
  firstProofOverride=null,finalProofOverride=null}={}){
  const src=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
  const start=src.indexOf('async function scanEarlyPeriodNos('),end=src.indexOf('async function scanSoccerTotalNos(',start);
@@ -102,7 +102,7 @@ function harness(sport,period=1,{firstUnavail=false,finalUnavail=false,wrongFina
  };
  const table=sport==='NHL'?'nhl_early_period_no_windows':sport==='Soccer'?
    'soccer_first_half_no_windows':'basketball_early_quarter_no_windows';
- const context=vm.createContext({eligibleNoFinal,launchImmediateNoFinalFixtures,immediateNoFinalProof,dueNoFinalWindows,noFinalCheckpoint,noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async()=>{},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
+ const context=vm.createContext({eligibleNoFinal,launchImmediateNoFinalFixtures,immediateNoFinalProof,dueNoFinalWindows,noFinalCheckpoint,noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,scheduleNoLiquidityRecheck:()=>{},recordDecision:async()=>{},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
    Date,JSON,Math,Number,Promise,console,
    live:()=>true,liveBatch:async()=>new Map(),linkedEventTickers:()=>[f.market.event_ticker],
    hockeyEarlyNoMarketSpec,hockeyEarlyPeriodNo,validFreshEspnHockeyNo,pairedFreshEspnHockeyNo,
@@ -150,7 +150,7 @@ function harness(sport,period=1,{firstUnavail=false,finalUnavail=false,wrongFina
    shardCash:()=>10000,marketShard:()=>0,singleSpendableCash:x=>x,feeReserve:()=>2,
    orderSize:(cash,price,depth,pct,min,bankroll,budgetCents,fees)=>{
      fraction=pct;budget=budgetCents;return 1;
-   },estimatedCostCents,profitableCount:()=>1,
+   },estimatedCostCents,profitableCount:()=>unprofitable?0:1,
    auditTable:async()=>{},randomUUID:()=> 'verified-early',rememberIndependentEntry,
    reserve:async signal=>{trace.push('reserve');assert.equal(signal.fraction,.05);return 'early-order';},
    withEntryProfitFloor:async(opts,submit)=>{assert.equal(opts.fraction,.05);return submit();},
@@ -187,8 +187,8 @@ test('NHL P1/P2, soccer 1H and NBA quarter NO each require initial and final ver
    assert.equal(h.verified,2,sport+' '+period+' both independent checks');
    assert.equal(h.orders,1,sport+' '+period+' exactly one order');
    assert.equal(h.fraction,.05);
-   assert.ok(h.trace.lastIndexOf('external')<h.trace.indexOf('orderbook'),
-     'final independent score check must occur BEFORE liquidity evaluation');
+   assert.ok(h.trace.lastIndexOf('orderbook')<h.trace.lastIndexOf('external'),
+     'final independent score check must occur AFTER executable liquidity evaluation');
    assert.ok(h.trace.lastIndexOf('external')<h.trace.indexOf('reserve'));
  }
 });
@@ -286,5 +286,32 @@ test('early NHL, first-half soccer and NBA due finals preempt first-check work',
   assert.equal(h.orders,1);
   assert.equal(await h.scan(entry,'initial'),0);
   assert.equal(h.verified,2);
+ }
+});
+
+test('NHL, soccer and NBA early NO preserve their first external proof but do not request final ESPN on an empty NO book',async()=>{
+ for(const [sport,period,first,entry] of [
+   ['NHL',1,360,299],['Soccer',1,360,299],['Basketball',2,120,89]
+ ]){
+  const h=harness(sport,period,{noSeller:true});
+  assert.equal(await h.scan(first),0);
+  assert.equal(h.verified,1,'first proof establishes the mandatory 30-second interval for '+sport);
+  assert.equal(await h.scan(entry),0);
+  assert.equal(h.verified,1,'final ESPN verification must wait until the NO orderbook has executable depth for '+sport);
+  assert.equal(h.orders,0);
+ }
+});
+
+
+test('every early-period NO family rejects negative net profit without a final ESPN request',async()=>{
+ for(const [sport,period,first,entry] of [
+  ['NHL',1,360,299],['Soccer',1,360,299],['Basketball',2,120,89]
+ ]){
+  const h=harness(sport,period,{unprofitable:true});
+  assert.equal(await h.scan(first),0);
+  assert.equal(h.verified,1);
+  assert.equal(await h.scan(entry),0);
+  assert.equal(h.verified,1,'profit floor must suppress final source verification for '+sport);
+  assert.equal(h.orders,0);
  }
 });

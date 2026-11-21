@@ -56,7 +56,7 @@ import { filledOrderGateCount } from './entry_floor.mjs';
 import {thirdQuarterYardageNo,collegeFootballTotalNo,collegeBasketballTotalNo,highestYardageNos,bestNoAsk,noDepthAtAsk} from './no_strategy.mjs';
 import {verifyIndependentCollegeTotalNo} from './college_total_no.mjs';
 import {tagNoPreflight,validNoPreflight,lateNoPreflightProgress} from './late_no_preflight.mjs';
-import {eligibleNoFinal,dueNoFinalWindows,runImmediateNoFinalPass,launchImmediateNoFinalFixtures,immediateNoFinalProof} from './no_final_priority.mjs';
+import {eligibleNoFinal,dueNoFinalWindows,runImmediateNoFinalPass} from './no_final_priority.mjs';
 import {leadFirstProofValid,leadFirstProofReady,leadFinalProofValid} from './lead_verification_timer.mjs';
 import {pairedExternalMatch,configureIndependentFixtureCache} from './independent_match_score.mjs';
 import {validFreshEspnSoccerNo,pairedFreshEspnSoccerNo} from './soccer_espn_no.mjs';
@@ -490,13 +490,23 @@ async function pairedOverRead(first,milestone,market,decorate=state=>state){
   return {state:second,pairedAt,externalId:first.verificationId,overValue:first.independentEntry?.overValue};
 }
 async function confirmedIndependentOver(first,milestone,market,{decorate=state=>state}={}){
+  if(await noAskTimeout.isRetired({market,game:first},'yes')&&
+    !await noAskTimeout.claimRecovery({market,game:first},'yes'))return null;
+  // An actual executable YES offer is required before any external
+  // scoreboard request, including the ESPN-first independent score lookup.
+  // Do not accept an advertised ask without resting orderbook depth.
+  const current=(await kalshi('/markets/'+encodeURIComponent(market.ticker))).market;
+  if(!current||overContractKey(first,current)!==overContractKey(first,market))return null;
+  const quoted=await recoverSummaryAsk(current,{fresh:true});
+  const seller=quoted&&hasAsk(quoted)?await executableQuote(quoted):null;
+  if(!seller){await noAskTimeout.observeMissing({market,game:first},'yes');return null;}
+  await noAskTimeout.available([{market,game:first}],'yes');
+  if(await noAskTimeout.isRetired({market,game:first},'yes'))return null;
   if(externalSportFeeds(first)){
-    const independent=await externallyScoredOverState(first,milestone,market);
+    const independent=await externallyScoredOverState(first,milestone,seller);
     if(!independent)return null;
     first=decorate(independent);
   }
-  if(await noAskTimeout.isRetired({market,game:first},'yes')&&
-    !await noAskTimeout.claimRecovery({market,game:first},'yes'))return null;
   await ensureOverWindows();
   if(overCushion(first,market)===null){
     await pool.query('DELETE FROM over_verification_windows WHERE market_ticker=$1 AND game_id=$2',[market.ticker,first.id]);
@@ -514,14 +524,6 @@ async function confirmedIndependentOver(first,milestone,market,{decorate=state=>
       prior.first_external_at=null;prior.first_external_id=null;
     }
   }
-  // An actual seller on the unchanged contract is required to start the clock.
-  const current=(await kalshi('/markets/'+encodeURIComponent(market.ticker))).market;
-  if(!current||overContractKey(first,current)!==overContractKey(first,market))return null;
-  const quoted=await recoverSummaryAsk(current,{fresh:true});
-  const seller=quoted&&hasAsk(quoted)?await executableQuote(quoted):null;
-  if(!seller){await noAskTimeout.observeMissing({market,game:first},'yes');return null;}
-  await noAskTimeout.available([{market,game:first}],'yes');
-  if(await noAskTimeout.isRetired({market,game:first},'yes'))return null;
   if(!freshOverState(first,seller)){
     const raw=await liveMilestone(milestone.id);
     if(!raw)return null;
@@ -3124,6 +3126,16 @@ async function scanThirdQuarterNos(games,events){
   await pool.query("DELETE FROM no_verification_windows WHERE first_at<now()-interval '2 days'");
   return filled;
 }
+// A missing executable NO seller is a reason to recheck the book, not to
+// spend an independent final ESPN verification. Retry at +10 and +20 seconds
+// through the existing durable, deduplicated exact-contract entry worker.
+function scheduleNoLiquidityRecheck(market,game){
+  if(!market?.ticker||!game?.id)return;
+  void entryRechecks.register(market.ticker,game.id,'no')
+    .catch(error=>console.warn('NO liquidity recheck scheduling deferred:',
+      market.ticker,error.message));
+}
+
 async function scanCollegeTotalNos(games,events,sport,signalSink=null,phase='all'){
   const basketball=sport==='basketball',qualifies=basketball?collegeBasketballTotalNo:collegeFootballTotalNo;
   const prewindow=360,entry=300;
@@ -3227,20 +3239,8 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null,phase='all
   }
   console.info(`${label} total NO scan:`,JSON.stringify({watching:watching.map(({state})=>({game:state.title,
     period:state.period,seconds:state.remainingSeconds})),eligible:choices.length}));
-  const fixtureChecks=phase==='final'?launchImmediateNoFinalFixtures(
-    choices.filter(c=>{
-      const g=c.state,expanded=basketball&&c.signal.period==='full_game'&&
-        ['NBA','WNBA','NCAAB','NCAAW'].includes(g.sport);
-      return eligibleNoFinal(dueWindows.get(c.market.ticker),g,{
-        contractKey:overContractKey(g,c.market),
-        firstSeconds:basketball?(expanded?480:c.signal.period==='full_game'?120:150):prewindow,
-        entrySeconds:basketball?(expanded?420:90):entry,
-        remainingSeconds:g.remainingSeconds});
-    }),{
-      key:c=>c.state.id+':'+c.state.period,
-      verify:async c=>({game:c.state,
-        proof:await verifyIndependentCollegeTotalNo(c.state,c.milestone,c.market)})
-    }):null;
+  // Final independent proof requests start only after executable depth,
+  // available cash, reserved fees and net-profit checks pass.
   let filled=0;
   for(const c of choices){
     try{
@@ -3312,33 +3312,16 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null,phase='all
       if(!sameSportsContract(current,c.market)||!qualifies(fresh,current,{externalPending:true})){
         report(c,'Entry blocked: market or score no longer qualifies');continue;
       }
-      // A college basketball or football candidate reaching the final-check clock MUST receive
-      // a second independent score check even with no ask, cash or profit.
-      await auditTable(); // Final verification records exist before any orderbook or risk checks.
-      const finalCheck=await noFinalCheckpoint({market:current,game:fresh,
-        first:window,verify:()=>{
-          const scoreKey=JSON.stringify([fresh.id,fresh.home,fresh.away,fresh.period,fresh.periodScores,
-            c.spec?.period,c.spec?.quarter,c.signal?.period]);
-          if(!finalProofs.has(scoreKey))finalProofs.set(scoreKey,immediateNoFinalProof(
-            fixtureChecks,fresh.id+':'+fresh.period,fresh,
-            ()=>verifyIndependentCollegeTotalNo(fresh,c.milestone,current)));
-          return finalProofs.get(scoreKey);
-        },
-        approve:pairedExternalMatch,validate:proof=>Boolean(qualifies(fresh,current,{external:proof}))});
-      {
-        c.finalCheck={...finalCheck,attemptedAt:Date.now()};
-        if(!finalCheck.ok){report(c,'Final independent verification attempted: '+finalCheck.reason);continue;}
-        report(c,'Final independent score verified; checking liquidity and order requirements');
-      }
       if(unresolved.rowCount){report(c,'Unresolved basketball/football NO order; new entry deferred');continue;}
       if(await noAskTimeout.isRetired(c,'no')&&
         !await noAskTimeout.claimRecovery(c,'no')){
-        report(c,NO_ASK_RETIRED+'; final score verification already completed');continue;
+        report(c,NO_ASK_RETIRED);continue;
       }
       const {orderbook_fp}=await kalshi('/markets/'+encodeURIComponent(current.ticker)+'/orderbook');
       const ask=bestNoAsk(orderbook_fp);
       if(!ask||ask.size<minimumCount(current)||noDepthAtAsk(orderbook_fp,ask.price,ask.size)<minimumCount(current)){
         const gap=await noAskTimeout.observeMissing(c,'no');
+        scheduleNoLiquidityRecheck(current,fresh);
         report(c,gap?.retired?NO_ASK_RETIRED:waitingOnAsk(gap));continue;
       }
       report(c,'NO seller available; checking cash, fees and profitability',ask);
@@ -3373,7 +3356,23 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null,phase='all
       if(quantity<minimumCount(current)||!profitableCount(quantity,ask.price,fees,'no',bankroll,fresh.type,fresh.remainingSeconds,{game:fresh,market:current})){
         report(c,'Entry blocked: 5% bankroll pool, fees or required net profit',ask);continue;
       }
+      // All executable-liquidity, bankroll, fee and profit gates passed.
+      // Obtain the required independent final score proof immediately before entry.
       await auditTable();
+      const finalCheck=await noFinalCheckpoint({market:current,game:fresh,
+        first:window,verify:()=>{
+          const scoreKey=JSON.stringify([fresh.id,fresh.home,fresh.away,fresh.period,fresh.periodScores,
+            c.spec?.period,c.spec?.quarter,c.signal?.period]);
+          if(!finalProofs.has(scoreKey))finalProofs.set(scoreKey,
+            verifyIndependentCollegeTotalNo(fresh,c.milestone,current));
+          return finalProofs.get(scoreKey);
+        },
+        approve:pairedExternalMatch,validate:proof=>Boolean(qualifies(fresh,current,{external:proof}))});
+      {
+        c.finalCheck={...finalCheck,attemptedAt:Date.now()};
+        if(!finalCheck.ok){report(c,'Final independent verification attempted: '+finalCheck.reason);continue;}
+        report(c,'Final independent score verified; checking last dispatch freshness');
+      }
       // Keep independent scoreboard verification immediately before order
       // reservation and dispatch, after quote, position, cash and fee checks.
       const proof=finalCheck?.newCheck&&Date.now()-finalCheck.at<8000?
@@ -3507,16 +3506,8 @@ async function scanHockeyTotalNos(games,events,signalSink=null,phase='all'){
     }]);
   }
   candidates.sort((a,b)=>a.spec.line-b.spec.line);
-  const fixtureChecks=phase==='final'?launchImmediateNoFinalFixtures(
-    candidates.filter(c=>eligibleNoFinal(dueWindows.get(c.market.ticker),c.state,{
-      contractKey:overContractKey(c.state,c.market),firstSeconds:start,entrySeconds:entry,
-      remainingSeconds:c.state.remainingSeconds,
-      validFirst:proof=>validFreshEspnHockeyNo(proof,c.state,Date.now(),{allowHistorical:true})
-    })),{
-      key:c=>c.state.id+':'+c.state.period,
-      verify:async c=>({game:c.state,
-        proof:await verifyIndependentHockeyTotalNo(c.state,c.milestone,c.market)})
-    }):null;
+  // Final independent proof requests start only after executable depth,
+  // available cash, reserved fees and net-profit checks pass.
   console.info('NHL hockey total NO scan:',JSON.stringify({
     watching:watching.map(({state})=>({game:state.title,seconds:state.remainingSeconds})),
     candidates:candidates.length
@@ -3577,27 +3568,16 @@ async function scanHockeyTotalNos(games,events,signalSink=null,phase='all'){
       if(!sameSportsContract(current,c.market)||!hockeyNoMarketSpec(fresh,current)){
         report(c,'Entry blocked: contract identity, NHL period or clock no longer matches');continue;
       }
-      // Verify immediately on eligibility, before ask, cash and bankroll.
-      await auditTable(); // Final verification records exist before any orderbook or risk checks.
-      const finalCheck=await noFinalCheckpoint({market:current,game:fresh,
-        first:window,forceFresh:true,
-        verify:()=>immediateNoFinalProof(fixtureChecks,fresh.id+':'+fresh.period,fresh,
-          ()=>verifyIndependentHockeyTotalNo(fresh,c.milestone,current)),
-        approve:pairedFreshEspnHockeyNo,
-        validate:proof=>Boolean(validFreshEspnHockeyNo(proof,fresh)&&
-          hockeyTotalNo(fresh,current,{external:proof}))});
-      c.finalCheck={...finalCheck,attemptedAt:Date.now()};
-      if(!finalCheck.ok){report(c,'Final independent verification attempted: '+finalCheck.reason);continue;}
-      report(c,'Final independent score verified; checking liquidity and order requirements');
       if(pending.rowCount){report(c,'Unresolved NHL NO order; new entry deferred');continue;}
       if(await noAskTimeout.isRetired(c,'no')&&
         !await noAskTimeout.claimRecovery(c,'no')){
-        report(c,NO_ASK_RETIRED+'; final score verification already completed');continue;
+        report(c,NO_ASK_RETIRED);continue;
       }
       const {orderbook_fp}=await kalshi('/markets/'+encodeURIComponent(current.ticker)+'/orderbook');
       const ask=bestNoAsk(orderbook_fp);
       if(!ask||ask.size<minimumCount(current)||noDepthAtAsk(orderbook_fp,ask.price,ask.size)<minimumCount(current)){
         const gap=await noAskTimeout.observeMissing(c,'no');
+        scheduleNoLiquidityRecheck(current,fresh);
         report(c,gap?.retired?NO_ASK_RETIRED:waitingOnAsk(gap));continue;
       }
       await noAskTimeout.available([c],'no');
@@ -3649,7 +3629,18 @@ async function scanHockeyTotalNos(games,events,signalSink=null,phase='all'){
         'no',bankroll,fresh.type,fresh.remainingSeconds,{game:fresh,market:current})){
         report(c,'Entry blocked: 5% shared NHL total-NO cap, fees or net profit',null,ask);continue;
       }
+      // Executable orderbook depth and all risk/profit checks passed.
+      // Only now run independent final NHL ESPN verification.
       await auditTable();
+      const finalCheck=await noFinalCheckpoint({market:current,game:fresh,
+        first:window,forceFresh:true,
+        verify:()=>verifyIndependentHockeyTotalNo(fresh,c.milestone,current),
+        approve:pairedFreshEspnHockeyNo,
+        validate:proof=>Boolean(validFreshEspnHockeyNo(proof,fresh)&&
+          hockeyTotalNo(fresh,current,{external:proof}))});
+      c.finalCheck={...finalCheck,attemptedAt:Date.now()};
+      if(!finalCheck.ok){report(c,'Final independent verification attempted: '+finalCheck.reason);continue;}
+      report(c,'Final independent score verified; checking last dispatch freshness');
       // Only a fresh exact ESPN game score plus third-period goals can authorize entry.
       const proof=finalCheck.newCheck&&Date.now()-finalCheck.at<8000?
         finalCheck.proof:await verifyIndependentHockeyTotalNo(fresh,c.milestone,current);
@@ -3833,18 +3824,8 @@ async function scanEarlyPeriodNos(games,events,signalSink=null,sport='NHL',phase
     }]);
   }
   candidates.sort((a,b)=>a.spec.line-b.spec.line);
-  const fixtureChecks=phase==='final'?launchImmediateNoFinalFixtures(
-    candidates.filter(c=>eligibleNoFinal(dueWindows.get(c.market.ticker),c.state,{
-      contractKey:overContractKey(c.state,c.market),firstSeconds:start,entrySeconds:entry,
-      remainingSeconds:policy.seconds(c.state),
-      validFirst:proof=>!(sport==='Soccer'||hockey)||(hockey?
-        validFreshEspnHockeyNo(proof,c.state,Date.now(),{allowHistorical:true}):
-        validFreshEspnSoccerNo(proof,c.state,Date.now(),{allowHistorical:true}))
-    })),{
-      key:c=>c.state.id+':'+c.state.period,
-      verify:async c=>({game:c.state,
-        proof:await policy.verify(c.state,c.milestone,c.market)})
-    }):null;
+  // Final independent proof requests start only after executable depth,
+  // available cash, reserved fees and net-profit checks pass.
   const firstProofs=new Map(),finalProofs=new Map();
   let filled=0;
   for(const c of candidates){
@@ -3920,42 +3901,17 @@ async function scanEarlyPeriodNos(games,events,signalSink=null,sport='NHL',phase
         report(c,'Entry blocked: live contract identity, period or regulation clock changed');
         continue;
       }
-      // A second independent score check is mandatory once the game is in
-      // the entry window and 30 real seconds have elapsed, regardless of ask.
-      await auditTable(); // Final verification records exist before any orderbook or risk checks.
-      const finalCheck=await noFinalCheckpoint({market:current,game:fresh,
-        first:window,forceFresh:sport==='Soccer'||hockey,verify:()=>{
-          // Soccer and NHL both require a new ESPN HTTP request for each proof.
-          if(sport==='Soccer'||hockey)return immediateNoFinalProof(
-            fixtureChecks,fresh.id+':'+fresh.period,fresh,
-            ()=>policy.verify(fresh,c.milestone,current));
-          const scoreKey=JSON.stringify([fresh.id,fresh.home,fresh.away,fresh.period,fresh.periodScores,
-            c.spec?.period,c.spec?.quarter,c.signal?.period]);
-          if(!finalProofs.has(scoreKey))finalProofs.set(scoreKey,immediateNoFinalProof(
-            fixtureChecks,fresh.id+':'+fresh.period,fresh,
-            ()=>policy.verify(fresh,c.milestone,current)));
-          return finalProofs.get(scoreKey);
-        },
-        approve:(first,second,game)=>sport==='Soccer'?
-          pairedFreshEspnSoccerNo(first,second,game):hockey?
-          pairedFreshEspnHockeyNo(first,second,game):
-          pairedExternalMatch(first,second,game),
-        validate:proof=>Boolean((!(sport==='Soccer'||hockey)||
-          (hockey?validFreshEspnHockeyNo(proof,fresh):validFreshEspnSoccerNo(proof,fresh)))&&
-          policy.signal(fresh,current,{external:proof}))});
-      c.finalCheck={...finalCheck,attemptedAt:Date.now()};
-      if(!finalCheck.ok){report(c,'Final independent verification attempted: '+finalCheck.reason);continue;}
-      report(c,'Final independent score verified; checking liquidity and order requirements');
       if(pending.rowCount){report(c,'Unresolved shared NO order; new entry deferred');continue;}
       if(await noAskTimeout.isRetired(c,'no')&&
         !await noAskTimeout.claimRecovery(c,'no')){
-        report(c,NO_ASK_RETIRED+'; final score verification already completed');continue;
+        report(c,NO_ASK_RETIRED);continue;
       }
       const {orderbook_fp}=await kalshi('/markets/'+encodeURIComponent(current.ticker)+'/orderbook');
       const ask=bestNoAsk(orderbook_fp);
       if(!ask||ask.size<minimumCount(current)||
         noDepthAtAsk(orderbook_fp,ask.price,ask.size)<minimumCount(current)){
         const gap=await noAskTimeout.observeMissing(c,'no');
+        scheduleNoLiquidityRecheck(current,fresh);
         report(c,gap?.retired?NO_ASK_RETIRED:waitingOnAsk(gap));continue;
       }
       await noAskTimeout.available([c],'no');
@@ -4011,7 +3967,29 @@ async function scanEarlyPeriodNos(games,events,signalSink=null,sport='NHL',phase
         report(c,'Entry blocked: shared 5% bankroll/fees ceiling or net-profit check',null,ask);
         continue;
       }
+      // Complete final ESPN verification only with an executable seller,
+      // sufficient bankroll, fees covered and positive net profitability.
       await auditTable();
+      const finalCheck=await noFinalCheckpoint({market:current,game:fresh,
+        first:window,forceFresh:sport==='Soccer'||hockey,verify:()=>{
+          // Soccer and NHL both require a new ESPN HTTP request for each proof.
+          if(sport==='Soccer'||hockey)return policy.verify(fresh,c.milestone,current);
+          const scoreKey=JSON.stringify([fresh.id,fresh.home,fresh.away,fresh.period,fresh.periodScores,
+            c.spec?.period,c.spec?.quarter,c.signal?.period]);
+          if(!finalProofs.has(scoreKey))finalProofs.set(scoreKey,
+            policy.verify(fresh,c.milestone,current));
+          return finalProofs.get(scoreKey);
+        },
+        approve:(first,second,game)=>sport==='Soccer'?
+          pairedFreshEspnSoccerNo(first,second,game):hockey?
+          pairedFreshEspnHockeyNo(first,second,game):
+          pairedExternalMatch(first,second,game),
+        validate:proof=>Boolean((!(sport==='Soccer'||hockey)||
+          (hockey?validFreshEspnHockeyNo(proof,fresh):validFreshEspnSoccerNo(proof,fresh)))&&
+          policy.signal(fresh,current,{external:proof}))});
+      c.finalCheck={...finalCheck,attemptedAt:Date.now()};
+      if(!finalCheck.ok){report(c,'Final independent verification attempted: '+finalCheck.reason);continue;}
+      report(c,'Final independent score verified; checking last dispatch freshness');
       // The independent check is after the final live NO quote and sizing.
       const proof=finalCheck.newCheck&&Date.now()-finalCheck.at<8000?
         finalCheck.proof:await policy.verify(fresh,c.milestone,current);
@@ -4183,17 +4161,8 @@ async function scanSoccerTotalNos(games,events,signalSink=null,phase='all'){
     }]);
   }
   candidates.sort((a,b)=>a.spec.line-b.spec.line);
-  const fixtureChecks=phase==='final'?launchImmediateNoFinalFixtures(
-    candidates.filter(c=>eligibleNoFinal(dueWindows.get(c.market.ticker),c.state,{
-      contractKey:overContractKey(c.state,c.market),firstSeconds:start,entrySeconds:entry,
-      remainingSeconds:c.state.matchRemainingSeconds,
-      allowZeroClock:soccerStoppageNoWindow(c.state),
-      validFirst:proof=>validFreshEspnSoccerNo(proof,c.state,Date.now(),{allowHistorical:true})
-    })),{
-      key:c=>c.state.id+':'+c.state.period,
-      verify:async c=>({game:c.state,
-        proof:await verifyIndependentSoccerTotalNo(c.state,c.milestone,c.market)})
-    }):null;
+  // Final independent proof requests start only after executable depth,
+  // available cash, reserved fees and net-profit checks pass.
   let filled=0;
   for(const c of candidates){
     try{
@@ -4257,29 +4226,17 @@ async function scanSoccerTotalNos(games,events,signalSink=null,phase='all'){
       if(!sameSportsContract(current,c.market)||!soccerNoMarketSpec(fresh,current)){
         report(c,'Entry blocked: soccer total contract or final match clock changed');continue;
       }
-      // Independent final score verification is a clock-triggered action;
-      // quote depth, cash and order profitability cannot suppress it.
-      await auditTable(); // Final verification records exist before any orderbook or risk checks.
-      const finalCheck=await noFinalCheckpoint({market:current,game:fresh,
-        first:window,forceFresh:true,
-        verify:()=>immediateNoFinalProof(fixtureChecks,fresh.id+':'+fresh.period,fresh,
-          ()=>verifyIndependentSoccerTotalNo(fresh,c.milestone,current)),
-        approve:pairedFreshEspnSoccerNo,
-        validate:proof=>Boolean(validFreshEspnSoccerNo(proof,fresh)&&
-          soccerTotalNo(fresh,current,{external:proof}))});
-      c.finalCheck={...finalCheck,attemptedAt:Date.now()};
-      if(!finalCheck.ok){report(c,'Final independent verification attempted: '+finalCheck.reason);continue;}
-      report(c,'Final independent score verified; checking liquidity and order requirements');
       if(pending.rowCount){report(c,'Unresolved soccer NO order; new entry deferred');continue;}
       if(await noAskTimeout.isRetired(c,'no')&&
         !await noAskTimeout.claimRecovery(c,'no')){
-        report(c,NO_ASK_RETIRED+'; final score verification already completed');continue;
+        report(c,NO_ASK_RETIRED);continue;
       }
       const {orderbook_fp}=await kalshi('/markets/'+encodeURIComponent(current.ticker)+'/orderbook');
       const ask=bestNoAsk(orderbook_fp);
       if(!ask||ask.size<minimumCount(current)||
         noDepthAtAsk(orderbook_fp,ask.price,ask.size)<minimumCount(current)){
         const gap=await noAskTimeout.observeMissing(c,'no');
+        scheduleNoLiquidityRecheck(current,fresh);
         report(c,gap?.retired?NO_ASK_RETIRED:waitingOnAsk(gap));continue;
       }
       await noAskTimeout.available([c],'no');
@@ -4332,7 +4289,18 @@ async function scanSoccerTotalNos(games,events,signalSink=null,phase='all'){
         'no',bankroll,fresh.type,fresh.matchRemainingSeconds,{game:fresh,market:current})){
         report(c,'Entry blocked: shared 5% soccer total-NO cap, fees or net profit',null,ask);continue;
       }
+      // With executable liquidity and positive net profit confirmed,
+      // perform the separate required final live ESPN verification.
       await auditTable();
+      const finalCheck=await noFinalCheckpoint({market:current,game:fresh,
+        first:window,forceFresh:true,
+        verify:()=>verifyIndependentSoccerTotalNo(fresh,c.milestone,current),
+        approve:pairedFreshEspnSoccerNo,
+        validate:proof=>Boolean(validFreshEspnSoccerNo(proof,fresh)&&
+          soccerTotalNo(fresh,current,{external:proof}))});
+      c.finalCheck={...finalCheck,attemptedAt:Date.now()};
+      if(!finalCheck.ok){report(c,'Final independent verification attempted: '+finalCheck.reason);continue;}
+      report(c,'Final independent score verified; checking last dispatch freshness');
       const proof=finalCheck.newCheck&&Date.now()-finalCheck.at<8000?
         finalCheck.proof:await verifyIndependentSoccerTotalNo(fresh,c.milestone,current);
       const externalCheckedAt=Date.now();
