@@ -1,3 +1,4 @@
+import {externalNoScore,externalNoPeriods} from './external_no_authority.mjs';
 import {fetchIndependentMatchScore} from './independent_match_score.mjs';
 import {espnMatches} from './score_verification.mjs';
 import {espnScoreboardUrls} from './espn_scoreboards.mjs';
@@ -70,13 +71,12 @@ export function basketballEarlyQuarterNo(game,market,{beforeWindow=false,externa
   const spec=basketballEarlyQuarterNoSpec(game,market,{beforeWindow});
   if(!spec)return null;
   if(external&&(!['ESPN','FOX Sports'].includes(external.source)||
-    !external.eventId||external.home!==game.home||external.away!==game.away))return null;
+    !externalNoScore(game,external)))return null;
   const provider=currentParts(game.periodScores,game.period);
-  const independent=external?.parts?.length?currentParts(external.parts,game.period):null;
-  if(external?.parts?.length&&!independent)return null;
-  if(independent&&!agrees(game,independent))return null;
-  const parts=independent||provider;
-  if(!parts||!agrees(game,parts))return null;
+  const independent=external?externalNoPeriods(game,external,game.period):null;
+  if(external&&!independent)return null;
+  const parts=external?independent:provider;
+  if(!parts||!external&&!agrees(game,parts))return null;
   if(external?.currentQuarter&&(
     external.currentQuarter.home!==parts[spec.quarter-1].home||
     external.currentQuarter.away!==parts[spec.quarter-1].away))return null;
