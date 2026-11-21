@@ -30,7 +30,7 @@ export function lateCommandingLead(game,market){
 
   return false;
 }
-export function independentlyVerifiedLeadFraction(game,market){
+function unboundedIndependentLeadFraction(game,market){
   if(/hockey|soccer/.test(game?.type||''))return .05;
   if(!lateCommandingLead(game,market))return .20;
   const margin=Math.abs(game.homeUnits-game.awayUnits),type=game.type||'';
@@ -38,14 +38,14 @@ export function independentlyVerifiedLeadFraction(game,market){
   return margin>=top?.30:.25;
 }
 
-export function directLeadFraction(game,signal,market){
+function unboundedDirectLeadFraction(game,signal,market){
   if(signal?.strategy==='lead'&&/hockey|soccer/.test(game?.type||''))return .05;
   if(threeGoalWinner(game,signal,market))return .20;
   return signal?.strategy==='lead'&&lateCommandingLead(game,market)?.20:
     Math.min(.15,signal?.fraction??.15);
 }
 export function leadEntryFraction(first,second,signal,market,independent,direct){
-  if(basketballCloseoutEntry(second)||second.basketballVerification)return independent===true?.15:null;
+  if(basketballCloseoutEntry(second)||second.basketballVerification)return independent===true?.05:null;
   return independent===true?finalLeadFraction(first,second,signal,true,market):
     direct?directLeadFraction(second,signal,market):finalLeadFraction(first,second,signal,false,market);
 }
@@ -63,7 +63,7 @@ export function leaderHasControl(game){
 }
 
 // Entry rules stay in sport-specific signal functions; this cannot create one.
-export function finalLeadFraction(first,second,signal,externallyVerified,market){
+function unboundedFinalLeadFraction(first,second,signal,externallyVerified,market){
   if(signal?.strategy!=='lead')return signal?.fraction;
   if(basketballCloseoutEntry(second)||second.basketballVerification)return .15;
   if(/^Restricted 5% draw\b/.test(signal.reason||''))return .05;
@@ -80,4 +80,17 @@ export function finalLeadFraction(first,second,signal,externallyVerified,market)
   }
   if(threeGoalWinner(second,signal,market))return .20;
   return externallyVerified||market&&strongKalshiOnlyLead(first,second,market)?.20:KALSHI_ONLY_FRACTION;
+}
+// A lead verification selects eligibility, never permission to spend more than
+// five percent of bankroll. Preserve OVER-specific fractions separately.
+export function independentlyVerifiedLeadFraction(game,market){
+ return Math.min(.05,unboundedIndependentLeadFraction(game,market));
+}
+export function directLeadFraction(game,signal,market){
+ const raw=unboundedDirectLeadFraction(game,signal,market);
+ return signal?.strategy==='lead'&&Number.isFinite(raw)?Math.min(.05,raw):raw;
+}
+export function finalLeadFraction(first,second,signal,externallyVerified,market){
+ const raw=unboundedFinalLeadFraction(first,second,signal,externallyVerified,market);
+ return signal?.strategy==='lead'&&Number.isFinite(raw)?Math.min(.05,raw):raw;
 }
