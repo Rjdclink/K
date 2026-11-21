@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {gameState} from '../src/strategy.mjs';
 import {espnMatches,scoreAgreement} from '../src/score_verification.mjs';
 import {soccerTotalNo,independentSoccerTotalNoReading} from '../src/soccer_total_no.mjs';
+import {soccerVerifiedProof} from './support/soccer_verified_proof.mjs';
 import {hockeyTotalNo,independentHockeyTotalNoReading} from '../src/hockey_total_no.mjs';
 import {basketballEarlyQuarterNo,independentBasketballEarlyQuarterNoReading} from '../src/basketball_early_quarter_no.mjs';
 import {independentCollegeTotalNoReading} from '../src/college_total_no.mjs';
@@ -15,7 +16,7 @@ const scoreboard=(p,clock,home,away,periods=null)=>({events:[{id:'espn-game-'+p,
   ]}]}]});
 const game=(m,details)=>gameState(m,{milestone_id:m.id,_observed_at:new Date().toISOString(),details:{status:'live',home_team_name:'Alpha',away_team_name:'Beta',last_updated_ts:Date.now()/1000,...details}});
 
-test('soccer NO external matching depends on the two teams and scores, never the external clock',()=>{
+test('soccer NO rejects an out-of-date ESPN clock and requires two independently current provider scores',()=>{
  const m=milestone('soccer-score','soccer_match','Soccer','KXEPLGAME-26NOV20ALPBET');
  const g=game(m,{home_score:2,away_score:1,period:2,half:'2nd',time:"84:00'"});
  const market={ticker:'KXEPLTOTAL-26NOV20ALPBET-6',event_ticker:'KXEPLTOTAL-26NOV20ALPBET',status:'active',strike_type:'greater',
@@ -24,8 +25,12 @@ test('soccer NO external matching depends on the two teams and scores, never the
  assert.equal(soccerTotalNo(g,market,{beforeWindow:true})?.total,3);
  const oldClock=scoreboard(2,"72'",2,1);
  const reading=independentSoccerTotalNoReading(oldClock,g,m,market);
- assert.equal(reading?.home,2,'only score and correct teams required');
- assert.equal(soccerTotalNo(g,market,{beforeWindow:true,external:reading})?.total,3);
+ assert.equal(reading,null,'ESPN source 12 minutes behind Kalshi cannot qualify');
+ const current=independentSoccerTotalNoReading(scoreboard(2,"84'",2,1),g,m,market);
+ assert.equal(current?.home,2);
+ assert.equal(soccerTotalNo(g,market,{beforeWindow:true,external:current}),null,'ESPN alone cannot qualify');
+ const confirmed=soccerVerifiedProof(g);
+ assert.equal(soccerTotalNo(g,market,{beforeWindow:true,external:confirmed})?.total,3);
  assert.equal(independentSoccerTotalNoReading(scoreboard(2,"84'",2,2),g,m,market)?.away,2,'external goals are authoritative');
  const wrong=structuredClone(oldClock);wrong.events[0].competitions[0].competitors[0].team.displayName='Other';
  assert.equal(independentSoccerTotalNoReading(wrong,g,m,market),null,'wrong team blocked');

@@ -9,6 +9,8 @@ import {readFileSync} from 'node:fs';
 import {gameState,orderSize,estimatedCostCents,profitableCount} from '../src/strategy.mjs';
 import {hockeyEarlyNoMarketSpec,hockeyEarlyPeriodNo} from '../src/hockey_early_period_no.mjs';
 import {soccerFirstHalfNoSpec,soccerFirstHalfNo,soccerFirstHalfSeconds} from '../src/soccer_first_half_no.mjs';
+import {soccerVerifiedProof} from './support/soccer_verified_proof.mjs';
+import {validSoccerNoPreflightProof} from '../src/soccer_no_external_proof.mjs';
 import {basketballEarlyQuarterNoSpec,basketballEarlyQuarterNo} from '../src/basketball_early_quarter_no.mjs';
 import {bestNoAsk,noDepthAtAsk} from '../src/no_strategy.mjs';
 import {sameSportsContract,overContractKey} from '../src/over_verification.mjs';
@@ -78,8 +80,7 @@ function harness(sport,period=1,{firstUnavail=false,finalUnavail=false,wrongFina
     period:game.period,seconds:game.remainingSeconds,home:game.home,away:game.away,
     periods:game.periodScores,currentPeriod:{home:game.periodScores[period-1].home,
       away:game.periodScores[period-1].away}};
-   if(sport==='Soccer')return {source:'ESPN',eventId:'matched-espn',live:true,
-    period:1,home:game.home,away:game.away,elapsedMinute:game.soccerMinute};
+   if(sport==='Soccer')return soccerVerifiedProof(game,{eventId:'matched-espn'});
    return {source:'ESPN',eventId:'matched-espn',live:true,quarter:period,
     seconds:game.remainingSeconds,home:game.home,away:game.away,
     parts:game.periodScores,currentQuarter:{home:game.periodScores[period-1].home,
@@ -96,7 +97,7 @@ function harness(sport,period=1,{firstUnavail=false,finalUnavail=false,wrongFina
    Date,JSON,Math,Number,Promise,console,
    live:()=>true,liveBatch:async()=>new Map(),linkedEventTickers:()=>[f.market.event_ticker],
    hockeyEarlyNoMarketSpec,hockeyEarlyPeriodNo,
-   soccerFirstHalfNoSpec,soccerFirstHalfNo,soccerFirstHalfSeconds,
+   soccerFirstHalfNoSpec,soccerFirstHalfNo,soccerFirstHalfSeconds,validSoccerNoPreflightProof,
    basketballEarlyQuarterNoSpec,basketballEarlyQuarterNo,
    verifyIndependentEarlyHockeyNo:verify,verifyIndependentSoccerFirstHalfNo:verify,
    verifyIndependentBasketballEarlyQuarterNo:verify,
@@ -151,6 +152,16 @@ function harness(sport,period=1,{firstUnavail=false,finalUnavail=false,wrongFina
  };
 }
 
+test('pre-deployment single-source soccer first-half proof cannot authorize a subsequent order',async()=>{
+ const h=harness('Soccer',1);
+ assert.equal(await h.scan(360),0);
+ const first=[...h.windows.values()][0];
+ assert.ok(first?.first_evidence?.sourcePolicy);
+ delete first.first_evidence.sourcePolicy;
+ assert.equal(await h.scan(299),0);
+ assert.equal(h.orders,0);
+ assert.equal(h.verified,2,'fresh first proof is required after a migration');
+});
 test('NHL P1/P2, soccer 1H and NBA quarter NO each require initial and final verification',async()=>{
  for(const [sport,period,first,boundary] of [
    ['NHL',1,360,300],['NHL',2,360,300],

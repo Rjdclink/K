@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {gameState} from '../src/strategy.mjs';
 import {nearEntryPhase,linkedEventTickers} from '../src/discovery.mjs';
+import {soccerVerifiedProof} from './support/soccer_verified_proof.mjs';
 import {soccerFirstHalfNoSpec,soccerFirstHalfNo,verifyIndependentSoccerFirstHalfNo,
  independentSoccerFirstHalfNoReading,soccerFirstHalfSeconds} from '../src/soccer_first_half_no.mjs';
 
@@ -79,25 +80,33 @@ test('only the exact Kalshi first-half total identity, strike and settlement cou
  for(const variant of variations)assert.equal(soccerFirstHalfNoSpec(g,{...m,...variant}),null,JSON.stringify(variant));
 });
 
-test('independent ESPN check verifies teams and scores, never independent period or elapsed minute',async()=>{
+test('first-half ESPN readings must be live, current and correct-period; single source cannot authorize entry',async()=>{
  const g=state("42'",0,1),m=market(),scoreboard=board("42'");
  const proof=independentSoccerFirstHalfNoReading(scoreboard,g,milestone,m);
  assert.equal(proof?.source,'ESPN');
  assert.equal(proof?.period,1);
- assert.equal(soccerFirstHalfNo(g,m,{external:proof})?.total,1);
+ assert.equal(soccerFirstHalfNo(g,m,{external:proof}),null,
+  'ESPN-only reading is not sufficient to enter');
+ assert.equal(soccerFirstHalfNo(g,m,{external:soccerVerifiedProof(g)})?.total,1);
  assert.equal(independentSoccerFirstHalfNoReading(board("40'"),g,milestone,m)?.away,1);
  assert.equal(independentSoccerFirstHalfNoReading(board("42'",1,1),g,milestone,m)?.home,1,'external score controls eligibility');
- assert.equal(independentSoccerFirstHalfNoReading(board("42'",0,1,2),g,milestone,m)?.away,1);
+ assert.equal(independentSoccerFirstHalfNoReading(board("42'",0,1,2),g,milestone,m),null);
  const duplicate=structuredClone(scoreboard);duplicate.events.push({...duplicate.events[0],id:'other'});
  assert.equal(independentSoccerFirstHalfNoReading(duplicate,g,milestone,m),null);
  const final=structuredClone(scoreboard);final.events[0].competitions[0].status.type.state='post';
- assert.equal(independentSoccerFirstHalfNoReading(final,g,milestone,m)?.away,1);
+ assert.equal(independentSoccerFirstHalfNoReading(final,g,milestone,m),null);
  let requests=[];
  const matched=await verifyIndependentSoccerFirstHalfNo(g,milestone,m,{fetcher:async url=>{
    requests.push(url);return {ok:true,json:async()=>scoreboard};
- }});
+ },sportradarLoad:async()=>[{
+   eventId:'sr:sport_event:123',time:milestone.start_date,
+   homeAliases:['Hull City'],awayAliases:['Brighton'],
+   home:0,away:1,live:true,period:1,clock:"42'",publishedAt:new Date().toISOString()
+ }]});
  assert.equal(matched?.eventId,'espn-1h-hulbri');
- assert.ok(requests.length>0&&requests.every(u=>u.includes('/soccer/all/scoreboard')));
+ assert.deepEqual(matched?.verifiedProviders,['ESPN','Sportradar']);
+ assert.ok(requests.some(u=>u.includes('/soccer/all/scoreboard')));
+ assert.ok(requests.some(u=>u.includes('foxsports.com')));
 });
 
 test('first-half soccer market discovery and fast priority include the preflight window',()=>{
@@ -110,11 +119,11 @@ test('first-half soccer market discovery and fast priority include the preflight
  assert.equal(nearEntryPhase(state("46'")),false);
 });
 test('soccer first-half NO at four or more goals requires a 3.5-goal cushion',()=>{
-  const large=market(6.5),proof={source:'ESPN',eventId:'matched-first-half',home:2,away:2};
+  const large=market(6.5),proof=soccerVerifiedProof(state("42'",1,2),{home:2,away:2});
   assert.equal(soccerFirstHalfNo(state("42'",1,2),large)?.total,3);
   assert.equal(soccerFirstHalfNo(state("42'",2,2),large),null,'exact four first-half goals need Over 7.5');
   assert.equal(soccerFirstHalfNo(state("42'",3,2),large),null,'five goals need Over 8.5');
   assert.equal(soccerFirstHalfNo(state("40'",2,2),large,{beforeWindow:true}),null,'early check requires same cushion');
   assert.equal(soccerFirstHalfNo(state("42'",1,2),large,{external:proof}),null,'independent four goals require Over 7.5');
-  assert.equal(soccerFirstHalfNo(state("42'",2,2),market(5.5),{external:{...proof,away:1}})?.total,3,'external three-goal reading stays authoritative');
+  assert.equal(soccerFirstHalfNo(state("42'",2,2),market(5.5),{external:{...proof,away:1}}),null,'source behind Kalshi or inconsistent provider proof fails closed');
 });

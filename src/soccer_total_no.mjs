@@ -1,5 +1,5 @@
 import {externalNoScore} from './external_no_authority.mjs';
-import {fetchIndependentMatchScore} from './independent_match_score.mjs';
+import {verifyCorroboratedSoccerNo,validCorroboratedSoccerNoProof,validSoccerNoSource} from './soccer_no_external_proof.mjs';
 import {soccerRegulationSeconds} from './strategy.mjs';
 import {espnMatches} from './score_verification.mjs';
 import {espnScoreboardUrls} from './espn_scoreboards.mjs';
@@ -22,7 +22,7 @@ const clockMinute=clock=>{
 // Its countdown, period and publication status do not determine entry.
 const currentExternal=(reading,game)=>Boolean(
   ['ESPN','FOX Sports','Sportradar'].includes(reading?.source)&&reading.eventId&&
-  Boolean(externalNoScore(game,reading)));
+  Boolean(externalNoScore(game,reading))&&validCorroboratedSoccerNoProof(game,reading));
 
 // Kalshi full-game totals include regulation stoppage, but not the separate
 // extra-time phases. Require an explicitly advancing 90+ live match clock.
@@ -88,15 +88,17 @@ export function independentSoccerTotalNoReading(scoreboard,game,milestone,market
   const match=matches[0],event=scoreboard.events.find(e=>e.id===match.eventId);
   const status=event?.competitions?.[0]?.status||event?.status;
   const elapsedMinute=clockMinute(status?.displayClock);
-  const reading={source:'ESPN',eventId:match.eventId,home:match.home,away:match.away,
-    period:match.period,elapsedMinute,live:match.live};
-  return currentExternal(reading,game)?reading:null;
+  const reading={source:'ESPN',eventId:match.eventId,gameId:game.id,
+    home:match.home,away:match.away,period:match.period,elapsedMinute,
+    live:match.live,sourceClock:String(status?.displayClock||'')};
+  // Pure standalone parsing is informational; it is never a two-source entry
+  // authorization and must itself reject a stale or postgame scoreboard.
+  return validSoccerNoSource(game,reading)?reading:null;
 }
 
-export async function verifyIndependentSoccerTotalNo(game,milestone,market,{fetcher=fetch}={}){
+export async function verifyIndependentSoccerTotalNo(game,milestone,market,options={}){
   if(!soccerNoMarketSpec(game,market,{beforeWindow:true}))return null;
-  const feed='soccer/all';
-  if(!feed)return null;
-  // ESPN first, retry only when unavailable, then FOX; no source clock check.
-  return fetchIndependentMatchScore(game,milestone,{fetcher,espnFeed:feed,foxFeed:'soccer'});
+  // Each mandatory checkpoint now requires two distinct live, clock-current
+  // external score sources. No correlated evidence means NO ENTRY.
+  return verifyCorroboratedSoccerNo(game,milestone,options);
 }
