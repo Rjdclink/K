@@ -9,6 +9,12 @@ const market={ticker:'KXNBAREB-TEST-6',event_ticker:'KXNBAREB-TEST',title:'Pat: 
  custom_strike:{basketball_player:'p'},rules_primary:'If Pat has 7 or more rebounds, market resolves Yes.'};
 const proof=(n,at)=>({source:'ESPN',eventId:'espn-123',gameId:game.id,playerId:'p',metric:'REB',playerValue:n,
  contractKey:uncushionedPlayerSpec(game,market).key,requestedAt:at});
+test('player market appearance starts its clock even when Kalshi has not populated that athlete stat',()=>{
+ const missing={...game,playerStats:{}};
+ assert.ok(uncushionedPlayerSpec(missing,market));
+ const verified=noncushionedPlayerState(missing,market,proof(7,now));
+ assert.equal(verified?.playerStats.p.rebounds,7);
+});
 test('uncushioned player OVER can cross externally without Kalshi showing the crossing',()=>{
  assert.equal(FIRST_NONCUSHIONED_CHECK_MS,210000);
  assert.ok(uncushionedPlayerSpec(game,market));
