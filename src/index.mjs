@@ -50,6 +50,7 @@ import { manualComboQuote } from './combo_manual.mjs';
 import { yesDepthAtAsk, bestYesAsk, bestAsksForTickers, createMissingAskProbe } from './orderbook.mjs';
 import {createNoAskTimeout,NO_ASK_GRACE_MS,NO_ASK_RETIRED} from './no_ask_timeout.mjs';
 import {createNoFinalCheckpoint} from './no_final_checkpoint.mjs';
+import {createEntryRechecks,groupEntryRechecks} from './entry_rechecks.mjs';
 import {runEligibleFinalLeadChecks,finalLeadKey} from './final_lead_eligibility.mjs';
 import { filledOrderGateCount } from './entry_floor.mjs';
 import {thirdQuarterYardageNo,collegeFootballTotalNo,collegeBasketballTotalNo,highestYardageNos,bestNoAsk,noDepthAtAsk} from './no_strategy.mjs';
@@ -95,7 +96,17 @@ const ensureManualSales=()=>manualSalesReady??=(async()=>{
 const executionAudit=createExecutionAudit((...args)=>pool.query(...args));
 const probeMissingAsks=createMissingAskProbe((...args)=>pool.query(...args));
 const noAskTimeout=createNoAskTimeout((...args)=>pool.query(...args));
-const noFinalCheckpoint=createNoFinalCheckpoint((...args)=>pool.query(...args));
+const entryRechecks=createEntryRechecks((...args)=>pool.query(...args));
+const coreNoFinalCheckpoint=createNoFinalCheckpoint((...args)=>pool.query(...args));
+const noFinalCheckpoint=async options=>{
+  const result=await coreNoFinalCheckpoint(options);
+  if((result.attempted===true||result.newCheck===true)&&options.market?.ticker&&options.game?.id){
+    // Never delay a valid trade merely to write retry telemetry.
+    await entryRechecks.register(options.market.ticker,options.game.id,'no')
+      .catch(error=>console.warn('NO entry recheck registration deferred:',error.message));
+  }
+  return result;
+};
 const noAskKey=c=>String(c.market?.ticker||c.ticker)+'\0'+String(c.state?.id||c.game?.id||c.game_id||c.milestone?.id);
 const waitingOnAsk=gap=>gap?.retired?NO_ASK_RETIRED:
   'No executable ask; waiting '+Math.max(1,Math.ceil((NO_ASK_GRACE_MS-(gap?.elapsedMs||0))/1000))+'s before skip';
@@ -2518,7 +2529,7 @@ async function watchLeadWindows(until){
 // Recheck ready over tickets directly. They already have an exact
 // event link in the latest scan, so a full catalog pass is unnecessary before
 // independently confirmed score, live orderbook, cash and the final buy gate.
-async function watchReadyOverTickets(until){
+async function watchReadyOverTickets(until,{onlyTickers=null,once=false}={}){
   if(!live())return;
   await ensureLeadWatch();
   while(Date.now()<until){
@@ -2532,12 +2543,16 @@ async function watchReadyOverTickets(until){
           (active.game_id IS NOT NULL OR w.updated_at>now()-interval '4 minutes')
           AND g.signals @> '[{"strategy":"over"}]'::jsonb
           AND g.sport_family ~* '^(basketball|hockey|soccer|football)_'
-        ORDER BY (active.game_id IS NOT NULL) DESC,g.scanned_at DESC LIMIT 60`);
+          AND ($1::text[] IS NULL OR EXISTS (SELECT 1 FROM jsonb_array_elements(g.signals) s
+            WHERE s->>'ticker'=ANY($1::text[]) AND s->>'strategy'='over'))
+        ORDER BY (active.game_id IS NOT NULL) DESC,g.scanned_at DESC LIMIT 60`,
+        [onlyTickers?.size?[...onlyTickers]:null]);
       const tickers=[...new Set(rows.flatMap(row=>(row.signals||[]).filter(s=>s.strategy==='over'&&s.ticker).map(s=>s.ticker)))];
       const {rows:windows}=tickers.length?await pool.query(`SELECT market_ticker,last_seen FROM over_verification_windows
         WHERE market_ticker=ANY($1::text[])`,[tickers]):{rows:[]};
       const allTickets=readyOverTickets(rows.filter(row=>supportedScannerSport(row.milestone)),Infinity,new Set(windows.map(w=>w.market_ticker)));
-      const tickets=prioritizeReadyOverTickets(allTickets,windows);
+      const tickets=onlyTickers?.size?allTickets.filter(t=>onlyTickers.has(t.signal.ticker)):
+        prioritizeReadyOverTickets(allTickets,windows);
       for(const {milestone,signal:ticket} of tickets){
         if(Date.now()>=until)break;
         let stage='fresh_score',outcome='skipped',detail=null;
@@ -2565,8 +2580,10 @@ async function watchReadyOverTickets(until){
           // Kalshi's own score cannot veto an independently crossed OVER.
           // The subsequent proof reads the source first and checks the cushion.
           stage='score_verification';
+          const beforeExternal=state;
           state=await confirmedIndependentOver(state,milestone,listed);
-          if(!state)continue;
+          if(!state){detail=beforeExternal.verificationIssue||
+            'Independent live score, contract, or executable seller could not be confirmed';continue;}
           stage='live_contract_and_orderbook';
           if(!sameSportsContract(current,listed)||!['active','open'].includes(current.status)||current.event_ticker!==eventTicker)continue;
           market=await recoverSummaryAsk(current,{fresh:true});
@@ -2600,11 +2617,127 @@ async function watchReadyOverTickets(until){
           signal:verified||{strategy:'over'},game:state||{id:milestone.id},stage,outcome,detail,startedAt:checkedAt})}
       }
     }catch(e){console.warn('Fast over tickets deferred:',e.message)}
+    if(once)break;
     const pause=Math.max(0,3000-(Date.now()-started));
     if(Date.now()+pause>=until)break;
     if(pause)await new Promise(resolve=>setTimeout(resolve,pause));
   }
 }
+
+// Retry ONLY the requested game and contract lines, allowing the existing
+// final-verification scanner to share one fresh ESPN read for the fixture.
+async function retryGroupedNoTickets(tickets){
+  const first=tickets?.[0];
+  if(!first)return 'no candidate';
+  const {rows:[watch]}=await pool.query(
+    'SELECT milestone FROM lead_watch_milestones WHERE game_id=$1',[first.game_id]);
+  if(!watch?.milestone||!supportedScannerSport(watch.milestone))return 'game unavailable';
+  const milestone=watch.milestone,raw=await liveMilestone(milestone.id);
+  if(!raw)return 'fresh Kalshi score unavailable';
+  raw._observed_at=new Date().toISOString();
+  const state=gameState(milestone,raw);
+  if(!state.verifiedLive||!state.scoreKnown)return 'game not verified live';
+  const fetched=await Promise.allSettled(tickets.map(t=>
+    kalshi('/markets/'+encodeURIComponent(t.market_ticker))));
+  const markets=fetched.filter(r=>r.status==='fulfilled').map(r=>r.value?.market)
+    .filter(m=>m&&['active','open'].includes(m.status)&&
+      linkedEventTickers(milestone).includes(m.event_ticker));
+  if(!markets.length)return 'contracts no longer open or linked';
+  const originals=await marketMap([...new Set(markets.map(m=>m.event_ticker))]);
+  const events=new Map();
+  for(const [ticker,event] of originals){
+    if(event?.category!=='Sports')continue;
+    const selected=markets.filter(m=>m.event_ticker===ticker);
+    if(selected.length)events.set(ticker,{...event,markets:selected});
+  }
+  if(!events.size)return 'Sports events unavailable';
+  const games=[{milestone,state}],sink=new Map();
+  let count=0;
+  if(state.sport==='NHL')count=[1,2].includes(state.period)?
+    await scanEarlyPeriodNos(games,events,sink,'NHL','final'):
+    await scanHockeyTotalNos(games,events,sink,'final');
+  else if(state.sport==='Soccer')count=state.period===1?
+    await scanEarlyPeriodNos(games,events,sink,'Soccer','final'):
+    await scanSoccerTotalNos(games,events,sink,'final');
+  else if(['NBA','WNBA'].includes(state.sport)&&[1,2,3].includes(state.period))
+    count=await scanEarlyPeriodNos(games,events,sink,'Basketball','final');
+  else if(['CFB','NFL'].includes(state.sport))
+    count=await scanCollegeTotalNos(games,events,'football',null,'final');
+  else if(state.type==='basketball_game')
+    count=await scanCollegeTotalNos(games,events,'basketball',sink,'final');
+  else return 'unsupported sport or contract';
+  return count>0?'order submitted':
+    sink.get(state.id)?.find(row=>tickets.some(t=>t.market_ticker===row.ticker))?.execution||
+    'fresh final proof and order gates checked; no entry';
+}
+
+async function watchEntryRechecks(until){
+  if(!live())return;
+  await entryRechecks.ensure();
+  while(Date.now()<until){
+    const started=Date.now();
+    try{
+      const due=await entryRechecks.claimDue(12);
+      for(const group of groupEntryRechecks(due)){
+        if(Date.now()>=until)break;
+        let reason='recheck attempted';
+        try{
+          if(group[0].strategy==='over'){
+            await watchReadyOverTickets(until,{
+              onlyTickers:new Set(group.map(t=>t.market_ticker)),once:true});
+            reason='OVER proof, executable ask and profit rechecked';
+          }else reason=await retryGroupedNoTickets(group);
+        }catch(error){
+          reason='recheck unavailable: '+String(error.message).slice(0,120);
+          console.warn('Urgent entry group deferred:',group[0].game_id,error.message);
+        }finally{
+          for(const candidate of group){
+            await entryRechecks.finish(candidate.market_ticker,candidate.game_id,reason)
+              .catch(error=>console.warn('Retry state update deferred:',error.message));
+            if(candidate.strategy==='over'&&candidate.attempts>=2){
+              // A failed independent check must not be displayed indefinitely
+              // as though it has not yet run. Do not overwrite later fills.
+              await pool.query(
+                "UPDATE game_snapshots g SET signals=(SELECT jsonb_agg(CASE "+
+                "WHEN s->>'ticker'=$2 AND s->>'execution'='Awaiting score verification' "+
+                "THEN jsonb_set(s,'{execution}',to_jsonb($3::text)) ELSE s END) "+
+                "FROM jsonb_array_elements(g.signals) s) "+
+                "WHERE g.id=$1 AND g.status='live' AND NOT EXISTS "+
+                "(SELECT 1 FROM trade_attempts t WHERE t.market_ticker=$2 "+
+                "AND t.status IN ('filled','reserved','retrying','check_order','combo_pending')) "+
+                "AND g.signals @> jsonb_build_array(jsonb_build_object('ticker',$2::text))",
+                [candidate.game_id,candidate.market_ticker,
+                  'Two prioritized entry rechecks completed; no eligible order ('+
+                  String(reason).slice(0,90)+')'])
+                .catch(error=>console.warn('Over retry dashboard status deferred:',error.message));
+            }
+          }
+        }
+      }
+      // Only genuine currently quoted OVER candidates enter the urgent lane.
+      const {rows:overCandidates}=await pool.query(
+        "SELECT g.id AS game_id,s->>'ticker' AS market_ticker FROM game_snapshots g "+
+        "CROSS JOIN LATERAL jsonb_array_elements(g.signals) s "+
+        "WHERE g.status='live' AND g.scanned_at>now()-interval '90 seconds' "+
+        "AND s->>'strategy'='over' AND s->>'execution'='Awaiting score verification' "+
+        "AND CASE WHEN s->>'ask' ~ '^0[.][0-9]+$' "+
+        "AND s->>'ask_size' ~ '^[0-9]+([.][0-9]+)?$' "+
+        "THEN (s->>'ask_size')::numeric>0 ELSE false END "+
+        "ORDER BY g.scanned_at DESC LIMIT 12");
+      const newly=await entryRechecks.registerMany(overCandidates,'over');
+      // First check immediately; subsequent checks are +10s and +20s.
+      for(const group of groupEntryRechecks(newly)){
+        if(Date.now()>=until)break;
+        await watchReadyOverTickets(until,{
+          onlyTickers:new Set(group.map(t=>t.market_ticker)),once:true});
+      }
+    }catch(error){console.warn('Urgent entry rechecks deferred:',error.message)}
+    const pause=Math.max(0,1000-(Date.now()-started));
+    if(Date.now()+pause>=until)break;
+    if(pause)await new Promise(resolve=>setTimeout(resolve,pause));
+  }
+}
+
 async function nws(path){
   const response=await fetch('https://api.weather.gov'+path,{headers:{accept:'application/geo+json','user-agent':'K-Kalshi-weather-verification (station observations)'},signal:AbortSignal.timeout(9000)});
   if(!response.ok)throw Error(`NWS ${response.status}`);
@@ -5452,6 +5585,7 @@ async function handleRequest(req){const url=new URL(req.url);
     const correctionJob=withApiPriority('live',()=>watchCorrectedOvers(until)).catch(e=>console.error('Fast correction watcher failed:',e));
     const leadWatchJob=withApiPriority('live',()=>watchLeadWindows(until)).catch(e=>console.error('Fast lead watcher failed:',e));
     const readyOverJob=withApiPriority('live',()=>watchReadyOverTickets(until)).catch(e=>console.error('Fast over ticket watcher failed:',e));
+    const entryRecheckJob=withApiPriority('live',()=>watchEntryRechecks(until)).catch(e=>console.error('Urgent entry rechecks failed:',e));
     try{
       while(Date.now()<until){
         if(discovered&&!discoveryApplied&&(cycles>0||!cached.length)){
@@ -5465,7 +5599,7 @@ async function handleRequest(req){const url=new URL(req.url);
         await new Promise(resolve=>setTimeout(resolve,pause));
       }
     }finally{
-      await Promise.all([correctionJob,leadWatchJob,readyOverJob,discoveryJob]);
+      await Promise.all([correctionJob,leadWatchJob,readyOverJob,entryRecheckJob,discoveryJob]);
       if(discoveryError)console.warn('Sports discovery deferred:',discoveryError.message);
     }
     const {next,...summary}=last;return json({...summary,cycles});
