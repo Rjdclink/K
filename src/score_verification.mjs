@@ -91,7 +91,7 @@ function clockSeconds(clock){
 // Kalshi alone supplies entry timing; this separate source verifies fixture
 // identity and the score, never clock equality.
 function clockCompatible(){return true;}
-function sameFixture(game,milestone,home,away,time,externalScores=null,{identityOnly=false}={}){
+export function sameFixture(game,milestone,home,away,time,externalScores=null,{identityOnly=false}={}){
   const names=expectedNames(game,milestone),start=Date.parse(milestone.start_date||'');
   const other=Date.parse(time||'');
   if(!Number.isFinite(start)||!Number.isFinite(other)||Math.abs(start-other)>3*3600000)return false;
