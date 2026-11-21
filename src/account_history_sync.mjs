@@ -1,4 +1,5 @@
 import {summarizeAccountMarkets} from './account_history.mjs';
+import {combineAccountSettlements} from './settlement_accounting.mjs';
 
 // Read-only exchange imports. Account history is published only after both
 // live + archived fills and account settlements reach the final cursor.
@@ -59,20 +60,9 @@ async function publish(query){
   query('SELECT raw FROM account_history_fills ORDER BY filled_at,fill_id'),
   query('SELECT raw FROM account_history_settlements ORDER BY settled_at,settlement_id')
  ]);
- const normalizedSettlements=new Map();
- for(const item of settlements){
-  const s=item.raw;
-  if(!s?.ticker)continue;
-  const prior=normalizedSettlements.get(s.ticker);
-  if(!prior){normalizedSettlements.set(s.ticker,{...s});continue;}
-  // Separate subaccounts are combined only when their result and settlement
-  // timestamp agree. Otherwise fail closed on this ambiguous market.
-  if(prior.market_result!==s.market_result||prior.settled_time!==s.settled_time||
-     !Number.isFinite(Number(prior.revenue))||!Number.isFinite(Number(s.revenue))){
-   normalizedSettlements.set(s.ticker,{...s,revenue:NaN});continue;
-  }
-  normalizedSettlements.set(s.ticker,{...prior,revenue:Number(prior.revenue)+Number(s.revenue)});
- }
+ // Source subaccounts are merged only after cross-checking exact settlement
+ // identity, and every cash-flow field is summed, not just payout revenue.
+ const normalizedSettlements=combineAccountSettlements(settlements.map(item=>item.raw));
  const {rows,unresolved}=summarizeAccountMarkets(fills,[...normalizedSettlements.values()]);
  for(let start=0;start<rows.length;start+=80){
   const batch=rows.slice(start,start+80);

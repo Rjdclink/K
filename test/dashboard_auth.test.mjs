@@ -145,7 +145,11 @@ test('history returns losses with signed totals and supports a loss-only view',a
     assert.equal(body.history[0].profit_cents,-478);
     assert.equal(body.summary.loss_cents,'-1284');
     assert.equal(body.coverage.phase,'complete');
-    assert.match(calls.find(call=>call.sql.includes('LIMIT 51')).sql,/NOT EXISTS\(SELECT 1 FROM account_realized_history/);
+    const listSql=calls.find(call=>call.sql.includes('LIMIT 51')).sql;
+    assert.match(listSql,/NOT EXISTS\(SELECT 1 FROM authoritative/);
+    assert.match(listSql,/account_history_settlements/);
+    assert.match(listSql,/account_history_fills/);
+    assert.match(listSql,/account_position_history_publish/);
     assert.deepEqual(calls.find(call=>call.sql.includes('LIMIT 51')).params,[null,null,'loss','today']);
     assert.match(calls.find(call=>call.sql.includes('LIMIT 51')).sql,/history_view_config/);
     const full=await app.fetch(new Request(base+'/api/history?view=full',{headers}));

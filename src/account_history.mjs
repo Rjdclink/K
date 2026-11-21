@@ -1,3 +1,5 @@
+import {verifiedSettlementProfit,closedOffsetProfit} from './settlement_accounting.mjs';
+
 // Exchange-authoritative realized account history, independent of which client
 // submitted an order. Never infer a realized win from a live position or from
 // an incomplete fill/settlement record.
@@ -26,11 +28,16 @@ export function realizedAccountMarket(fills,settlement=null){
     !['yes','no'].includes(f.side)||!['buy','sell'].includes(f.action)||
     !Number.isFinite(f.count)||f.count<=0||!Number.isFinite(f.price)||
     f.price<0||f.price>1||!Number.isFinite(f.fee)||f.fee<0||!date(f.createdAt)))return null;
- // Exchange netting can encode a sale of YES as a purchase of NO.
- // Opposing-side fills may return collateral outside this settlement record;
- // without that cash movement, arithmetic could manufacture a loss.
- // Retain legacy results until an exchange-authoritative realized P&L is available.
- if(new Set(fills.map(f=>f.side)).size>1)return null;
+ // Kalshi's settled ledger separately accounts for equal YES/NO pairs as
+ // returned collateral, which is NOT included in settlement.revenue.
+ // When those complete fields exist, they supersede fill-action semantics.
+ const exchange=verifiedSettlementProfit(settlement);
+ if(exchange)return exchange;
+ // Without complete settlement accounting, an already closed, exactly paired
+ // two-sided market can be reconciled from the fully imported executed fills.
+ // An incomplete or contradictory settlement must not create a false result.
+ if(new Set(fills.map(f=>f.side)).size>1)
+   return settlement?null:closedOffsetProfit(fills);
  let cash=0,yes=0,no=0,purchases=0;
  for(const f of fills){
    const signed=f.action==='buy'?1:-1;
