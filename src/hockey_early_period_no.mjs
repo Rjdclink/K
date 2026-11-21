@@ -96,7 +96,7 @@ export function hockeyEarlyPeriodNo(game,market,{beforeWindow=false,external=nul
 export function independentEarlyHockeyNoReading(scoreboard,game,milestone,market){
   const spec=hockeyEarlyNoMarketSpec(game,market,{beforeWindow:true});
   if(!spec)return null;
-  const matches=espnMatches(scoreboard,game,milestone);
+  const matches=espnMatches(scoreboard,game,milestone,{identityOnly:true});
   if(matches.length!==1)return null;
   const match=matches[0],period=spec.periodNumber;
   if(!match.eventId||match.home!==game.home||match.away!==game.away)return null;
