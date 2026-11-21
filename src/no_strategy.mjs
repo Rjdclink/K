@@ -1,3 +1,4 @@
+import {externalNoScore} from './external_no_authority.mjs';
 import {basketballTotalNoSupported,basketballNoOnlyInternational} from './basketball_no_leagues.mjs';
 import {playerOverSpec} from './strategy.mjs';
 
@@ -27,7 +28,7 @@ export function thirdQuarterYardageNo(game,market){
 
 // Football total NO: Q4 full-game contracts only. CFB needs a 20-point
 // cushion and NFL needs a 15-point cushion; the first check precedes 5:00.
-export function collegeFootballTotalNo(game,market,{beforeWindow=false}={}){
+export function collegeFootballTotalNo(game,market,{beforeWindow=false,external=null,externalPending=false}={}){
   if(!['CFB','NFL'].includes(game?.sport)||game.type!=='football_game'||!game.verifiedLive||
     !game.scoreKnown||!game.scoreConsistent||!game.periodConsistent||game.feedId!==game.id||
     !Number.isFinite(game.observedAt)||Date.now()-game.observedAt>10000||
@@ -41,15 +42,17 @@ export function collegeFootballTotalNo(game,market,{beforeWindow=false}={}){
   const line=Number(market.floor_strike),displayed=totalLine(market);
   const rules=String(market.rules_primary||'');
   const gap=game.sport==='CFB'?20:15;
-  if(!Number.isFinite(line)||line!==displayed||line-(game.home+game.away)<gap||
+  const score=external?externalNoScore(game,external):{home:game.home,away:game.away};
+  if(!score)return null;
+  if(!Number.isFinite(line)||line!==displayed||!externalPending&&line-(score.home+score.away)<gap||
     !(/collectively score more than|combined total points scored/i.test(rules)||
       game.sport==='NFL'&&/over\s+\d+(?:\.\d+)?\s+total points are scored/i.test(rules))||
     /\b(?:1st|first|2nd|second)\s+half\b|quarter|team total/i.test(rules))return null;
-  return {strategy:'no',period:'full_game',line,total:game.home+game.away,
-    reason:game.sport+' full-game NO over '+line+'; '+(game.home+game.away)+' scored, '+game.remainingSeconds+'s left in Q4'};
+  return {strategy:'no',period:'full_game',line,total:score.home+score.away,
+    reason:game.sport+' full-game NO over '+line+'; '+(score.home+score.away)+' externally scored, '+game.remainingSeconds+'s left in Q4'};
 }
 
-export function collegeBasketballTotalNo(game,market,{beforeWindow=false}={}){
+export function collegeBasketballTotalNo(game,market,{beforeWindow=false,external=null,externalPending=false}={}){
   const collegeMen=game?.sport==='NCAAB',collegeWomen=game?.sport==='NCAAW';
   const firstHalf=(collegeMen&&game?.period===1)||(collegeWomen&&game?.period===2);
   const fullGame=game?.period===(collegeMen?2:4);
@@ -77,16 +80,18 @@ export function collegeBasketballTotalNo(game,market,{beforeWindow=false}={}){
   const displayed=totalLine(market);
   const line=Number(market.floor_strike),rules=String(market.rules_primary||'');
   const cushion=firstHalf?12:expandedFullGame?(game.sport==='NBA'?45:40):20;
-  if(!Number.isFinite(line)||line!==displayed||line-(game.home+game.away)<cushion||
+  const score=external?externalNoScore(game,external):{home:game.home,away:game.away};
+  if(!score)return null;
+  if(!Number.isFinite(line)||line!==displayed||!externalPending&&line-(score.home+score.away)<cushion||
     !(/over\s+\d+(?:\.\d+)?\s+total points are scored/i.test(rules)||
       /collectively score more than|combined total points scored/i.test(rules))||
     (firstHalf?!/1st half|first half/i.test(rules):
       /\b(?:1st|first|2nd|second)\s+half\b|quarter|team total/i.test(rules)))return null;
   const period=firstHalf?'first_half':'full_game';
   const reason=collegeMen||collegeWomen?
-    'College basketball '+(firstHalf?'first-half':'full-game')+' NO over '+line+'; '+(game.home+game.away)+' scored, '+game.remainingSeconds+'s left in '+(collegeMen?'half':'Q')+game.period:
-    'Basketball total NO ('+game.sport+') full-game over '+line+'; '+(game.home+game.away)+' scored, '+game.remainingSeconds+'s left in Q4';
-  return {strategy:'no',period,line,total:game.home+game.away,reason};
+    'College basketball '+(firstHalf?'first-half':'full-game')+' NO over '+line+'; '+(score.home+score.away)+' externally scored, '+game.remainingSeconds+'s left in '+(collegeMen?'half':'Q')+game.period:
+    'Basketball total NO ('+game.sport+') full-game over '+line+'; '+(score.home+score.away)+' externally scored, '+game.remainingSeconds+'s left in Q4';
+  return {strategy:'no',period,line,total:score.home+score.away,reason};
 }
 
 export function highestYardageNos(candidates){
