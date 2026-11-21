@@ -33,7 +33,7 @@ test('with one freed slot the executable prop with highest TOTAL NET PROFIT is o
    if(sql.includes('INSERT INTO noncushioned_prop_preflights'))return {rows:JSON.parse(args[0]).map(item=>({
     market_ticker:item.market_ticker,first_seen:new Date(now-220000),
     first_proof:{source:'ESPN',eventId:'fixed-game',gameId:'game',contractKey:item.contract_key,
-     playerId:'p',metric:'REB',playerValue:7,requestedAt:now-1000}}))};
+     playerId:'p',metric:'REB',playerValue:7,requestedAt:now-220000}}))};
    if(sql.includes('SELECT 1 FROM trade_attempts'))return {rows:[]};
    if(sql.startsWith('INSERT INTO verification_records'))return {rows:[]};
    throw Error('unexpected query '+sql.slice(0,90));

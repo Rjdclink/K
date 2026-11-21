@@ -144,18 +144,18 @@ test('college first-half retains 12 and under 1:30; both college full-game use 4
     assert.equal(independentCollegeTotalNoReading(board,stateAt(halfPeriod,'0:29'),fixture,half)?.seconds,29);
   }
 });
-test('football Q4 total NO enters with a single immediately preceding external check and executable NO seller',async()=>{
+test('football Q4 total NO enters after two external checks at least 30 seconds apart and executable NO seller',async()=>{
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
   const code=source.slice(source.indexOf('async function scanCollegeTotalNos('),source.indexOf('async function scan(cachedMilestones'));
   const half=market(false),event={event_ticker:half.event_ticker,category:'Sports',markets:[half]};
   let window=null,checks=0,orders=0;const first=state(4,'5:30'),last=state(4,'4:59');
-  const context=vm.createContext({noFinalCheckpoint,noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async()=>{},tagNoPreflight,validNoPreflight,lateNoPreflightProgress,Date,JSON,Number,Math,Promise,console,live:()=>true,
+  const context=vm.createContext({noFinalCheckpoint,pairedExternalMatch,noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async()=>{},tagNoPreflight,validNoPreflight,lateNoPreflightProgress,Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),
     linkedEventTickers:()=>[half.event_ticker],collegeFootballTotalNo,collegeBasketballTotalNo,overContractKey,sameSportsContract,
     verifyIndependentCollegeTotalNo:async game=>{checks++;return {source:'ESPN',eventId:'college-verified',gameId:game.id,home:game.home,away:game.away,seconds:299}}, 
     pool:{query:async(sql,args=[])=>{
       if(sql.startsWith('SELECT * FROM college_total_no_windows'))return {rows:window?[window]:[]};
-      if(sql.startsWith('INSERT INTO college_total_no_windows')){window={market_ticker:args[0],game_id:args[1],contract_key:args[2],period:args[3],first_clock:args[4],first_evidence:JSON.parse(args[5]),first_at:new Date(Date.now()-25000)};return {rows:[]}}
+      if(sql.startsWith('INSERT INTO college_total_no_windows')){window={market_ticker:args[0],game_id:args[1],contract_key:args[2],period:args[3],first_clock:args[4],first_evidence:JSON.parse(args[5]),first_at:new Date(Date.now()-31000)};return {rows:[]}}
       if(sql.startsWith('SELECT 1 FROM trade_attempts'))return {rowCount:0};
       if(sql.startsWith('SELECT market_ticker,fill_count'))return {rows:[]};
       return {rows:[],rowCount:1};
@@ -176,8 +176,8 @@ test('football Q4 total NO enters with a single immediately preceding external c
     invalidateBalance:async()=>{}});
   vm.runInContext(code,context);
   const args=g=>[[{milestone,state:g}],new Map([[half.event_ticker,event]])];
-  assert.equal(await context.scanCollegeTotalNos(...args(last),'football'),1,'a single external check may authorize entry immediately under 5:00');
-  assert.equal(checks,1);assert.equal(orders,1);
-  assert.equal(await context.scanCollegeTotalNos(...args(first),'football'),0,'5:30 remains outside the entry window');
-  assert.equal(checks,1);assert.equal(window,null,'football no longer creates a first-check window');
+  assert.equal(await context.scanCollegeTotalNos(...args(first),'football'),0,'5:30 records first independent proof');
+  assert.equal(checks,1);assert.ok(window);
+  assert.equal(await context.scanCollegeTotalNos(...args(last),'football'),1,'second proof after 30 seconds permits entry');
+  assert.equal(checks,2);assert.equal(orders,1);
 });

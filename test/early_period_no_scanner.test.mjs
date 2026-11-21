@@ -169,7 +169,7 @@ test('NHL P1/P2, soccer 1H and NBA quarter NO each require initial and final ver
    assert.ok(h.trace.lastIndexOf('external')<h.trace.indexOf('reserve'));
  }
 });
-test('early NHL, soccer and NBA NO permit a late first proof with an unchanged clock after 60 seconds elapsed',async()=>{
+test('early NHL, soccer and NBA NO permit a late first proof with an unchanged clock after 30 seconds elapsed',async()=>{
   for(const sport of ['NHL','Soccer','Basketball']){
     const h=harness(sport,1,{firstAgeMs:61000});
     const clock=sport==='Basketball'?89:299;
@@ -180,9 +180,9 @@ test('early NHL, soccer and NBA NO permit a late first proof with an unchanged c
     assert.equal(h.orders,1,sport+' order');
   }
 });
-test('early NHL, soccer and NBA NO block a second check until one minute of elapsed time',async()=>{
+test('early NHL, soccer and NBA NO block a second check until 30 seconds of elapsed time',async()=>{
   for(const sport of ['NHL','Soccer','Basketball']){
-    const h=harness(sport,1,{firstAgeMs:59000});
+    const h=harness(sport,1,{firstAgeMs:29000});
     const clock=sport==='Basketball'?89:299;
     assert.equal(await h.scan(clock),0);
     assert.equal(await h.scan(clock),0,sport+' must not assume game-clock movement is elapsed real time');

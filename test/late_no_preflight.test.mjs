@@ -5,18 +5,18 @@ import {NO_PREFLIGHT_POLICY,NO_PREFLIGHT_MIN_SECONDS,tagNoPreflight,
 const now=Date.now();
 const base={market_ticker:'TOTAL',game_id:'g',contract_key:'contract',period:2,
  first_clock:460,first_evidence:{source:'ESPN',eventId:'espn-1',preflight_policy:NO_PREFLIGHT_POLICY},
- first_at:new Date(now-60000)};
+ first_at:new Date(now-30000)};
 test('a late first verification remains valid even if it begins under the entry time',()=>{
- assert.equal(NO_PREFLIGHT_MIN_SECONDS,60);
+ assert.equal(NO_PREFLIGHT_MIN_SECONDS,30);
  assert.equal(validNoPreflight(base,{gameId:'g',contractKey:'contract',period:2,maxFirstSeconds:540,now}),true);
  assert.equal(lateNoPreflightProgress(base,now).ready,true);
  assert.equal(validNoPreflight({...base,first_clock:360},
    {gameId:'g',contractKey:'contract',period:2,maxFirstSeconds:540,now}),true);
 });
-test('separation is 60 seconds of ELAPSED TIME only, even when game clock is stopped',()=>{
- assert.equal(lateNoPreflightProgress({...base,first_at:new Date(now-59999)},now).ready,false);
- assert.equal(lateNoPreflightProgress({...base,first_at:new Date(now-60000)},now).ready,true);
- assert.equal(lateNoPreflightProgress({...base,first_at:new Date(now-61000)},now).ready,true);
+test('separation is 30 seconds of ELAPSED TIME only, even when game clock is stopped',()=>{
+ assert.equal(lateNoPreflightProgress({...base,first_at:new Date(now-29999)},now).ready,false);
+ assert.equal(lateNoPreflightProgress({...base,first_at:new Date(now-30000)},now).ready,true);
+ assert.equal(lateNoPreflightProgress({...base,first_at:new Date(now-31000)},now).ready,true);
  assert.equal(lateNoPreflightProgress({...base,first_clock:460},now).ready,true,
    'unchanged match clock must not block a second check');
  assert.equal(lateNoPreflightProgress({...base,first_clock:400},now).ready,true,

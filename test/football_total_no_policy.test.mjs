@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
 import {gameState} from '../src/strategy.mjs';
+import {tagNoPreflight,validNoPreflight,lateNoPreflightProgress} from '../src/late_no_preflight.mjs';
 import {collegeFootballTotalNo,collegeBasketballTotalNo,bestNoAsk,noDepthAtAsk} from '../src/no_strategy.mjs';
 import {verifyIndependentCollegeTotalNo,independentCollegeTotalNoReading} from '../src/college_total_no.mjs';
 import {linkedEventTickers} from '../src/discovery.mjs';
@@ -104,7 +105,7 @@ test('football scanner enforces shared 5% NO pool including NFL, CFB and fees',a
   const events=new Map([[m.event_ticker,{category:'Sports',event_ticker:m.event_ticker,markets:[m]}]]);
   let saved=null,orders=0,checks=0,allocation=null,budget=null,patterns=[];
   const fakeHeld={ticker:'KXNCAAFTOTAL-OLD',position_fp:-2,market_exposure_dollars:'3.00',fees_paid_dollars:'1.00'};
-  const context=vm.createContext({noFinalCheckpoint,noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async()=>{},pairedExternalMatch,Date,JSON,Number,Math,Promise,console,live:()=>true,
+  const context=vm.createContext({noFinalCheckpoint,noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async()=>{},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),linkedEventTickers:()=>[m.event_ticker],
     collegeFootballTotalNo,collegeBasketballTotalNo,overContractKey,sameSportsContract,
     verifyIndependentCollegeTotalNo:async game=>{checks++;return {source:'ESPN',eventId:'nfl-external',gameId:game.id,home:game.home,away:game.away,seconds:299};},
@@ -113,7 +114,7 @@ test('football scanner enforces shared 5% NO pool including NFL, CFB and fees',a
       if(sql.startsWith('SELECT * FROM college_total_no_windows'))return {rows:saved?[saved]:[]};
       if(sql.startsWith('INSERT INTO college_total_no_windows')){
         saved={game_id:args[1],contract_key:args[2],period:args[3],first_clock:args[4],
-          first_evidence:JSON.parse(args[5]),first_at:new Date(Date.now()-25000)};
+          first_evidence:JSON.parse(args[5]),first_at:new Date(Date.now()-31000)};
         return {rows:[]};
       }
       if(sql.startsWith('SELECT 1 FROM trade_attempts'))return {rows:[],rowCount:0};
@@ -142,11 +143,11 @@ test('football scanner enforces shared 5% NO pool including NFL, CFB and fees',a
   });
   vm.runInContext(code,context);
   const run=(f,scanSport='football')=>context.scanCollegeTotalNos([{milestone:f.milestone,state:f.state}],events,scanSport);
-  assert.equal(await run(first),0,'football does not verify before the under-5:00 entry window');
-  assert.equal(checks,0);
-  assert.equal(saved,null,'no football preflight window');
-  assert.equal(await run(later),1,'NFL Q4 enters after one immediate independent check');
+  assert.equal(await run(first),0,'football starts first proof at 5:30');
   assert.equal(checks,1);
+  assert.ok(saved);
+  assert.equal(await run(later),1,'second proof after 30 seconds authorizes entry');
+  assert.equal(checks,2);
   assert.equal(orders,1);
   assert.equal(allocation,.05);
   assert.equal(budget,100,'$100 bankroll, with $3 CFB exposure and $1 fee, leaves only $1');
