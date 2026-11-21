@@ -24,6 +24,6 @@ test('all ordinary and leading entry fractions including winner combos cap at 5%
 });
 test('verified cushioned OVER retains exception with its own net profit and allocation gates',()=>{
  const signal={strategy:'over',fraction:.45};
- const proof={verificationId:'a',contractKey:'k'};
+ const proof={verificationId:'a',contractKey:'k',route:'cushion'};
  assert.equal(automaticEntryFraction({...signal,game:{overVerification:proof,independentEntry:{verificationId:'a'},verificationId:'a'}}),.45);
 });
