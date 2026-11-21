@@ -1,6 +1,7 @@
 import { golfState, golfSignal } from './golf.mjs';
+import {automaticEntryFraction,hasIndependentCushionedOverProof} from './automatic_entry_policy.mjs';
 import { VERIFY_DWELL_MS } from './combos.mjs';
-export const KALSHI_ONLY_FRACTION=.15;
+export const KALSHI_ONLY_FRACTION=.05;
 export const SOCCER_OVER_STABILITY_MS=10000;
 export const PLAYER_PROP_WINDOW_MS=7*60*1000;
 export const CFB_LEAD_WINDOW_SECONDS=270;
@@ -937,6 +938,10 @@ export function tennisSignal(game,market){
   return {strategy:'lead',reason:`Tennis match-clinching set ${leaderGames}–${opponentGames}; leader serves, points ${leaderPoints}–${opponentPoints}${t.advantage===leaderId?' advantage':''}; deciding-set match point, one point from match win`,fraction:.15};
 }
 export function minimumProfitCents(strategy,availableCents,sportType='',remainingSeconds=NaN,filledOrders=0,{game,market}={}){
+  // Commanding leads require a positive net return, with no additional fixed floor.
+  if(strategy==='lead')return 1;
+  // Non-cushioned strategies share one fee-inclusive 50-cent net-profit floor.
+  if(!(strategy==='over'&&hasIndependentCushionedOverProof(game)))return 50;
   const tier=filledOrders>=20?50:filledOrders>=15?35:filledOrders>=10?15:0;
   const existing=strategy==='weather'?30:
     strategy==='over'||strategy==='lead'?1:
@@ -1026,7 +1031,10 @@ export function timedProfitExitAllowed(game,market){
 export function estimatedCostCents(count,price,feeMultiplier=2) {
   return Math.ceil(count*price*100-1e-8)+Math.ceil(7*count*price*(1-price)*feeMultiplier-1e-8);
 }
-export function orderSize(balanceCents, askDollars, askSize, fraction, cap=1, bankrollCents=balanceCents, maxSpendCents=Infinity, feeMultiplier=2) {
+export function orderSize(balanceCents, askDollars, askSize, fraction, cap=1, bankrollCents=balanceCents, maxSpendCents=Infinity, feeMultiplier=2,entry={}) {
+  // The sizing gate cannot accept a caller-declared larger fraction unless
+  // the verified cushioned OVER exception is actually present on the game.
+  fraction=automaticEntryFraction({...entry,fraction});
   const price=N(askDollars),size=N(askSize),cash=N(balanceCents),bankroll=N(bankrollCents),limit=N(maxSpendCents);
   if (!Number.isFinite(price)||price<=0||!Number.isFinite(cap)||cap<=0||price>Math.min(1,cap)||!Number.isFinite(size)||size<0.01||!Number.isFinite(cash)||cash<=0||!Number.isFinite(bankroll)||bankroll<0||!Number.isFinite(fraction)||fraction<=0||fraction>1||!(Number.isFinite(limit)||limit===Infinity)||limit<0||!Number.isFinite(feeMultiplier)||feeMultiplier<1) return 0;
   const budget=Math.min(Math.floor(cash),Math.floor(bankroll*fraction),Math.floor(limit));
@@ -1039,5 +1047,5 @@ export function overBudget(balanceCents, portfolioValueCents) {
   if (![cash,value].every(Number.isFinite) || Math.min(cash,value)<0) return 0;
   // Each ordinary over has its own 15% bankroll limit. Existing positions do not
   // reduce another trade's limit; cash availability is checked separately.
-  return Math.floor((cash+value)*0.15);
+  return Math.floor((cash+value)*0.05);
 }

@@ -29,10 +29,10 @@ test('two unavailable ESPN attempts precede FOX, which verifies team identity an
  assert.equal(validNoPreflight({game_id:'foo',contract_key:'key',period:2,first_clock:420,first_evidence:proof,first_at:new Date(Date.now()-61000)},
   {gameId:'foo',contractKey:'key',period:2,maxFirstSeconds:540}),true);
 });
-test('ESPN exact scoreboard disagreement prevents FOX fallback despite later availability',async()=>{
+test('uniquely matched ESPN fixture supplies authoritative score and prevents unnecessary FOX fallback',async()=>{
  const calls=[],fetcher=async url=>{calls.push(url);return read(/espn/.test(url)?espnScore(2,3):foxScore())};
  const result=await fetchIndependentMatchScore(g,m,{fetcher,espnFeed:'soccer/all',foxFeed:'soccer'});
- assert.equal(result,false,'wrong scoreboard score is a terminal contradiction');
+ assert.deepEqual([result?.source,result?.home,result?.away],['ESPN',2,3],'independent ESPN score controls the NO cushion');
  assert.ok(calls.every(url=>/espn/.test(url)));
 });
 test('first matching ESPN fixture stops the retry and prevents FOX use',async()=>{
@@ -43,8 +43,8 @@ test('first matching ESPN fixture stops the retry and prevents FOX use',async()=
  assert.equal(calls.filter(url=>/espn/.test(url)).length,3);
  assert.ok(calls.every(url=>/espn/.test(url)));
 });
-test('wrong teams, wrong scores and ambiguous fixtures fail closed for either provider',async()=>{
- assert.equal(scorePairMatches({source:'FOX Sports',eventId:'123',home:4,away:3},g),false);
+test('wrong teams and ambiguous fixtures fail closed; source scores need not equal Kalshi',async()=>{
+ assert.equal(scorePairMatches({source:'FOX Sports',eventId:'123',home:4,away:3},g),true);
  assert.equal(scorePairMatches({source:'ESPN',eventId:'',home:3,away:3},g),false);
  const mismatch=foxScore();mismatch.sectionList[0].events[0].lowerTeam.name='Gamma';
  const bad=await fetchIndependentMatchScore(g,m,{fetcher:async url=>read(/espn/.test(url)?{events:[]}:mismatch),espnFeed:'soccer/all',foxFeed:'soccer'});
@@ -60,5 +60,5 @@ test('ESPN first and FOX second can verify one matched Kalshi game without shari
  assert.equal(pairedExternalMatch(first,second,g),true);
  assert.equal(pairedExternalMatch(first,{...second,gameId:'unrelated'},g),false);
  assert.equal(pairedExternalMatch({...first,source:'FOX Sports',eventId:'other'},second,g),false);
- assert.equal(pairedExternalMatch(first,{...second,home:4},g),false);
+ assert.equal(pairedExternalMatch(first,{...second,home:1},g),false,'external score must not regress');
 });

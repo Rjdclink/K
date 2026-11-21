@@ -1,3 +1,4 @@
+import {externalNoScore,externalNoPeriods} from './external_no_authority.mjs';
 import {fetchIndependentMatchScore} from './independent_match_score.mjs';
 import {espnMatches} from './score_verification.mjs';
 import {espnScoreboardUrls} from './espn_scoreboards.mjs';
@@ -41,15 +42,9 @@ const agrees=(game,parts)=>{
 };
 const validExternal=(external,game,period)=>{
   if(!['ESPN','FOX Sports'].includes(external?.source)||!external.eventId||
-    external.home!==game.home||external.away!==game.away)return null;
-  const provider=periodParts(game.periodScores,period);
-  const source=Array.isArray(external.periods)&&external.periods.length?
-    periodParts(external.periods,period):null;
-  if(Array.isArray(external.periods)&&external.periods.length&&!source)return null;
-  if(source&&!agrees(game,source))return null;
-  if(source&&provider&&provider.some((p,i)=>p.home!==source[i].home||p.away!==source[i].away))return null;
-  const parts=source||provider;
-  if(!parts||!agrees(game,parts))return null;
+    !externalNoScore(game,external))return null;
+  const parts=externalNoPeriods(game,external,period);
+  if(!parts)return null;
   if(external.currentPeriod&&(
     external.currentPeriod.home!==parts[period-1].home||
     external.currentPeriod.away!==parts[period-1].away))return null;
@@ -89,7 +84,7 @@ export function hockeyEarlyPeriodNo(game,market,{beforeWindow=false,external=nul
   if(!spec)return null;
   const parts=external?validExternal(external,game,spec.periodNumber):
     periodParts(game.periodScores,spec.periodNumber);
-  if(!parts||!agrees(game,parts))return null;
+  if(!parts||!external&&!agrees(game,parts))return null;
   const periodTotal=parts[spec.periodNumber-1].home+parts[spec.periodNumber-1].away;
   if(spec.line-periodTotal<1.5)return null;
   return {...spec,total:periodTotal,reason:
@@ -101,14 +96,12 @@ export function hockeyEarlyPeriodNo(game,market,{beforeWindow=false,external=nul
 export function independentEarlyHockeyNoReading(scoreboard,game,milestone,market){
   const spec=hockeyEarlyNoMarketSpec(game,market,{beforeWindow:true});
   if(!spec)return null;
-  const matches=espnMatches(scoreboard,game,milestone);
+  const matches=espnMatches(scoreboard,game,milestone,{identityOnly:true});
   if(matches.length!==1)return null;
   const match=matches[0],period=spec.periodNumber;
-  if(!match.eventId||match.home!==game.home||match.away!==game.away)return null;
-  const parts=periodParts(match.periods,period)||periodParts(game.periodScores,period);
-  if(!parts||!agrees(game,parts))return null;
-  if(match.periods?.length&&(!periodParts(match.periods,period)||
-    !agrees(game,periodParts(match.periods,period))))return null;
+  if(!match.eventId||!externalNoScore(game,{...match,source:'ESPN'}))return null;
+  const parts=externalNoPeriods(game,{...match,source:'ESPN'},period);
+  if(!parts)return null;
   return {source:'ESPN',eventId:match.eventId,home:match.home,away:match.away,
     period,seconds:match.remainingSeconds,live:true,
     periods:parts,currentPeriod:{home:parts[period-1].home,away:parts[period-1].away}};

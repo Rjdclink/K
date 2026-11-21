@@ -7,6 +7,7 @@ import {gameState,overSignal,playerOverSpec,PLAYER_PROP_MAX_FRACTION,BASKETBALL_
 import {overContractKey,timedOverEntryValid,assertTimedOverEntry,sameSportsContract} from '../src/over_verification.mjs';
 import {assertOverExposure} from '../src/over_exposure.mjs';
 import {verifiedOverFraction} from '../src/lead_allocation.mjs';
+import {automaticEntryFraction} from '../src/automatic_entry_policy.mjs';
 import {remainingVerifiedOverCents,upgradeEligible} from '../src/upgrades.mjs';
 import {singleSpendableCash} from '../src/combos.mjs';
 import {filledOrderGateCount} from '../src/entry_floor.mjs';
@@ -27,12 +28,12 @@ test('a held basketball count prop tops up within 10% only when the new purchase
     const sent=[];let immediateChecks=0;
     const client={query:async sql=>({rows:sql.includes('pg_try_advisory_xact_lock')?[{acquired:true}]:[]}),release(){}};
     const context=vm.createContext({ensureManualCombos:async()=>{},console,setTimeout,PLAYER_PROP_MAX_FRACTION,BASKETBALL_COUNT_PROP_MAX_FRACTION,overSignal,playerOverSpec,freshPlayerPropForEntry:async state=>{immediateChecks++;return state},timedOverEntryValid,assertTimedOverEntry,assertOverExposure,
-      sameSportsContract,verifiedOverFraction,remainingVerifiedOverCents,upgradeEligible,estimatedCostCents,profitableCount,
+      sameSportsContract,verifiedOverFraction,remainingVerifiedOverCents,upgradeEligible,estimatedCostCents,profitableCount,automaticEntryFraction,
       minimumProfitCents,netSettlementProfitCents,filledOrderGateCount,singleSpendableCash,randomUUID:()=> 'upgrade',
       upgradeTables:async()=>{},recoverSummaryAsk:async m=>m,hasAsk:()=>true,executableQuote:async m=>m,
       accountBalance:async()=>({balance:10000,portfolio_value:0}),allOpenPositions:async()=>({market_positions:[position]}),
       marketShard:()=>0,shardCash:()=>10000,feeReserve:()=>2,confirmedSingleFill:async()=>{},
-      contractCount:(cash,m,fraction,bankroll,budget,fees)=>Math.floor(orderSize(cash,m.yes_ask_dollars,m.yes_ask_size_fp,fraction,1,bankroll,budget,fees)),
+      contractCount:(cash,m,fraction,bankroll,budget,fees,entry)=>Math.floor(orderSize(cash,m.yes_ask_dollars,m.yes_ask_size_fp,fraction,1,bankroll,budget,fees,entry)),
       pool:{connect:async()=>client,query:async sql=>({rows:[],rowCount:sql.includes('INSERT INTO position_upgrades')?1:0})},
       kalshi:async(path,options)=>{
         if(path.startsWith('/markets/'))return {market};

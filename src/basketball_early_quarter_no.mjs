@@ -1,3 +1,4 @@
+import {externalNoScore,externalNoPeriods} from './external_no_authority.mjs';
 import {fetchIndependentMatchScore} from './independent_match_score.mjs';
 import {espnMatches} from './score_verification.mjs';
 import {espnScoreboardUrls} from './espn_scoreboards.mjs';
@@ -70,13 +71,12 @@ export function basketballEarlyQuarterNo(game,market,{beforeWindow=false,externa
   const spec=basketballEarlyQuarterNoSpec(game,market,{beforeWindow});
   if(!spec)return null;
   if(external&&(!['ESPN','FOX Sports'].includes(external.source)||
-    !external.eventId||external.home!==game.home||external.away!==game.away))return null;
+    !externalNoScore(game,external)))return null;
   const provider=currentParts(game.periodScores,game.period);
-  const independent=external?.parts?.length?currentParts(external.parts,game.period):null;
-  if(external?.parts?.length&&!independent)return null;
-  if(independent&&!agrees(game,independent))return null;
-  const parts=independent||provider;
-  if(!parts||!agrees(game,parts))return null;
+  const independent=external?externalNoPeriods(game,external,game.period):null;
+  if(external&&!independent)return null;
+  const parts=external?independent:provider;
+  if(!parts||!external&&!agrees(game,parts))return null;
   if(external?.currentQuarter&&(
     external.currentQuarter.home!==parts[spec.quarter-1].home||
     external.currentQuarter.away!==parts[spec.quarter-1].away))return null;
@@ -90,14 +90,12 @@ export function basketballEarlyQuarterNo(game,market,{beforeWindow=false,externa
 export function independentBasketballEarlyQuarterNoReading(board,game,milestone,market){
   const spec=basketballEarlyQuarterNoSpec(game,market,{beforeWindow:true});
   if(!spec)return null;
-  const matches=espnMatches(board,game,milestone);
+  const matches=espnMatches(board,game,milestone,{identityOnly:true});
   if(matches.length!==1)return null;
   const m=matches[0];
-  if(!m.eventId||m.home!==game.home||m.away!==game.away)return null;
-  const parts=currentParts(m.periods,game.period)||currentParts(game.periodScores,game.period);
-  if(!parts||!agrees(game,parts))return null;
-  if(m.periods?.length&&(!currentParts(m.periods,game.period)||
-    !agrees(game,currentParts(m.periods,game.period))))return null;
+  if(!m.eventId||!externalNoScore(game,{...m,source:'ESPN'}))return null;
+  const parts=externalNoPeriods(game,{...m,source:'ESPN'},game.period);
+  if(!parts)return null;
   return {source:'ESPN',eventId:m.eventId,home:m.home,away:m.away,
     quarter:game.period,seconds:m.remainingSeconds,live:true,parts,
     currentQuarter:{home:parts[game.period-1].home,away:parts[game.period-1].away}};

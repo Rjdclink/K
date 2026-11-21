@@ -68,7 +68,7 @@ test('men college full-game NO verifies at 8:00 and enters under 7:00 after 60 r
     liveBatch:async()=>new Map(),
     linkedEventTickers:()=>[market.event_ticker],
     collegeFootballTotalNo,collegeBasketballTotalNo,overContractKey,sameSportsContract,
-    verifyIndependentCollegeTotalNo:async()=>{checks++;return {source:'ESPN',eventId:'espn-basketball',seconds:29}},
+    verifyIndependentCollegeTotalNo:async game=>{checks++;return {source:'ESPN',eventId:'espn-basketball',gameId:game.id,home:game.home,away:game.away,seconds:29}}, 
     pool:{query:async(sql,args=[])=>{
       if(sql.startsWith('SELECT * FROM college_total_no_windows'))return {rows:window?[window]:[]};
       if(sql.startsWith('INSERT INTO college_total_no_windows')){
@@ -138,7 +138,7 @@ test('college first-half NO requires first proof at >=2:00 and enters strictly u
   const context=vm.createContext({noFinalCheckpoint,noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async()=>{},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),linkedEventTickers:()=>[market.event_ticker],
     collegeFootballTotalNo,collegeBasketballTotalNo,overContractKey,sameSportsContract,
-    verifyIndependentCollegeTotalNo:async()=>{checks++;return {source:'ESPN',eventId:'espn-basketball'};},
+    verifyIndependentCollegeTotalNo:async game=>{checks++;return {source:'ESPN',eventId:'espn-basketball',gameId:game.id,home:game.home,away:game.away};},
     pool:{query:async(sql,args=[])=>{
       if(sql.startsWith('SELECT * FROM college_total_no_windows'))return {rows:window?[window]:[]};
       if(sql.startsWith('INSERT INTO college_total_no_windows')){

@@ -8,6 +8,7 @@ import {overContractKey,overCushion,timedOverEntryValid,sameSportsContract} from
 import {singleSpendableCash} from '../src/combos.mjs';
 import {externalOverMinimum,verifyExternalOverExposure,externalOverExposureValid,assertOverExposure} from '../src/over_exposure.mjs';
 import {verifiedOverFraction} from '../src/lead_allocation.mjs';
+import {automaticEntryFraction} from '../src/automatic_entry_policy.mjs';
 import {scoreAgreement,verifyIndependentOverDecision,nbaAgreement} from '../src/score_verification.mjs';
 import {remainingVerifiedOverCents,upgradeEligible} from '../src/upgrades.mjs';
 const now=Date.now(),start='2026-11-02T12:00:00Z';
@@ -159,7 +160,8 @@ test('sixty percent subtracts held exposure and paid fees from the entire positi
   const position={ticker:'OVER',position_fp:'40',market_exposure_dollars:'39',fees_paid_dollars:'1'};
   const budget=remainingVerifiedOverCents(position,10000,.60);
   assert.equal(budget,2000);
-  const count=orderSize(10000,.91,1000,.60,1,10000,budget,2);
+  const verified={verificationId:'v',independentEntry:{verificationId:'v'},overVerification:{route:'cushion'}};
+  const count=orderSize(10000,.91,1000,.60,1,10000,budget,2,{strategy:'over',game:verified});
   assert.ok(count>0);assert.ok(estimatedCostCents(count,.91,2)+4000<=6000);
   assert.equal(remainingVerifiedOverCents({...position,market_exposure_dollars:'59'},10000,.60),0);
   const fill={status:'filled',strategy:'over',market_ticker:'OVER',event_ticker:'E',game_id:'g'};
@@ -169,12 +171,13 @@ test('the final serialized gate includes holdings and fees for initial buys, upg
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
   for(const held of [null,{ticker:'OVER',position_fp:'40',market_exposure_dollars:'39',fees_paid_dollars:'1'}]){
     const client={query:async sql=>({rows:sql.includes('pg_try_advisory_xact_lock')?[{acquired:true}]:[]}),release(){}};
-    const context=vm.createContext({console,setTimeout,remainingVerifiedOverCents,estimatedCostCents,
+    const context=vm.createContext({console,setTimeout,remainingVerifiedOverCents,estimatedCostCents,automaticEntryFraction,
       ensureManualCombos:async()=>{},accountBalance:async()=>({balance:10000,portfolio_value:0}),pool:{connect:async()=>client},allOpenPositions:async()=>({market_positions:held?[held]:[]}),
       filledOrderGateCount:()=>0,minimumProfitCents:()=>0,netSettlementProfitCents:()=>100});
     vm.runInContext(source.slice(source.indexOf('async function withEntryProfitFloor('),source.indexOf('async function milestones(')),context);
     let sent=0;
-    const run=count=>context.withEntryProfitFloor({ticker:'OVER',count,price:.91,fees:2,strategy:'over',fraction:.60,bankroll:10000},async()=>++sent);
+    const verified={verificationId:'v',independentEntry:{verificationId:'v'},overVerification:{route:'cushion'}};
+    const run=count=>context.withEntryProfitFloor({ticker:'OVER',count,price:.91,fees:2,strategy:'over',fraction:.60,bankroll:10000,game:verified},async()=>++sent);
     assert.equal(await run(70),null);assert.equal(sent,0);
     assert.equal(await run(held?21:60),1);assert.equal(sent,1);
   }

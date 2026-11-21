@@ -1,3 +1,4 @@
+import {externalNoScore,externalNoPeriods} from './external_no_authority.mjs';
 import {fetchIndependentMatchScore} from './independent_match_score.mjs';
 import {espnMatches} from './score_verification.mjs';
 import {espnScoreboardUrls} from './espn_scoreboards.mjs';
@@ -20,8 +21,7 @@ const sums=periods=>({
   away:periods.reduce((n,p)=>n+p.away,0)
 });
 const validExternal=(external,game)=>{
-  if(!['ESPN','FOX Sports'].includes(external?.source)||!external.eventId||
-    external.home!==game.home||external.away!==game.away)return false;
+  if(!externalNoScore(game,external))return false;
   return true;
 };
 
@@ -54,20 +54,18 @@ export function hockeyTotalNo(game,market,{beforeWindow=false,external=null}={})
   const spec=hockeyNoMarketSpec(game,market,{beforeWindow});
   if(!spec)return null;
   if(external&&!validExternal(external,game))return null;
-  let total=game.home+game.away;
+  const independent=external?externalNoScore(game,external):null;
+  let total=independent?independent.home+independent.away:game.home+game.away;
   if(spec.period==='third_period'){
     const providerParts=validPeriods(game.periodScores);
-    const externalParts=external?validPeriods(external.periods):null;
-    if(external&&Array.isArray(external.periods)&&external.periods.length&&!externalParts)return null;
-    if(providerParts){
+    const externalParts=external?externalNoPeriods(game,external,3):null;
+    if(external&&!externalParts)return null;
+    if(!external&&providerParts){
       const providerTotals=sums(providerParts);
       if(providerTotals.home!==game.home||providerTotals.away!==game.away)return null;
     }
-    if(externalParts){
-      const independentTotals=sums(externalParts);
-      if(independentTotals.home!==game.home||independentTotals.away!==game.away||
-        providerParts&&providerParts.some((p,i)=>p.home!==externalParts[i].home||p.away!==externalParts[i].away))return null;
-    }
+    // Independent period attribution supersedes contradictory Kalshi splits.
+    // It must still reconcile to the external cumulative score.
     const parts=externalParts||providerParts;
     if(!parts)return null;
     total=parts[2].home+parts[2].away;
@@ -86,18 +84,15 @@ export function hockeyTotalNo(game,market,{beforeWindow=false,external=null}={})
 export function independentHockeyTotalNoReading(scoreboard,game,milestone,market){
   const spec=hockeyNoMarketSpec(game,market,{beforeWindow:true});
   if(!spec)return null;
-  const matches=espnMatches(scoreboard,game,milestone);
+  const matches=espnMatches(scoreboard,game,milestone,{identityOnly:true});
   if(matches.length!==1)return null;
   const m=matches[0];
-  if(!m.eventId||m.home!==game.home||m.away!==game.away)return null;
+  if(!m.eventId||!externalNoScore(game,{...m,source:'ESPN'}))return null;
   const periods=validPeriods(m.periods);
   if(spec.period==='third_period'){
-    if(Array.isArray(m.periods)&&m.periods.length&&!periods)return null;
-    if(periods){const total=sums(periods);
-    if(total.home!==game.home||total.away!==game.away)return null;
-    const direct=validPeriods(game.periodScores);
-    if(direct&&direct.some((p,i)=>p.home!==periods[i].home||p.away!==periods[i].away))return null;}
-    if(!periods&&!validPeriods(game.periodScores))return null;
+    if(!periods)return null;
+    const sourceTotals=sums(periods);
+    if(sourceTotals.home!==m.home||sourceTotals.away!==m.away)return null;
   }
   return {source:'ESPN',eventId:m.eventId,home:m.home,away:m.away,period:3,
     seconds:m.remainingSeconds,periods:periods||null,

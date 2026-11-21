@@ -37,13 +37,13 @@ for(const x of original){
   assert.equal(proof?.source,'ESPN');assert.equal(proof?.eventId,x.eventId);
   assert.deepEqual([proof?.home,proof?.away],x.score);
  });
- test('wrong team or different score cannot pass verified '+x.kalshi,async()=>{
+ test('wrong team blocked but independently confirmed source score controls '+x.kalshi,async()=>{
   const {game,milestone,scoreboard}=inputs(x);
   const wrong=structuredClone(scoreboard);wrong.events[0].competitions[0].competitors[1].team={displayName:'Different Club',shortDisplayName:'Different Club',name:'Different Club',location:'Different Club'};
   assert.equal(espnMatches(wrong,game,milestone).length,0);
   const score=structuredClone(scoreboard);score.events[0].competitions[0].competitors[0].score=String(x.score[0]+1);
-  assert.equal(await fetchIndependentMatchScore(game,milestone,{fetcher:fetchOne(score),espnFeed:'soccer/all'}),false,
-    'verified wrong score must veto the order');
+  assert.equal((await fetchIndependentMatchScore(game,milestone,{fetcher:fetchOne(score),espnFeed:'soccer/all'}))?.home,x.score[0]+1,
+    'verified source score is authoritative even when Kalshi reports another score');
  });
 }
 test('only explicitly documented soccer team aliases are interchangeable, not unrelated clubs',()=>{

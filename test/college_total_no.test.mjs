@@ -98,7 +98,7 @@ test('the independent CFB check verifies the correct team scores without requiri
       competitors:[{id:'1',homeAway:'away',team:{displayName:'Ohio Bobcats',shortDisplayName:'Ohio',abbreviation:'OHIO'},score:'7'},
         {id:'2',homeAway:'home',team:{displayName:'Akron Zips',shortDisplayName:'Akron',abbreviation:'AKR'},score:'6'}]}]}]};
   assert.equal(independentCollegeTotalNoReading(scoreboard,game,milestone,full)?.seconds,118);
-  assert.equal(independentCollegeTotalNoReading({...scoreboard,events:[{...scoreboard.events[0],competitions:[{...scoreboard.events[0].competitions[0],competitors:[{...scoreboard.events[0].competitions[0].competitors[0],score:'10'},scoreboard.events[0].competitions[0].competitors[1]]}]}]},game,milestone,full),false);
+  assert.equal(independentCollegeTotalNoReading({...scoreboard,events:[{...scoreboard.events[0],competitions:[{...scoreboard.events[0].competitions[0],competitors:[{...scoreboard.events[0].competitions[0].competitors[0],score:'10'},scoreboard.events[0].competitions[0].competitors[1]]}]}]},game,milestone,full)?.away,10,'external score is independently authoritative');
   assert.equal(independentCollegeTotalNoReading({...scoreboard,events:[{...scoreboard.events[0],competitions:[{...scoreboard.events[0].competitions[0],status:{period:4,displayClock:'1:30',type:{state:'in'}}}]}]},game,milestone,full)?.home,6);
 });
 test('college first-half retains 12 and under 1:30; both college full-game use 40 and under 7:00',()=>{
@@ -152,7 +152,7 @@ test('football Q4 total NO enters with a single immediately preceding external c
   const context=vm.createContext({noFinalCheckpoint,noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async()=>{},tagNoPreflight,validNoPreflight,lateNoPreflightProgress,Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),
     linkedEventTickers:()=>[half.event_ticker],collegeFootballTotalNo,collegeBasketballTotalNo,overContractKey,sameSportsContract,
-    verifyIndependentCollegeTotalNo:async()=>{checks++;return {source:'ESPN',seconds:299}},
+    verifyIndependentCollegeTotalNo:async game=>{checks++;return {source:'ESPN',eventId:'college-verified',gameId:game.id,home:game.home,away:game.away,seconds:299}}, 
     pool:{query:async(sql,args=[])=>{
       if(sql.startsWith('SELECT * FROM college_total_no_windows'))return {rows:window?[window]:[]};
       if(sql.startsWith('INSERT INTO college_total_no_windows')){window={market_ticker:args[0],game_id:args[1],contract_key:args[2],period:args[3],first_clock:args[4],first_evidence:JSON.parse(args[5]),first_at:new Date(Date.now()-25000)};return {rows:[]}}
@@ -171,8 +171,8 @@ test('football Q4 total NO enters with a single immediately preceding external c
     accountBalance:async()=>({balance:10000,portfolio_value:0}),shardCash:()=>10000,marketShard:()=>0,
     singleSpendableCash:v=>v,feeReserve:()=>0,orderSize:()=>10,profitableCount:n=>n,
     estimatedCostCents:()=>500,auditTable:async()=>{},randomUUID:()=> 'proof',
-    rememberIndependentEntry,reserve:async signal=>{assert.equal(signal.fraction,.10);return 'order-1'},
-    withEntryProfitFloor:async(options,fn)=>{assert.equal(options.fraction,.10);return fn()},
+    rememberIndependentEntry,reserve:async signal=>{assert.equal(signal.fraction,.05);return 'order-1'}, 
+    withEntryProfitFloor:async(options,fn)=>{assert.equal(options.fraction,.05);return fn()}, 
     invalidateBalance:async()=>{}});
   vm.runInContext(code,context);
   const args=g=>[[{milestone,state:g}],new Map([[half.event_ticker,event]])];

@@ -11,10 +11,13 @@ export function configureIndependentFixtureCache(cache){activeFixtureCache=cache
 // with a conflicting score is a veto, never permission to try another source.
 const FOX_PUBLIC_KEY='jE7yBJVRNAwdDesMgTzTXUUSx1It41Fq';
 const foxQuery=`apikey=${FOX_PUBLIC_KEY}&api-version=1.1`;
+// An independent provider is the score authority. Kalshi supplies timing,
+// contract identity, liquidity and execution, never an equality veto here.
 export const scorePairMatches=(reading,game)=>Boolean(
   ['ESPN','FOX Sports'].includes(reading?.source)&&reading.eventId&&
-  Number.isInteger(reading.home)&&Number.isInteger(reading.away)&&
-  reading.home===game.home&&reading.away===game.away);
+  Number.isInteger(reading.home)&&reading.home>=0&&
+  Number.isInteger(reading.away)&&reading.away>=0&&
+  (!reading.gameId||reading.gameId===game?.id));
 
 const daysFor=start=>[start,start-86400000,start+86400000]
   .map(ms=>new Date(ms).toISOString().slice(0,10).replaceAll('-',''));
@@ -128,7 +131,8 @@ export async function fetchIndependentMatchScore(game,milestone,{fetcher=fetch,e
 // The two successful readings can come from different legitimate sources.
 // A provider switch changes event IDs, not the Kalshi fixture identity.
 export function pairedExternalMatch(first,second,game){
-  if(!first?.eventId||!scorePairMatches(second,game))return false;
+  if(!scorePairMatches(first,game)||!scorePairMatches(second,game)||
+    second.home<first.home||second.away<first.away)return false;
   if(first.source===second.source)return String(first.eventId)===String(second.eventId);
   return ['ESPN','FOX Sports'].includes(first.source)&&
     first.gameId===game.id&&second.gameId===game.id;

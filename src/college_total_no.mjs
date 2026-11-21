@@ -4,18 +4,19 @@ import {espnMatches} from './score_verification.mjs';
 import {espnScoreboardUrls} from './espn_scoreboards.mjs';
 import {collegeFootballTotalNo,collegeBasketballTotalNo} from './no_strategy.mjs';
 
-const qualifies=(game,market)=>['CFB','NFL'].includes(game.sport)?collegeFootballTotalNo(game,market,{beforeWindow:true}):
-  collegeBasketballTotalNo(game,market,{beforeWindow:true});
+const qualifies=(game,market)=>['CFB','NFL'].includes(game.sport)?
+  collegeFootballTotalNo(game,market,{beforeWindow:true,externalPending:true}):
+  collegeBasketballTotalNo(game,market,{beforeWindow:true,externalPending:true});
 
 export function independentCollegeTotalNoReading(scoreboard,game,milestone,market){
   if(!qualifies(game,market))return false;
-  const matches=espnMatches(scoreboard,game,milestone);
+  const matches=espnMatches(scoreboard,game,milestone,{identityOnly:true});
   return collegeTotalNoReading(matches,game);
 }
 function collegeTotalNoReading(matches,game){
   if(matches.length!==1)return false;
   const reading=matches[0];
-  if(!reading.eventId||reading.home!==game.home||reading.away!==game.away)return false;
+  if(!reading.eventId||![reading.home,reading.away].every(n=>Number.isInteger(n)&&n>=0))return false;
   return {source:'ESPN',eventId:reading.eventId,home:reading.home,away:reading.away,
     period:reading.period,seconds:reading.remainingSeconds};
 }

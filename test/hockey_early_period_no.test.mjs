@@ -90,7 +90,7 @@ test('ESPN proof validates current period linescores without requiring future pe
  assert.equal(proof2?.currentPeriod?.away,1);
  assert.equal(hockeyEarlyPeriodNo(g1,m1,{external:proof1})?.total,0);
  assert.equal(hockeyEarlyPeriodNo(g2,m2,{external:proof2})?.total,1);
- assert.equal(independentEarlyHockeyNoReading(board(2,'3:29',[{home:1,away:1},{home:1,away:0}]),g2,milestone,m2),null);
+ assert.equal(independentEarlyHockeyNoReading(board(2,'3:29',[{home:1,away:1},{home:1,away:0}]),g2,milestone,m2)?.home,2,'independent period goals are authoritative');
  assert.equal(independentEarlyHockeyNoReading(board(2,'4:29',[{home:1,away:1},{home:0,away:1}]),g2,milestone,m2)?.away,2,
    'the ESPN clock is not an entry requirement');
  assert.equal(independentEarlyHockeyNoReading(board(1,'3:29',[{home:0,away:0}]),g2,milestone,m2),null);

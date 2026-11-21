@@ -26,7 +26,7 @@ test('soccer NO external matching depends on the two teams and scores, never the
  const reading=independentSoccerTotalNoReading(oldClock,g,m,market);
  assert.equal(reading?.home,3,'only score and correct teams required');
  assert.equal(soccerTotalNo(g,market,{beforeWindow:true,external:reading})?.total,6);
- assert.equal(independentSoccerTotalNoReading(scoreboard(2,"84'",3,2),g,m,market),null,'wrong score blocked');
+ assert.equal(independentSoccerTotalNoReading(scoreboard(2,"84'",3,2),g,m,market)?.away,2,'external goals are authoritative');
  const wrong=structuredClone(oldClock);wrong.events[0].competitions[0].competitors[0].team.displayName='Other';
  assert.equal(independentSoccerTotalNoReading(wrong,g,m,market),null,'wrong team blocked');
 });
@@ -41,7 +41,7 @@ test('hockey full-game NO score proof does not require ESPN countdown to match K
  const proof=independentHockeyTotalNoReading(scoreboard(3,'14:00',3,3,[[1,1],[1,1],[1,1]]),g,m,market);
  assert.equal(proof?.home,3);
  assert.equal(hockeyTotalNo(g,market,{external:proof})?.total,6);
- assert.equal(independentHockeyTotalNoReading(scoreboard(3,'4:29',2,3,[[1,1],[0,1],[1,1]]),g,m,market),null);
+ assert.equal(independentHockeyTotalNoReading(scoreboard(3,'4:29',2,3,[[1,1],[0,1],[1,1]]),g,m,market)?.home,2);
 });
 
 test('basketball quarter-NO proof verifies the same score and attributed quarter points, not ESPN seconds',()=>{

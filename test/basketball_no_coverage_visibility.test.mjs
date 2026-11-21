@@ -82,7 +82,7 @@ test('NBA, WNBA and mapped international NO independently verify exact ESPN fixt
     assert.equal(evidence?.source,'ESPN');
     assert.ok(urls.some(url=>url.includes('/'+feed+'/scoreboard')));
     const changed=structuredClone(board);changed.events[0].competitions[0].competitors[0].score='71';
-    assert.equal(independentCollegeTotalNoReading(changed,g.state,g.milestone,market(league,league==='NBA'?185:league==='WNBA'?180:160)),false);
+    assert.equal(independentCollegeTotalNoReading(changed,g.state,g.milestone,market(league,league==='NBA'?185:league==='WNBA'?180:160))?.home,71,'independent score remains authoritative even if Kalshi differs');
   }
 });
 
@@ -95,7 +95,7 @@ test('multiple qualifying NO lines receive independent tracked windows and dashb
   const context=vm.createContext({noFinalCheckpoint,noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async()=>{},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),linkedEventTickers:()=>[contracts[0].event_ticker],
     collegeFootballTotalNo,collegeBasketballTotalNo,overContractKey,sameSportsContract,
-    verifyIndependentCollegeTotalNo:async()=>{verificationCalls++;return {source:'ESPN',eventId:'espn-matched-game',seconds:269};},
+    verifyIndependentCollegeTotalNo:async game=>{verificationCalls++;return {source:'ESPN',eventId:'espn-matched-game',gameId:game.id,home:game.home,away:game.away,seconds:269};},
     pool:{query:async(sql,args=[])=>{
       if(sql.startsWith('SELECT * FROM college_total_no_windows'))return {rows:windows.has(args[0])?[windows.get(args[0])]:[]};
       if(sql.startsWith('INSERT INTO college_total_no_windows')){
@@ -193,12 +193,12 @@ test('all basketball NO leagues share one 5% fee-inclusive pool without affectin
   const src=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
   const code=src.slice(src.indexOf('async function scanCollegeTotalNos('),src.indexOf('async function scan(cachedMilestones'));
   const window={market_ticker:m.ticker,game_id:f.state.id,contract_key:overContractKey(f.state,m),
-    period:4,first_clock:480,first_evidence:tagNoPreflight({source:'ESPN',eventId:'espn-matched-game'}),first_at:new Date(Date.now()-61000)};
+    period:4,first_clock:480,first_evidence:tagNoPreflight({source:'ESPN',eventId:'espn-matched-game',gameId:f.state.id,home:70,away:70}),first_at:new Date(Date.now()-61000)};
   let allocated=null,budget=null,orders=0,patterns=null;
   const ctx=vm.createContext({noFinalCheckpoint,noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async()=>{},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),linkedEventTickers:()=>[m.event_ticker],
     collegeFootballTotalNo,collegeBasketballTotalNo,overContractKey,sameSportsContract,
-    verifyIndependentCollegeTotalNo:async()=>({source:'ESPN',eventId:'espn-matched-game',seconds:29}),
+    verifyIndependentCollegeTotalNo:async game=>({source:'ESPN',eventId:'espn-matched-game',gameId:game.id,home:game.home,away:game.away,seconds:29}),
     pool:{query:async(sql,args=[])=>{
       if(sql.startsWith('SELECT * FROM college_total_no_windows'))return {rows:[window]};
       if(sql.startsWith('SELECT 1 FROM trade_attempts')){if(sql.includes('reason LIKE ANY'))patterns=args[0];return {rows:[],rowCount:0};}

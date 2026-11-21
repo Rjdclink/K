@@ -90,24 +90,24 @@ test('NFL total NO independently verifies teams and scores, not ESPN clock',asyn
   assert.equal(proof?.eventId,'nfl-game');
   assert.ok(urls.length>0&&urls.every(url=>url.includes('/football/nfl/')&&!url.includes('&groups=')));
   const conflict=structuredClone(board);conflict.events[0].competitions[0].competitors[0].score='21';
-  assert.equal(independentCollegeTotalNoReading(conflict,f.state,f.milestone,m),false);
-  assert.equal(await verifyIndependentCollegeTotalNo(f.state,f.milestone,m,{fetcher:async()=>({ok:true,json:async()=>conflict})}),false);
+  assert.equal(independentCollegeTotalNoReading(conflict,f.state,f.milestone,m)?.home,21);
+  assert.equal((await verifyIndependentCollegeTotalNo(f.state,f.milestone,m,{fetcher:async()=>({ok:true,json:async()=>conflict})}))?.home,21);
   const clockConflict=structuredClone(board);clockConflict.events[0].competitions[0].status.displayClock='5:00';
   assert.equal(independentCollegeTotalNoReading(clockConflict,f.state,f.milestone,m)?.home,20);
 });
 
-test('football scanner handles both NFL and CFB and enforces a shared 10% cap including fees',async()=>{
+test('football scanner enforces shared 5% NO pool including NFL, CFB and fees',async()=>{
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
   const code=source.slice(source.indexOf('async function scanCollegeTotalNos('),source.indexOf('async function scan(cachedMilestones'));
   assert.ok(code.includes('async function scanCollegeTotalNos'));
   const m=market('NFL'),first=fixture('NFL',4,'5:30'),later=fixture('NFL',4,'4:59');
   const events=new Map([[m.event_ticker,{category:'Sports',event_ticker:m.event_ticker,markets:[m]}]]);
   let saved=null,orders=0,checks=0,allocation=null,budget=null,patterns=[];
-  const fakeHeld={ticker:'KXNCAAFTOTAL-OLD',position_fp:-2,market_exposure_dollars:'8.00',fees_paid_dollars:'1.00'};
+  const fakeHeld={ticker:'KXNCAAFTOTAL-OLD',position_fp:-2,market_exposure_dollars:'3.00',fees_paid_dollars:'1.00'};
   const context=vm.createContext({noFinalCheckpoint,noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async()=>{},pairedExternalMatch,Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),linkedEventTickers:()=>[m.event_ticker],
     collegeFootballTotalNo,collegeBasketballTotalNo,overContractKey,sameSportsContract,
-    verifyIndependentCollegeTotalNo:async()=>{checks++;return {source:'ESPN',seconds:299};},
+    verifyIndependentCollegeTotalNo:async game=>{checks++;return {source:'ESPN',eventId:'nfl-external',gameId:game.id,home:game.home,away:game.away,seconds:299};},
     pool:{query:async(sql,args=[])=>{
       if(sql.includes('strategy=')&&sql.includes('reason')&&args[0])patterns.push(args[0]);
       if(sql.startsWith('SELECT * FROM college_total_no_windows'))return {rows:saved?[saved]:[]};
@@ -136,8 +136,8 @@ test('football scanner handles both NFL and CFB and enforces a shared 10% cap in
     orderSize:(cash,price,depth,fraction,min,bankroll,b)=>{allocation=fraction;budget=b;return b>=5?1:0;},
     profitableCount:n=>n,estimatedCostCents:()=>0,auditTable:async()=>{},
     randomUUID:()=> 'proof',rememberIndependentEntry,
-    reserve:async signal=>{assert.equal(signal.fraction,.10);return 'order-1';},
-    withEntryProfitFloor:async(options,fn)=>{assert.equal(options.fraction,.10);return fn();},
+    reserve:async signal=>{assert.equal(signal.fraction,.05);return 'order-1';},
+    withEntryProfitFloor:async(options,fn)=>{assert.equal(options.fraction,.05);return fn();},
     invalidateBalance:async()=>{}
   });
   vm.runInContext(code,context);
@@ -148,8 +148,8 @@ test('football scanner handles both NFL and CFB and enforces a shared 10% cap in
   assert.equal(await run(later),1,'NFL Q4 enters after one immediate independent check');
   assert.equal(checks,1);
   assert.equal(orders,1);
-  assert.equal(allocation,.10);
-  assert.equal(budget,100,'$100 bankroll, with $8 CFB exposure and $1 fees, leaves only $1');
+  assert.equal(allocation,.05);
+  assert.equal(budget,100,'$100 bankroll, with $3 CFB exposure and $1 fee, leaves only $1');
   assert.ok(patterns.some(p=>Array.isArray(p)&&p.includes('CFB %')&&p.includes('NFL %')),
-    'open holdings for both football leagues must be pooled into a single 10% limit');
+    'open holdings for both football leagues must be pooled into a single 5% limit');
 });

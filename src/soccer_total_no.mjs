@@ -1,3 +1,4 @@
+import {externalNoScore} from './external_no_authority.mjs';
 import {fetchIndependentMatchScore} from './independent_match_score.mjs';
 import {soccerRegulationSeconds} from './strategy.mjs';
 import {espnMatches} from './score_verification.mjs';
@@ -21,7 +22,7 @@ const clockMinute=clock=>{
 // Its countdown, period and publication status do not determine entry.
 const currentExternal=(reading,game)=>Boolean(
   ['ESPN','FOX Sports'].includes(reading?.source)&&reading.eventId&&
-  reading.home===game.home&&reading.away===game.away);
+  Boolean(externalNoScore(game,reading)));
 
 export function soccerNoMarketSpec(game,market,{beforeWindow=false}={}){
   const seconds=soccerRegulationSeconds(game);
@@ -55,7 +56,9 @@ export function soccerNoMarketSpec(game,market,{beforeWindow=false}={}){
 export function soccerTotalNo(game,market,{beforeWindow=false,external=null}={}){
   const spec=soccerNoMarketSpec(game,market,{beforeWindow});
   if(!spec||external&&!currentExternal(external,game))return null;
-  const total=game.home+game.away;
+  const score=external?externalNoScore(game,external):{home:game.home,away:game.away};
+  if(!score)return null;
+  const total=score.home+score.away;
   if(spec.line-total<1.5)return null;
   return {...spec,total,reason:
     'Soccer full-game total NO over '+spec.line+'; '+total+
@@ -66,7 +69,7 @@ export function soccerTotalNo(game,market,{beforeWindow=false,external=null}={})
 // and displayed elapsed match minute; the exchange supplies final-whistle countdown.
 export function independentSoccerTotalNoReading(scoreboard,game,milestone,market){
   if(!soccerNoMarketSpec(game,market,{beforeWindow:true}))return null;
-  const matches=espnMatches(scoreboard,game,milestone);
+  const matches=espnMatches(scoreboard,game,milestone,{identityOnly:true});
   if(matches.length!==1)return null;
   const match=matches[0],event=scoreboard.events.find(e=>e.id===match.eventId);
   const status=event?.competitions?.[0]?.status||event?.status;
