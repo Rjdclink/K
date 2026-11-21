@@ -152,7 +152,7 @@ test('football Q4 total NO enters with a single immediately preceding external c
   const context=vm.createContext({noFinalCheckpoint,noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async()=>{},tagNoPreflight,validNoPreflight,lateNoPreflightProgress,Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),
     linkedEventTickers:()=>[half.event_ticker],collegeFootballTotalNo,collegeBasketballTotalNo,overContractKey,sameSportsContract,
-    verifyIndependentCollegeTotalNo:async()=>{checks++;return {source:'ESPN',seconds:299}},
+    verifyIndependentCollegeTotalNo:async game=>{checks++;return {source:'ESPN',eventId:'college-verified',gameId:game.id,home:game.home,away:game.away,seconds:299}}, 
     pool:{query:async(sql,args=[])=>{
       if(sql.startsWith('SELECT * FROM college_total_no_windows'))return {rows:window?[window]:[]};
       if(sql.startsWith('INSERT INTO college_total_no_windows')){window={market_ticker:args[0],game_id:args[1],contract_key:args[2],period:args[3],first_clock:args[4],first_evidence:JSON.parse(args[5]),first_at:new Date(Date.now()-25000)};return {rows:[]}}
