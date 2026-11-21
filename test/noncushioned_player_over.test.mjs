@@ -41,3 +41,11 @@ test('when a settlement releases a slot, highest executable total net profit ran
  assert.deepEqual(rankNoncushionedReplacements(candidates).map(e=>e.ticker),['best','middle','older']);
  assert.deepEqual(rankNoncushionedReplacements([...candidates,{ticker:'equal',netProfitCents:390,costCents:475}]).map(e=>e.ticker).slice(0,2),['best','equal']);
 });
+
+test('first external proof cannot precede appearance plus 3:30; same-source event ID must match the verified game',()=>{
+ const first=proof(7,now-1000),last=proof(8,now);
+ assert.equal(noncushionedTwoProofs(first,last,game,market,now,now-205000),false);
+ assert.equal(noncushionedTwoProofs(first,last,game,market,now,now-215000),true);
+ const contradictory={...game,externalScore:{source:'ESPN',eventId:'different-match'}};
+ assert.equal(noncushionedPlayerState(contradictory,market,last),null);
+});
