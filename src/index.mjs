@@ -21,6 +21,10 @@ import {publishVerifiedPositions,ensureVerifiedPositionTables} from './account_p
 import {accountHistoryListSQL,accountHistorySummarySQL} from './account_history_query.mjs';
 import { ensureExitLedger, recordExitFill } from './exit_ledger.mjs';
 import { gameState, overSignal, PLAYER_PROP_MAX_FRACTION, BASKETBALL_COUNT_PROP_MAX_FRACTION, BASKETBALL_WINNER_ENTRY_SECONDS, playerOverSpec, playerPropEarlyWindow, confirmedOver, fallbackScoringUnits, confirmedExternalLead, leadSignal, isTieOutcomeMarket, proBasketballLeadRules, basketballCloseoutEntry, basketballCloseoutMinimum, nbaSingleReadLead, kalshiSingleReadLead, confirmedSoccerWinnerClock, soccerWinnerWindowOpen, leadWatchReason, additionalLeadSignal, cricketLeadSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback, teamScorePosition } from './strategy.mjs';
+import {authoritativeGameState,verifiedSourceReady} from './external_authority.mjs';
+import {fetchIndependentMatchScore} from './independent_match_score.mjs';
+import {uncushionedPlayerSpec,verifyNoncushionedPlayerStat,noncushionedPlayerState,noncushionedTwoProofs,FIRST_NONCUSHIONED_CHECK_MS} from './noncushioned_player_over.mjs';
+import {mayOpenNoncushionedPlayerProp,NONCUSHIONED_PLAYER_TAG} from './noncushioned_prop_slots.mjs';
 import { reviewMiss } from './ai.mjs';
 import { kalshiSignature } from './auth.mjs';
 import { marketShard, shardCash, transferPlan, comboShardBudget, awaitShardCash } from './funding.mjs';
@@ -242,8 +246,37 @@ function upgradeTables(){return upgradesReady??=Promise.all([
   pool.query(`CREATE TABLE IF NOT EXISTS fallback_verifications (market_ticker text PRIMARY KEY,original_id uuid NOT NULL,verification_id uuid NOT NULL,first_verified_at timestamptz NOT NULL DEFAULT now(),verified_at timestamptz NOT NULL DEFAULT now())`),
   pool.query(`CREATE TABLE IF NOT EXISTS combo_upgrades (market_ticker text PRIMARY KEY,original_id uuid NOT NULL,verification_ids jsonb NOT NULL,status text NOT NULL,rfq_id text NOT NULL,quote_id text NOT NULL,order_id text,fill_count numeric NOT NULL DEFAULT 0,error text,created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now())`)
 ]).catch(e=>{upgradesReady=null;throw e})}
+const externalSportFeeds=game=>{
+ const league=game?.sport;
+ const supported={NBA:['basketball/nba','nba'],WNBA:['basketball/wnba','wnba'],
+  NCAAB:['basketball/mens-college-basketball','cbk'],
+  NCAAW:['basketball/womens-college-basketball',null],
+  NFL:['football/nfl','nfl'],CFB:['football/college-football','cfb'],
+  NHL:['hockey/nhl','nhl'],Soccer:['soccer/all','soccer']};
+ return supported[league]||(/soccer/.test(String(game?.type||''))?supported.Soccer:null);
+};
+const sourceScoreReads=new Map();
+async function externallyScoredGame(game,milestone,{fresh=false}={}){
+ if(!game?.verifiedLive||!milestone?.id)return null;
+ const feeds=externalSportFeeds(game);
+ if(!feeds)return null;
+ const cached=sourceScoreReads.get(game.id),now=Date.now();
+ let reading=!fresh&&cached&&now-cached.at<2500?cached.reading:null;
+ if(!reading){
+  reading=await fetchIndependentMatchScore(game,milestone,{espnFeed:feeds[0],foxFeed:feeds[1]});
+  if(!reading||reading===false)return null;
+  sourceScoreReads.set(game.id,{reading,at:Date.now()});
+ }
+ return authoritativeGameState(game,reading,Date.now());
+}
+
 async function auditedOver(game,milestone,options={}){
   delete game.independentEntry;
+  if(externalSportFeeds(game)){
+    const authoritative=await externallyScoredGame(game,milestone,{fresh:true});
+    if(!authoritative){game.verificationIssue='Fresh independently matched external score unavailable';return false;}
+    Object.assign(game,authoritative);
+  }
   const signal=options.market&&overSignal(game,options.market);
   if(signal){
     const cushion=overCushion(game,options.market);
@@ -4168,6 +4201,14 @@ async function scan(cachedMilestones,discoveryCount){
     submitted+=await scanVariablePlayerOvers(marketGames,events,variableOverSignals);
     submitted+=await scanThirdQuarterNos(marketGames,events);
     await candidateTable();
+    // Fresh external scores, never Kalshi's score, determine normal OVER
+    // and commanding-lead candidate qualification.
+    await mapBatches(games.filter(g=>externalSportFeeds(g.state)&&eligibleForMarkets(g.state)),6,async g=>{
+      try{
+        const score=await externallyScoredGame(g.state,g.milestone);
+        if(score)Object.assign(g.state,score);
+      }catch(error){console.warn('External candidate score deferred:',g.milestone.id,error.message)}
+    });
     const opportunities=[],snapshotRows=new Map(),scoreboardCache=new Map();
     const allCandidates=[],upgradeCandidates=[],snapshotCandidates=new Map();
     const upgradeFills=new Map(existingFills.rows.filter(r=>r.strategy==='over'||r.strategy==='lead'&&/Kalshi-only/i.test(r.reason||'')).map(r=>[r.market_ticker,r]));
