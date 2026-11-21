@@ -5,6 +5,13 @@ import {espnScoreboardUrls} from './espn_scoreboards.mjs';
 import {espnRetryThenFox} from './source_fallback.mjs';
 
 export const FIRST_NONCUSHIONED_CHECK_MS=210000;
+export function rankNoncushionedReplacements(entries){
+ return entries.filter(e=>e&&Number.isFinite(e.netProfitCents)&&e.netProfitCents>=50&&
+   Number.isFinite(e.costCents)&&e.costCents>0)
+  .sort((a,b)=>b.netProfitCents-a.netProfitCents||
+    String(a.ticker||a.c?.market?.ticker||'').localeCompare(String(b.ticker||b.c?.market?.ticker||'')));
+}
+
 const statField={REB:'rebounds',AST:'assists','3PT':'three_points_made',STL:'steals',BLK:'blocks',
  GOALS:'goals',SAVES:'saves',SOG:'shots_on_goal',HITS:'hits',HR:'home_runs'};
 const feedBySport={NBA:'basketball/nba',WNBA:'basketball/wnba',NCAAB:'basketball/mens-college-basketball',
