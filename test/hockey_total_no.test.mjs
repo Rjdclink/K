@@ -43,12 +43,12 @@ test('NHL NO requires 2.5 goals for full-game and 1.5 for third-period totals',(
   assert.equal(hockeyTotalNo(state,market('third_period',2.5))?.total,0,'third period 0 qualifies at 2.5');
   assert.equal(hockeyTotalNo(state,market('third_period',1.5))?.total,0,'exact 1.5-goal P3 cushion qualifies');
   assert.equal(hockeyTotalNo(state,market('third_period',1.0)),null,'1.0-goal P3 cushion fails');
-  assert.equal(hockeyTotalNo(game('1:29',3,3,1),market('third_period',3.5))?.total,1);
-  assert.equal(hockeyTotalNo(game('1:29',3,3,1),market('third_period',2.5))?.total,1);
+  assert.equal(hockeyTotalNo(game('1:29',3,3,1),market('third_period',3.5)),null,'four goals veto P3 NO');
+  assert.equal(hockeyTotalNo(game('1:29',3,3,1),market('third_period',2.5)),null,'four goals veto P3 NO');
   assert.equal(hockeyTotalNo(game('1:29',3,3,1),market('third_period',2.0)),null);
 });
 
-test('NHL example: 4 combined goals requires an Over 6.5 line, and P3 compares P3 goals only',()=>{
+test('NHL example: four or more combined goals block NO even when the selected period remains low',()=>{
   const twoGoals=gameState(milestone,{milestone_id:milestone.id,
     _observed_at:new Date().toISOString(),details:{
       status:'inprogress',home_points:1,away_points:1,period:3,
@@ -63,15 +63,15 @@ test('NHL example: 4 combined goals requires an Over 6.5 line, and P3 compares P
   assert.equal(hockeyTotalNo(twoGoals,market('full_game',3.5)),null,
     'a 1.5-goal full-game cushion is insufficient');
   const atFour=game('1:29',3,3,1);
-  assert.equal(hockeyTotalNo(atFour,market('full_game',6.5))?.total,4);
+  assert.equal(hockeyTotalNo(atFour,market('full_game',6.5)),null,'four goals veto full-game NO');
   assert.equal(hockeyTotalNo(atFour,market('full_game',5.5)),null,'a 1.5-goal full-game cushion is insufficient');
   assert.equal(hockeyTotalNo(atFour,market('full_game',5.0)),null,'one goal is below 1.5');
-  assert.equal(hockeyTotalNo(atFour,market('third_period',3.5))?.total,1);
-  assert.equal(hockeyTotalNo(atFour,market('third_period',2.5))?.total,1);
+  assert.equal(hockeyTotalNo(atFour,market('third_period',3.5)),null,'four goals veto P3 NO');
+  assert.equal(hockeyTotalNo(atFour,market('third_period',2.5)),null,'four goals veto P3 NO');
   assert.equal(hockeyTotalNo(atFour,market('third_period',2.0)),null);
   const twoP3Goals=game('1:29',3,4,1);
-  assert.equal(hockeyTotalNo(twoP3Goals,market('third_period',3.5))?.total,2,
-    'when P3 has 2 goals, its minimum NO line is Over 3.5');
+  assert.equal(hockeyTotalNo(twoP3Goals,market('third_period',3.5)),null,
+    'five combined game goals veto P3 NO despite the selected period cushion');
   assert.equal(hockeyTotalNo(twoP3Goals,market('third_period',3.0)),null);
 });
 
@@ -135,4 +135,20 @@ test('full-game NHL total NO verifies full score even when direct period breakou
   const proof=independentHockeyTotalNoReading(s,state,milestone,market('full_game',5.5));
   assert.equal(proof?.home,2);
   assert.equal(proof?.away,1);
+});
+test('NHL full-game and third-period NO block at four combined game goals',()=>{
+  const atThree=game('1:29',3,2,1),atFour=game('1:29',3,3,1),atFive=game('1:29',3,4,1);
+  const full=market('full_game',8.5),third=market('third_period',5.5);
+  assert.equal(hockeyTotalNo(atThree,full)?.total,3);
+  assert.equal(hockeyTotalNo(atThree,third)?.total,0);
+  for(const state of [atFour,atFive]){
+    assert.equal(hockeyTotalNo(state,full),null,'full-game NO blocks four or more');
+    assert.equal(hockeyTotalNo(state,third),null,'P3 NO must use cumulative game goals for the limit');
+    assert.equal(hockeyTotalNo(state,full,{beforeWindow:true}),null,'preflight blocks four goals');
+  }
+  const reading={source:'ESPN',eventId:'nhl-match',home:3,away:1,
+    periods:[{number:1,home:1,away:1},{number:2,home:1,away:0},{number:3,home:1,away:0}],
+    period3:{home:1,away:0}};
+  assert.equal(hockeyTotalNo(atThree,full,{external:reading}),null,'verified four goals block if Kalshi shows three');
+  assert.equal(hockeyTotalNo(atThree,third,{external:reading}),null,'verified cumulative four block third-period NO');
 });

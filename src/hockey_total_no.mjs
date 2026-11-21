@@ -56,6 +56,7 @@ export function hockeyTotalNo(game,market,{beforeWindow=false,external=null}={})
   if(external&&!validExternal(external,game))return null;
   const independent=external?externalNoScore(game,external):null;
   let total=independent?independent.home+independent.away:game.home+game.away;
+  if(total>=4)return null;
   if(spec.period==='third_period'){
     const providerParts=validPeriods(game.periodScores);
     const externalParts=external?externalNoPeriods(game,external,3):null;

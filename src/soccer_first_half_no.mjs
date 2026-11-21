@@ -53,7 +53,7 @@ export function soccerFirstHalfNo(game,market,{beforeWindow=false,external=null}
   const score=external?externalNoScore(game,external):{home:game.home,away:game.away};
   if(!score)return null;
   const total=score.home+score.away;
-  if(spec.line-total<1.5)return null;
+  if(total>=4||spec.line-total<1.5)return null;
   return {...spec,total,reason:'Soccer first-half total NO over '+spec.line+'; '+
     total+' first-half goals, '+soccerFirstHalfSeconds(game)+
     's to the 45-minute regulation clock'};

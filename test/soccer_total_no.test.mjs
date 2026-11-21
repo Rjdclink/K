@@ -48,7 +48,7 @@ test('soccer NO needs at least 1.5 goals above current combined live score',()=>
   assert.equal(soccerTotalNo(game(),market(4.5))?.total,3);
   assert.equal(soccerTotalNo(game(),market(4.0)),null);
   assert.equal(soccerTotalNo(game(),market(3.5)),null);
-  assert.equal(soccerTotalNo(game(479,3,1),market(5.5))?.total,4);
+  assert.equal(soccerTotalNo(game(479,3,1),market(5.5)),null,'four-goal games are excluded');
   assert.equal(soccerTotalNo(game(479,3,1),market(4.5)),null);
 });
 
@@ -86,4 +86,13 @@ test('independent ESPN proof verifies exact soccer fixture and goals without pro
   }});
   assert.equal(fetched?.eventId,'espn-soccer-game');
   assert.ok(urls.length>0&&urls.every(url=>url.includes('/soccer/all/scoreboard')));
+});
+test('soccer full-game NO blocks four or more total goals even with ample cushion',()=>{
+  const large=market(8.5),proof={source:'ESPN',eventId:'matched-soccer',home:2,away:2};
+  assert.equal(soccerTotalNo(game(479,2,1),large)?.total,3);
+  assert.equal(soccerTotalNo(game(479,2,2),large),null,'exactly four scored must block');
+  assert.equal(soccerTotalNo(game(479,3,2),large),null,'more than four scored must block');
+  assert.equal(soccerTotalNo(game(479,2,2),large,{beforeWindow:true}),null,'preflight must block four goals');
+  assert.equal(soccerTotalNo(game(479,2,1),large,{external:proof}),null,'independent four-goal reading blocks even if Kalshi shows three');
+  assert.equal(soccerTotalNo(game(479,2,2),market(5.5),{external:{...proof,away:1}})?.total,3,'independent score remains authoritative');
 });
