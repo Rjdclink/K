@@ -384,7 +384,12 @@ async function pairedOverRead(first,milestone,market,decorate=state=>state){
   const decision=external?await external:null;
   if(!raw||decision!==true)return {state:null,decision};
   raw._observed_at=new Date().toISOString();
-  const second=decorate(gameState(milestone,raw));
+  let second=decorate(gameState(milestone,raw));
+  if(externalSportFeeds(second)){
+    const independent=await externallyScoredOverState(second,milestone,market);
+    if(!independent)return {state:null,decision:false};
+    second=decorate(independent);
+  }
   if(!overSignal(second,market))return {state:null,decision:false};
   if(!confirmedOver(first,second,market,0)||!sameOverReading(first,second,market)||
     !freshOverState(second,market)||Date.now()-pairedAt>OVER_FRESH_MS)return null;
@@ -2229,8 +2234,20 @@ async function watchLeadWindows(until){
           if(needed.length&&Date.now()<until)yield await liveBatch(needed);
         }
         for await(const latest of scorePasses()){
-        const possible=watching.map(milestone=>({milestone,state:gameState(milestone,latest.get(milestone.id))}))
-          .filter(g=>eligibleForMarkets(g.state)&&leadWatchReason(g.state))
+        const rawWatch=watching.map(milestone=>({milestone,state:gameState(milestone,latest.get(milestone.id))}))
+          .filter(g=>eligibleForMarkets(g.state));
+        // The live clock narrows the watch; externally sourced team scores,
+        // never Kalshi-only leads, then decide candidate eligibility.
+        const near=rawWatch.filter(g=>g.state.period>=1&&
+          (Number.isFinite(g.state.remainingSeconds)&&g.state.remainingSeconds<=900||
+           /soccer/.test(g.state.type)&&Number.isFinite(g.state.soccerMinute)&&g.state.soccerMinute>=75));
+        const external=await mapBatches(near,6,async g=>{
+          try{
+            const result=await externallyScoredGame(g.state,g.milestone);
+            return result?{...g,state:result}:null;
+          }catch{return null}
+        });
+        const possible=external.filter(g=>g&&leadWatchReason(g.state))
           .sort((a,b)=>(a.state.remainingSeconds||Infinity)-(b.state.remainingSeconds||Infinity));
         const eventTickers=[...new Set(possible.flatMap(g=>winnerEventTickers(g.milestone)))];
         const events=eventTickers.length?await marketMap(eventTickers):new Map();
@@ -2371,7 +2388,8 @@ async function watchReadyOverTickets(until){
           if(!event||event.category!=='Sports')continue;
           const listed=(event.markets||[]).find(m=>m.ticker===ticket.ticker&&m.event_ticker===eventTicker);
           if(!listed)continue;
-          if(!overSignal(state,listed)){await resetLostOverWindow(state,listed);continue;}
+          // Kalshi's own score cannot veto an independently crossed OVER.
+          // The subsequent proof reads the source first and checks the cushion.
           stage='score_verification';
           state=await confirmedIndependentOver(state,milestone,listed);
           if(!state)continue;
