@@ -58,7 +58,7 @@ test('normal live games receive a market catalog sweep at least once in a minute
 test('the scanner executes all due sport NO finals before any routine first checks or player scans',()=>{
  const src=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
  const fragment=src.slice(src.indexOf('const events=await marketMap('),src.indexOf('await candidateTable();'));
- const first=fragment.indexOf('submitted+=await runImmediateNoFinalPass([');
+ const first=fragment.indexOf("submitted+=await withApiPriority('preflight_final',()=>runImmediateNoFinalPass([");
  const initial=fragment.indexOf("scanCollegeTotalNos(marketGames,events,'football',null,'initial')");
  const props=fragment.indexOf('scanVariablePlayerOvers(marketGames,events,variableOverSignals)');
  assert.ok(first>=0&&initial>first&&props>initial,'due finals precede first checks and props');

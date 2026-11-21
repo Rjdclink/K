@@ -3,7 +3,10 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 const context=new AsyncLocalStorage();
 export const withApiPriority=(priority,work)=>context.run(priority,work);
 export const apiPriority=()=>context.getStore()||'normal';
-const rank={interactive:0,live:1,normal:2,background:3};
+// Initial preflight and due-final evidence must never sit behind unrelated
+// discovery, dashboard reads or position upgrades. Protective exits share
+// the top tier because skipping an emergency exit could increase losses.
+const rank={risk_exit:0,preflight_final:0,preflight:1,interactive:2,live:3,normal:4,background:5};
 
 // Reserve only the next available shared slot. A queued catalog request must
 // not book a future slot ahead of a live score/quote that arrives afterward.
@@ -15,7 +18,9 @@ export function createPriorityGate(reserve,{wait=ms=>new Promise(r=>setTimeout(r
     try{
       while(queue.length){
         queue.sort((a,b)=>rank[a.priority]-rank[b.priority]);
-        const deferred=urgentStreak>=4?queue.filter(j=>rank[j.priority]>=rank.normal).sort((a,b)=>a.sequence-b.sequence)[0]:null;
+        const preflightPending=queue.some(j=>rank[j.priority]<=rank.preflight);
+        const deferred=urgentStreak>=4&&!preflightPending?
+          queue.filter(j=>rank[j.priority]>=rank.normal).sort((a,b)=>a.sequence-b.sequence)[0]:null;
         const job=deferred||queue[0];
         try{
           const delay=await reserve(job.priority);
