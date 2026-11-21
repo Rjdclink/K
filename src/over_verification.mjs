@@ -45,6 +45,17 @@ export function sameOverReading(first,second,market){
 }
 export function timedOverEntryValid(game,market,now=Date.now()){
   if(!independentEntryValid(game,market,now))return false;
+  if(game?.overVerification?.route==='noncushioned_player_two_proof'){
+    const proof=game.overVerification,player=playerOverSpec(game,market);
+    return Boolean(player&&game.verificationId&&
+      proof.contractKey===overContractKey(game,market)&&
+      proof.verificationId===game.verificationId&&
+      proof.playerId===player.id&&proof.metric===player.metric&&
+      Number.isInteger(proof.externalValue)&&proof.externalValue>player.line&&
+      proof.firstSource===proof.secondSource&&proof.firstEventId===proof.secondEventId&&
+      Number.isFinite(proof.firstAt)&&Number.isFinite(proof.secondAt)&&
+      proof.secondAt>proof.firstAt&&now>=proof.secondAt&&now-proof.secondAt<=10000);
+  }
   const proof=game?.overVerification,player=playerOverSpec(game,market);
   const cushion=overCushion(game,market),signal=overSignal(game,market);
   if(cushion===null||!player&&!(game.independentEntry.overValue>=Math.floor(signal.strike+cushion)+1))return false;
