@@ -3871,6 +3871,132 @@ async function scanSoccerTotalNos(games,events,signalSink=null){
   return filled;
 }
 
+// Non-variable countable player props have a separate uncushioned path:
+// wait 3:30 after first observation, record an independent player-stat proof,
+// then obtain a second fresh and separately requested proof right before entry.
+// The existing immediate verified-cushion and variable-player paths are intact.
+async function scanNoncushionedPlayerOvers(games,events,signalSink=null){
+ if(!live())return 0;
+ await pool.query(`CREATE TABLE IF NOT EXISTS noncushioned_prop_preflights(
+   market_ticker text PRIMARY KEY,game_id text NOT NULL,contract_key text NOT NULL,
+   first_seen timestamptz NOT NULL DEFAULT now(),first_proof jsonb,
+   updated_at timestamptz NOT NULL DEFAULT now())`);
+ const candidates=[];
+ for(const {milestone,state} of games){
+  if(!state?.verifiedLive||!playerPropEarlyWindow(state))continue;
+  for(const ticker of linkedEventTickers(milestone)){
+   const event=events.get(ticker);if(event?.category!=='Sports')continue;
+   for(const market of event.markets||[]){
+    if(market.event_ticker!==ticker)continue;
+    const spec=uncushionedPlayerSpec(state,market);
+    if(!spec||overCushion(state,market)!==null)continue;
+    candidates.push({milestone,state,event,market,spec});
+   }
+  }
+ }
+ if(!candidates.length)return 0;
+ const windows=new Map();
+ for(let start=0;start<candidates.length;start+=150){
+  const batch=candidates.slice(start,start+150).map(c=>({
+   market_ticker:c.market.ticker,game_id:c.state.id,contract_key:c.spec.key}));
+  const {rows}=await pool.query(`INSERT INTO noncushioned_prop_preflights(market_ticker,game_id,contract_key)
+   SELECT market_ticker,game_id,contract_key
+   FROM jsonb_to_recordset($1::jsonb) x(market_ticker text,game_id text,contract_key text)
+   ON CONFLICT(market_ticker) DO UPDATE SET
+    first_seen=CASE WHEN noncushioned_prop_preflights.game_id=EXCLUDED.game_id
+      AND noncushioned_prop_preflights.contract_key=EXCLUDED.contract_key
+      THEN noncushioned_prop_preflights.first_seen ELSE now() END,
+    first_proof=CASE WHEN noncushioned_prop_preflights.game_id=EXCLUDED.game_id
+      AND noncushioned_prop_preflights.contract_key=EXCLUDED.contract_key
+      THEN noncushioned_prop_preflights.first_proof ELSE NULL END,
+    game_id=EXCLUDED.game_id,contract_key=EXCLUDED.contract_key,updated_at=now()
+   RETURNING market_ticker,first_seen,first_proof`,[JSON.stringify(batch)]);
+  rows.forEach(row=>windows.set(row.market_ticker,row));
+ }
+ const eligible=candidates.filter(c=>{
+  const w=windows.get(c.market.ticker);
+  return w&&Date.now()-Date.parse(w.first_seen)>=FIRST_NONCUSHIONED_CHECK_MS;
+ }).sort((a,b)=>Number(hasAsk(b.market))-Number(hasAsk(a.market))||
+   Date.parse(windows.get(a.market.ticker).first_seen)-
+   Date.parse(windows.get(b.market.ticker).first_seen)).slice(0,12);
+ let filled=0;
+ await mapBatches(eligible,4,async c=>{
+  const window=windows.get(c.market.ticker);
+  const show=(reason)=>{if(!signalSink)return;const list=signalSink.get(c.state.id)||[];
+   list.push({strategy:'watch',ticker:c.market.ticker,title:c.market.title||c.market.ticker,
+    player_prop:true,reason:NONCUSHIONED_PLAYER_TAG,execution:reason});
+   signalSink.set(c.state.id,list);
+  };
+  try{
+   const first=window.first_proof;
+   if(!first){
+    const reading=await verifyNoncushionedPlayerStat(c.state,c.milestone,c.market);
+    if(!reading||!noncushionedPlayerState(c.state,c.market,reading)){
+     show('First independent player statistic unavailable or not above line');return;
+    }
+    await pool.query(`UPDATE noncushioned_prop_preflights SET first_proof=$2::jsonb,
+      updated_at=now() WHERE market_ticker=$1 AND game_id=$3 AND contract_key=$4`,
+      [c.market.ticker,JSON.stringify(reading),c.state.id,c.spec.key]);
+    show('First external player-stat check passed; final check due immediately before a qualifying order');
+    return;
+   }
+   if(first.contractKey!==c.spec.key||first.gameId!==c.state.id)return;
+   const raw=await liveMilestone(c.milestone.id);
+   if(!raw)return;
+   raw._observed_at=new Date().toISOString();
+   const kalshiState=gameState(c.milestone,raw);
+   const current=(await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market;
+   if(!current||!sameSportsContract(current,c.market))return;
+   const spec=uncushionedPlayerSpec(kalshiState,current);
+   if(!spec||spec.key!==c.spec.key)return;
+   const quote=await recoverSummaryAsk(current,{fresh:true});
+   const seller=quote&&hasAsk(quote)?await executableQuote(quote):null;
+   if(!seller||!hasAsk(seller)){show('Awaiting executable YES seller');return}
+   const {rows:pending}=await pool.query(`SELECT 1 FROM trade_attempts
+     WHERE market_ticker=$1 AND status IN ('filled','reserved','check_order','retrying','combo_pending') LIMIT 1`,
+     [seller.ticker]);
+   if(pending.length)return;
+   const account=await accountBalance({fresh:true});
+   const bankroll=Number(account.balance)+Number(account.portfolio_value);
+   const local=shardCash(account,marketShard(c.event,seller));
+   if(!Number.isFinite(bankroll)||bankroll<=0||local===null||local<=0)return;
+   const price=Number(seller.yes_ask_dollars),fees=feeReserve(c.event,seller);
+   const authoritative=await externallyScoredGame(kalshiState,c.milestone,{fresh:true});
+   if(!authoritative||!verifiedSourceReady(authoritative))return;
+   const second=await verifyNoncushionedPlayerStat(authoritative,c.milestone,seller);
+   const checkedAt=Date.now();
+   if(!noncushionedTwoProofs(first,second,authoritative,seller,checkedAt)||
+      checkedAt-authoritative.observedAt>10000){
+    show('Final independent player-stat check or same-fixture check failed');return;
+   }
+   const checked=noncushionedPlayerState(authoritative,seller,second);
+   if(!checked)return;
+   await auditTable();
+   const verificationId=randomUUID();
+   await pool.query(`INSERT INTO verification_records(id,market_ticker,passed,evidence)
+     VALUES($1,$2,true,$3::jsonb)`,[verificationId,seller.ticker,JSON.stringify({
+      mode:'noncushioned_player_external_two_checks',first,second,
+      firstSeen:window.first_seen,game:checked,milestone:c.milestone,market:seller})]);
+   checked.verificationId=verificationId;
+   rememberIndependentEntry(checked,seller,verificationId,second.requestedAt,second.playerValue);
+   checked.overVerification={route:'noncushioned_player_two_proof',
+    verificationId,contractKey:spec.key,playerId:spec.player.id,metric:spec.player.metric,
+    externalValue:second.playerValue,firstSource:first.source,secondSource:second.source,
+    firstEventId:first.eventId,secondEventId:second.eventId,
+    firstAt:first.requestedAt,secondAt:second.requestedAt};
+   if(!timedOverEntryValid(checked,seller))return;
+   const signal={strategy:'over',fraction:.05,
+    reason:NONCUSHIONED_PLAYER_TAG+'; '+spec.player.name+' '+spec.player.metric+
+    ' externally '+second.playerValue+' above '+spec.player.line+
+    ', independent first check after 3:30 and second immediately before entry'};
+   if(await submit(signal,checked,c.event,seller,Math.min(Number(account.balance),local),
+     bankroll,Infinity,bankroll,Number(account.balance))){filled++;show('Filled')}
+  }catch(error){console.warn('Non-cushioned player prop deferred:',c.market.ticker,error.message);
+   show('Independent player-prop verification unavailable')}
+ });
+ return filled;
+}
+
 async function scanVariablePlayerOvers(games,events,signalSink=null){
   const fraction=.05,reasonPrefix='Variable player over: ';
   const report=(c,execution,proof=null)=>{
@@ -4214,6 +4340,7 @@ async function scan(cachedMilestones,discoveryCount){
     submitted+=await scanEarlyPeriodNos(marketGames,events,basketballNoSignals,'Basketball');
     const variableOverSignals=new Map();
     submitted+=await scanVariablePlayerOvers(marketGames,events,variableOverSignals);
+    submitted+=await scanNoncushionedPlayerOvers(marketGames,events,variableOverSignals);
     submitted+=await scanThirdQuarterNos(marketGames,events);
     await candidateTable();
     // Fresh external scores, never Kalshi's score, determine normal OVER
