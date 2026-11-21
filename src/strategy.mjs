@@ -1,7 +1,7 @@
 import { golfState, golfSignal } from './golf.mjs';
 import {automaticEntryFraction,hasIndependentCushionedOverProof} from './automatic_entry_policy.mjs';
 import { VERIFY_DWELL_MS } from './combos.mjs';
-export const KALSHI_ONLY_FRACTION=.15;
+export const KALSHI_ONLY_FRACTION=.05;
 export const SOCCER_OVER_STABILITY_MS=10000;
 export const PLAYER_PROP_WINDOW_MS=7*60*1000;
 export const CFB_LEAD_WINDOW_SECONDS=270;
@@ -1047,5 +1047,5 @@ export function overBudget(balanceCents, portfolioValueCents) {
   if (![cash,value].every(Number.isFinite) || Math.min(cash,value)<0) return 0;
   // Each ordinary over has its own 15% bankroll limit. Existing positions do not
   // reduce another trade's limit; cash availability is checked separately.
-  return Math.floor((cash+value)*0.15);
+  return Math.floor((cash+value)*0.05);
 }
