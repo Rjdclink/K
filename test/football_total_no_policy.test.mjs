@@ -90,8 +90,8 @@ test('NFL total NO independently verifies teams and scores, not ESPN clock',asyn
   assert.equal(proof?.eventId,'nfl-game');
   assert.ok(urls.length>0&&urls.every(url=>url.includes('/football/nfl/')&&!url.includes('&groups=')));
   const conflict=structuredClone(board);conflict.events[0].competitions[0].competitors[0].score='21';
-  assert.equal(independentCollegeTotalNoReading(conflict,f.state,f.milestone,m),false);
-  assert.equal(await verifyIndependentCollegeTotalNo(f.state,f.milestone,m,{fetcher:async()=>({ok:true,json:async()=>conflict})}),false);
+  assert.equal(independentCollegeTotalNoReading(conflict,f.state,f.milestone,m)?.home,21);
+  assert.equal((await verifyIndependentCollegeTotalNo(f.state,f.milestone,m,{fetcher:async()=>({ok:true,json:async()=>conflict})}))?.home,21);
   const clockConflict=structuredClone(board);clockConflict.events[0].competitions[0].status.displayClock='5:00';
   assert.equal(independentCollegeTotalNoReading(clockConflict,f.state,f.milestone,m)?.home,20);
 });
