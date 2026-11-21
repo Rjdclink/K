@@ -83,3 +83,33 @@ test('lead cash-out needs half the possible net settlement profit after both fee
   assert.equal(halfPotentialProfitExitEligible(held,{count:10,price:1}),false,'an invalid bid cannot trigger an exit');
 });
 
+
+test('NO-origin trade reversed by YES purchases is visibly flagged without altering exchange holdings',()=>{
+  const ticker='KXNCAAMBTOTAL-26NOV20UNTAPP-169';
+  const [row]=untrackedOpenPositions([
+    {ticker,position_fp:'138.25',market_exposure_dollars:'98.898800',fees_paid_dollars:'2.187400'}
+  ],new Set(),[{id:'game',title:'North Texas at Appalachian St.',sport:'NCAAB',
+    signals:[{ticker,title:'Full Game: Over 168.5 points scored'}]}],
+  [{market_ticker:ticker,strategy:'no',fill_count:'17.58'}]);
+  assert.equal(row.side,'YES','Kalshi net position must remain accurately labeled');
+  assert.match(row.reconciliation_warning,/K recorded 17.58 NO-equivalent contracts/);
+  assert.match(row.reconciliation_warning,/138.25 net YES contracts/);
+  assert.equal(row.fill_count,138.25);
+  assert.equal(row.allocated_cents,10109);
+  assert.equal(row.potential_profit_cents,3716);
+});
+
+test('NO origin warning is restricted to conflicting filled trades on the same ticker',()=>{
+  const rows=untrackedOpenPositions([
+    {ticker:'YES-NORMAL',position_fp:'4',market_exposure_dollars:'3',fees_paid_dollars:'0'},
+    {ticker:'NO-NORMAL',position_fp:'-5',market_exposure_dollars:'4',fees_paid_dollars:'0'},
+    {ticker:'UNFILLED',position_fp:'4',market_exposure_dollars:'3',fees_paid_dollars:'0'}
+  ],new Set(),[],[
+    {market_ticker:'YES-NORMAL',strategy:'over',fill_count:'4'},
+    {market_ticker:'NO-NORMAL',strategy:'no',fill_count:'5'},
+    {market_ticker:'UNFILLED',strategy:'no',fill_count:'0'}
+  ]);
+  assert.deepEqual(rows.map(r=>[r.side,r.reconciliation_warning]),[
+    ['YES',undefined],['NO',undefined],['YES',undefined]
+  ]);
+});

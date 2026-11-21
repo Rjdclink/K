@@ -696,6 +696,8 @@ async function verifiedPurchaseEntries(market,knownLegs=null,visited=new Set()){
   return [{game,market}];
 }
 async function currentManualBuy(ticker,amountCents){
+  const {rowCount:noOrigin}=await pool.query(
+    "SELECT 1 FROM trade_attempts WHERE market_ticker=$1 AND strategy IN ('no','mention_no') AND status='filled' AND fill_count>0 LIMIT 1",[ticker]);
   const [positions,account,{market},bookResponse]=await Promise.all([
     allOpenPositions({strict:true}),accountBalance({fresh:true}),
     kalshi('/markets/'+encodeURIComponent(ticker)),kalshi('/markets/'+encodeURIComponent(ticker)+'/orderbook').then(r=>({...r,checkedAt:Date.now()}))]);
@@ -705,8 +707,10 @@ async function currentManualBuy(ticker,amountCents){
   if(!(Number(position?.position_fp??position?.position)>0))throw Error('This contract is no longer held');
   const [fees,entryVerifications]=await Promise.all([currentFeeSpec(market,{fresh:true}),verifiedPurchaseEntries(market)]);
   const local=shardCash(account,marketShard({},market));
-  const quote=manualPositionQuote(market,orderbook_fp,position,account,amountCents,local,fees);
-  return {positions,position,account,market,book:orderbook_fp,fees,quote,entryVerifications,checkedAt:bookResponse.checkedAt};
+  const botNoRestricted=noOrigin>0;
+  const quote=botNoRestricted?{reason:'YES purchase blocked: K entered NO on this contract. Buying YES would reverse the NO strategy.'}:
+    manualPositionQuote(market,orderbook_fp,position,account,amountCents,local,fees);
+  return {positions,position,account,market,book:orderbook_fp,fees,quote,botNoRestricted,entryVerifications,checkedAt:bookResponse.checkedAt};
 }
 async function lookupSubmittedOrder(ticker,id,createdAt){
   let cursor='';
@@ -848,6 +852,7 @@ async function manualBuyPosition(body){
       return json({error:message},409);
     };
     let current=await currentManualBuy(body.ticker,body.amount_cents);
+    if(current.botNoRestricted)return reject(current.quote.reason);
     // A manual addition uses the amount the user confirmed, with actual cash
     // and depth limits. Automatic strategy allocations do not size this order.
     const desired=manualPositionQuote(current.market,current.book,current.position,current.account,
@@ -5053,7 +5058,7 @@ async function state(){
       potential_profit_cents:actual?Math.floor(count*100-allocated):netSettlementProfitCents(count,Number(o.limit_price),2)};
   }):[];
   const orders=positions?[...managed,...untrackedOpenPositions(positions.market_positions,
-    new Set(managed.map(o=>o.market_ticker)),snap.rows)].sort((a,b)=>
+    new Set(managed.map(o=>o.market_ticker)),snap.rows,attempts.rows)].sort((a,b)=>
       (b.potential_profit_cents??-Infinity)-(a.potential_profit_cents??-Infinity)):[];
   for(const o of orders){
     if(o.external_position)continue;
@@ -5142,6 +5147,7 @@ async function handleRequest(req){const url=new URL(req.url);
       const ticker=url.searchParams.get('ticker'),amount=Number(url.searchParams.get('amount_cents'));
       if(!/^[A-Z0-9-]{1,180}$/.test(ticker||'')||!Number.isSafeInteger(amount)||amount<1)return json({error:'Invalid purchase quote'},400);
       const current=await currentManualBuy(ticker,amount);
+      if(current.botNoRestricted)return json({error:current.quote.reason},409);
       const quote=manualPositionQuote(current.market,current.book,current.position,current.account,amount,Number(current.account.balance),current.fees);
       if(Date.now()-current.checkedAt>30000)return json({error:'Purchase quote expired; refresh before confirming'},409);
       return quote.count?json({quote,checked_at:new Date(current.checkedAt).toISOString()}):json({error:quote.reason},409);

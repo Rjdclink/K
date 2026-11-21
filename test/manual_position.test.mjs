@@ -48,7 +48,7 @@ test('manual additions honor chosen cash, shard cash, ask depth and whole-share 
 const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
 const id='00000000-0000-0000-0000-000000000001';
 const body={ticker:'OVER',id,amount_cents:1000,price:.9,count:10,confirmed:true};
-function harness({price=.9,old=null,expired=false,uncertain=false,result=null,verified=true}={}){
+function harness({price=.9,old=null,expired=false,uncertain=false,result=null,verified=true,botNoRestricted=false}={}){
   const writes=[],sent=[];let released=false;
   const game={id:'game',verificationId:'fresh'};if(verified)rememberIndependentEntry(game,{...market,ticker:'OVER'},'fresh',Date.now());
   const entryVerifications=[{game,market:{...market,ticker:'OVER'}}];
@@ -59,7 +59,7 @@ function harness({price=.9,old=null,expired=false,uncertain=false,result=null,ve
     live:()=>true,ensureManualCombos:async()=>{},pool:{connect:async()=>client,query:async(sql,args)=>{writes.push([sql,args]);return {rows:[]}}},
     currentManualBuy:async()=>{
       assert.equal(released,true,'release the intent transaction before network reads');
-      return {entryVerifications,position,account,market,book,fees:standard,quote:{price,count:9,max_cost_cents:900},checkedAt:Date.now()-(expired?30001:0)};
+      return {entryVerifications,position,account,market,book,fees:standard,botNoRestricted,quote:botNoRestricted?{reason:'YES purchase blocked: K entered NO on this contract.'}:{price,count:9,max_cost_cents:900},checkedAt:Date.now()-(expired?30001:0)};
     },marketShard:()=>0,shardCash:()=>10000,transferPlan:()=>false,invalidateBalance:async()=>{},
     withEntryProfitFloor:async(options,send)=>{assert.equal(options.manual,true);return send()},
     kalshi:async(path,options)=>{
@@ -103,4 +103,34 @@ test('manual dispatch without independent proof is rejected as a definite no-fil
   const h=harness({verified:false});const response=await h.context.manualBuyPosition(body);
   assert.equal(response.status,409);assert.equal(h.sent.length,0);
   assert.ok(h.writes.some(([sql])=>sql.includes("SET status='unfilled'")));
+});
+
+test('dashboard refuses YES add-on after K filled a NO-origin position',async()=>{
+  const h=harness({botNoRestricted:true});
+  const response=await h.context.manualBuyPosition(body);
+  assert.equal(response.status,409);
+  assert.match(response.body.error,/YES purchase blocked: K entered NO/);
+  assert.equal(h.sent.length,0,'no YES order may reach Kalshi');
+});
+
+test('manual quote detects filled K NO before allowing a YES market add-on',async()=>{
+  const chunk=source.slice(source.indexOf('async function currentManualBuy('),
+    source.indexOf('async function lookupSubmittedOrder('));
+  const ctx=vm.createContext({
+    pool:{query:async(sql,args)=>{
+      assert.match(sql,/strategy IN \('no','mention_no'\)/);
+      assert.equal(args[0],'OVER');
+      return {rowCount:1,rows:[{one:1}]};
+    }},
+    allOpenPositions:async()=>({market_positions:[position]}),
+    accountBalance:async()=>account,
+    kalshi:async(path)=>path.includes('/orderbook')?{orderbook_fp:book}:{market},
+    currentFeeSpec:async()=>standard,verifiedPurchaseEntries:async()=>[],
+    marketShard:()=>3,shardCash:()=>10000,manualPositionQuote
+  });
+  vm.runInContext(chunk,ctx);
+  const actual=await ctx.currentManualBuy('OVER',1000);
+  assert.equal(actual.botNoRestricted,true);
+  assert.equal(actual.quote.count,undefined);
+  assert.match(actual.quote.reason,/YES purchase blocked/);
 });

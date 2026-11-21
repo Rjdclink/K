@@ -1,6 +1,6 @@
 import { periodValue, playerOverSpec } from './strategy.mjs';
 
-export function untrackedOpenPositions(positions,trackedTickers,games){
+export function untrackedOpenPositions(positions,trackedTickers,games,filledBotOrders=[]){
   return (positions||[]).flatMap(position=>{
     const held=Number(position.position_fp??position.position);
     if(!position.ticker||!Number.isFinite(held)||held===0||trackedTickers.has(position.ticker))return [];
@@ -11,10 +11,15 @@ export function untrackedOpenPositions(positions,trackedTickers,games){
       Number.isFinite(exposure)&&exposure>=0&&Number.isFinite(fees)&&fees>=0;
     const allocated=known?Math.ceil(exposure*100)+Math.ceil(fees*100):null;
     const count=Math.abs(held);
+    const botNoFill=held>0&&filledBotOrders.find(order=>order.market_ticker===position.ticker&&
+      ['no','mention_no'].includes(order.strategy)&&Number(order.fill_count)>0);
     return [{market_ticker:position.ticker,external_position:true,side:held>0?'YES':'NO',
       market_title:signal?.title||position.ticker,game_id:game?.id||null,game_title:game?.title||null,
       sport:game?.sport||null,fill_count:count,allocated_cents:allocated,
-      potential_profit_cents:known?Math.floor(count*100-allocated):null}];
+      potential_profit_cents:known?Math.floor(count*100-allocated):null,
+      ...(botNoFill?{reconciliation_warning:'CONFLICT: K recorded '+Number(botNoFill.fill_count)+
+        ' NO-equivalent contracts (shown as Sold YES on Kalshi), but Kalshi now holds '+count+
+        ' net YES contracts. This is opposite to K\'s original NO trade; review Kalshi order history.'}:{})}];
   });
 }
 
