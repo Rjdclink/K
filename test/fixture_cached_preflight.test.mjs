@@ -31,22 +31,23 @@ test('first exact verified event ID is reused when a provider subsequently chang
  assert.equal(fresh?.eventId,'ESPN-99');
  assert.equal(cache.reads.length,2);
 });
-test('cached ID never bypasses current scoreboard scores and never accepts a changed provider ID',async()=>{
+test('cached ID accepts fresh authoritative source scores but never accepts a changed provider ID',async()=>{
  const cache=store();
  await fetchIndependentMatchScore(game(),milestone,{fetcher:fetcher(espn()),espnFeed:'soccer/all',fixtureCache:cache});
  const wrong=await fetchIndependentMatchScore(game(),milestone,{fetcher:fetcher(espn(3,1,'Different','Other')),
   espnFeed:'soccer/all',fixtureCache:cache});
- assert.equal(wrong,false,'previously matching ESPN game ID with a new different score is a veto');
+ assert.deepEqual([wrong?.home,wrong?.away],[3,1],'same independently confirmed event may update its score');
  const swapped=await fetchIndependentMatchScore(game(),milestone,{fetcher:fetcher(espn(2,1,'Northbridge Wanderers','Southport United','ESPN-100')),
   espnFeed:'soccer/all',fixtureCache:cache});
  assert.equal(swapped,false,'cached same-game event ID may not be silently changed');
  assert.equal(cache.refs.get('kalshi-123:ESPN'),'ESPN-99');
 });
-test('cache is not populated from ambiguous fixtures or unverified scores',async()=>{
+test('cache is not populated from ambiguous fixtures, but does accept independent source scores',async()=>{
  const cache=store();
  const ambiguous={events:[...espn().events,...espn(2,1,'Northbridge Wanderers','Southport United','ESPN-100').events]};
  assert.equal(await fetchIndependentMatchScore(game(),milestone,{fetcher:fetcher(ambiguous),espnFeed:'soccer/all',fixtureCache:cache}),false);
  assert.equal(cache.refs.size,0);
- assert.equal(await fetchIndependentMatchScore(game(),milestone,{fetcher:fetcher(espn(3,1)),espnFeed:'soccer/all',fixtureCache:cache}),false);
- assert.equal(cache.refs.size,0);
+ const source=await fetchIndependentMatchScore(game(),milestone,{fetcher:fetcher(espn(3,1)),espnFeed:'soccer/all',fixtureCache:cache});
+ assert.deepEqual([source?.home,source?.away],[3,1]);
+ assert.equal(cache.refs.size,1);
 });
