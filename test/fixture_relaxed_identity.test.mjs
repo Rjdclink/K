@@ -38,7 +38,7 @@ test('relaxed matching works for sport-specific short forms, without hardcoding 
  }
 });
 
-test('team mismatch, one-point score disagreement, wrong kickoff and swapped home-away stay disqualifying',async()=>{
+test('wrong teams, kickoff and swapped home-away fail closed; independent source score may differ',async()=>{
  const {game,milestone}=mk('Northbridge Wndrs','Southport Utd',2,1);
  const conflicting=[
   event({away:'Different City Rovers',awayShort:'Different Rovers'}),
@@ -50,7 +50,8 @@ test('team mismatch, one-point score disagreement, wrong kickoff and swapped hom
   const matches=espnMatches({events:[e]},game,milestone);
   if(i===1){assert.equal(matches.length,0,'ordinary relaxed verification requires exact score');
     assert.equal(espnMatches({events:[e]},game,milestone,{identityOnly:true}).length,1,'dedicated preflight recognizes a mismatched fixture for veto');
-    assert.equal(await fetchIndependentMatchScore(game,milestone,{espnFeed:'soccer/all',fetcher:fetchBoard([e])}),false);
+    const proof=await fetchIndependentMatchScore(game,milestone,{espnFeed:'soccer/all',fetcher:fetchBoard([e])});
+    assert.equal(proof?.home,3,'identified external fixture is source of truth for score');
   }else assert.equal(matches.length,0,String(i));
  }
 });
