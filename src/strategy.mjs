@@ -936,7 +936,10 @@ export function tennisSignal(game,market){
   const leaderGames=first?t.firstGames:t.secondGames,opponentGames=first?t.secondGames:t.firstGames;
   return {strategy:'lead',reason:`Tennis match-clinching set ${leaderGames}–${opponentGames}; leader serves, points ${leaderPoints}–${opponentPoints}${t.advantage===leaderId?' advantage':''}; deciding-set match point, one point from match win`,fraction:.15};
 }
-export function minimumProfitCents(strategy,availableCents,sportType='',remainingSeconds=NaN,filledOrders=0,{game,market}={}){
+export function minimumProfitCents(strategy,availableCents,sportType='',remainingSeconds=NaN,filledOrders=0,{game,market,fraction}={}){
+  // Five-percent NO trades have no extra dollar target: one whole net cent
+  // above estimated fees is sufficient. All other allocations remain intact.
+  if(strategy==='no'&&fraction===.05)return 1;
   const tier=filledOrders>=20?50:filledOrders>=15?35:filledOrders>=10?15:0;
   const existing=strategy==='weather'?30:
     strategy==='over'||strategy==='lead'?1:
