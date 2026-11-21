@@ -1,3 +1,4 @@
+import {externalNoScore} from './external_no_authority.mjs';
 import {fetchIndependentMatchScore} from './independent_match_score.mjs';
 import {espnMatches} from './score_verification.mjs';
 import {espnScoreboardUrls} from './espn_scoreboards.mjs';
@@ -19,7 +20,7 @@ const lineFrom=text=>{
 };
 const externalCurrent=(reading,game)=>Boolean(
   ['ESPN','FOX Sports'].includes(reading?.source)&&reading.eventId&&
-  reading.home===game.home&&reading.away===game.away);
+  Boolean(externalNoScore(game,reading)));
 
 export function soccerFirstHalfNoSpec(game,market,{beforeWindow=false}={}){
   const seconds=soccerFirstHalfSeconds(game);
@@ -49,7 +50,9 @@ export function soccerFirstHalfNoSpec(game,market,{beforeWindow=false}={}){
 export function soccerFirstHalfNo(game,market,{beforeWindow=false,external=null}={}){
   const spec=soccerFirstHalfNoSpec(game,market,{beforeWindow});
   if(!spec||external&&!externalCurrent(external,game))return null;
-  const total=game.home+game.away;
+  const score=external?externalNoScore(game,external):{home:game.home,away:game.away};
+  if(!score)return null;
+  const total=score.home+score.away;
   if(spec.line-total<1.5)return null;
   return {...spec,total,reason:'Soccer first-half total NO over '+spec.line+'; '+
     total+' first-half goals, '+soccerFirstHalfSeconds(game)+
