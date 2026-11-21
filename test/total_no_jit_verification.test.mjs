@@ -12,7 +12,7 @@ import {collegeBasketballTotalNo,collegeFootballTotalNo,bestNoAsk,noDepthAtAsk} 
 import {sameSportsContract,overContractKey} from '../src/over_verification.mjs';
 import {rememberIndependentEntry} from '../src/entry_verification.mjs';
 
-function harness(sport,{ageMs=61000,failSecond=false,legacyFirstClock=null,finalEventId='jit-espn-game'}={}){
+function harness(sport,{ageMs=61000,failSecond=false,legacyFirstClock=null,finalEventId='jit-espn-game',unprofitable=false}={}){
   const basketball=sport==='NCAAB',league=basketball?'NCAAMB':sport;
   const prefix=basketball?'KXNCAAMB':sport==='NFL'?'KXNFL':'KXNCAAF';
   const period=basketball?2:4,home=basketball?65:20,away=basketball?65:17;
@@ -39,7 +39,7 @@ function harness(sport,{ageMs=61000,failSecond=false,legacyFirstClock=null,final
   const trace=[];
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
   const code=source.slice(source.indexOf('async function scanCollegeTotalNos('),source.indexOf('async function scan(cachedMilestones'));
-  const context=vm.createContext({eligibleNoFinal,launchImmediateNoFinalFixtures,immediateNoFinalProof,dueNoFinalWindows,noFinalCheckpoint,noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async()=>{},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
+  const context=vm.createContext({eligibleNoFinal,launchImmediateNoFinalFixtures,immediateNoFinalProof,dueNoFinalWindows,noFinalCheckpoint,noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,scheduleNoLiquidityRecheck:()=>{},recordDecision:async()=>{},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
     Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),
     linkedEventTickers:()=>[market.event_ticker],
@@ -83,7 +83,7 @@ function harness(sport,{ageMs=61000,failSecond=false,legacyFirstClock=null,final
     minimumCount:()=>1,allOpenPositions:async()=>({market_positions:[]}),
     accountBalance:async()=>({balance:10000,portfolio_value:0}),
     shardCash:()=>10000,marketShard:()=>0,singleSpendableCash:v=>v,
-    feeReserve:()=>0,orderSize:()=>1,profitableCount:n=>n,estimatedCostCents:()=>0,
+    feeReserve:()=>0,orderSize:()=>1,profitableCount:n=>unprofitable?0:n,estimatedCostCents:()=>0,
     auditTable:async()=>{},randomUUID:()=> 'proof',rememberIndependentEntry,
     reserve:async signal=>{trace.push('reserve');assert.equal(signal.fraction,.05);return 'order-id';},
     withEntryProfitFloor:async(options,fn)=>{assert.equal(options.fraction,.05);return fn();},
@@ -114,7 +114,7 @@ test('basketball full-game first ESPN check starts at 8:00 and fresh second proo
   assert.equal(await h.scan('6:59'),1);
   assert.equal(h.proofs,2,'exactly two independent readings total');
   assert.equal(h.orders,1);
-  assert.ok(h.trace.indexOf('external2')<h.trace.indexOf('orderbook'),'second external verification MUST happen BEFORE liquidity checks');
+  assert.ok(h.trace.indexOf('orderbook')<h.trace.indexOf('external2'),'second external verification MUST happen AFTER executable NO depth checks');
   assert.ok(h.trace.indexOf('external2')<h.trace.indexOf('reserve'),'second verification must occur immediately BEFORE reservation');
 });
 
@@ -141,8 +141,8 @@ test('basketball NO accepts a verified same-game preflight older than five real 
   assert.equal(await h.scan('6:59'),1,'preflight age alone must not block an eligible same-game trade');
   assert.equal(h.proofs,2,'initial proof plus fresh independent final proof must both occur');
   assert.equal(h.orders,1);
-  assert.ok(h.trace.indexOf('external2')<h.trace.indexOf('orderbook'),
-    'eligible final external proof occurs whether or not any seller is available');
+  assert.ok(h.trace.indexOf('orderbook')<h.trace.indexOf('external2'),
+    'eligible final external proof requires an executable seller first');
   assert.ok(h.trace.indexOf('external2')<h.trace.indexOf('reserve'),
     'final independent evidence must precede the order reservation');
 });
@@ -186,7 +186,7 @@ test('NFL and CFB Q4 total NO require first external proof at eligibility and se
     assert.equal(await h.scan('4:59'),1);
     assert.equal(h.proofs,2);
     assert.equal(h.orders,1);
-    assert.ok(h.trace.indexOf('external2')<h.trace.indexOf('orderbook'));
+    assert.ok(h.trace.indexOf('orderbook')<h.trace.indexOf('external2'));
     assert.ok(h.trace.indexOf('external2')<h.trace.indexOf('reserve'));
   }
 });
@@ -227,5 +227,17 @@ test('NFL, CFB and college basketball final checks preempt all new first checks'
   assert.equal(h.orders,1);
   assert.equal(await h.scan(entryClock,'initial'),0);
   assert.equal(h.proofs,2,'no redundant final ESPN request in first lane');
+ }
+});
+
+test('college football, NFL and basketball never call final ESPN when executable asks fail the net-profit floor',async()=>{
+ for(const sport of ['NCAAB','CFB','NFL']){
+  const h=harness(sport,{unprofitable:true});
+  await h.scan(sport==='NCAAB'?'8:00':'5:30');
+  assert.equal(h.proofs,1,'initial source proof retained for '+sport);
+  assert.equal(await h.scan(sport==='NCAAB'?'6:59':'4:59'),0);
+  assert.equal(h.proofs,1,'final external request must be suppressed by negative profit for '+sport);
+  assert.equal(h.orders,0);
+  assert.ok(h.trace.includes('orderbook'),'executable depth still checked for '+sport);
  }
 });

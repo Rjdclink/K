@@ -29,7 +29,7 @@ const market={ticker:'KXEPLTOTAL-26NOV20AWAYHOME-6',
   rules_primary:'If over 5.5 goals are scored in the Away vs Home professional EPL soccer game originally scheduled for Nov 20, 2026 after 90 minutes plus stoppage time (does not include extra time or penalties), then the market resolves to Yes.'};
 const events=new Map([[market.event_ticker,{event_ticker:market.event_ticker,category:'Sports',markets:[market]}]]);
 
-function harness({canVerify=true,hasSeller=true,initialAgeMs=61000,existingExposure=false,
+function harness({canVerify=true,hasSeller=true,unprofitable=false,initialAgeMs=61000,existingExposure=false,
   afterRefreshScore=3,missingClock=false,finalExternalFails=false,duplicate=false,globalPending=false,
   firstProofOverride=null,finalProofOverride=null,noAskPolicy=noAskTimeout}={}){
   const src=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
@@ -39,7 +39,7 @@ function harness({canVerify=true,hasSeller=true,initialAgeMs=61000,existingExpos
   const windows=new Map(),dashboard=new Map(),trace=[],diagnostics=[];
   let verified=0,orders=0,lastBudget=null,lastFraction=null,lastQuantity=null,scanSeconds=540;
   const held={ticker:'KXEPLTOTAL-OLDER',position_fp:-1,market_exposure_dollars:'4.00',fees_paid_dollars:'0.50'};
-  const context=vm.createContext({eligibleNoFinal,launchImmediateNoFinalFixtures,immediateNoFinalProof,dueNoFinalWindows,noFinalCheckpoint,noAskTimeout:noAskPolicy,waitingOnAsk,NO_ASK_RETIRED,noAskKey,recordDecision:async decision=>{diagnostics.push(decision)},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
+  const context=vm.createContext({eligibleNoFinal,launchImmediateNoFinalFixtures,immediateNoFinalProof,dueNoFinalWindows,noFinalCheckpoint,noAskTimeout:noAskPolicy,waitingOnAsk,NO_ASK_RETIRED,noAskKey,scheduleNoLiquidityRecheck:()=>{},recordDecision:async decision=>{diagnostics.push(decision)},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
     Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),
     linkedEventTickers:()=>[market.event_ticker],
@@ -105,7 +105,7 @@ function harness({canVerify=true,hasSeller=true,initialAgeMs=61000,existingExpos
       lastQuantity=orderSize(cash,price,depth,fraction,min,bankroll,budget,fees);
       return lastQuantity;
     },
-    profitableCount:n=>n>0,estimatedCostCents,
+    profitableCount:n=>!unprofitable&&n>0,estimatedCostCents,
     auditTable:async()=>{},randomUUID:()=> 'soccer-verification',rememberIndependentEntry,
     reserve:async signal=>{
       trace.push('reserve');assert.equal(signal.fraction,.05);return 'soccer-order';
@@ -149,9 +149,9 @@ test('NO book probes stop at 30 elapsed seconds of absent asks, even when game c
  assert.equal(await h.scan(479),0,'same contract is retired after 30 seconds');
  assert.equal(h.trace.filter(t=>t==='orderbook').length,2,
    'no more orderbook calls for a retired market');
- assert.equal(h.verifications,2,'expired ask cannot block the mandatory final external score check');
+ assert.equal(h.verifications,1,'expired executable NO ask must suppress the final external check, but not the initial mandatory proof');
  assert.match((h.dashboard.get(milestone.id)||[]).find(x=>x.ticker===market.ticker)?.execution||'',
-   /No executable ask after 30 seconds.*final score verification already completed/);
+   /No executable ask after 30 seconds/);
  assert.equal(h.orders,0);
 });
 
@@ -207,8 +207,8 @@ test('soccer NO checks once near 11:00 and once just before entry strictly under
   assert.equal(h.orders,1);
   assert.equal(h.lastFraction,.05);
   assert.ok(h.lastQuantity>0);
-  assert.ok(h.trace.lastIndexOf('external')<h.trace.indexOf('orderbook'),
-     'final independent score check must occur BEFORE liquidity evaluation');
+  assert.ok(h.trace.lastIndexOf('orderbook')<h.trace.lastIndexOf('external'),
+     'final independent score check must occur AFTER executable liquidity evaluation');
   assert.ok(h.trace.lastIndexOf('external')<h.trace.lastIndexOf('reserve'));
   assert.ok((h.dashboard.get(milestone.id)||[]).some(s=>s.strategy==='no'&&s.ticker===market.ticker));
 });
@@ -238,6 +238,7 @@ test('soccer NO requires executable NO liquidity and refuses a future-dated init
     const h=harness(opts);await h.scan(660);
     assert.equal(await h.scan(479),0,JSON.stringify(opts));
     assert.equal(h.orders,0,JSON.stringify(opts));
+    if(opts.hasSeller===false)assert.equal(h.verifications,1,'empty soccer NO book must not trigger a final ESPN call');
   }
   const paused=harness({initialAgeMs:1000000});
   await paused.scan(660);
@@ -345,4 +346,14 @@ test('due soccer final ESPN check runs before ordinary first checks',async()=>{
  assert.equal(h.orders,1);
  assert.equal(await h.scan(479,'initial'),0);
  assert.equal(h.verifications,2,'an already-due final does not reenter initial proof processing');
+});
+
+test('soccer NO does not request final ESPN verification for a quote with insufficient net profit',async()=>{
+ const h=harness({unprofitable:true});
+ await h.scan(660);
+ assert.equal(h.verifications,1);
+ assert.equal(await h.scan(479),0);
+ assert.equal(h.verifications,1,'final score verification must not occur without net profitability');
+ assert.equal(h.orders,0);
+ assert.ok(h.trace.includes('orderbook'));
 });
