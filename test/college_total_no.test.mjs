@@ -98,7 +98,7 @@ test('the independent CFB check verifies the correct team scores without requiri
       competitors:[{id:'1',homeAway:'away',team:{displayName:'Ohio Bobcats',shortDisplayName:'Ohio',abbreviation:'OHIO'},score:'7'},
         {id:'2',homeAway:'home',team:{displayName:'Akron Zips',shortDisplayName:'Akron',abbreviation:'AKR'},score:'6'}]}]}]};
   assert.equal(independentCollegeTotalNoReading(scoreboard,game,milestone,full)?.seconds,118);
-  assert.equal(independentCollegeTotalNoReading({...scoreboard,events:[{...scoreboard.events[0],competitions:[{...scoreboard.events[0].competitions[0],competitors:[{...scoreboard.events[0].competitions[0].competitors[0],score:'10'},scoreboard.events[0].competitions[0].competitors[1]]}]}]},game,milestone,full),false);
+  assert.equal(independentCollegeTotalNoReading({...scoreboard,events:[{...scoreboard.events[0],competitions:[{...scoreboard.events[0].competitions[0],competitors:[{...scoreboard.events[0].competitions[0].competitors[0],score:'10'},scoreboard.events[0].competitions[0].competitors[1]]}]}]},game,milestone,full)?.away,10,'external score is independently authoritative');
   assert.equal(independentCollegeTotalNoReading({...scoreboard,events:[{...scoreboard.events[0],competitions:[{...scoreboard.events[0].competitions[0],status:{period:4,displayClock:'1:30',type:{state:'in'}}}]}]},game,milestone,full)?.home,6);
 });
 test('college first-half retains 12 and under 1:30; both college full-game use 40 and under 7:00',()=>{
