@@ -8,9 +8,9 @@ export const VERIFY_DWELL_MS=10000;
 export const COMBO_RFQ_PLANS=12;
 export const COMBO_CASH_RESERVE_CENTS=0;
 export const singleSpendableCash=cash=>Math.max(0,Math.floor(Number(cash)||0)-COMBO_CASH_RESERVE_CENTS);
-export function comboAllocation(){return .35;}
+export function comboAllocation(){return .05;}
 export function comboAllowedCents(fraction,bankrollCents){return Math.floor(fraction*bankrollCents);}
-export function comboMinimumCents(fraction,bankrollCents){return fraction===comboAllocation()?Math.ceil(.10*bankrollCents):0;}
+export function comboMinimumCents(){return 0;}
 export function comboMeetsMinimum(fraction,bankrollCents,newCostCents,heldCostCents=0){
   return heldCostCents+newCostCents>=comboMinimumCents(fraction,bankrollCents);
 }
@@ -19,12 +19,12 @@ export function comboRfqTargetCents(budgetCents){return Math.max(0,Math.floor(bu
 export function comboLegAllocation(legs,verifiedFraction){
   // Crossed overs retain their own 15% combination ceiling. A winner combo
   // gets 35% only if every leg has an independent verification record.
-  return Math.min(verifiedFraction,legs.length&&legs.every(l=>l.signal?.strategy==='lead'&&
-    l.signal.externallyVerified===true)?.35:.15);
+  // Even independently verified winner combos share the 5% maximum.
+  return Math.min(.05,verifiedFraction);
 }
 export function comboHeldFraction(legs){return comboLegAllocation(legs.map(l=>({signal:{strategy:l.strategy,
   externallyVerified:l.externallyVerified===true||l.kalshiOnly===false}})),comboAllocation())}
-export function remainingVerifiedComboCents(position,bankroll,fraction=.15){
+export function remainingVerifiedComboCents(position,bankroll,fraction=.05){
   const held=Number(position?.position_fp),exposure=Number(position?.market_exposure_dollars),fees=Number(position?.fees_paid_dollars);
   if(!Number.isFinite(held)||held<=0||position?.market_exposure_dollars==null||
     position?.fees_paid_dollars==null||!Number.isFinite(exposure)||exposure<0||
