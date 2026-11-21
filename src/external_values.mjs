@@ -4,7 +4,8 @@ export function externalValueQualifies(actual,expected,line){
     (Number.isFinite(line)?actual>line:Number.isFinite(expected)&&actual>=expected);
 }
 export const playerValueQualifies=(value,player)=>Number.isInteger(value)&&value>=0&&
-  Number.isFinite(player.line)&&value-1>player.line;
+  (Number.isFinite(player?.line)?value-1>player.line:
+    Number.isFinite(player?.value)&&value>=player.value);
 const clean=s=>String(s||'').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]/g,'');
 export function selectedTeamSide(game,market){
   const id=Object.entries(market?.custom_strike||{}).find(([key,value])=>/_team$/.test(key)&&typeof value==='string')?.[1];
