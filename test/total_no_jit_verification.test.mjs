@@ -43,9 +43,9 @@ function harness(sport,{ageMs=61000,failSecond=false,legacyFirstClock=null,final
     liveBatch:async()=>new Map(),
     linkedEventTickers:()=>[market.event_ticker],
     collegeFootballTotalNo,collegeBasketballTotalNo,overContractKey,sameSportsContract,
-    verifyIndependentCollegeTotalNo:async()=>{
+    verifyIndependentCollegeTotalNo:async game=>{
       proofs++;trace.push('external'+proofs);
-      return blocked||failSecond&&proofs===2?null:{source:'ESPN',eventId:proofs>=2?finalEventId:'jit-espn-game',seconds:basketball?89:299,period};
+      return blocked||failSecond&&proofs===2?null:{source:'ESPN',eventId:proofs>=2?finalEventId:'jit-espn-game',gameId:game.id,home:game.home,away:game.away,seconds:basketball?89:299,period};
     },
     pool:{query:async(sql,args=[])=>{
       if(sql.startsWith('SELECT * FROM college_total_no_windows'))return {rows:window?[window]:[]};
@@ -81,8 +81,8 @@ function harness(sport,{ageMs=61000,failSecond=false,legacyFirstClock=null,final
     shardCash:()=>10000,marketShard:()=>0,singleSpendableCash:v=>v,
     feeReserve:()=>0,orderSize:()=>1,profitableCount:n=>n,estimatedCostCents:()=>0,
     auditTable:async()=>{},randomUUID:()=> 'proof',rememberIndependentEntry,
-    reserve:async signal=>{trace.push('reserve');assert.equal(signal.fraction,basketball?.05:.10);return 'order-id';},
-    withEntryProfitFloor:async(options,fn)=>{assert.equal(options.fraction,basketball?.05:.10);return fn();},
+    reserve:async signal=>{trace.push('reserve');assert.equal(signal.fraction,.05);return 'order-id';},
+    withEntryProfitFloor:async(options,fn)=>{assert.equal(options.fraction,.05);return fn();},
     invalidateBalance:async()=>{}
   });
   vm.runInContext(code,context);
