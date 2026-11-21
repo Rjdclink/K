@@ -23,7 +23,7 @@ import { ensureExitLedger, recordExitFill } from './exit_ledger.mjs';
 import { gameState, overSignal, PLAYER_PROP_MAX_FRACTION, BASKETBALL_COUNT_PROP_MAX_FRACTION, BASKETBALL_WINNER_ENTRY_SECONDS, playerOverSpec, playerPropEarlyWindow, confirmedOver, fallbackScoringUnits, confirmedExternalLead, leadSignal, isTieOutcomeMarket, proBasketballLeadRules, basketballCloseoutEntry, basketballCloseoutMinimum, nbaSingleReadLead, kalshiSingleReadLead, confirmedSoccerWinnerClock, soccerWinnerWindowOpen, leadWatchReason, additionalLeadSignal, cricketLeadSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback, teamScorePosition } from './strategy.mjs';
 import {authoritativeGameState,verifiedSourceReady} from './external_authority.mjs';
 import {fetchIndependentMatchScore} from './independent_match_score.mjs';
-import {uncushionedPlayerSpec,verifyNoncushionedPlayerStat,noncushionedPlayerState,noncushionedTwoProofs,FIRST_NONCUSHIONED_CHECK_MS} from './noncushioned_player_over.mjs';
+import {uncushionedPlayerSpec,verifyNoncushionedPlayerStat,noncushionedPlayerState,noncushionedTwoProofs,FIRST_NONCUSHIONED_CHECK_MS,rankNoncushionedReplacements} from './noncushioned_player_over.mjs';
 import {openNoncushionedPlayerTickers,NONCUSHIONED_PLAYER_TAG} from './noncushioned_prop_slots.mjs';
 import { reviewMiss } from './ai.mjs';
 import { kalshiSignature } from './auth.mjs';
@@ -3916,11 +3916,39 @@ async function scanNoncushionedPlayerOvers(games,events,signalSink=null){
  const eligible=candidates.filter(c=>{
   const w=windows.get(c.market.ticker);
   return w&&Date.now()-Date.parse(w.first_seen)>=FIRST_NONCUSHIONED_CHECK_MS;
- }).sort((a,b)=>Number(hasAsk(b.market))-Number(hasAsk(a.market))||
-   Date.parse(windows.get(a.market.ticker).first_seen)-
-   Date.parse(windows.get(b.market.ticker).first_seen)).slice(0,12);
+ });
  let filled=0;
- await mapBatches(eligible,4,async c=>{
+ // All matured markets are compared using actual executable asks, liquidity,
+ // the fee reserve and the ordinary 5% bankroll ceiling. Neither discovery
+ // order nor apparent ROI is allowed to choose the next five-slot entry.
+ const firstChecks=eligible.filter(c=>!windows.get(c.market.ticker).first_proof);
+ const ready=eligible.filter(c=>windows.get(c.market.ticker).first_proof);
+ let ranked=[];
+ if(ready.length){
+  const account=await accountBalance({fresh:true});
+  const bankroll=Number(account.balance)+Number(account.portfolio_value);
+  if(Number.isFinite(bankroll)&&bankroll>0){
+   const previews=await mapBatches(ready,5,async c=>{
+    try{
+     const latest=(await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market;
+     if(!sameSportsContract(latest,c.market))return null;
+     const refreshed=await recoverSummaryAsk(latest,{fresh:true});
+     const quote=refreshed&&hasAsk(refreshed)?await executableQuote(refreshed):null;
+     if(!quote||!hasAsk(quote))return null;
+     const local=shardCash(account,marketShard(c.event,quote));
+     if(local===null||local<=0)return null;
+     const price=Number(quote.yes_ask_dollars),fees=feeReserve(c.event,quote);
+     const count=contractCount(Math.min(singleSpendableCash(account.balance),local),
+       quote,.05,bankroll,Infinity,fees,{strategy:'over',game:c.state});
+     if(!Number.isFinite(count)||count<=0)return null;
+     return {c,ticker:c.market.ticker,netProfitCents:netSettlementProfitCents(count,price,fees),
+       costCents:estimatedCostCents(count,price,fees)};
+    }catch(error){console.warn('Player prop net ranking deferred:',c.market.ticker,error.message);return null}
+   });
+   ranked=rankNoncushionedReplacements(previews);
+  }
+ }
+ const process=async c=>{
   const window=windows.get(c.market.ticker);
   const show=(reason)=>{if(!signalSink)return;const list=signalSink.get(c.state.id)||[];
    list.push({strategy:'watch',ticker:c.market.ticker,title:c.market.title||c.market.ticker,
@@ -3993,7 +4021,11 @@ async function scanNoncushionedPlayerOvers(games,events,signalSink=null){
      bankroll,Infinity,bankroll,Number(account.balance))){filled++;show('Filled')}
   }catch(error){console.warn('Non-cushioned player prop deferred:',c.market.ticker,error.message);
    show('Independent player-prop verification unavailable')}
- });
+ };
+ await mapBatches(firstChecks,4,process);
+ // Replacements are offered highest expected NET PROFIT first. After one fills,
+ // a new account/settlement slot check occurs under the serialized order lock.
+ for(const candidate of ranked)await process(candidate.c);
  return filled;
 }
 
