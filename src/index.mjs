@@ -16,6 +16,7 @@ import { historyPage } from './history_ui.mjs';
 import { completedTrade, completedNoTrade, manualSaleFill, reconcileManualSaleFills, settlementLookupCandidates } from './history.mjs';
 import {syncAccountHistory,ensureAccountHistoryTables} from './account_history_sync.mjs';
 import {syncAccountPositions} from './account_positions_sync.mjs';
+import {automaticEntryFraction} from './automatic_entry_policy.mjs';
 import {publishVerifiedPositions,ensureVerifiedPositionTables} from './account_position_profit.mjs';
 import {accountHistoryListSQL,accountHistorySummarySQL} from './account_history_query.mjs';
 import { ensureExitLedger, recordExitFill } from './exit_ledger.mjs';
@@ -1003,6 +1004,11 @@ async function withEntryProfitFloor({ticker,count,price,fees,strategy,fraction,b
         const {rows}=await client.query(`SELECT market_ticker,status FROM trade_attempts
           WHERE status='filled' OR status IN ('reserved','check_order','retrying','combo_pending')
             AND updated_at>now()-interval '2 minutes'`);
+        const appliedFraction=automaticEntryFraction({strategy,fraction,game});
+        if(!Number.isFinite(bankroll)||bankroll<=0||
+          estimatedCostCents(count,price,fees)>Math.floor(bankroll*appliedFraction)){
+          await client.query('COMMIT');return null;
+        }
         const required=minimumProfitCents(strategy,bankroll,'',NaN,filledOrderGateCount(positions,rows,ticker),{game,market});
         if(netSettlementProfitCents(count,price,fees)<required){await client.query('COMMIT');return null}
         const result=await send();
@@ -1181,13 +1187,13 @@ async function recoverSummaryAsk(market){
     return quote?{...market,...quote}:market;
   }catch(e){console.warn('Ask depth probe unavailable:',market.ticker,e.message);return market}
 }
-function contractCount(balance,market,fraction,bankroll,budget,fees){
-  const count=orderSize(balance,market.yes_ask_dollars,market.yes_ask_size_fp,fraction,Number(process.env.MAX_YES_PRICE||1),bankroll,budget,fees);
+function contractCount(balance,market,fraction,bankroll,budget,fees,entry={}){
+  const count=orderSize(balance,market.yes_ask_dollars,market.yes_ask_size_fp,fraction,Number(process.env.MAX_YES_PRICE||1),bankroll,budget,fees,entry);
   return market.fractional_trading_enabled===false?Math.floor(count):count;
 }
 function executableCount(c,balance,bankroll){
   const fees=feeReserve(c.event,c.market),price=Number(c.market.yes_ask_dollars);
-  const count=contractCount(balance,c.market,c.signal.fraction,bankroll,Infinity,fees);
+  const count=contractCount(balance,c.market,c.signal.fraction,bankroll,Infinity,fees,{strategy:c.signal.strategy,game:c.state});
   return profitableCount(count,price,fees,c.signal.strategy,bankroll,c.state.type,c.state.remainingSeconds,{game:c.state,market:c.market});
 }
 const signalKey=c=>`${c.market.ticker}:${c.signal.strategy}`;
@@ -1201,7 +1207,7 @@ function signalExecution(c,filled,account,balance,bankroll){
   if(player&&overCushion(c.state,c.market)===null)
     return 'Player prop blocked: one additional credited statistic required';
   const spendable=singleSpendableCash(balance);
-  const raw=contractCount(spendable,c.market,c.signal.fraction,bankroll,Infinity,fees);
+  const raw=contractCount(spendable,c.market,c.signal.fraction,bankroll,Infinity,fees,{strategy:c.signal.strategy,game:c.state});
   if(!raw)return 'Insufficient available cash for this trade';
   if(!profitableCount(raw,price,fees,c.signal.strategy,bankroll,c.state.type,c.state.remainingSeconds,{game:c.state,market:c.market})){
     // Fractional contracts and fee rounding can still leave zero net cents.
@@ -1219,7 +1225,7 @@ function signalExecution(c,filled,account,balance,bankroll){
       'Shard transfer needed before immediate independent player-stat verification':singleRead?
       'Shard transfer needed; one fresh Kalshi score required':
       'Verification pending; shard transfer needed if confirmed';
-    const localCount=contractCount(Math.min(spendable,local),c.market,c.signal.fraction,bankroll,Infinity,fees);
+    const localCount=contractCount(Math.min(spendable,local),c.market,c.signal.fraction,bankroll,Infinity,fees,{strategy:c.signal.strategy,game:c.state});
     if(!profitableCount(localCount,price,fees,c.signal.strategy,bankroll,c.state.type,c.state.remainingSeconds,{game:c.state,market:c.market}))return 'Insufficient shard cash';
   }
   return player?'Independent player-stat check immediately before entry':
@@ -1295,7 +1301,7 @@ async function submit(signal,game,event,market,balance,bankroll,budgetCents=Infi
   if(signal.strategy==='lead'&&(!Number.isFinite(game.observedAt)||Date.now()-game.observedAt>30000))return false;
   if(signal.strategy==='lead'&&/Kalshi-only live score and executable seller checked/.test(signal.reason||'')&&
     (!kalshiSingleReadLead(game,market)||!hasAsk(market)))return false;
-  const price=Number(market.yes_ask_dollars);const count=profitableCount(contractCount(balance,market,signal.fraction,bankroll,budgetCents,feeReserve(event,market)),price,feeReserve(event,market),signal.strategy,availableCents,game.type,game.remainingSeconds,{game,market});if(!count)return false;
+  const price=Number(market.yes_ask_dollars);const count=profitableCount(contractCount(balance,market,signal.fraction,bankroll,budgetCents,feeReserve(event,market),{strategy:signal.strategy,game}),price,feeReserve(event,market),signal.strategy,availableCents,game.type,game.remainingSeconds,{game,market});if(!count)return false;
   if(['over','weather','lead'].includes(signal.strategy)&&!game.verificationId)return false;
   if(/Kalshi-only/i.test(signal.reason||'')){
     // A provisional position consumes its entire allowance for this game.
@@ -1357,7 +1363,7 @@ async function recoverPending(signal,game,event,market,balance,bankroll,budgetCe
   // uses fresh strategy and external evidence without a model call.
   const review=await reviewMiss();
   if(!review.retry){await pool.query(`UPDATE trade_attempts SET status='needs_review',ai_review=$2,updated_at=now() WHERE id=$1`,[row.id,review.reason]);return false}
-  if(Number(row.count)>contractCount(balance,{...market,yes_ask_dollars:row.limit_price},signal.fraction,bankroll,budgetCents,feeReserve(event,market))||
+  if(Number(row.count)>contractCount(balance,{...market,yes_ask_dollars:row.limit_price},signal.fraction,bankroll,budgetCents,feeReserve(event,market),{strategy:signal.strategy,game})||
     !profitableCount(Number(row.count),Number(row.limit_price),feeReserve(event,market),signal.strategy,availableCents,game.type,game.remainingSeconds,{game,market})||
     signal.strategy==='lead'&&!soccerWinnerWindowOpen(game))return false;
   const claim=await pool.query(`UPDATE trade_attempts SET retries=1,status='retrying',ai_review=$2,updated_at=now() WHERE id=$1 AND status IN ('check_order','reserved') AND retries=0 RETURNING id`,[row.id,review.reason]);
@@ -1436,13 +1442,13 @@ async function upgradeHeldOver(c,preflight,original,scoreboardCache){
   const bankroll=Number(account.balance)+Number(account.portfolio_value);
   const fraction=verifiedSignal.fraction,budget=remainingVerifiedOverCents(position,bankroll,fraction),fees=feeReserve(c.event,quote);
   const spendable=singleSpendableCash(account.balance),price=Number(quote.yes_ask_dollars);
-  const desired=profitableCount(contractCount(spendable,quote,fraction,bankroll,budget,fees),price,fees,'over',bankroll,state.type,state.remainingSeconds,{game:state,market:quote});
+  const desired=profitableCount(contractCount(spendable,quote,fraction,bankroll,budget,fees,{strategy:'over',game:state}),price,fees,'over',bankroll,state.type,state.remainingSeconds,{game:state,market:quote});
   if(!desired)return {verified:true,filled:false};
   const shard=marketShard(c.event,quote),local=shardCash(account,shard);
   if(local===null)return {verified:true,filled:false};
   const desiredCost=estimatedCostCents(desired,price,fees);
   if(local<desiredCost&&transferPlan(account,shard,desiredCost))await ensureShardFunding({strategy:'over'},c.event,quote,account,desiredCost);
-  const count=profitableCount(contractCount(Math.min(spendable,local),quote,fraction,bankroll,budget,fees),price,fees,'over',bankroll,state.type,state.remainingSeconds,{game:state,market:quote});
+  const count=profitableCount(contractCount(Math.min(spendable,local),quote,fraction,bankroll,budget,fees,{strategy:'over',game:state}),price,fees,'over',bankroll,state.type,state.remainingSeconds,{game:state,market:quote});
   if(!count)return {verified:true,filled:false};
   if(playerOverSpec(state,quote)){
     state=await freshPlayerPropForEntry(state,c.milestone,quote);
@@ -2320,7 +2326,7 @@ async function watchReadyOverTickets(until){
           const currentSignal=overSignal(state,market);
           if(!currentSignal)continue;
           currentSignal.fraction=verifiedOverFraction(currentSignal,state,market);
-          const count=contractCount(Math.min(balance,local),market,currentSignal.fraction,bankroll,Infinity,fee);
+          const count=contractCount(Math.min(balance,local),market,currentSignal.fraction,bankroll,Infinity,fee,{strategy:'over',game:state});
           if(!profitableCount(count,price,fee,'over',bankroll,state.type,state.remainingSeconds,{game:state,market}))continue;
           verified=currentSignal;
           if(!state.verificationId||Date.now()-state.observedAt>10000)continue;
@@ -2447,7 +2453,7 @@ async function executeVerifiedMention(item){
   const ask=side==='yes'?bestYesAsk(orderbook_fp):bestNoAsk(orderbook_fp);
   if(!ask||!mentionEntryPrice(ask.price)||ask.size<minimumCount(current))return;
   const fee=feeReserve(event,current),spendable=Math.min(singleSpendableCash(account.balance),local);
-  const raw=orderSize(spendable,ask.price,ask.size,.15,.40,bankroll,budget,fee);
+  const raw=orderSize(spendable,ask.price,ask.size,.05,.40,bankroll,budget,fee);
   const count=current.fractional_trading_enabled===false?Math.floor(raw):raw;
   if(count<minimumCount(current)||estimatedCostCents(count,ask.price,fee)>budget||
     netSettlementProfitCents(count,ask.price,fee)<minimumProfitCents('mention',bankroll))return;
@@ -2663,7 +2669,7 @@ async function scanThirdQuarterNos(games,events){
       const accounted=held+unreported;
       if(baselineHeld===null)baselineHeld=accounted;
       const budget=Math.max(0,Math.floor(bankroll*.30)-Math.max(accounted,baselineHeld+spent)),fees=feeReserve(c.event,refreshed);
-      const price=ask.price,count=orderSize(Math.min(singleSpendableCash(account.balance),local),price,ask.size,.30,1,bankroll,budget,fees);
+      const price=ask.price,count=orderSize(Math.min(singleSpendableCash(account.balance),local),price,ask.size,.05,1,bankroll,budget,fees);
       const quantity=refreshed.fractional_trading_enabled===false?Math.floor(count):count;
       if(quantity<minimumCount(refreshed)||!profitableCount(quantity,price,fees,'no',bankroll,game.type,game.remainingSeconds,{game,market:refreshed}))continue;
       await auditTable();const verificationId=randomUUID(),verifiedAt=Date.now();
@@ -2702,7 +2708,7 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null){
   const basketball=sport==='basketball',qualifies=basketball?collegeBasketballTotalNo:collegeFootballTotalNo;
   const prewindow=300,entry=300;
   const label=basketball?'College basketball':'Football';
-  const allocation=basketball?.05:.10;
+  const allocation=.05;
   const reasonPatterns=basketball?['College basketball %','Basketball total NO %',
     'Basketball early-quarter NO %']:['CFB %','NFL %'];
   // NO diagnostics are separate from YES over/winner entry signals.
@@ -3818,7 +3824,7 @@ async function scanSoccerTotalNos(games,events,signalSink=null){
 }
 
 async function scanVariablePlayerOvers(games,events,signalSink=null){
-  const fraction=.25,reasonPrefix='Variable player over: ';
+  const fraction=.05,reasonPrefix='Variable player over: ';
   const report=(c,execution,proof=null)=>{
     if(!signalSink)return;
     const list=signalSink.get(c.state.id)||[];
