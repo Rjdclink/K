@@ -53,15 +53,15 @@ test('CFB NO exclusively uses a fourth-quarter full-game market',()=>{
   assert.equal(nearEntryPhase(state(4,'5:30')),true);
 });
 
-test('CFB NO requires a 20-point gap in Q4 and strictly fewer than five minutes',()=>{
+test('CFB NO requires at least a 16-point cushion in Q4 and strictly fewer than five minutes',()=>{
   const contract=line=>market(false,line),fresh=clock=>state(4,clock);
-  assert.ok(collegeFootballTotalNo(fresh('4:59'),contract(33)),'exact 20-point gap qualifies');
-  assert.equal(collegeFootballTotalNo(fresh('4:59'),contract(32.5)),null,'19.5 points is insufficient');
-  assert.equal(collegeFootballTotalNo(fresh('4:59'),contract(28.5)),null,'previous threshold is disabled');
-  assert.equal(collegeFootballTotalNo(fresh('5:00'),contract(33)),null,'five minutes is preflight only');
-  assert.ok(collegeFootballTotalNo(fresh('5:59'),contract(33),{beforeWindow:true}));
-  assert.equal(collegeFootballTotalNo(fresh('6:00'),contract(33),{beforeWindow:true}),null);
-  assert.equal(collegeFootballTotalNo({...fresh('4:59'),sport:'NFL'},contract(33)),null);
+  assert.ok(collegeFootballTotalNo(fresh('4:59'),contract(29)),'exact 16-point cushion qualifies');
+  assert.equal(collegeFootballTotalNo(fresh('4:59'),contract(28.5)),null,'15.5 points is insufficient');
+  assert.ok(collegeFootballTotalNo(fresh('4:59'),contract(33)),'old 20-point cushion still qualifies');
+  assert.equal(collegeFootballTotalNo(fresh('5:00'),contract(29)),null,'five minutes is preflight only');
+  assert.ok(collegeFootballTotalNo(fresh('5:59'),contract(29),{beforeWindow:true}));
+  assert.equal(collegeFootballTotalNo(fresh('6:00'),contract(29),{beforeWindow:true}),null);
+  assert.equal(collegeFootballTotalNo({...fresh('4:59'),sport:'NFL'},contract(29)),null);
 });
 
 test('the market pass fetches actual full-game totals while rejecting first-half NO eligibility',()=>{
@@ -75,7 +75,7 @@ test('the market pass fetches actual full-game totals while rejecting first-half
 test('CFB NO line and field position are independent; an invalid market fails closed',()=>{
   const full=market(false);
   assert.equal(collegeFootballTotalNo(state(4),full)?.total,13);
-  assert.equal(collegeFootballTotalNo(state(4),market(false,30.5)),null);
+  assert.equal(collegeFootballTotalNo(state(4),market(false,28.5)),null);
   assert.equal(collegeFootballTotalNo(state(4),{...full,title:'Over 22.5 points'}),null);
   assert.ok(collegeFootballTotalNo(state(4,'1:58',{possession_team_id:'ohio-id',side_team_id:'akron-id',yardline:16}),full));
   assert.ok(collegeFootballTotalNo(state(4,'1:58',{possession_team_id:'ohio-id',side_team_id:'ohio-id',yardline:50}),full));
@@ -181,4 +181,13 @@ test('football Q4 total NO enters after two external checks at least 30 seconds 
   assert.equal(checks,1);assert.ok(window);
   assert.equal(await context.scanCollegeTotalNos(...args(last),'football'),1,'second proof after 30 seconds permits entry');
   assert.equal(checks,2);assert.equal(orders,1);
+});
+
+test('CFB cushion applies equally to independently verified combined points, not just Kalshi scores',()=>{
+ const game=state(4,'4:59'),target=market(false,29);
+ const matching={source:'ESPN',eventId:'verified-cfb-fixture',gameId:game.id,home:6,away:7};
+ const higher={...matching,away:8};
+ assert.equal(collegeFootballTotalNo(game,target,{external:matching})?.line,29);
+ assert.equal(collegeFootballTotalNo(game,target,{external:higher}),null,
+  'external score raised the combined total, leaving under 16 cushion');
 });
