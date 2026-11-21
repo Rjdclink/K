@@ -10,7 +10,7 @@ const qualifies=(game,market)=>['CFB','NFL'].includes(game.sport)?
 
 export function independentCollegeTotalNoReading(scoreboard,game,milestone,market){
   if(!qualifies(game,market))return false;
-  const matches=espnMatches(scoreboard,game,milestone);
+  const matches=espnMatches(scoreboard,game,milestone,{identityOnly:true});
   return collegeTotalNoReading(matches,game);
 }
 function collegeTotalNoReading(matches,game){
