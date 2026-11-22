@@ -6,6 +6,8 @@ import {readFileSync} from 'node:fs';
 import {gameState,tennisSignal,kalshiSingleReadLead,kalshiOnlyLead,confirmedExternalLead,comeback,teamScorePosition} from '../src/strategy.mjs';
 import * as exits from '../src/positions.mjs';
 import {sellQuote} from '../src/sell.mjs';
+import {threatenedLead} from '../src/lead_profit_protection.mjs';
+import {eligibleProfitExit} from '../src/profit_exits.mjs';
 
 function fixture({bestOf=3,selected=0,games=[5,4],points=[40,30],sets,advantage='',server,at=Date.now(),status='live'}={}){
   const ids=['jov','lew'],before=(bestOf-1)/2;
@@ -73,7 +75,8 @@ async function runExit({owner=original,position=held,price='.99',count='10',pend
   const first=fixtureOverride||fixture({games:[5,6],points:[30,40],server:'lew',at:now-1000});
   const second=fixture({games:[5,6],points:[30,40],server:'lew',at:now}).game;
   const context=vm.createContext({isScannerExcludedSport,console,Date,Number,Math,Map,Set,JSON,...exits,sellQuote,
-    ensureExitFills:async()=>{},exitAtRiskNos:async()=>0,reconcilePendingExit:async()=>!pending,minimumCount:()=>.01,
+    ensureExitFills:async()=>{},ensureLeadProfitExitWatch:async()=>{},threatenedLead,eligibleProfitExit,
+    externallyScoredGame:async()=>null,currentFeeSpec:async()=>({multiplier:1}),exitAtRiskNos:async()=>0,reconcilePendingExit:async()=>!pending,minimumCount:()=>.01,
     randomUUID:()=> 'exit-id',comeback,teamScorePosition,linkedEventTickers:()=>[first.market.event_ticker],
     auditedOver:async()=>true,liveMilestone:async()=>({}),gameState:()=>second,
     recordExitFill:async()=>{},invalidateBalance:async()=>{},
@@ -86,7 +89,7 @@ async function runExit({owner=original,position=held,price='.99',count='10',pend
     }},kalshi:async(path,options)=>{
       if(options?.method==='POST'){orders.push(options.body);return {fill_count_fp:count,order_id:'sold'}}
       if(path.endsWith('/orderbook'))return {orderbook_fp:{yes_dollars:[[price,count]]}};
-      return {market:fixtureOverride?first.market:{status:'active'}};
+      return {market:fixtureOverride?first.market:{...first.market,ticker:position.ticker,status:'active'}};
     }});
   vm.runInContext(source.slice(source.indexOf('async function exitComebacks('),source.indexOf('// A full discovery scan')),context);
   await context.exitComebacks(reversal||fixtureOverride?[{milestone:first.milestone,state:first.game}]:[],
@@ -111,7 +114,7 @@ test('other sports and combinations retain their existing profitable exits and u
   for(const owner of [{...original,sport:'NBA'},
     {...original,sport:'NBA',combo_legs:[{sport:'NFL'},{sport:'NBA'}]}]){
     const orders=await runExit({owner});assert.equal(orders.length,1,JSON.stringify(owner));
-    assert.equal(orders[0].time_in_force,'immediate_or_cancel');
+    assert.equal(orders[0].time_in_force,owner.combo_legs?'immediate_or_cancel':'fill_or_kill');
     assert.equal(orders[0].reduce_only,true);
   }
   assert.deepEqual(await runExit({owner:{...original,sport:'Soccer'}}),[]);

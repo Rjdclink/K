@@ -43,6 +43,8 @@ import { COMBO_ATTEMPT_MS, VERIFY_DWELL_MS, COMBO_RFQ_PLANS, singleSpendableCash
 import { selectedTeamName, selectedTeamSide } from './selected_team.mjs';
 import { estimatedSaleProfitCents, halfPotentialProfitExitEligible, oneAndHalfExitEligible, profitTargetAllowed, overCorrectionAffects, correctionExitTargets, untrackedOpenPositions } from './positions.mjs';
 import {noNearLossScore,profitableNoReductionQuote} from './no_protective_exit.mjs';
+import {threatenedLead} from './lead_profit_protection.mjs';
+import {eligibleProfitExit} from './profit_exits.mjs';
 import { remainingVerifiedOverCents, upgradeEligible } from './upgrades.mjs';
 import { weatherContract } from './weather.mjs';
 import { sellQuote,cashoutQuote } from './sell.mjs';
@@ -2226,8 +2228,18 @@ async function exitAtRiskNos(games,events,positions){
   }
   return reduced;
 }
+let leadProfitExitWatchCreation=null;
+function ensureLeadProfitExitWatch(){
+  if(!leadProfitExitWatchCreation){
+    leadProfitExitWatchCreation=pool.query(`CREATE TABLE IF NOT EXISTS lead_profit_exit_watch (
+      market_ticker text PRIMARY KEY, game_id text NOT NULL, activated_at timestamptz NOT NULL DEFAULT now()
+    )`).catch(error=>{leadProfitExitWatchCreation=null;throw error});
+  }
+  return leadProfitExitWatchCreation;
+}
 async function exitComebacks(games,events,positions){
   await ensureExitFills();
+  await ensureLeadProfitExitWatch();
   await exitAtRiskNos(games,events,positions);
   const byGame=new Map(games.map(g=>[g.milestone.id,g.state]));
   const gameInfo=new Map(games.map(g=>[g.milestone.id,g]));
@@ -2238,6 +2250,8 @@ async function exitComebacks(games,events,positions){
   const unresolved=new Set();
   for(const row of pendingExits)if(!await reconcilePendingExit(row.market_ticker))unresolved.add(row.market_ticker);
   if(!held.length)return;
+  const {rows:leadWatchRows}=await pool.query('SELECT market_ticker FROM lead_profit_exit_watch');
+  const watchedLeads=new Set(leadWatchRows.map(row=>row.market_ticker));
   const recorded=await pool.query(`SELECT DISTINCT ON (market_ticker) market_ticker,game_id,a.sport AS sport,strategy,reason,a.status AS status,combo_legs,g.sport_family AS game_family
     FROM trade_attempts a LEFT JOIN game_snapshots g ON g.id=a.game_id
     WHERE a.status='filled' AND (g.sport_family IS NULL OR g.sport_family ~* '^(basketball|hockey|soccer|football)_') ORDER BY market_ticker,a.updated_at DESC`);
@@ -2276,8 +2290,22 @@ async function exitComebacks(games,events,positions){
         if(overCorrectionAffects(leg.row,gameState(leg.game.milestone,raw),leg.market)){corrected=true;break}
       }
       const market=(await kalshi('/markets/'+encodeURIComponent(position.ticker))).market;
-      if(!market||!['active','open'].includes(market.status))continue;
-      if(leadExit&&state?.verifiedLive&&teamScorePosition(state,market)===0)continue;
+      if(!market||market.ticker!==position.ticker||!['active','open'].includes(market.status))continue;
+      let threatened=leadExit&&watchedLeads.has(position.ticker);
+      if(leadExit&&!threatened&&state?.verifiedLive&&threatenedLead(state,market)&&gameInfo.get(gameId)?.milestone){
+        // Do not react to a Kalshi-only score change. Independently verify the
+        // exact fixture and selected winner before the permanent exit latch.
+        const external=await externallyScoredGame(state,gameInfo.get(gameId).milestone,{fresh:true,market});
+        if(threatenedLead(external,market)){
+          await pool.query(`INSERT INTO lead_profit_exit_watch(market_ticker,game_id)
+            VALUES($1,$2) ON CONFLICT(market_ticker) DO NOTHING`,[position.ticker,gameId]);
+          watchedLeads.add(position.ticker);threatened=true;
+          console.info('Commanding lead reduced to one or fewer: profitable sell watch activated',position.ticker);
+        }
+      }
+      // A tie on Kalshi's own score is not independent proof. A verified,
+      // previously latched threat may exit; otherwise retain the tie veto.
+      if(leadExit&&!threatened&&state?.verifiedLive&&teamScorePosition(state,market)===0)continue;
       const book=(await kalshi('/markets/'+encodeURIComponent(position.ticker)+'/orderbook')).orderbook_fp;
       const heldCount=Number(position.position_fp??position.position);
       const sale=sellQuote(book,heldCount,market.fractional_trading_enabled===false);
@@ -2287,9 +2315,9 @@ async function exitComebacks(games,events,positions){
       const targetReached=profitTargetAllowed(original)&&sale.count>=heldCount-1e-7&&
         (leadPosition?halfPotentialProfitExitEligible(position,sale):oneAndHalfExitEligible(position,sale));
       if(!leadExit&&!targetReached&&!corrected)continue;
-      if(!targetReached&&!reversed&&!corrected)continue;
+      if(!targetReached&&!reversed&&!corrected&&!threatened)continue;
       const reversing=[{game:gameInfo.get(gameId),market:nested,event:events.get(nested?.event_ticker)}];
-      let confirmed=targetReached||corrected;
+      let confirmed=targetReached||corrected||threatened;
       for(const leg of confirmed?[]:reversing){
         if(!leg.game?.state?.verifiedLive||!leg.market)continue;
         const first=leg.game.state;
@@ -2316,6 +2344,15 @@ async function exitComebacks(games,events,positions){
       const bid=sale.price,bidSize=sale.count;
       const count=market.fractional_trading_enabled===false?Math.floor(Math.min(heldCount,bidSize)):Math.floor(Math.min(heldCount,bidSize)*100+1e-7)/100;
       if(count<minimumCount(market))continue;
+      if(leadExit){
+        // Exchange-reported acquisition basis and paid fees are mandatory.
+        // Reserve at least twice the market taker multiplier, not only the
+        // generic 2x fee, and require a positive net profit for EXACTLY the
+        // executable count. FOK below prevents a loss from partial fills.
+        const fees=await currentFeeSpec(market);
+        if(!fees||!eligibleProfitExit('lead',position,{price:bid,count},[],
+          Math.max(2,2*fees.multiplier)))continue;
+      }
       const id=randomUUID();
       const claim=await pool.query(`INSERT INTO exit_attempts(id,market_ticker,game_id,requested_count,limit_price,status)
         VALUES($1,$2,$3,$4,$5,'pending')
@@ -2325,7 +2362,7 @@ async function exitComebacks(games,events,positions){
         [id,position.ticker,gameId,count,bid]);
       if(!claim.rowCount)continue;
       try{
-        const result=await kalshi('/portfolio/events/orders',{method:'POST',auth:true,body:{ticker:position.ticker,client_order_id:id,side:'ask',count:count.toFixed(2),price:bid.toFixed(4),time_in_force:'immediate_or_cancel',self_trade_prevention_type:'taker_at_cross',post_only:false,reduce_only:true}});
+        const result=await kalshi('/portfolio/events/orders',{method:'POST',auth:true,body:{ticker:position.ticker,client_order_id:id,side:'ask',count:count.toFixed(2),price:bid.toFixed(4),time_in_force:leadExit?'fill_or_kill':'immediate_or_cancel',self_trade_prevention_type:'taker_at_cross',post_only:false,reduce_only:true}});
         const filledCount=Number(result.fill_count_fp??result.fill_count??0);
         await recordExitFill((...args)=>pool.query(...args),position.ticker,result.order_id||result.order?.order_id,filledCount);
         await pool.query(`UPDATE exit_attempts SET status=$2,order_id=$3,filled_count=$4,updated_at=now() WHERE id=$1`,[id,filledCount>0?'filled':'unfilled',result.order_id||result.order?.order_id||null,filledCount]);
@@ -2341,19 +2378,26 @@ async function exitComebacks(games,events,positions){
 // held overs throughout the cron invocation, so a statistic correction
 // does not wait for discovery, candidate verification or combo RFQs.
 async function watchCorrectedOvers(until){
+  await ensureLeadProfitExitWatch();
   let rows=[],marketsByTicker=new Map(),nextRefresh=0;
   while(Date.now()<until){
     const started=Date.now();
     try{
       if(started>=nextRefresh){
         const result=await pool.query(`SELECT DISTINCT ON (a.market_ticker) a.market_ticker,a.game_id,a.sport,a.strategy,a.reason,a.combo_legs,
-          g.title,g.sport_family,g.sport AS game_sport,g.home_team_id,g.away_team_id,g.status AS game_status
+          g.title,g.sport_family,g.sport AS game_sport,g.home_team_id,g.away_team_id,g.status AS game_status,g.scanned_at AS game_scanned_at
           FROM trade_attempts a LEFT JOIN game_snapshots g ON g.id=a.game_id
-          WHERE a.status='filled' AND (a.strategy IN ('over','no') OR a.combo_legs IS NOT NULL)
+          WHERE a.status='filled' AND (a.strategy IN ('over','no','lead') OR a.combo_legs IS NOT NULL)
             AND (g.sport_family IS NULL OR g.sport_family ~* '^(basketball|hockey|soccer|football)_')
           ORDER BY a.market_ticker,a.updated_at DESC`);
         rows=result.rows;
-        const overRows=rows.filter(row=>['over','no'].includes(row.strategy)&&row.game_status==='live'&&
+        // Do not flood Kalshi with old winners whose stored fixture never
+        // advanced beyond 'live'. Keep the older over/NO protection unchanged.
+        const liveRows=rows.filter(row=>row.strategy!=='lead'||(
+          Number.isFinite(Date.parse(row.game_scanned_at||''))&&
+          Date.now()-Date.parse(row.game_scanned_at)>=0&&
+          Date.now()-Date.parse(row.game_scanned_at)<=30*60000));
+        const overRows=liveRows.filter(row=>['over','no','lead'].includes(row.strategy)&&row.game_status==='live'&&
           supportedScannerSport({type:row.sport_family,sport:row.game_sport}));
         const quotes=await Promise.all(overRows.map(async row=>{
           try{return [row.market_ticker,(await kalshi('/markets/'+encodeURIComponent(row.market_ticker))).market]}
@@ -2362,7 +2406,10 @@ async function watchCorrectedOvers(until){
         marketsByTicker=new Map(quotes.filter(([,market])=>market));
         nextRefresh=Date.now()+5000;
       }
-      const singles=rows.filter(row=>['over','no'].includes(row.strategy)&&row.game_status==='live'&&
+      const singles=rows.filter(row=>['over','no','lead'].includes(row.strategy)&&row.game_status==='live'&&
+        (row.strategy!=='lead'||Number.isFinite(Date.parse(row.game_scanned_at||''))&&
+          Date.now()-Date.parse(row.game_scanned_at)>=0&&
+          Date.now()-Date.parse(row.game_scanned_at)<=30*60000)&&
         supportedScannerSport({type:row.sport_family,sport:row.game_sport})&&marketsByTicker.has(row.market_ticker));
       const milestones=[...new Map(singles.map(row=>[row.game_id,{id:row.game_id,title:row.title,
         type:row.sport_family,details:{league:row.game_sport,home_team_id:row.home_team_id,away_team_id:row.away_team_id}}])).values()];
@@ -2371,6 +2418,14 @@ async function watchCorrectedOvers(until){
         const games=milestones.map(milestone=>({milestone,state:gameState(milestone,data.get(milestone.id))}));
         const states=new Map(games.map(game=>[game.milestone.id,game.state]));
         const target=correctionExitTargets(rows,states,marketsByTicker);
+        // Poll live positions every two seconds. A threatened leader stays on
+        // watch even after the score improves until its position is closed.
+        const {rows:activated}=await pool.query('SELECT market_ticker FROM lead_profit_exit_watch');
+        const latched=new Set(activated.map(row=>row.market_ticker));
+        for(const row of singles)if(row.strategy==='lead'&&(
+          latched.has(row.market_ticker)||
+          threatenedLead(states.get(row.game_id),marketsByTicker.get(row.market_ticker))))
+          target.add(row.market_ticker);
         const atRiskNos=new Set(singles.filter(row=>row.strategy==='no'&&
           noNearLossScore(states.get(row.game_id),marketsByTicker.get(row.market_ticker))!==null)
           .map(row=>row.market_ticker));
@@ -2395,7 +2450,7 @@ async function watchCorrectedOvers(until){
           }
         }
       }
-    }catch(e){console.error('Fast over correction exit deferred:',e)}
+    }catch(e){console.error('Fast protective exit watcher deferred:',e)}
     const pause=Math.max(0,2000-(Date.now()-started));
     if(Date.now()+pause>=until)break;
     if(pause)await new Promise(resolve=>setTimeout(resolve,pause));
