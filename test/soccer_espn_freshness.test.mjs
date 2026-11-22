@@ -25,12 +25,16 @@ test('one fresh ESPN reading verifies the exact fixture, score, current period a
  assert.equal(validFreshEspnSoccerNo(p,g),true);
  assert.equal(validFreshEspnSoccerNo(p,g,Date.now()+11000),false);
 });
-test('ESPN must be current relative to Kalshi; stale 78th minute cannot verify an 83rd-minute market',async()=>{
- assert.equal(await verify(game(),scoreboard("78'")),false);
+test('ESPN independently sourced clock is authoritative even if Kalshi shows another minute',async()=>{
+ const proof=await verify(game(),scoreboard("78'"));
+ assert.equal(proof?.elapsedMinute,78);
+ assert.equal(validFreshEspnSoccerNo(proof,game()),true);
 });
-test('ESPN current minute with different home or away score must veto the purchase',async()=>{
- assert.equal(await verify(game(),scoreboard("83'",2,2)),false);
- assert.equal(await verify(game(),scoreboard("83'",1,1)),false);
+test('the correctly identified ESPN fixture controls scores despite a differing Kalshi score',async()=>{
+ const twoTwo=await verify(game(),scoreboard("83'",2,2));
+ const oneOne=await verify(game(),scoreboard("83'",1,1));
+ assert.deepEqual([twoTwo?.home,twoTwo?.away],[2,2]);
+ assert.deepEqual([oneOne?.home,oneOne?.away],[1,1]);
 });
 test('finished match or mismatched period cannot verify NO even with matching score',async()=>{
  assert.equal(await verify(game(),scoreboard("83'",2,1,'post')),false);
@@ -47,7 +51,7 @@ test('90-plus stoppage score can verify from ESPN apostrophe plus syntax',async(
  const g=game(94),p=await verify(g,scoreboard("90'+4'"));
  assert.equal(p?.elapsedMinute,94);
  assert.equal(validFreshEspnSoccerNo(p,g),true);
- assert.equal(await verify(g,scoreboard('90+1')),false);
+ assert.equal((await verify(g,scoreboard('90+1')))?.elapsedMinute,91);
 });
 test('first-half requires first-half ESPN status with a matching score and minute',async()=>{
  const g=game(42,0,1,1);

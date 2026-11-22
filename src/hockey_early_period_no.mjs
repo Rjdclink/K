@@ -1,5 +1,5 @@
 import {externalNoScore,externalNoPeriods} from './external_no_authority.mjs';
-import {verifyFreshEspnHockeyNo} from './hockey_espn_no.mjs';
+import {verifyFreshEspnHockeyNo,independentlyVerifiedHockeyGame} from './hockey_espn_no.mjs';
 import {espnMatches} from './score_verification.mjs';
 
 // NHL period-one and period-two NO markets settle on goals scored in that
@@ -80,7 +80,9 @@ export function hockeyEarlyNoMarketSpec(game,market,{beforeWindow=false}={}){
 }
 
 export function hockeyEarlyPeriodNo(game,market,{beforeWindow=false,external=null}={}){
-  const spec=hockeyEarlyNoMarketSpec(game,market,{beforeWindow});
+  const verified=external?independentlyVerifiedHockeyGame(game,external):null;
+  const sourceGame=verified||game;
+  const spec=hockeyEarlyNoMarketSpec(sourceGame,market,{beforeWindow});
   if(!spec)return null;
   const parts=external?validExternal(external,game,spec.periodNumber):
     periodParts(game.periodScores,spec.periodNumber);
@@ -91,7 +93,7 @@ export function hockeyEarlyPeriodNo(game,market,{beforeWindow=false,external=nul
   return {...spec,total:periodTotal,reason:
     'NHL hockey total NO '+(spec.periodNumber===1?'first period':'second period')+
     ' over '+spec.line+'; '+periodTotal+' period goals, '+
-    game.remainingSeconds+'s remaining in P'+spec.periodNumber};
+    sourceGame.remainingSeconds+'s remaining in P'+spec.periodNumber};
 }
 
 export function independentEarlyHockeyNoReading(scoreboard,game,milestone,market){

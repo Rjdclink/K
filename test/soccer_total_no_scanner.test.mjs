@@ -286,7 +286,7 @@ test('soccer NO never stores an untrusted ESPN preflight',async()=>{
  for(const bad of [
   {checkedAt:Date.now()-25000},{source:'FOX Sports'},
   {verificationPolicy:'old'},{live:false},{period:1},
-  {elapsedMinute:50},{away:9}
+  {elapsedMinute:NaN},{away:-1}
  ]){
   const h=harness({firstProofOverride:bad});
   assert.equal(await h.scan(660),0);
@@ -298,7 +298,7 @@ test('soccer NO blocks entry after invalid final ESPN evidence',async()=>{
  for(const bad of [
   {checkedAt:Date.now()-25000},{source:'Sportradar'},
   {verificationPolicy:'old'},{live:false},{period:1},
-  {elapsedMinute:50},{away:9}
+  {elapsedMinute:NaN},{away:-1}
  ]){
   const h=harness({finalProofOverride:bad});
   assert.equal(await h.scan(660),0);

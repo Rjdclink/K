@@ -86,7 +86,7 @@ test('Sportradar HTTP 429 opens shared quota cooldown and never permits an autom
  assert.equal(attempts,1,'a rejected provider quota must not be retried across supported sports');
 });
 
-test('soccer ESPN absence is reported as unavailable; score/clock contradiction remains a veto, never a fabricated proof',async()=>{
+test('soccer ESPN absence remains unavailable, while verified external scores supersede the Kalshi display',async()=>{
  const now=Date.now(),start=new Date(now-60000).toISOString();
  const milestone={id:'soccer-test',type:'soccer_match',title:'Alpha at Beta',start_date:start,details:{league:'Soccer'}};
  const game={id:'soccer-test',type:'soccer_match',sport:'Soccer',verifiedLive:true,scoreKnown:true,
@@ -100,10 +100,11 @@ test('soccer ESPN absence is reported as unavailable; score/clock contradiction 
   status:{period:2,displayClock:"83'",type:{state:'in',completed:false}},
   competitors:[{homeAway:'home',score:'2',team:{displayName:'Beta'}},
     {homeAway:'away',score:'2',team:{displayName:'Alpha'}}]}]}]};
- assert.equal(await verifyFreshEspnSoccerNo(game,milestone,{fetcher:async()=>({
+ const proof=await verifyFreshEspnSoccerNo(game,milestone,{fetcher:async()=>({
   ok:true,headers:{get:()=>null},json:async()=>wrong
- })}),false);
- assert.match(game.verificationIssue||'',/score|contradic/i);
+ })});
+ assert.equal(proof?.source,'ESPN');
+ assert.deepEqual([proof?.home,proof?.away],[2,2]);
 });
 
 test('contract-bound college hockey identity safely resolves a reversed versus-title when Kalshi omits names',async()=>{

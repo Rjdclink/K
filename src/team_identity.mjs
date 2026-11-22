@@ -26,7 +26,11 @@ export function teamAbbreviationVariants(name,sport){
     // fixtures by Kalshi and ESPN; never use a generic fuzzy name match.
     const clubs=[
       ['Bodoe/Glimt','Bodo/Glimt','Bodø/Glimt'],
-      ['Aarhus','AGF','Aarhus GF']
+      ['Aarhus','AGF','Aarhus GF'],
+      // Independently confirmed same-club names in ESPN's Austrian and Greek feeds.
+      ['SCR Altach','SC Rheindorf Altach'],
+      ['Sturm Graz','SK Sturm Graz'],
+      ['Atromitos Athinon','Atromitos']
     ];
     const variants=clubs.find(names=>names.some(name=>
       name.normalize('NFKD').toLowerCase()===text.normalize('NFKD').toLowerCase()));

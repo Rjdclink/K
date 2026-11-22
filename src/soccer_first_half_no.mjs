@@ -1,5 +1,5 @@
 import {externalNoScore} from './external_no_authority.mjs';
-import {verifyFreshEspnSoccerNo} from './soccer_espn_no.mjs';
+import {verifyFreshEspnSoccerNo,independentlyVerifiedSoccerGame} from './soccer_espn_no.mjs';
 import {espnMatches} from './score_verification.mjs';
 import {espnScoreboardUrls} from './espn_scoreboards.mjs';
 
@@ -48,7 +48,9 @@ export function soccerFirstHalfNoSpec(game,market,{beforeWindow=false}={}){
 }
 
 export function soccerFirstHalfNo(game,market,{beforeWindow=false,external=null}={}){
-  const spec=soccerFirstHalfNoSpec(game,market,{beforeWindow});
+  const verified=external?independentlyVerifiedSoccerGame(game,external):null;
+  const sourceGame=verified||game;
+  const spec=soccerFirstHalfNoSpec(sourceGame,market,{beforeWindow});
   if(!spec||external&&!externalCurrent(external,game))return null;
   const score=external?externalNoScore(game,external):{home:game.home,away:game.away};
   if(!score)return null;
@@ -56,7 +58,7 @@ export function soccerFirstHalfNo(game,market,{beforeWindow=false,external=null}
   // The full-game 90+ stoppage-time exception NEVER applies to first-half NO.
   if(spec.line-total<(total>=4?3.5:2.5))return null;
   return {...spec,total,reason:'Soccer first-half total NO over '+spec.line+'; '+
-    total+' first-half goals, '+soccerFirstHalfSeconds(game)+
+    total+' first-half goals, '+soccerFirstHalfSeconds(sourceGame)+
     's to the 45-minute regulation clock'};
 }
 
@@ -74,6 +76,6 @@ export function independentSoccerFirstHalfNoReading(scoreboard,game,milestone,ma
 
 export async function verifyIndependentSoccerFirstHalfNo(game,milestone,market,{fetcher=fetch}={}){
   if(!soccerFirstHalfNoSpec(game,market,{beforeWindow:true}))return null;
-  // ESPN only. The scoreboard must be live, current, and agree on the score and minute.
+  // ESPN alone establishes the fixture, current clock and sporting score.
   return verifyFreshEspnSoccerNo(game,milestone,{fetcher});
 }

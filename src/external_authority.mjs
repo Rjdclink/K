@@ -34,6 +34,14 @@ export function authoritativeGameState(game,reading,now=Date.now()){
   periodConsistent:periods?true:game.periodConsistent,
   externalScore:score,kalshiScore:{home:game.home,away:game.away}};
  if(periods)result.periodScores=periods;
+ if(/soccer/.test(String(game.type||''))&&Number.isFinite(reading.elapsedMinute)&&
+   reading.elapsedMinute>=0&&reading.elapsedMinute<=180){
+   result.soccerMinute=reading.elapsedMinute;
+   result.matchRemainingSeconds=Math.max(0,Math.round((90-reading.elapsedMinute)*60));
+ }
+ if(/hockey|basketball|football/.test(String(game.type||''))&&
+   Number.isFinite(reading.seconds)&&reading.seconds>=0&&reading.seconds<=3600)
+   result.remainingSeconds=reading.seconds;
  return result;
 }
 export function verifiedSourceReady(game,now=Date.now()){
