@@ -16,3 +16,13 @@ test('independent countable player stat can qualify even if Kalshi reports fewer
  assert.equal(playerValueQualifies(9,{value:8,line:7.5}),true);
  assert.equal(playerValueQualifies(8,{value:9,line:7.5}),false);
 });
+
+test('identical Kalshi and independent scores never authorize an unrelated or unidentified winner contract',()=>{
+ const g={type:'hockey_tournament',sport:'Hockey',home:4,away:1,homeTeamId:'official-home',awayTeamId:'official-away',homeName:'Alpha',awayName:'Beta'};
+ const independent={home:4,away:1};
+ assert.equal(externalScoresQualify(g,independent,{event_ticker:'KXKHLGAME-TEST',title:'Unrelated market'}),false);
+ assert.equal(externalScoresQualify(g,independent,{event_ticker:'KXKHLGAME-TEST',title:'Will Alpha win?',custom_strike:{hockey_team:'unrelated-team'}}),false);
+ const stale={...g,home:0,away:7};
+ assert.equal(externalScoresQualify(stale,{home:2,away:2},{event_ticker:'KXKHLGAME-TEST',title:'Draw'}),true,
+  'an independently verified draw must not depend on the displayed Kalshi goals');
+});

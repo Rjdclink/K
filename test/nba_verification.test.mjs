@@ -18,12 +18,12 @@ test('NBA exact fixture and player stats distinguish agreement, disagreement and
  assert.equal(nbaAgreement({},game,milestone,market,id),null);
  assert.equal(nbaFixtures({scoreboard:{games:[{...fixture,gameTimeUTC:'2026-10-30T00:00:00Z'}]}},game,milestone).length,0);
 });
-test('NBA game and period overs compare their respective scores',()=>{
- assert.equal(nbaAgreement({game:fixture},game,milestone,{event_ticker:'KXNBATOTAL-X'},id),true);
- assert.equal(nbaAgreement({game:fixture},{...game,home:128},milestone,{event_ticker:'KXNBATOTAL-X'},id),false);
- assert.equal(nbaAgreement({game:fixture},game,milestone,{event_ticker:'KXNBA1QTOTAL-X'},id),true);
+test('NBA totals depend solely on the independent game and quarter scores, not Kalshi',()=>{
+ assert.equal(nbaAgreement({game:fixture},game,milestone,{event_ticker:'KXNBATOTAL-X',floor_strike:259.5},id),true);
+ assert.equal(nbaAgreement({game:fixture},{...game,home:128},milestone,{event_ticker:'KXNBATOTAL-X',floor_strike:259.5},id),true);
+ assert.equal(nbaAgreement({game:fixture},game,milestone,{event_ticker:'KXNBA1QTOTAL-X',floor_strike:66.5},id),true);
  const changed=structuredClone(fixture);changed.homeTeam.periods[0].score=32;
- assert.equal(nbaAgreement({game:changed},game,milestone,{event_ticker:'KXNBA1QTOTAL-X'},id),false);
+ assert.equal(nbaAgreement({game:changed},game,milestone,{event_ticker:'KXNBA1QTOTAL-X',floor_strike:66.5},id),false);
 });
 test('NBA official data governs when available and ESPN is used when NBA is unavailable',async()=>{
  const espn={events:[{id:'espn',date:start,competitions:[{status:{type:{state:'in'}},competitors:[{homeAway:'home',score:127,team:{abbreviation:'CHI',name:'Bulls'}},{homeAway:'away',score:133,team:{abbreviation:'NYK',name:'Knicks'}}]}]}]};

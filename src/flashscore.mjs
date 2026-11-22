@@ -27,13 +27,28 @@ export function flashscoreCompetition(game,milestone){
   if(type.startsWith('soccer_')&&soccer[league])return {sportId:1,paths:soccer[league]};
   return null;
 }
-// Kalshi lower-league hockey tournament titles place the away club first.
-// Use that orientation only if Kalshi has not explicitly named either side.
+// Exact, competition-scoped aliases observed on the public match listings.
+// Never infer a team's identity from a score or an unrelated league.
+const hockeyAliases=Object.freeze({
+  'Polska Hokej Liga':{'GKS Tychy':'Tychy','TMH Polonia Bytom':'Bytom','KH Energa Torun':'Torun'},
+  'Germany DEL':{'Fischtown Pinguins':'Bremerhaven','Nuremberg Ice Tigers':'Nurnberg Ice Tigers',
+    'Red Bull Munich':'Munchen','Kolner Haie':'Kolner'},
+  KHL:{'Ak Bars Kazan':'Bars Kazan','HK Avangard Omsk':'Avangard Omsk'},
+  'Czech Extraliga':{'BK Mlada Boleslav':'Mlada Boleslav','Bili Tygri Liberec':'Liberec',
+    'HC Verva Litvinov':'Litvinov','HC Rytiri Kladno':'Kladno'}
+});
+// Kalshi tournament titles place the away club first. These are solely
+// fixture-identity hints; the score and goals must come from Flashscore.
 export function flashscoreFixture(game,milestone){
-  if(!flashscoreCompetition(game,milestone)||game?.type!=='hockey_tournament'||
-    game.homeName||game.awayName)return game;
-  const parts=String(milestone?.title||'').split(/\s+vs\.?\s+/i);
-  return parts.length===2?{...game,homeName:parts[1],awayName:parts[0]}:game;
+  if(!flashscoreCompetition(game,milestone))return game;
+  let fixture=game;
+  if(game?.type==='hockey_tournament'&&!game.homeName&&!game.awayName){
+    const parts=String(milestone?.title||'').split(/\s+vs\.?\s+/i);
+    if(parts.length===2)fixture={...game,homeName:parts[1],awayName:parts[0]};
+  }
+  const names=hockeyAliases[String(milestone?.details?.league||game?.competition||'')];
+  return names?{...fixture,homeName:names[fixture.homeName]||fixture.homeName,
+    awayName:names[fixture.awayName]||fixture.awayName}:fixture;
 }
 const fields=text=>Object.fromEntries(String(text).split('¬').map(part=>{
   const divider=part.indexOf('÷');return divider>0?[part.slice(0,divider),part.slice(divider+1)]:[];
@@ -78,7 +93,9 @@ export async function loadFlashscore(game,milestone,{fetcher=fetch,now=Date.now(
   const day=ms=>Date.parse(new Date(ms-5*3600000).toISOString().slice(0,10)+'T00:00:00Z');
   const offset=Math.round((day(start)-day(now))/86400000);
   if(Math.abs(offset)>2)return null;
-  const url=`https://global.flashscore.ninja/2/x/feed/f_${competition.sportId}_${offset}_-5_en_1`;
+  // The default CDN scoreboard can be minutes old despite no-store; request
+  // the current public snapshot and still reject any provider age >10 seconds.
+  const url=`https://global.flashscore.ninja/2/x/feed/f_${competition.sportId}_${offset}_-5_en_1?t=${Math.floor(now/1000)}`;
   try{
     const response=await fetcher(url,{cache:'no-store',headers:{accept:'text/plain',referer:'https://www.flashscore.com/','x-fsign':'SW9D1eZo'},signal:AbortSignal.timeout(7000)});
     if(!response.ok||Number(response.headers?.get?.('age')||0)>10)return null;
