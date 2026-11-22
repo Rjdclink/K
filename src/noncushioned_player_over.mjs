@@ -3,6 +3,7 @@ import {sportsContractKey} from './entry_verification.mjs';
 import {espnMatches,foxMatches,playerStatValue,foxPlayerStat} from './score_verification.mjs';
 import {espnScoreboardUrls} from './espn_scoreboards.mjs';
 import {espnRetryThenFox} from './source_fallback.mjs';
+import {scoreFeedAgeMs} from './score_feed_freshness.mjs';
 
 export const FIRST_NONCUSHIONED_CHECK_MS=210000;
 export function rankNoncushionedReplacements(entries){
@@ -76,7 +77,9 @@ export async function verifyNoncushionedPlayerStat(game,milestone,market,{fetche
  const days=[0,-1,1].map(d=>new Date(Date.parse(milestone.start_date)+d*86400000)
    .toISOString().slice(0,10).replaceAll('-',''));
  const read=async url=>{const r=await fetcher(url,{cache:'no-store',
-   signal:AbortSignal.timeout(6500)});if(!r.ok)throw Error('Unusable score provider');return r.json()};
+   signal:AbortSignal.timeout(6500)});
+  if(!r.ok||scoreFeedAgeMs(r)===null)throw Error('Unusable or stale player-stat source');
+  return r.json()};
  const espn=async()=>{
   const boards=(await Promise.allSettled(espnScoreboardUrls(spec.feed,game,milestone,days).map(read)))
    .filter(r=>r.status==='fulfilled').map(r=>r.value);

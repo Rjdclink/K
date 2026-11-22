@@ -12,7 +12,7 @@ import {collegeBasketballTotalNo,collegeFootballTotalNo,bestNoAsk,noDepthAtAsk} 
 import {sameSportsContract,overContractKey} from '../src/over_verification.mjs';
 import {rememberIndependentEntry} from '../src/entry_verification.mjs';
 
-function harness(sport,{ageMs=61000,failSecond=false,legacyFirstClock=null,finalEventId='jit-espn-game',unprofitable=false}={}){
+function harness(sport,{ageMs=61000,failSecond=false,legacyFirstClock=null,finalEventId='jit-espn-game',unprofitable=false,retiredNo=false}={}){
   const basketball=sport==='NCAAB',league=basketball?'NCAAMB':sport;
   const prefix=basketball?'KXNCAAMB':sport==='NFL'?'KXNFL':'KXNCAAF';
   const period=basketball?2:4,home=basketball?65:20,away=basketball?65:17;
@@ -37,9 +37,13 @@ function harness(sport,{ageMs=61000,failSecond=false,legacyFirstClock=null,final
     first_at:new Date(Date.now()-ageMs)
   },proofs=0,orders=0,blocked=false;
   const trace=[];
+  let retired=retiredNo;
+  const candidateAskTimeout={...noAskTimeout,
+   isRetired:async()=>retired,claimRecovery:async()=>false,
+   available:async()=>{retired=false;}};
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
   const code=source.slice(source.indexOf('async function scanCollegeTotalNos('),source.indexOf('async function scan(cachedMilestones'));
-  const context=vm.createContext({eligibleNoFinal,launchImmediateNoFinalFixtures,immediateNoFinalProof,dueNoFinalWindows,noFinalCheckpoint,noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,scheduleNoLiquidityRecheck:()=>{},recordDecision:async()=>{},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
+  const context=vm.createContext({eligibleNoFinal,launchImmediateNoFinalFixtures,immediateNoFinalProof,dueNoFinalWindows,noFinalCheckpoint,noAskTimeout:candidateAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,scheduleNoLiquidityRecheck:()=>{},recordDecision:async()=>{},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
     Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),
     linkedEventTickers:()=>[market.event_ticker],
@@ -239,5 +243,18 @@ test('college football, NFL and basketball never call final ESPN when executable
   assert.equal(h.proofs,1,'final external request must be suppressed by negative profit for '+sport);
   assert.equal(h.orders,0);
   assert.ok(h.trace.includes('orderbook'),'executable depth still checked for '+sport);
+ }
+});
+
+test('a valid ESPN NO preflight is not permanently lost to an expired missing-orderbook timer',async()=>{
+ for(const sport of ['NCAAB','CFB','NFL']){
+  const h=harness(sport,{retiredNo:true});
+  await h.scan(sport==='NCAAB'?'8:00':'5:30');
+  assert.equal(h.proofs,1,sport+' must save its first independent proof');
+  assert.equal(await h.scan(sport==='NCAAB'?'6:59':'4:59'),1,
+   sport+' must recheck live NO depth despite an earlier 30-second empty book');
+  assert.ok(h.trace.includes('orderbook'),sport+' must query executable depth');
+  assert.equal(h.proofs,2,sport+' must still require the second independent proof');
+  assert.equal(h.orders,1,sport+' may buy only after live depth and fresh ESPN proof');
  }
 });

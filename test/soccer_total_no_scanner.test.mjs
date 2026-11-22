@@ -125,7 +125,7 @@ function harness({canVerify=true,hasSeller=true,unprofitable=false,initialAgeMs=
   };
 }
 
-test('NO book probes stop at 30 elapsed seconds of absent asks, even when game clock is stopped',async()=>{
+test('a saved independent soccer preflight keeps checking live NO liquidity after the 30-second empty-book timer',async()=>{
  let elapsed=0,firstAt=null;
  const gate={
   claimRecovery:async()=>false,
@@ -146,12 +146,12 @@ test('NO book probes stop at 30 elapsed seconds of absent asks, even when game c
  assert.equal(await h.scan(479),0,'another probe may occur within the 30-second grace');
  assert.equal(h.trace.filter(t=>t==='orderbook').length,2);
  elapsed=30_000;
- assert.equal(await h.scan(479),0,'same contract is retired after 30 seconds');
- assert.equal(h.trace.filter(t=>t==='orderbook').length,2,
-   'no more orderbook calls for a retired market');
- assert.equal(h.verifications,1,'expired executable NO ask must suppress the final external check, but not the initial mandatory proof');
+ assert.equal(await h.scan(479),0,'still no seller after thirty real seconds');
+ assert.equal(h.trace.filter(t=>t==='orderbook').length,3,
+   'verified preflight must remain eligible for a live book recheck');
+ assert.equal(h.verifications,1,'without executable depth, no final ESPN check or order occurs');
  assert.match((h.dashboard.get(milestone.id)||[]).find(x=>x.ticker===market.ticker)?.execution||'',
-   /No executable ask after 30 seconds/);
+   /Verified ESPN preflight retained; no executable NO seller/);
  assert.equal(h.orders,0);
 });
 
@@ -169,7 +169,7 @@ test('a valid live NO quote remains tradable after a previous empty-book timer e
  assert.equal(await h.scan(479),1,'confirmed executable NO quote does not expire at the 30-second limit');
  assert.equal(h.verifications,2);
  assert.equal(h.orders,1);
- assert.ok(claims>=1,'updated ask information must trigger one book recheck');
+ assert.equal(claims,0,'a prior no-seller timer must never block the immediate live book query');
  assert.ok(clears>=1,'live orderbook depth clears the previous missing-ask record');
  assert.equal(retired,false);
  const final=(h.dashboard.get(milestone.id)||[]).find(x=>x.ticker===market.ticker);

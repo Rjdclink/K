@@ -284,8 +284,15 @@ export function playerStatValue(summary,player,{participated=false}={}){
   const matches=(summary?.boxscore?.players||[]).flatMap(team=>(team.statistics||[]).flatMap(group=>{
     const yardType={PASSYDS:'passing',RUSHYDS:'rushing',RECYDS:'receiving'}[player.metric];
     if(yardType&&!String(group.name||group.displayName||'').toLowerCase().includes(yardType))return [];
-    const label={PTS:'PTS',REB:'REB',AST:'AST','3PT':'3PT',STL:'STL',BLK:'BLK',PRA:'PTS',GOALS:'G',SAVES:'SV',SOG:'SOG',HITS:'H',RBI:'RBI',HR:'HR',PASSYDS:'YDS',RUSHYDS:'YDS',RECYDS:'YDS'}[player.metric];
     const headers=group.names||group.labels;
+    // ESPN hockey skater columns are A=assists, HT=hits and S=shots.
+    // Its SOG column is SHOOTOUT goals, never player shots on goal.
+    // Basketball still uses AST, and football uses group-specific YDS.
+    const hockeySkaters=['forwards','defenses','skaters'].includes(String(group.name||'').toLowerCase())&&
+      headers?.includes('A')&&headers?.includes('HT')&&headers?.includes('S');
+    const hockeyLabel={AST:'A',HITS:'HT',SOG:'S'};
+    const label=hockeySkaters&&hockeyLabel[player.metric]||
+      {PTS:'PTS',REB:'REB',AST:'AST','3PT':'3PT',STL:'STL',BLK:'BLK',PRA:'PTS',GOALS:'G',SAVES:'SV',SOG:'SOG',HITS:'H',RBI:'RBI',HR:'HR',PASSYDS:'YDS',RUSHYDS:'YDS',RECYDS:'YDS'}[player.metric];
     const index=headers?.findIndex(name=>name===label);
     if(!Number.isInteger(index)||index<0)return [];
     return (group.athletes||[]).filter(a=>clean(a.athlete?.displayName)===clean(player.name)&&
@@ -325,14 +332,22 @@ export async function verifyIndependentYardageZero(game,milestone,player,{fetche
 export function foxPlayerStat(data,player,eventId){
   if(String(data?.header?.id)!==String(eventId))return null;
   const yardType={PASSYDS:'PASSING',RUSHYDS:'RUSHING',RECYDS:'RECEIVING'}[player.metric];
-  const column=yardType?'YDS':{PTS:'PTS',REB:'REB',AST:'AST','3PT':'3FG',STL:'STL',BLK:'BLK'}[player.metric];
-  if(!column&&player.metric!=='PRA')return null;
+  const regular=yardType?'YDS':{PTS:'PTS',REB:'REB',AST:'AST','3PT':'3FG',STL:'STL',BLK:'BLK'}[player.metric];
+  const nhlSkater={GOALS:'G',AST:'A',SOG:'S',HITS:'H'};
+  const nhlGoalie={SAVES:'SV'};
+  if(!regular&&!nhlSkater[player.metric]&&!nhlGoalie[player.metric]&&player.metric!=='PRA')return null;
   const matches=[];
   for(const section of data?.boxscore?.boxscoreSections||[])for(const item of section.boxscoreItems||[]){
     const table=item.boxscoreTable;
     if(!table)continue;
     const headers=table.headers?.[0]?.columns||[];
     if(yardType&&!headers.some(h=>String(h.text).toUpperCase()===yardType))continue;
+    // FOX NHL skaters: G/A/S/H; NHL goalkeepers: SV. Other sports,
+    // especially basketball AST, must retain their own unrelated columns.
+    const skaters=headers.some(h=>h.text==='SKATERS');
+    const goalies=headers.some(h=>h.text==='GOALKEEPERS');
+    const column=skaters?nhlSkater[player.metric]:goalies?nhlGoalie[player.metric]:regular;
+    if(!column&&player.metric!=='PRA')continue;
     const indexes=(player.metric==='PRA'?['PTS','REB','AST']:[column]).map(label=>headers.find(h=>h.text===label)?.index);
     if(indexes.some(n=>!Number.isInteger(n)))continue;
     for(const row of table.rows||[]){
