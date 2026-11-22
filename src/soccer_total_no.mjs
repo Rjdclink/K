@@ -21,7 +21,7 @@ const clockMinute=clock=>{
 // Independent fixture, score, and match time determine whether the exact
 // Kalshi contract has enough goal cushion within its regulation window.
 const currentExternal=(reading,game)=>Boolean(
-  ['ESPN','FOX Sports','Sportradar'].includes(reading?.source)&&reading.eventId&&
+  ['ESPN','FOX Sports','Flashscore'].includes(reading?.source)&&reading.eventId&&
   Boolean(externalNoScore(game,reading)));
 
 // Kalshi full-game totals include regulation stoppage, but not the separate

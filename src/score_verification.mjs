@@ -3,7 +3,7 @@ import {espnScoreboardUrls,espnSoccerLeagueFeed} from './espn_scoreboards.mjs';
 import { alternateCheck } from './alternate_scores.mjs';
 import { teamAbbreviationVariants } from './team_identity.mjs';
 import { relaxedTeamCompatibility } from './fixture_aliases.mjs';
-import { loadSportradar, sportradarPlayerValue } from './sportradar.mjs';
+import {flashscoreCompetition,flashscoreFixture,loadFlashscore} from './flashscore.mjs';
 // ESPN and FOX publish the scoreboards used by their sites. These endpoints
 // are not contractual data APIs; a changed schema or unavailable fixture must
 // fail closed, never silently turn into permission to buy an over.
@@ -462,21 +462,48 @@ async function verifyNbaOver(game,milestone,{fetcher=fetch,market,minimumOverVal
 }
 // null means no exact independent fixture/stat was available. A definite
 // contradiction remains false and must never authorize a Kalshi-only fallback.
+// A Flashscore fallback exists only for a statically confirmed ESPN coverage
+// gap. Unavailability is null; contradiction is false and vetoes every fallback.
+export async function verifyFlashscoreOver(game,milestone,options={}){
+  if(!flashscoreCompetition(game,milestone)||!game?.scoreKnown)return null;
+  const {market,minimumOverValue,onOverValue}=options;
+  const readings=await loadFlashscore(game,milestone,options);
+  if(!Array.isArray(readings))return null;
+  const named=contractBoundFixtureIdentity(game,milestone,market);
+  const matches=readings.filter(m=>sameFixture(flashscoreFixture(named,milestone),milestone,m.homeAliases,m.awayAliases,m.time));
+  if(matches.length>1)return false;
+  if(matches.length!==1)return null;
+  const matched=matches[0];
+  if(!matched.live)return false;
+  if(Number.isInteger(game.period)&&Number.isInteger(matched.period)&&matched.period!==game.period)return false;
+  if(playerOverSpec(game,market))return null; // No verified Flashscore player box-score adapter.
+  if(periodValue(game,market)&&!periodValue({...game,periodScores:matched.periods},market))return null;
+  const series=String(market?.event_ticker||'').split('-')[0];
+  if(/soccer/.test(game.type)&&/TOTAL$/.test(series)&&
+    !/TEAMTOTAL$|[1-9](?:Q|P|H|INNING)TOTAL$/.test(series))return null; // Goals need a verified scoring timeline.
+  return scoreAgreement(game,[[matched]],market,{minimumOverValue,onOverValue});
+}
 export async function verifyIndependentOverDecision(game,milestone,options={}){
   delete game.verificationIssue;
   const unavailableReasons=[],rankedOptions={...options,unavailableReasons};
-  // Start the fallback directly from ESPN's unavailable result, without
-  // waiting for the parallel NBA check. Each ESPN URL is requested once.
+  const knownGap=Boolean(flashscoreCompetition(game,milestone));
   const nbaTask=verifyNbaOver(game,milestone,options);
   const preferred=await verifyExistingOver(game,milestone,rankedOptions);
-  const sportradarTask=preferred===null?verifySportradarOver(game,milestone,rankedOptions):Promise.resolve(null);
-  const [nba,sportradar]=await Promise.all([nbaTask,sportradarTask]);
-  if(nba===false||preferred===false)return false;
-  if(sportradar!==null)return sportradar;
+  // Repeat ESPN once, only for a competition confirmed to lack ESPN coverage.
+  // Do not reuse a cached response for the retry.
+  const retried=knownGap&&preferred===null?
+    await verifyExistingOver(game,milestone,{...rankedOptions,cache:undefined}):null;
+  const nba=await nbaTask;
+  if(nba===false||preferred===false||retried===false)return false;
   if(nba!==null)return nba;
   if(preferred!==null)return preferred;
-  // Only an unavailable source advances to the next rank. An exact
-  // contradiction is a failed verification, not permission to shop feeds.
+  if(retried!==null)return retried;
+  if(knownGap){
+    const flash=await verifyFlashscoreOver(game,milestone,rankedOptions);
+    if(flash===null)game.verificationIssue='External verification unavailable: ESPN/Flashscore could not verify exact live fixture';
+    return flash;
+  }
+  // Non-gap leagues keep their existing CBS/Yahoo/FOX fallback order.
   for(const source of ['CBS','Yahoo']){
     const result=await alternateCheck(source,game,milestone,options);
     if(result!==null)return result;
@@ -485,44 +512,9 @@ export async function verifyIndependentOverDecision(game,milestone,options={}){
   if(fox===null&&unavailableReasons.length)game.verificationIssue='External verification unavailable: '+[...new Set(unavailableReasons)].join('; ');
   return fox;
 }
-export async function verifySportradarOver(game,milestone,options={}){
-  const {market,minimumOverValue,onOverValue}=options;
-  const readings=await loadSportradar(game,milestone,{...options,apiKey:options.sportradarApiKey??process.env.SPORTRADAR_API_KEY,
-    matchFixture:(home,away,time)=>sameFixture(game,milestone,home,away,time)});
-  if(readings?.ambiguous)return false;
-  if(!readings)return null;
-  const matches=readings.filter(r=>sameFixture(game,milestone,r.homeAliases,r.awayAliases,r.time));
-  if(matches.length>1)return false;
-  if(!matches.length)return null;
-  const m=matches[0];
-  if(!m.live)return false;
-  if(game.tableTennis){
-    const t=game.tableTennis,p=m.periods.find(p=>p.number===t.setNumber);
-    if(!p)return null;
-    return m.period===t.setNumber&&tableTennisScoreQualifies(game,p)&&
-      m.home===(t.firstIsHome?t.firstSets:t.secondSets)&&m.away===(t.firstIsHome?t.secondSets:t.firstSets);
-  }
-  if(/^tennis_/.test(game.type)){
-    if(!m.periods.length||m.periods.some(p=>![p.home,p.away].every(n=>Number.isInteger(n)&&n>=0&&n<=7)))return null;
-    m.totalGames=m.periods.reduce((total,p)=>total+p.home+p.away,0);
-    m.home=m.periods.at(-1).home;m.away=m.periods.at(-1).away;
-  }
-  if(![m.home,m.away].every(Number.isInteger))return null;
-  if(game.darts&&!/leg/i.test(game.darts.format))return null;
-  if(Number.isFinite(game.period)&&!Number.isFinite(m.period))return null;
-  if(periodValue(game,market)&&!periodValue({...game,periodScores:m.periods},market))return null;
-  m.clockOk=clockCompatible(game,m.period,m.clock);
-  m.remainingSeconds=clockSeconds(m.clock);
-  const values=[];
-  if(!scoreAgreement(game,[[m]],market,{minimumOverValue,onOverValue:value=>values.push(value)}))return false;
-  const player=playerOverSpec(game,market);
-  if(player){const value=sportradarPlayerValue(m,player);return value===null?null:playerValueQualifies(value,player);}
-  const series=String(market?.event_ticker||'').split('-')[0];
-  if(/soccer/.test(game.type)&&/TOTAL$/.test(series)&&!/TEAMTOTAL$|[1-9](?:Q|P|H|INNING)TOTAL$/.test(series)&&
-    (!(m.documentedGoals>Number(market.floor_strike))||minimumOverValue!==undefined&&m.documentedGoals<minimumOverValue))return false;
-  for(const value of values)onOverValue?.(value);
-  return true;
-}
+// Retired source: kept as a harmless compatibility entry point for callers.
+// No Sportradar requests may occur in any verification path.
+export async function verifySportradarOver(){return null;}
 export async function verifyIndependentOver(game,milestone,options={}){
   return (await verifyIndependentOverDecision(game,milestone,options))===true;
 }

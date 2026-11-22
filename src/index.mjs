@@ -4,7 +4,7 @@ import {verifyExternalOverExposure,assertOverExposure} from './over_exposure.mjs
 import {rememberIndependentEntry,independentEntryValid,assertExternalPurchase} from './entry_verification.mjs';
 import {createComboPlanner} from './combo_planner.mjs';
 import { sameSportsContract, overContractKey, freshOverObservation, freshOverState, overCushion, overTiming, sameOverReading, timedOverEntryValid, OVER_FRESH_MS, OVER_EXTERNAL_DELAY_MS } from './over_verification.mjs';
-import { golfSignal, verifyGolfDecision, verifySportradarGolf } from './golf.mjs';
+import { golfSignal, verifyGolfDecision } from './golf.mjs';
 import { randomUUID } from 'node:crypto';
 import { apiPriority, withApiPriority, createPriorityGate } from './api_priority.mjs';
 import { createExecutionAudit } from './execution_audit.mjs';
@@ -37,7 +37,8 @@ import { authorized, checkCredentials, sessionCookie, loginPage } from './dashbo
 import { refreshDiscovery, scanMilestones, supportedScannerSport, isScannerExcludedSport, eligibleForMarkets, internationalBasketball, prioritizeMarketGames, linkedEventTickers, playerPropEntryClosed, entryEventTickers, winnerEventTickers, readyOverTickets, prioritizeReadyOverTickets, gameTimeLabel, storedClockSeconds, mapBatches } from './discovery.mjs';
 import {selectStaleReviews,classifyStaleLive,retainedAfterStaleReview} from './stale_review.mjs';
 import { tieRefundPreference } from './settlement_preference.mjs';
-import { verifyIndependentOverDecision, verifySportradarOver, verifyIndependentTableTennisLeadDecision, verifyIndependentTableTennisMatch } from './score_verification.mjs';
+import { verifyIndependentOverDecision, verifyIndependentTableTennisLeadDecision, verifyIndependentTableTennisMatch } from './score_verification.mjs';
+import {flashscoreCompetition} from './flashscore.mjs';
 import { verificationStatus, completedOverWait, verificationWindowStatus } from './verification_status.mjs';
 import { COMBO_ATTEMPT_MS, VERIFY_DWELL_MS, COMBO_RFQ_PLANS, singleSpendableCash, comboAllocation, comboLegAllocation, comboHeldFraction, comboAllowedCents, comboMinimumCents, comboMeetsMinimum, comboRfqTargetCents, remainingVerifiedComboCents, availableComboFills, comboPairDiagnostics, comboExclusionKey, exchangeComboExclusion, comboLegs, filledComboWindow, heldComboLeg, quoteForYes, collectionsForEvents, selectedComboMarkets, liveComboMarket, missingQuoteFill, comboFillPages } from './combos.mjs';
 import { selectedTeamName, selectedTeamSide } from './selected_team.mjs';
@@ -275,7 +276,8 @@ const externalSportFeeds=game=>{
   NHL:['hockey/nhl','nhl'],
   'College Hockey':['hockey/mens-college-hockey',null],
   Soccer:['soccer/all','soccer']};
- return supported[league]||(/soccer/.test(String(game?.type||''))?supported.Soccer:null);
+ return supported[league]||(/soccer/.test(String(game?.type||''))?supported.Soccer:
+   flashscoreCompetition(game,{details:{league:game?.competition||league}})?[null,null]:null);
 };
 // Candidate discovery may reuse the same public league scoreboard for up to
 // 2 seconds. Independent preflight/final proof always bypasses this cache.
@@ -353,12 +355,12 @@ async function auditedOver(game,milestone,options={}){
       const r=await fetch(url,{...opts,cache:'no-store'}),raw=await r.text();let data;try{data=JSON.parse(raw)}catch{data=raw}
       return {ok:r.ok,status:r.status,headers:r.headers,data,raw,requested_at:at,received_at:new Date().toISOString()};
     })();
-    try{const r=await task;observations.push({source:url.includes('espn.com')?'ESPN':url.includes('api.sportradar.com')?'Sportradar':url.includes('sofascore.com')?'Sofascore':url.includes('cdn.nba.com')?'NBA':url.includes('cbssports.com')?'CBS':url.includes('yahoo.com')?'Yahoo':'FOX',url,requested_at:r.requested_at,received_at:r.received_at,status:r.status,data:r.data});return {ok:r.ok,status:r.status,headers:r.headers,json:async()=>r.data,text:async()=>r.raw}}
+    try{const r=await task;observations.push({source:url.includes('espn.com')?'ESPN':url.includes('flashscore.ninja')?'Flashscore':url.includes('sofascore.com')?'Sofascore':url.includes('cdn.nba.com')?'NBA':url.includes('cbssports.com')?'CBS':url.includes('yahoo.com')?'Yahoo':'FOX',url,requested_at:r.requested_at,received_at:r.received_at,status:r.status,data:url.includes('flashscore.ninja')?'Public Flashscore live feed, length '+String(r.raw).length:r.data});return {ok:r.ok,status:r.status,headers:r.headers,json:async()=>r.data,text:async()=>r.raw}}
     catch(e){observations.push({url,requested_at:at,error:String(e.message)});throw e}
   };
   // Separate reads retain the exact source response used for this decision.
-  const decision=game.golf?options.event?(await verifyGolfDecision(game,milestone,options.event,fetcher)??await verifySportradarGolf(game,milestone,options.event,{fetcher})):null:
-    game.tableTennis?(await verifySportradarOver(game,milestone,{...options,fetcher})??await verifyIndependentTableTennisLeadDecision(game,milestone,{fetcher})):
+  const decision=game.golf?options.event?await verifyGolfDecision(game,milestone,options.event,fetcher):null:
+    game.tableTennis?await verifyIndependentTableTennisLeadDecision(game,milestone,{fetcher}):
     await verifyIndependentOverDecision(game,milestone,{...options,cache:undefined,fetcher,onOverValue});
   const completedAt=Date.now();
   const requested=observations.some(o=>o.status>=200&&o.status<300&&
@@ -5619,7 +5621,7 @@ async function settlementAlerts(since){
   return rows;
 }
 async function handleRequest(req){const url=new URL(req.url);
-  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),mentionsConfigured:Boolean(process.env.MENTION_OFFICIAL_SOURCES),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'college-total-no-20261114',verification:{primary:'ESPN',fallback:'Sportradar',espnRetries:0,sportradarConfigured:Boolean(process.env.SPORTRADAR_API_KEY)}});
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),mentionsConfigured:Boolean(process.env.MENTION_OFFICIAL_SOURCES),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'college-total-no-20261114',verification:{primary:'ESPN',fallback:'Flashscore for confirmed coverage gaps; FOX otherwise',espnRetries:1}});
   if(req.method==='GET'&&url.pathname==='/manifest.webmanifest')return response(manifest,'application/manifest+json');
   if(req.method==='GET'&&url.pathname==='/sw.js')return new Response(worker,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','service-worker-allowed':'/','x-content-type-options':'nosniff'}});
   if(req.method==='GET'&&/^\/icon-(192|512)\.png$/.test(url.pathname))return response(Buffer.from(icons[Number(url.pathname.match(/\d+/)[0])],'base64'),'image/png');

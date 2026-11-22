@@ -19,7 +19,7 @@ const lineFrom=text=>{
   return match?Number(match[1]):NaN;
 };
 const externalCurrent=(reading,game)=>Boolean(
-  ['ESPN','FOX Sports','Sportradar'].includes(reading?.source)&&reading.eventId&&
+  ['ESPN','FOX Sports','Flashscore'].includes(reading?.source)&&reading.eventId&&
   Boolean(externalNoScore(game,reading)));
 
 export function soccerFirstHalfNoSpec(game,market,{beforeWindow=false}={}){

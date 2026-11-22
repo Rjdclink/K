@@ -1,5 +1,5 @@
 import {espnMatches,foxMatches,sameFixture,contractBoundFixtureIdentity,soccerClockMinute} from './score_verification.mjs';
-import {loadSportradar} from './sportradar.mjs';
+import {flashscoreCompetition,flashscoreFixture,loadFlashscore} from './flashscore.mjs';
 import {espnScoreboardUrls,espnSoccerLeagueFeed} from './espn_scoreboards.mjs';
 import {espnRetryThenFox} from './source_fallback.mjs';
 
@@ -15,8 +15,7 @@ const foxQuery=`apikey=${FOX_PUBLIC_KEY}&api-version=1.1`;
 // An independent provider is the source of sporting scores and clocks.
 // Kalshi controls contract identity, liquidity, fees and execution.
 export const scorePairMatches=(reading,game)=>Boolean(
-  ['ESPN','FOX Sports','Sportradar'].includes(reading?.source)&&reading.eventId&&
-  (reading.source!=='Sportradar'||/^sr:(?:sport_event|match):\d+$/.test(String(reading.eventId))&&reading.gameId===game?.id)&&
+  ['ESPN','FOX Sports','Flashscore'].includes(reading?.source)&&reading.eventId&&
   Number.isInteger(reading.home)&&reading.home>=0&&
   Number.isInteger(reading.away)&&reading.away>=0&&
   (!reading.gameId||reading.gameId===game?.id));
@@ -98,9 +97,10 @@ const select=(boards,game,milestone,source,knownId=null)=>{
 
 // Returns verified reading, false for matched score contradiction/ambiguous
 // identity, or null for coverage/unavailability. Never authorizes a trade.
-export async function fetchIndependentMatchScore(game,milestone,{fetcher=fetch,espnFeed,foxFeed=null,fixtureCache=activeFixtureCache,sportradarLoad=loadSportradar,market=null}={}){
+export async function fetchIndependentMatchScore(game,milestone,{fetcher=fetch,espnFeed,foxFeed=null,fixtureCache=activeFixtureCache,flashscoreLoad=loadFlashscore,market=null}={}){
+  const gap=flashscoreCompetition(game,milestone);
   if(!game?.verifiedLive||!Number.isInteger(game.home)||!Number.isInteger(game.away)||
-    !espnFeed||!Number.isFinite(Date.parse(milestone?.start_date||'')))return null;
+    (!espnFeed&&!gap)||!Number.isFinite(Date.parse(milestone?.start_date||'')))return null;
   const dates=daysFor(Date.parse(milestone.start_date));
   const identifiedGame=contractBoundFixtureIdentity(game,milestone,market);
   const known=new Map();
@@ -120,6 +120,7 @@ export async function fetchIndependentMatchScore(game,milestone,{fetcher=fetch,e
     return reading;
   };
   const espn=async()=>{
+    if(!espnFeed)return null; // No ESPN league feed exists for this verified gap.
     const preferred=await query(espnScoreboardUrls(espnFeed,game,milestone,dates),'ESPN');
     if(preferred!==null||espnFeed!=='soccer/all'||!espnSoccerLeagueFeed(milestone))
       return preferred;
@@ -142,30 +143,23 @@ export async function fetchIndependentMatchScore(game,milestone,{fetcher=fetch,e
       `${prefix}/league/scores-segment/${day}?${foxQuery}${foxFeed==='cbk'?'&groupId=-4':''}`);
     return query(urls,'FOX Sports');
   };
-  const matched=await espnRetryThenFox({espn,fox});
-  // A provider contradiction remains a veto. Only unavailable ESPN/FOX
-  // sources can advance to the authenticated, live Sportradar soccer feed.
-  if(matched!==null||!/soccer/.test(String(game.type||'')))return matched;
-  let readings;
-  try{
-    readings=await sportradarLoad(game,milestone,{
-      fetcher,matchFixture:(home,away,time)=>sameFixture(game,milestone,home,away,time)
-    });
-  }catch{return null}
-  if(readings?.ambiguous)return false;
+  // A known unsupported league gets exactly two ESPN availability attempts;
+  // all other leagues retain the existing ESPN -> FOX behavior.
+  const matched=await espnRetryThenFox({espn,fox:gap?null:fox});
+  if(matched!==null||!gap)return matched;
+  const readings=await flashscoreLoad(game,milestone,{fetcher});
   if(!Array.isArray(readings))return null;
-  const candidates=readings.filter(reading=>sameFixture(game,milestone,
-    reading?.homeAliases||[],reading?.awayAliases||[],reading?.time));
+  const candidates=readings.filter(reading=>sameFixture(flashscoreFixture(identifiedGame,milestone),milestone,
+    reading.homeAliases,reading.awayAliases,reading.time));
   if(candidates.length>1)return false;
   if(candidates.length!==1)return null;
-  const reading=candidates[0],eventId=String(reading.eventId||'');
-  if(!/^sr:(?:sport_event|match):\d+$/.test(eventId))return null;
-  if(reading.live!==true)return reading.live===false?false:null;
-  if(!Number.isInteger(reading.home)||reading.home<0||
-     !Number.isInteger(reading.away)||reading.away<0)return null;
-  return {source:'Sportradar',eventId,gameId:game.id,
+  const reading=candidates[0];
+  if(!/^[a-zA-Z0-9]{8}$/.test(String(reading.eventId||'')))return null;
+  if(reading.live!==true)return false;
+  if(!Number.isInteger(reading.home)||!Number.isInteger(reading.away))return null;
+  return {source:'Flashscore',eventId:reading.eventId,gameId:game.id,
     home:reading.home,away:reading.away,period:reading.period,
-    periods:Array.isArray(reading.periods)?reading.periods:[],live:true};
+    periods:reading.periods,seconds:reading.seconds,elapsedMinute:reading.elapsedMinute,live:true};
 
 }
 
@@ -175,6 +169,6 @@ export function pairedExternalMatch(first,second,game){
   if(!scorePairMatches(first,game)||!scorePairMatches(second,game)||
     second.home<first.home||second.away<first.away)return false;
   if(first.source===second.source)return String(first.eventId)===String(second.eventId);
-  return ['ESPN','FOX Sports','Sportradar'].includes(first.source)&&
+  return ['ESPN','FOX Sports','Flashscore'].includes(first.source)&&
     first.gameId===game.id&&second.gameId===game.id;
 }

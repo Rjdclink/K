@@ -49,24 +49,13 @@ test('college school locations and trailing St. aliases match without merging St
   assert.equal(espnMatches(b,{...game,sport:'NBA',awayName:'Georgia St.'},milestone).length,0);
 });
 
-test('Sportradar resolves school and mascot names by provider team ID and caches only identity metadata',async()=>{
-  const id='ccc1a514-3851-4d1b-9869-e0a141245bbc';
-  const h={id:'home-id',name:'Wake Forest Demon Deacons',alias:'WAKE'},a={id:'away-id',name:'USC Upstate Spartans',alias:'SCUS'};
-  const fixture={id,scheduled:start,home:h,away:a};
-  const hierarchyCache=new Map(),calls=[];
-  let duplicate=false,final=false,wrongId=false;
-  const run=()=>verifySportradarOver({...game},milestone,{market,sportradarApiKey:'test-only',minInterval:0,hierarchyCache,fetcher:async url=>{
-    calls.push(url);
-    if(url.endsWith('schedule.json'))return reply({games:duplicate?[fixture,{...fixture,id:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'}]:[fixture]});
-    if(url.endsWith('hierarchy.json'))return reply({conferences:[{teams:[{...h,market:'Wake Forest',name:'Demon Deacons'},{...a,market:'USC Upstate',name:'Spartans'}]}]});
-    return reply({...fixture,status:final?'closed':'inprogress',quarter:4,clock:'1:41',home:{...h,id:wrongId?'unrelated':h.id,points:60},away:{...a,points:53}});
-  }});
-  assert.equal(await run(),true);assert.equal(await run(),true);
-  assert.equal(calls.filter(u=>u.endsWith('hierarchy.json')).length,1);
-  assert.equal(calls.filter(u=>u.endsWith('summary.json')).length,2,'live scores are not cached with identity metadata');
-  duplicate=true;assert.equal(await run(),false);duplicate=false;
-  final=true;assert.equal(await run(),false);final=false;
-  wrongId=true;assert.equal(await run(),null);
+test('retired Sportradar cannot authorize college basketball or make an outbound request',async()=>{
+  let calls=0;
+  const decision=await verifySportradarOver({...game},milestone,{
+    market,sportradarApiKey:'test-only',fetcher:async()=>{calls++;throw Error('retired provider contacted');}
+  });
+  assert.equal(decision,null);
+  assert.equal(calls,0);
 });
 
 test('incremental discovery preserves old tournaments and periodically reconciles the full catalog',async()=>{
