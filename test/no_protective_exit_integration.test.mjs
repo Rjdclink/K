@@ -74,7 +74,7 @@ test('no risk, untracked NO, stale score, pending exit, missing basis and positi
 test('rapid NO watcher is connected separately from old YES profit exits',()=>{
  const fast=source.slice(source.indexOf('async function watchCorrectedOvers('),
    source.indexOf('async function watchLeadWindows('));
- assert.match(fast,/a.strategy IN \('over','no'\)/);
+ assert.match(fast,/a.strategy IN \('over','no','lead'\)/);
  assert.match(fast,/noNearLossScore/);
  assert.match(fast,/await exitAtRiskNos/);
  const normal=source.slice(source.indexOf('async function exitComebacks('),
