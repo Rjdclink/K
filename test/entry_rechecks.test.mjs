@@ -53,7 +53,8 @@ test('the live watcher handles due retries by exact contract without a new full 
  assert.match(src,/entryRechecks\.finish\(/);
  assert.match(src,/watchReadyOverTickets\(until,\{\s*onlyTickers:/);
  assert.match(src,/scanSoccerTotalNos\([^;]*'final'\)/);
- assert.match(src,/entryRecheckJob/);
+ assert.match(src,/async function runFastSportsTick\(\)/);
+ assert.match(src,/withApiPriority\('preflight_final',\(\)=>watchEntryRechecks\(until\)\)/);
 });
 
 test('already-due final checks are dispatched before registering or scanning new candidates',()=>{

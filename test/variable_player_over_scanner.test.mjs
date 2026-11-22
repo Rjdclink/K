@@ -23,13 +23,15 @@ const raw=(points=22)=>({milestone_id:milestone.id,_observed_at:new Date().toISO
   player_stats:{p:{points}}}});
 const state=()=>gameState(milestone,raw());
 function harness({ageMs=211000,initialUnavailable=false,finalUnavailable=false,
-  finalPoints=22,noSeller=false,noLaterPlay=false,firstSource='ESPN',secondSource=firstSource,existingOrder=false}={}){
+  finalPoints=22,noSeller=false,missingSummaryAsk=false,askDisappearsAtDispatch=false,noLaterPlay=false,firstSource='ESPN',secondSource=firstSource,existingOrder=false}={}){
   const src=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
   const a=src.indexOf('async function scanVariablePlayerOvers(');
   const b=src.indexOf('async function scan(cachedMilestones',a);
   assert.ok(a>0&&b>a,'scanner has a dedicated function');
   const stored=new Map(),dashboard=new Map(),trace=[];
-  let verified=0,orders=0,spentFraction=null;
+  const scanEvents=missingSummaryAsk?new Map([[market.event_ticker,{category:'Sports',
+    event_ticker:market.event_ticker,markets:[{...market,yes_ask_size_fp:'0'}]}]]):events;
+  let verified=0,orders=0,spentFraction=null,askReads=0;
   const source=vm.createContext({noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,
     Date,Math,Number,JSON,Promise,console,process:{env:{}},
     live:()=>true,playerPropEarlyWindow,linkedEventTickers:()=>[market.event_ticker],
@@ -72,9 +74,9 @@ function harness({ageMs=211000,initialUnavailable=false,finalUnavailable=false,
       }
       throw Error(path);
     },
-    recoverSummaryAsk:async m=>m,
     hasAsk:m=>Number(m?.yes_ask_size_fp)>0,
-    executableQuote:async m=>noSeller?null:m,
+    recoverSummaryAsk:async m=>({...m,yes_ask_dollars:'0.75',yes_ask_size_fp:'50'}),
+    executableQuote:async m=>{askReads++;return noSeller||askDisappearsAtDispatch&&askReads>=3?null:m},
     allOpenPositions:async()=>({market_positions:[]}),
     accountBalance:async()=>({balance:10000,portfolio_value:0}),
     shardCash:()=>10000,marketShard:()=>0,singleSpendableCash:x=>x,
@@ -88,7 +90,7 @@ function harness({ageMs=211000,initialUnavailable=false,finalUnavailable=false,
   });
   vm.runInContext(src.slice(a,b),source);
   return {
-    scan:()=>source.scanVariablePlayerOvers([{state:state(),milestone}],events,dashboard),
+    scan:()=>source.scanVariablePlayerOvers([{state:state(),milestone}],scanEvents,dashboard),
     get stored(){return stored;},get dashboard(){return dashboard;},
     get verified(){return verified;},get orders(){return orders;},
     get trace(){return trace;},get spentFraction(){return spentFraction;}
@@ -128,4 +130,24 @@ test('stale or contradicted final statistics never authorize an order',async()=>
     await h.scan();assert.equal(await h.scan(),0,JSON.stringify(opt));
     assert.equal(h.orders,0,JSON.stringify(opt));
   }
+});
+test('live executable ask is checked immediately before first independent player proof, with no 10- or 20-second liquidity wait',async()=>{
+  const h=harness({noSeller:true});
+  await h.scan();
+  assert.equal(h.verified,0,'the first ESPN proof must not run before confirming actual live ask depth');
+  assert.equal(h.stored.size,0,'no first proof is persisted without a current executable ask');
+});
+
+test('missing market summary ask triggers an immediate real ask probe without a timed delay',async()=>{
+ const h=harness({missingSummaryAsk:true});
+ await h.scan();
+ assert.equal(h.verified,1);
+ assert.equal(h.stored.size,1);
+});
+
+test('live ask disappearance immediately before order blocks execution without waiting for a scan interval',async()=>{
+ const h=harness({askDisappearsAtDispatch:true});
+ await h.scan();
+ await h.scan();
+ assert.equal(h.orders,0);
 });

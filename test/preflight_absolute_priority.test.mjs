@@ -45,17 +45,18 @@ test('async preflight context propagates to Kalshi requests while other jobs ret
  assert.deepEqual(seen,['preflight_final','preflight','risk_exit','background']);
 });
 
-test('tick launches priority preflights before discovery and other market scanners',()=>{
+test('independent fast worker runs priority checks without awaiting discovery',()=>{
  const src=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
- const tick=src.slice(src.indexOf("if(req.method==='POST'&&url.pathname==='/tick')"),
+ const fast=src.slice(src.indexOf('async function runFastSportsTick(){'),
+   src.indexOf('async function runNearSportsTick(){'));
+ const discovery=src.slice(src.indexOf("if(req.method==='POST'&&(url.pathname==='/tick'||url.pathname==='/tick/discovery'))"),
    src.indexOf("if(req.method==='GET'&&url.pathname==='/login')"));
- assert.ok(tick.indexOf('const entryRecheckJob=')>=0);
- assert.ok(tick.indexOf('const entryRecheckJob=')<tick.indexOf('const discoveryJob='));
- assert.ok(tick.indexOf('const entryRecheckJob=')<tick.indexOf('const readyOverJob='));
- assert.match(tick,/withApiPriority\('preflight_final',\(\)=>watchEntryRechecks\(until\)\)/);
- assert.match(tick,/withApiPriority\('preflight',\(\)=>watchReadyOverTickets\(until\)\)/);
- assert.match(tick,/withApiPriority\('preflight',\(\)=>watchLeadWindows\(until\)\)/);
- assert.match(tick,/withApiPriority\('risk_exit',\(\)=>watchCorrectedOvers\(until\)\)/);
+ assert.match(fast,/withApiPriority\('preflight_final',\(\)=>watchEntryRechecks\(until\)\)/);
+ assert.match(fast,/withApiPriority\('preflight',\(\)=>watchReadyOverTickets\(until\)\)/);
+ assert.match(fast,/withApiPriority\('preflight',\(\)=>watchLeadWindows\(until\)\)/);
+ assert.match(fast,/withApiPriority\('risk_exit',\(\)=>watchCorrectedOvers\(until\)\)/);
+ assert.doesNotMatch(fast,/discoveryJob|milestones\(/);
+ assert.doesNotMatch(discovery,/watchEntryRechecks\(until\)|watchLeadWindows\(until\)/);
 });
 
 test('final NO verification has first-priority external and exchange checks and does not block on retry telemetry',()=>{
