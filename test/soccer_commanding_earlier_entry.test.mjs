@@ -17,6 +17,8 @@ function state(margin,time,extra={}){
 }
 function cases(){
  return [
+  [5,"64:59'",false],[5,"65:00'",true],[5,"65:01'",true],
+  [5,"69:59'",true],[5,"70:00'",true],[6,"65:00'",true],
   [4,"69:59'",false],[4,"70:00'",false],[4,"70:01'",true],
   [4,"74:59'",true],[4,"75:00'",true],[4,"79:59'",true],
   [3,"69:59'",false],[3,"70:01'",false],[3,"74:59'",false],
@@ -27,7 +29,7 @@ function cases(){
  ];
 }
 
-test('soccer four-goal entry strictly under twenty minutes and three-goal entry strictly under fifteen, with two-goal rule unchanged',()=>{
+test('soccer five-goal entry at or below 25:00, four-goal strictly under 20:00, three-goal strictly under 15:00, and two-goal unchanged',()=>{
  for(const [margin,time,allowed] of cases()){
   const s=state(margin,time);
   assert.equal(goalCommandingLeadEntry(s),allowed,'rule at +'+margin+' '+time);
@@ -40,20 +42,21 @@ test('soccer four-goal entry strictly under twenty minutes and three-goal entry 
 });
 
 test('the soccer lead watcher sees both new entry tiers before their thresholds and reports accurate rules',()=>{
- for(const [margin,time,label] of [[4,"69:00'",'+4 strictly under 20:00'],[3,"74:00'",'+3 strictly under 15:00'],[2,"79:00'",'+2 strictly under 6:00']]){
+ for(const [margin,time,label] of [[5,"64:00'",'+5 at 25:00 remaining or less'],[4,"69:00'",'+4 strictly under 20:00'],[3,"74:00'",'+3 strictly under 15:00'],[2,"79:00'",'+2 strictly under 6:00']]){
   const watch=leadWatchReason(state(margin,time));
   assert.ok(watch,'fast watch before threshold +'+margin+' at '+time);
   assert.ok(watch.includes(label),label);
   assert.ok(watch.includes('waiting'),'before clock boundary is never called eligible');
  }
- for(const [margin,time] of [[4,"70:01'"],[3,"75:01'"],[2,"84:01'"]])
+ for(const [margin,time] of [[5,"65:00'"],[4,"70:01'"],[3,"75:01'"],[2,"84:01'"]])
   assert.match(leadWatchReason(state(margin,time)),/late winner rule reached/);
- assert.equal(leadWatchReason(state(4,"68:59'")),null,'do not start the new four-goal fast watch too early');
+ assert.equal(leadWatchReason(state(5,"63:59'")),null,'do not start the five-goal fast watch before minute 64');
+ assert.equal(leadWatchReason(state(4,"68:59'")),null,'do not start the four-goal fast watch too early');
  assert.equal(leadWatchReason(state(3,"73:59'")),null,'do not start the new three-goal fast watch too early');
 });
 
 test('priority routing promotes each new soccer entry window above unrelated discovery',()=>{
- for(const [margin,before,after] of [[4,"69:59'","70:01'"],[3,"74:59'","75:01'"]]){
+ for(const [margin,before,after] of [[5,"64:59'","65:00'"],[4,"69:59'","70:01'"],[3,"74:59'","75:01'"]]){
   const early=state(margin,before),ready=state(margin,after);
   assert.ok(marketEntryProximity(early)>0,'not priority-ready before cutoff '+margin);
   assert.ok(marketEntryProximity(ready)<0,'priority-ready past cutoff '+margin);
@@ -67,7 +70,7 @@ test('priority routing promotes each new soccer entry window above unrelated dis
 });
 
 test('the earlier soccer entry windows do not waive stale-score, regulation, fixture or draw safeguards',()=>{
- const allowed=state(4,"70:01'");
+ const allowed=state(5,"65:00'");
  assert.equal(soccerSingleReadLead({...allowed,clockRunning:false},market,now),false,'stopped clock');
  assert.equal(soccerSingleReadLead({...allowed,scoreConsistent:false},market,now),false,'score mismatch');
  assert.equal(soccerSingleReadLead({...allowed,feedId:'other'},market,now),false,'unlinked fixture');
