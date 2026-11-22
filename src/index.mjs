@@ -413,15 +413,17 @@ async function verifyCommandingLead(game,milestone,market,cache,event){
   if(!leadFirstProofReady(window,game,market))return false;
   const closeout=basketballCloseoutEntry(game);
   if(closeout)try{assertBasketballVerification(game,market)}catch{return false}
-  // The second independent request occurs only after sixty real seconds and
-  // immediately before entry. A first-check record alone never authorizes a buy.
+  // The second independent request requires 120 real seconds for soccer/hockey
+  // two-goal leads; all other commanding leads retain 60 seconds.
+  // A first-check record alone never authorizes a buy.
   const passed=await auditedOver(game,milestone,{market,event,cache,allowUnavailable:true});
   const finalAt=Date.now();
   if(passed!==true||!verifiedSourceReady(game,finalAt)||
     !pairedExternalMatch(window.first_evidence,game.externalScore,game))return false;
   game.leadVerification={contractKey:overContractKey(game,market),
     firstId:window.first_verification_id,finalId:game.verificationId,
-    firstAt:new Date(window.first_at).getTime(),finalAt};
+    firstAt:new Date(window.first_at).getTime(),finalAt,
+    firstEvidence:window.first_evidence};
   if(!leadFinalProofValid(game,market,finalAt))return false;
   if(closeout)return Boolean(game.basketballVerification&&game.verificationId);
   // Preserve existing winning-margin and allocation rules.

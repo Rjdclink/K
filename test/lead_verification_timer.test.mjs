@@ -111,3 +111,31 @@ test('a different external game identity on the final read blocks a commanding l
  assert.equal(checks,1);
  assert.equal(g.leadVerification,undefined);
 });
+
+test('two-goal commanding leads in soccer and hockey require 120 real seconds; other leads retain 60',()=>{
+ for(const [type,sport] of [['soccer_tournament_multi_leg','Soccer'],['hockey_match','NHL']]){
+  const g={...game,type,sport,homeUnits:2,awayUnits:0,externalScore:{source:'ESPN',home:2,away:0}};
+  const k=sportsContractKey(g,market);
+  const first={...proof(120000),contract_key:k,first_evidence:{source:'ESPN',eventId:'espn-g',gameId:'g',home:2,away:0}};
+  assert.equal(leadFirstProofReady({...first,first_at:new Date(now-119999)},g,market,now),false,type);
+  assert.equal(leadFirstProofReady(first,g,market,now),true,type);
+  const f={...g,verificationId:'second',independentEntry:{contractKey:k,verificationId:'second',requestedAt:now-500},
+   leadVerification:{contractKey:k,firstId:'first',finalId:'second',firstAt:now-61000,
+    finalAt:now-500,firstEvidence:first.first_evidence}};
+  assert.equal(leadFinalProofValid(f,market,now),false,type+' cannot dispatch at 61 seconds');
+  assert.equal(leadFinalProofValid({...f,leadVerification:{...f.leadVerification,firstAt:now-120500}},market,now),true,type+' qualified after 120 seconds');
+  const three={...g,homeUnits:3,externalScore:{source:'ESPN',home:3,away:0}};
+  const firstThree={...first,first_evidence:{source:'ESPN',eventId:'espn-g',gameId:'g',home:3,away:0},first_at:new Date(now-60000)};
+  assert.equal(leadFirstProofReady(firstThree,three,market,now),true,type+' +3 must remain 60 seconds');
+ }
+});
+
+test('a first external reading of a two-goal lead cannot be shortened by a later three-goal reading',()=>{
+ const gameNow={...game,type:'soccer_tournament_multi_leg',sport:'Soccer',homeUnits:3,awayUnits:0,externalScore:{source:'ESPN',home:3,away:0}};
+ const k=sportsContractKey(gameNow,market);
+ const first={...proof(90000),contract_key:k,first_evidence:{source:'ESPN',eventId:'espn-g',gameId:'g',home:2,away:0}};
+ assert.equal(leadFirstProofReady(first,gameNow,market,now),false);
+ const final={...gameNow,verificationId:'second',independentEntry:{contractKey:k,verificationId:'second',requestedAt:now-500},
+  leadVerification:{contractKey:k,firstId:'first',finalId:'second',firstAt:now-90000,finalAt:now-500,firstEvidence:first.first_evidence}};
+ assert.equal(leadFinalProofValid(final,market,now),false);
+});
