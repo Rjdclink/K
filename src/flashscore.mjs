@@ -1,3 +1,4 @@
+import {scoreFeedAgeMs} from './score_feed_freshness.mjs';
 // Only independently confirmed ESPN coverage gaps are eligible for Flashscore.
 // This is an undocumented public site feed, not a contracted API: failures
 // remain unavailable and must never authorize a Kalshi-only trade.
@@ -98,9 +99,10 @@ export async function loadFlashscore(game,milestone,{fetcher=fetch,now=Date.now(
   const url=`https://global.flashscore.ninja/2/x/feed/f_${competition.sportId}_${offset}_-5_en_1?t=${Math.floor(now/1000)}`;
   try{
     const response=await fetcher(url,{cache:'no-store',headers:{accept:'text/plain',referer:'https://www.flashscore.com/','x-fsign':'SW9D1eZo'},signal:AbortSignal.timeout(7000)});
-    if(!response.ok||Number(response.headers?.get?.('age')||0)>10)return null;
+    const sourceAgeMs=scoreFeedAgeMs(response);
+   if(!response.ok||sourceAgeMs===null)return null;
     const data=await response.text();
     if(data.length>3000000)return null;
-    return parseFlashscoreFeed(data,competition);
+    return parseFlashscoreFeed(data,competition).map(r=>({...r,sourceAgeMs}));
   }catch{return null}
 }

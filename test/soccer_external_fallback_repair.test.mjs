@@ -58,7 +58,7 @@ test('fresh verified Flashscore reading passes source authority but cannot be re
   gameId:game.id,home:0,away:1,live:true,period:2},now);
  assert.equal(checked?.externalScore?.source,'Flashscore');
  assert.equal(verifiedSourceReady(checked,now+9999),true);
- assert.equal(verifiedSourceReady(checked,now+10001),false);
+ assert.equal(verifiedSourceReady(checked,now+16000),false);
  assert.equal(pairedExternalMatch({source:'ESPN',eventId:'one',gameId:game.id,home:0,away:0},
   {source:'Flashscore',eventId:'fS1234dA',gameId:game.id,home:0,away:1},game),true);
 });

@@ -3,7 +3,7 @@
 // This conversion never creates a verified fixture from a Kalshi-only reading.
 const sources=new Set(['ESPN','FOX Sports','Flashscore']);
 const whole=n=>Number.isInteger(n)&&n>=0;
-export const EXTERNAL_GAME_FRESH_MS=10000;
+export const EXTERNAL_GAME_FRESH_MS=15000;
 export function authoritativeGameState(game,reading,now=Date.now()){
  if(!game||!game.verifiedLive||!sources.has(reading?.source)||
    !String(reading?.eventId||'').trim()||reading.gameId!==game.id||
@@ -28,7 +28,7 @@ export function authoritativeGameState(game,reading,now=Date.now()){
  }
  const score={source:reading.source,eventId:String(reading.eventId),gameId:game.id,
   home:reading.home,away:reading.away,period:reading.period,periods,
-  checkedAt:now,live:true};
+  checkedAt:now-(Number.isFinite(reading.sourceAgeMs)?reading.sourceAgeMs:0),live:true};
  const result={...game,home:score.home,away:score.away,
   homeUnits:score.home,awayUnits:score.away,scoreKnown:true,scoreConsistent:true,
   periodConsistent:periods?true:game.periodConsistent,

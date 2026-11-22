@@ -23,7 +23,7 @@ test('one fresh ESPN reading verifies the exact fixture, score, current period a
  assert.equal(p?.home,2);assert.equal(p?.away,1);
  assert.equal(p?.elapsedMinute,83);
  assert.equal(validFreshEspnSoccerNo(p,g),true);
- assert.equal(validFreshEspnSoccerNo(p,g,Date.now()+11000),false);
+ assert.equal(validFreshEspnSoccerNo(p,g,Date.now()+16000),false);
 });
 test('ESPN independently sourced clock is authoritative even if Kalshi shows another minute',async()=>{
  const proof=await verify(game(),scoreboard("78'"));
@@ -63,7 +63,7 @@ test('two separately requested ESPN proofs are required; proof does not authoriz
  const later=await verify(g,scoreboard());
  assert.equal(validFreshEspnSoccerNo(proof,g),true);
  assert.equal(validFreshEspnSoccerNo(later,g),true);
- assert.equal(validFreshEspnSoccerNo(proof,g,Date.now()+12000),false);
+ assert.equal(validFreshEspnSoccerNo(proof,g,Date.now()+16000),false);
  assert.equal(validFreshEspnSoccerNo(proof,g,Date.now()+12000,{allowHistorical:true}),true);
 });
 test('legacy proofs and forged ESPN origin cannot authorize new entries',()=>{

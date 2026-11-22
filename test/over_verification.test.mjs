@@ -75,11 +75,11 @@ test('a cushioned over needs independent external confirmation and expires at di
  assert.equal(timedOverEntryValid(verified,market,start+3),true);
  assert.equal(timedOverEntryValid({...verified,home:70},market,start+3),false);
  assert.equal(timedOverEntryValid(verified,market,start+10001),false,'stale Kalshi score still expires after 10 seconds');
- const refreshed={...verified,...state(start+15000,75,70)};
- assert.equal(timedOverEntryValid(refreshed,market,start+15000),true,'30-second proof can be used with freshly refreshed Kalshi score');
- const nearExpiry={...verified,...state(start+30000,75,70)};
- assert.equal(timedOverEntryValid(nearExpiry,market,start+30000),true);
- assert.equal(timedOverEntryValid({...verified,...state(start+30001,75,70)},market,start+30001),false);
+ const refreshed={...verified,...state(start+12000,75,70)};
+ assert.equal(timedOverEntryValid(refreshed,market,start+12000),true,'15-second proof can be used with fresh independent score evidence');
+ const nearExpiry={...verified,...state(start+15000,75,70)};
+ assert.equal(timedOverEntryValid(nearExpiry,market,start+15000),true);
+ assert.equal(timedOverEntryValid({...verified,...state(start+15001,75,70)},market,start+15001),false);
  assert.equal(timedOverEntryValid(verified,{...market,floor_strike:138.5},start+3),false);
  for(const overValue of [undefined,140,143])assert.equal(timedOverEntryValid({...verified,
   independentEntry:{...verified.independentEntry,overValue}},market,start+3),false);

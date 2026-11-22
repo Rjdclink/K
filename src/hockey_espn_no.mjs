@@ -1,12 +1,13 @@
 import {randomUUID} from 'node:crypto';
 import {espnMatches} from './score_verification.mjs';
 import {espnScoreboardUrls} from './espn_scoreboards.mjs';
+import {scoreFeedAgeMs} from './score_feed_freshness.mjs';
 
 // Same two-distinct-ESPN-request policy as soccer NO; NHL scoreboards report
 // a remaining period clock instead of an elapsed soccer regulation minute.
 export const HOCKEY_ESPN_POLICY='hockey-espn-two-distinct-requests-v1';
 export const HOCKEY_ESPN_MAX_CLOCK_SKEW_SECONDS=90; // legacy setting, no Kalshi equality veto
-export const HOCKEY_ESPN_MAX_HTTP_AGE_SECONDS=10;
+export const HOCKEY_ESPN_MAX_HTTP_AGE_SECONDS=15;
 
 const clockSeconds=value=>{
  const match=String(value||'').trim().match(/^(\d{1,2}):([0-5]\d)(?:\.\d{1,3})?$/);
@@ -21,7 +22,7 @@ export function validFreshEspnHockeyNo(reading,game,now=Date.now(),{allowHistori
   Number.isInteger(reading.home)&&reading.home>=0&&
   Number.isInteger(reading.away)&&reading.away>=0&&
   Number.isFinite(checked)&&checked>0&&now>=checked&&
-  now-checked<=(allowHistorical?30*60000:10000)&&
+  now-checked<=(allowHistorical?30*60000:15000)&&
   Number.isFinite(reading.seconds)&&reading.seconds>=0&&reading.seconds<=1200);
 }
 
@@ -66,8 +67,8 @@ export async function verifyFreshEspnHockeyNo(game,milestone,{fetcher=fetch}={})
    headers:{accept:'application/json','cache-control':'no-cache'},
    signal:AbortSignal.timeout(6000)});
   if(!reply.ok)throw Error('ESPN scoreboard unavailable');
-  const header=reply.headers?.get?.('age');
-  const age=header==null?0:Number(header);
+  const ageMs=scoreFeedAgeMs(reply);
+  const age=ageMs===null?Infinity:ageMs/1000;
   return {scoreboard:await reply.json(),age};
  }));
  const found=[];

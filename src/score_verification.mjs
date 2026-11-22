@@ -4,6 +4,7 @@ import { alternateCheck } from './alternate_scores.mjs';
 import { teamAbbreviationVariants } from './team_identity.mjs';
 import { relaxedTeamCompatibility } from './fixture_aliases.mjs';
 import {flashscoreCompetition,flashscoreFixture,loadFlashscore} from './flashscore.mjs';
+import {scoreFeedAgeMs} from './score_feed_freshness.mjs';
 // ESPN and FOX publish the scoreboards used by their sites. These endpoints
 // are not contractual data APIs; a changed schema or unavailable fixture must
 // fail closed, never silently turn into permission to buy an over.
@@ -346,7 +347,7 @@ export function foxPlayerStat(data,player,eventId){
 }
 async function json(url,fetcher){
   const response=await fetcher(url,{headers:{accept:'application/json'},signal:AbortSignal.timeout(7000)});
-  if(!response.ok)throw Error(`Scoreboard ${response.status}`);
+  if(!response.ok||scoreFeedAgeMs(response)===null)throw Error(`Scoreboard ${response.status} or stale`);
   return response.json();
 }
 async function verifyExistingOver(game,milestone,{fetcher=fetch,cache,market,source='ESPN',unavailableReasons=[],minimumOverValue,onOverValue}={}){

@@ -33,7 +33,7 @@ export async function mapBatches(items,limit,task){
 
 export const internationalBasketball=game=>/basketball/.test(String(game?.type||''))&&
   !['NBA','WNBA','NCAAB','NCAAW'].includes(game?.sport);
-export function eligibleForMarkets(game){return game?.verifiedLive && game.scoreKnown && supportedScannerSport(game) && !internationalBasketball(game)}
+export function eligibleForMarkets(game){return game?.verifiedLive && supportedScannerSport(game) && !internationalBasketball(game)}
 
 export async function discoverCurrentMilestones(get,now=Date.now(),lookbackMs=7*86400000){
   const cutoff=now+3600000,min=new Date(now-lookbackMs).toISOString();

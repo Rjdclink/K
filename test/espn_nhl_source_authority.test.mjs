@@ -16,7 +16,7 @@ const board=(clock='4:30',home=3,away=1)=>({events:[{id:'nhl-independent-event',
   {homeAway:'away',score:String(away),team:{displayName:'Away'},linescores:[{value:1},{value:0},{value:away-1}]}
  ]}]}]});
 const get=(g,b)=>verifyFreshEspnHockeyNo(g,milestone,{fetcher:async()=>({
- ok:true,headers:{get:()=>0},json:async()=>b})});
+ ok:true,headers:{get:name=>name.toLowerCase()==='age'?'0':null},json:async()=>b})});
 test('NHL scoreboard score and clock are independent of Kalshi displayed values',async()=>{
  const g=game(),r=await get(g,board('4:30',3,1));
  assert.equal(r?.source,'ESPN');

@@ -1,6 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import {espnMatches} from './score_verification.mjs';
 import {espnScoreboardUrls,espnSoccerLeagueFeed} from './espn_scoreboards.mjs';
+import {scoreFeedAgeMs} from './score_feed_freshness.mjs';
 
 // Soccer NO still needs two distinct fresh ESPN HTTP requests 30+ seconds
 // apart. ESPN establishes independently matched teams, live score, period,
@@ -8,7 +9,7 @@ import {espnScoreboardUrls,espnSoccerLeagueFeed} from './espn_scoreboards.mjs';
 // and position, never a veto on independently published sporting facts.
 export const SOCCER_ESPN_POLICY='soccer-espn-two-distinct-requests-v2';
 export const SOCCER_ESPN_MAX_CLOCK_SKEW_SECONDS=90; // legacy setting, no longer a Kalshi-equality gate
-export const SOCCER_ESPN_MAX_HTTP_AGE_SECONDS=10;
+export const SOCCER_ESPN_MAX_HTTP_AGE_SECONDS=15;
 const clockMinute=value=>{
  const s=String(value||'').trim().replace(/[′’]/g,"'");
  const m=s.match(/^(\d{1,3})(?::([0-5]\d))?'?(?:\+(\d{1,2}))?'?$/);
@@ -23,7 +24,7 @@ export function validFreshEspnSoccerNo(reading,game,now=Date.now(),{allowHistori
   Number.isInteger(reading.home)&&reading.home>=0&&
   Number.isInteger(reading.away)&&reading.away>=0&&
   Number.isFinite(checked)&&checked>0&&now>=checked&&
-  now-checked<=(allowHistorical?30*60000:10000)&&
+  now-checked<=(allowHistorical?30*60000:15000)&&
   Number.isFinite(reading.elapsedMinute)&&
   reading.elapsedMinute>=0&&reading.elapsedMinute<=180);
 }
@@ -72,8 +73,8 @@ export async function verifyFreshEspnSoccerNo(game,milestone,{fetcher=fetch}={})
     headers:{accept:'application/json','cache-control':'no-cache'},
     signal:AbortSignal.timeout(6000)});
    if(!response.ok)throw Error('ESPN scoreboard unavailable');
-   const ageText=response.headers?.get?.('age');
-   const age=ageText==null?0:Number(ageText);
+   const ageMs=scoreFeedAgeMs(response);
+   const age=ageMs===null?Infinity:ageMs/1000;
    return {board:await response.json(),age};
   }));
   for(const r of replies){
@@ -82,7 +83,7 @@ export async function verifyFreshEspnSoccerNo(game,milestone,{fetcher=fetch}={})
    const {board,age}=r.value,matched=espnMatches(board,game,milestone,{identityOnly:true});
    if(!matched.length)continue;
    if(!Number.isFinite(age)||age<0||age>SOCCER_ESPN_MAX_HTTP_AGE_SECONDS){
-    game.verificationIssue='ESPN response exceeded the 10-second CDN freshness threshold';
+    game.verificationIssue='ESPN response exceeded the 15-second CDN freshness threshold';
     return false;
    }
    for(const m of matched){

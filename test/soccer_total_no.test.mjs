@@ -109,7 +109,7 @@ test('soccer full-game NO admits 4+ goals only with a full 3.5-goal cushion',()=
 test('full-game NO entry uses the independently verified ESPN clock, not a more favorable Kalshi clock',async()=>{
   const g=game(479,2,1,83),m=market(5.5);
   const check=async(minute)=>verifyIndependentSoccerTotalNo(g,milestone,m,{
-    fetcher:async()=>({ok:true,headers:{get:()=>0},json:async()=>scoreboard(minute,2,1)})
+    fetcher:async()=>({ok:true,headers:{get:name=>name.toLowerCase()==='age'?'0':null},json:async()=>scoreboard(minute,2,1)})
   });
   const early=await check("77'"),late=await check("87'");
   assert.equal(early?.elapsedMinute,77);

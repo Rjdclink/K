@@ -1,5 +1,6 @@
 import {espnMatches,foxMatches,sameFixture,contractBoundFixtureIdentity,soccerClockMinute} from './score_verification.mjs';
 import {flashscoreCompetition,flashscoreFixture,loadFlashscore} from './flashscore.mjs';
+import {scoreFeedAgeMs} from './score_feed_freshness.mjs';
 import {espnScoreboardUrls,espnSoccerLeagueFeed} from './espn_scoreboards.mjs';
 import {espnRetryThenFox} from './source_fallback.mjs';
 
@@ -26,10 +27,15 @@ const periodClockSeconds=value=>{
   const match=String(value||'').trim().match(/^(\d{1,2}):([0-5]\d)$/);
   return match?Number(match[1])*60+Number(match[2]):NaN;
 };
+const providerAges=new WeakMap();
 const pull=async(url,fetcher)=>{
   const response=await fetcher(url,{cache:'no-store',headers:{accept:'application/json'},signal:AbortSignal.timeout(6000)});
-  if(!response.ok)throw Error('Scoreboard unavailable');
-  return response.json();
+  const sourceAgeMs=scoreFeedAgeMs(response);
+  if(!response.ok||sourceAgeMs===null)throw Error('Scoreboard unavailable or stale');
+  const board=await response.json();
+  if(!board||typeof board!=='object')throw Error('Invalid scoreboard response');
+  providerAges.set(board,sourceAgeMs);
+  return board;
 };
 // An event ID confirmed on an earlier verified score can disambiguate new
 // provider nicknames. It never supplies a cached score, clock or permission
@@ -112,7 +118,9 @@ export async function fetchIndependentMatchScore(game,milestone,{fetcher=fetch,e
       known.set(source,id||null);
     }
     const results=await Promise.allSettled(urls.map(u=>pull(u,fetcher)));
-    const reading=select(results.filter(r=>r.status==='fulfilled').map(r=>r.value),identifiedGame,milestone,source,id);
+    const fetched=results.filter(r=>r.status==='fulfilled').map(r=>r.value);
+    const reading=select(fetched,identifiedGame,milestone,source,id);
+    if(reading&&reading!==false)reading.sourceAgeMs=Math.max(...fetched.map(r=>providerAges.get(r)||0));
     if(reading&&reading!==false&&fixtureCache){
       try{if(await fixtureCache.put(game,milestone,source,reading.eventId)===false)return false}
       catch{} // The current independently matched scoreboard remains authoritative.
@@ -159,7 +167,8 @@ export async function fetchIndependentMatchScore(game,milestone,{fetcher=fetch,e
   if(!Number.isInteger(reading.home)||!Number.isInteger(reading.away))return null;
   return {source:'Flashscore',eventId:reading.eventId,gameId:game.id,
     home:reading.home,away:reading.away,period:reading.period,
-    periods:reading.periods,seconds:reading.seconds,elapsedMinute:reading.elapsedMinute,live:true};
+    periods:reading.periods,seconds:reading.seconds,elapsedMinute:reading.elapsedMinute,
+    sourceAgeMs:reading.sourceAgeMs,live:true};
 
 }
 

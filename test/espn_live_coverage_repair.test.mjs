@@ -22,7 +22,7 @@ function soccer({title,league,homeName,awayName,home=2,away=1,at=Date.now()-60*6
  return {game,milestone,board};
 }
 const empty={events:[]};
-const reply=board=>({ok:true,headers:{get:()=> '0'},json:async()=>board});
+const reply=board=>({ok:true,headers:{get:name=>name.toLowerCase()==='age'?'0':null},json:async()=>board});
 
 test('ESPN proves the real Austrian two-team fixture despite exact SCR/SC Rheindorf and SK name differences',()=>{
  const {game,milestone,board}=soccer({title:'SCR Altach vs Sturm Graz',
