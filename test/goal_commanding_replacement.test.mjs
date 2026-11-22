@@ -13,8 +13,11 @@ const fixture=(type,clock,lead=3,period=null,other={})=>{
  const market={ticker:(soccer?'KXEPLGAME':'KXNHLGAME')+'-TEST-HOME',event_ticker:(soccer?'KXEPLGAME':'KXNHLGAME')+'-TEST',title:'Home wins',yes_sub_title:'Home',status:'active',custom_strike:{[soccer?'soccer_team':'hockey_team']:'home'},rules_primary:'Home wins after 90 minutes plus stoppage time.'};
  return {g,market};
 };
-test('NHL commanding lead replaces legacy 6:45/3:45 with strict 10:00 +3 and 6:00 +2',()=>{
- for(const [clock,margin,allowed] of [['10:01',3,false],['10:00',3,false],['9:59',3,true],['6:45',3,true],['6:00',2,false],['5:59',2,true],['4:00',2,true],['10:00',5,false],['5:59',1,false],['0:00',3,false]]){
+test('NHL winner tiers allow five goals in last five minutes of P2, four from P3 start, three under 15:00, two under 6:00',()=>{
+ for(const [clock,margin,allowed] of [['20:00',4,true],['20:00',3,false],
+  ['15:00',3,false],['14:59',3,true],['10:01',3,true],['9:59',3,true],
+  ['6:00',2,false],['5:59',2,true],['4:00',2,true],
+  ['10:00',5,true],['5:59',1,false],['0:00',3,false]]){
   const {g,market}=fixture('hockey_match',clock,margin);
   assert.equal(Boolean(goalCommandingLeadEntry(g)),allowed,clock+' +'+margin);
   assert.equal(Boolean(leadSignal(g,market)),allowed,'winner signal '+clock+' +'+margin);
@@ -22,7 +25,9 @@ test('NHL commanding lead replaces legacy 6:45/3:45 with strict 10:00 +3 and 6:0
  }
  assert.equal(leadSignal(fixture('hockey_match','9:59',3,3,{period:2}).g,fixture('hockey_match','9:59',3).market),null);
  assert.equal(nearEntryPhase(fixture('hockey_match','11:00',3).g),true,'urgent scan starts before 10:00');
- assert.match(leadWatchReason(fixture('hockey_match','9:59',3).g),/10:00/);
+ assert.match(leadWatchReason(fixture('hockey_match','6:00',5,2,{period:2}).g),/5:00 or less left in P2/);
+ assert.match(leadWatchReason(fixture('hockey_match','20:00',4).g),/start of P3/);
+ assert.match(leadWatchReason(fixture('hockey_match','9:59',3).g),/15:00/);
  assert.match(leadWatchReason(fixture('hockey_match','5:59',2).g),/6:00/);
 });
 test('soccer commanding lead permits +5 at 25:00, +4 under 20:00, +3 under 15:00, +2 under 6:00, without invented stoppage',()=>{

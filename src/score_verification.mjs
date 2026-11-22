@@ -39,12 +39,37 @@ function feeds(game,milestone){
   if(/soccer/.test(game.type))return {espn:'soccer/all',fox:'soccer'};
   if(/^tennis_/.test(game.type))return /^(?:ATP|WTA)$/i.test(game.tour)?{espn:`tennis/${game.tour.toLowerCase()}`,fox:null}:{espn:null,fox:null};
   const league=game.sport;
-  const supported={NBA:['basketball/nba','nba'],WNBA:['basketball/wnba','wnba'],NCAAB:['basketball/mens-college-basketball','cbk'],NCAAW:['basketball/womens-college-basketball',null],NFL:['football/nfl','nfl'],CFB:['football/college-football','cfb'],NHL:['hockey/nhl','nhl'],MLB:['baseball/mlb','mlb']};
+  const supported={NBA:['basketball/nba','nba'],WNBA:['basketball/wnba','wnba'],NCAAB:['basketball/mens-college-basketball','cbk'],NCAAW:['basketball/womens-college-basketball',null],NFL:['football/nfl','nfl'],CFB:['football/college-football','cfb'],NHL:['hockey/nhl','nhl'],
+    'College Hockey':['hockey/mens-college-hockey',null],MLB:['baseball/mlb','mlb']};
   // Explicit ESPN league feeds; team aliases still use the unchanged identity checks.
   const international={'Australia NBL':'nbl',NBL:'nbl','FIBA World Cup':'fiba',FIBA:'fiba',
     "Olympics Men's Basketball":'mens-olympics-basketball',"Olympics Women's Basketball":'womens-olympics-basketball'};
   const [espn,fox]=supported[league]||(/basketball/.test(game.type)&&international[league]?[`basketball/${international[league]}`,null]:[]);
   return {espn,fox};
+}
+// Resolve missing display names only when an exact selected team in the
+// live Kalshi winner contract maps to a distinct Kalshi home/away team ID,
+// and that selected name occurs exactly once in the named fixture title.
+// No identity can be inferred from a versus title alone or a total contract.
+export function contractBoundFixtureIdentity(game,milestone,market){
+  if(!game||!milestone||!market||game.homeName||game.awayName||
+    !/hockey|soccer/.test(String(game.type||'')))return game;
+  const sport=/hockey/.test(game.type)?'hockey':'soccer';
+  const selected=market.custom_strike?.[sport+'_team'];
+  const home=game.homeTeamId,away=game.awayTeamId;
+  if(typeof selected!=='string'||!selected||typeof home!=='string'||!home||
+    typeof away!=='string'||!away||home===away)return game;
+  const chosen=selected===home?'home':selected===away?'away':null;
+  if(!chosen)return game;
+  const label=String(market.yes_sub_title||'').trim();
+  const named=String(milestone.title||'').trim().split(/\s+(?:vs\.?|at)\s+/i)
+    .map(name=>name.trim());
+  if(named.length!==2||named.some(name=>!name)||clean(label).length<3)return game;
+  const matches=named.map(name=>clean(name)===clean(label));
+  if(matches.filter(Boolean).length!==1)return game;
+  const other=named[matches[0]?1:0];
+  return {...game,homeName:chosen==='home'?label:other,
+    awayName:chosen==='away'?label:other};
 }
 function expectedNames(game,milestone){
   const title=String(milestone.title||'');
@@ -317,6 +342,7 @@ async function verifyExistingOver(game,milestone,{fetcher=fetch,cache,market,sou
   const {espn,fox}=feeds(game,milestone);
   if(!espn&&!fox)return null;
   const dates=dateCandidates(start);
+  const matchedGame=contractBoundFixtureIdentity(game,milestone,market);
   const read=url=>{
     const cached=cache?.get(url);
     if(cached&&Date.now()-cached.at<3000)return cached.value;
@@ -346,7 +372,7 @@ async function verifyExistingOver(game,milestone,{fetcher=fetch,cache,market,sou
     const seen=new Set(),matches=[];
     for(const result of results){
       if(result.status!=='fulfilled')continue;
-      const found=source==='ESPN'?/^tennis_/.test(game.type)?tennisMatches(result.value,game,milestone):espnMatches(result.value,game,milestone,{identityOnly:true}):foxMatches(result.value,game,milestone,{identityOnly:true});
+      const found=source==='ESPN'?/^tennis_/.test(game.type)?tennisMatches(result.value,game,milestone):espnMatches(result.value,matchedGame,milestone,{identityOnly:true}):foxMatches(result.value,matchedGame,milestone,{identityOnly:true});
       const signature=JSON.stringify(found);
       if(seen.has(signature))continue;
       seen.add(signature);matches.push(...found.filter(m=>!m.stale));
