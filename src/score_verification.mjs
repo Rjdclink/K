@@ -1,5 +1,5 @@
 import {playerValueQualifies,externalScoresQualify} from './external_values.mjs';
-import {espnScoreboardUrls} from './espn_scoreboards.mjs';
+import {espnScoreboardUrls,espnSoccerLeagueFeed} from './espn_scoreboards.mjs';
 import { alternateCheck } from './alternate_scores.mjs';
 import { teamAbbreviationVariants } from './team_identity.mjs';
 import { relaxedTeamCompatibility } from './fixture_aliases.mjs';
@@ -112,9 +112,13 @@ function clockSeconds(clock){
   return plain&&Number(plain[2])<60?Number(plain[1])*60+Number(plain[2]):
     iso&&Number(iso[2])<60?Number(iso[1]||0)*60+Number(iso[2]):NaN;
 }
-// Independent providers may publish a different or absent game clock.
-// Kalshi alone supplies entry timing; this separate source verifies fixture
-// identity and the score, never clock equality.
+// A provider clock never has to equal Kalshi's displayed clock. When ESPN
+// publishes one, carry it through independently instead of dropping it.
+export function soccerClockMinute(value){
+ const text=String(value||'').trim().replace(/[′’]/g,"'");
+ const m=text.match(/^(\d{1,3})(?::([0-5]\d))?'?(?:\+(\d{1,2}))?'?$/);
+ return m?Number(m[1])+Number(m[2]||0)/60+Number(m[3]||0):NaN;
+}
 function clockCompatible(){return true;}
 export function sameFixture(game,milestone,home,away,time,externalScores=null,{identityOnly=false}={}){
   const names=expectedNames(game,milestone),start=Date.parse(milestone.start_date||'');
@@ -124,7 +128,7 @@ export function sameFixture(game,milestone,home,away,time,externalScores=null,{i
   // Relaxed names identify a possible fixture, not a confirmed score.
   // The source still must present BOTH independently identifiable teams
   // within fifteen minutes of Kalshi's kickoff; downstream score checks
-  // require exact home/away totals and veto disagreements (no FOX retry).
+  // require an unambiguous independently scored two-team fixture.
   if(Math.abs(start-other)>15*60000||!milestone?.details?.league)return false;
   // Independent fixture identity is based on identified teams and kickoff.
   // Kalshi's displayed score must not veto an independently identified score.
@@ -146,7 +150,9 @@ export function espnMatches(data,game,milestone,{identityOnly=false}={}){
     const total=score(home.score)+score(away.score);
     const documentedGoals=values.every(v=>Number.isInteger(v)&&v>0)?values.reduce((a,b)=>a+b,0):NaN;
     const lastScoringPlay=values.length&&documentedGoals===total?values.at(-1):null;
-    return [{source:'ESPN',eventId:e.id,home:score(home.score),away:score(away.score),periods,period:Number(status?.period),remainingSeconds:clockSeconds(status?.displayClock),live:status?.type?.state==='in',clockOk:clockCompatible(game,status?.period,status?.displayClock),documentedGoals,lastScoringPlay}];
+    return [{source:'ESPN',eventId:e.id,home:score(home.score),away:score(away.score),periods,period:Number(status?.period),remainingSeconds:clockSeconds(status?.displayClock),
+      elapsedMinute:/soccer/.test(game.type)?soccerClockMinute(status?.displayClock):NaN,
+      live:status?.type?.state==='in',clockOk:clockCompatible(game,status?.period,status?.displayClock),documentedGoals,lastScoringPlay}];
   });
 }
 export function tennisMatches(data,game,milestone){
@@ -350,12 +356,12 @@ async function verifyExistingOver(game,milestone,{fetcher=fetch,cache,market,sou
     cache?.set(url,{at:Date.now(),value});
     return value;
   };
-  const check=async(source,feed)=>{
+  const check=async(source,feed,{forceAll=false}={})=>{
     if(!feed)return null;
     const foxBase=`https://api.foxsports.com/bifrost/v1/${feed}`;
     const foxQuery=`apikey=${FOX_KEY}&api-version=1.1`;
     let requests;
-    if(source==='ESPN')requests=espnScoreboardUrls(feed,game,milestone,dates);
+    if(source==='ESPN')requests=espnScoreboardUrls(feed,game,milestone,dates,{forceAll});
     else if(feed==='nfl'||feed==='cfb'){
       // Football score segments are season/week IDs, never calendar dates.
       // Discover the provider's current segment instead of guessing its week.
@@ -379,6 +385,8 @@ async function verifyExistingOver(game,milestone,{fetcher=fetch,cache,market,sou
     }
     if(matches.length>1)return false;
     if(!matches.length){
+      if(source==='ESPN'&&!forceAll&&feed==='soccer/all'&&espnSoccerLeagueFeed(milestone))
+        return check(source,feed,{forceAll:true});
       const errors=results.filter(r=>r.status==='rejected').map(r=>String(r.reason?.message||'request failed'));
       unavailableReasons.push(`${source}: ${errors.length===results.length?errors.join(', '):'no exact matching fixture'}`);
       return null;

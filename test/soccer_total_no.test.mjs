@@ -94,7 +94,7 @@ test('independent ESPN proof verifies exact soccer fixture and goals without pro
     urls.push(url);return {ok:true,json:async()=>board};
   }});
   assert.equal(fetched?.eventId,'espn-soccer-game');
-  assert.ok(urls.length>0&&urls.every(url=>url.includes('/soccer/all/scoreboard')));
+  assert.ok(urls.length>0&&urls.some(url=>url.includes('/soccer/eng.1/scoreboard')));
 });
 test('soccer full-game NO admits 4+ goals only with a full 3.5-goal cushion',()=>{
   const large=market(8.5),proof={source:'ESPN',eventId:'matched-soccer',home:2,away:2};
@@ -104,4 +104,17 @@ test('soccer full-game NO admits 4+ goals only with a full 3.5-goal cushion',()=
   assert.equal(soccerTotalNo(game(479,2,2),large,{beforeWindow:true})?.total,4,'preflight applies same cushion');
   assert.equal(soccerTotalNo(game(479,2,1),large,{external:proof})?.total,4,'independent score chooses actual four-goal cushion');
   assert.equal(soccerTotalNo(game(479,2,2),market(5.5),{external:{...proof,away:1}})?.total,3,'independent score remains authoritative');
+});
+
+test('full-game NO entry uses the independently verified ESPN clock, not a more favorable Kalshi clock',async()=>{
+  const g=game(479,2,1,83),m=market(5.5);
+  const check=async(minute)=>verifyIndependentSoccerTotalNo(g,milestone,m,{
+    fetcher:async()=>({ok:true,headers:{get:()=>0},json:async()=>scoreboard(minute,2,1)})
+  });
+  const early=await check("77'"),late=await check("87'");
+  assert.equal(early?.elapsedMinute,77);
+  assert.equal(late?.elapsedMinute,87);
+  assert.equal(soccerTotalNo(g,m,{external:early}),null,'ESPN says 13 minutes remain, so no live NO entry');
+  assert.equal(soccerTotalNo(g,m,{external:late})?.total,3);
+  assert.match(soccerTotalNo(g,m,{external:late})?.reason||'',/180s/);
 });

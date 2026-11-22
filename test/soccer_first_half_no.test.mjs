@@ -106,7 +106,7 @@ test('independent ESPN check verifies teams and scores, never independent period
    requests.push(url);return {ok:true,json:async()=>scoreboard};
  }});
  assert.equal(matched?.eventId,'espn-1h-hulbri');
- assert.ok(requests.length>0&&requests.every(u=>u.includes('/soccer/all/scoreboard')));
+ assert.ok(requests.length>0&&requests.some(u=>u.includes('/soccer/eng.1/scoreboard')));
 });
 
 test('first-half soccer market discovery and fast priority include the preflight window',()=>{
@@ -126,4 +126,16 @@ test('soccer first-half NO at four or more goals requires a 3.5-goal cushion',()
   assert.equal(soccerFirstHalfNo(state("40'",2,2),large,{beforeWindow:true}),null,'early check requires same cushion');
   assert.equal(soccerFirstHalfNo(state("42'",1,2),large,{external:proof}),null,'independent four goals require Over 7.5');
   assert.equal(soccerFirstHalfNo(state("42'",2,2),market(5.5),{external:{...proof,away:1}})?.total,3,'external three-goal reading stays authoritative');
+});
+
+test('first-half NO entry uses the independent ESPN minute rather than the exchange countdown',async()=>{
+ const g=state("42'",0,1),m=market(3.5);
+ const prove=async minute=>verifyIndependentSoccerFirstHalfNo(g,milestone,m,{
+  fetcher:async()=>({ok:true,headers:{get:()=>0},json:async()=>board(minute,0,1)})
+ });
+ const early=await prove("39'"),late=await prove("43'");
+ assert.equal(early?.elapsedMinute,39);
+ assert.equal(late?.elapsedMinute,43);
+ assert.equal(soccerFirstHalfNo(g,m,{external:early}),null,'ESPN says six minutes remain');
+ assert.match(soccerFirstHalfNo(g,m,{external:late})?.reason||'',/120s/);
 });

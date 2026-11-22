@@ -1,19 +1,19 @@
-import {espnMatches,foxMatches,sameFixture,contractBoundFixtureIdentity} from './score_verification.mjs';
+import {espnMatches,foxMatches,sameFixture,contractBoundFixtureIdentity,soccerClockMinute} from './score_verification.mjs';
 import {loadSportradar} from './sportradar.mjs';
-import {espnScoreboardUrls} from './espn_scoreboards.mjs';
+import {espnScoreboardUrls,espnSoccerLeagueFeed} from './espn_scoreboards.mjs';
 import {espnRetryThenFox} from './source_fallback.mjs';
 
 let activeFixtureCache=null;
 export function configureIndependentFixtureCache(cache){activeFixtureCache=cache||null;}
 
 
-// These are site-facing public scoreboard formats already used by K. A source
-// with no exact fixture is unavailable, not verification. A matched fixture
-// with a conflicting score is a veto, never permission to try another source.
+// These are site-facing public scoreboards. A source with no exact fixture
+// is unavailable, not verification. Conflicting independent fixtures or
+// scores veto; a difference from Kalshi's displayed score is not a veto.
 const FOX_PUBLIC_KEY='jE7yBJVRNAwdDesMgTzTXUUSx1It41Fq';
 const foxQuery=`apikey=${FOX_PUBLIC_KEY}&api-version=1.1`;
-// An independent provider is the score authority. Kalshi supplies timing,
-// contract identity, liquidity and execution, never an equality veto here.
+// An independent provider is the source of sporting scores and clocks.
+// Kalshi controls contract identity, liquidity, fees and execution.
 export const scorePairMatches=(reading,game)=>Boolean(
   ['ESPN','FOX Sports','Sportradar'].includes(reading?.source)&&reading.eventId&&
   (reading.source!=='Sportradar'||/^sr:(?:sport_event|match):\d+$/.test(String(reading.eventId))&&reading.gameId===game?.id)&&
@@ -23,6 +23,10 @@ export const scorePairMatches=(reading,game)=>Boolean(
 
 const daysFor=start=>[start,start-86400000,start+86400000]
   .map(ms=>new Date(ms).toISOString().slice(0,10).replaceAll('-',''));
+const periodClockSeconds=value=>{
+  const match=String(value||'').trim().match(/^(\d{1,2}):([0-5]\d)$/);
+  return match?Number(match[1])*60+Number(match[2]):NaN;
+};
 const pull=async(url,fetcher)=>{
   const response=await fetcher(url,{cache:'no-store',headers:{accept:'application/json'},signal:AbortSignal.timeout(6000)});
   if(!response.ok)throw Error('Scoreboard unavailable');
@@ -40,8 +44,11 @@ const cachedEvent=(boards,source,id,game,milestone)=>{
       const c=e.competitions?.[0],home=c?.competitors?.find(t=>t.homeAway==='home'),away=c?.competitors?.find(t=>t.homeAway==='away');
       if(!home||!away)return null;
       const periods=(home.linescores||[]).map((p,i)=>({number:i+1,home:Number(p.value),away:Number(away.linescores?.[i]?.value)}));
+      const status=c.status||e.status;
       return {eventId:id,time:e.date,home:Number(home.score),away:Number(away.score),
-        periods,period:Number(c.status?.period||e.status?.period),live:c.status?.type?.state==='in'};
+        periods,period:Number(status?.period),live:status?.type?.state==='in',
+        seconds:/soccer/.test(game.type)?NaN:periodClockSeconds(status?.displayClock),
+        elapsedMinute:/soccer/.test(game.type)?soccerClockMinute(status?.displayClock):NaN};
     }):boards.flatMap(b=>b?.sectionList||[]).flatMap(section=>section?.events||[])
     .filter(e=>String(e.entityLink?.layout?.tokens?.id||'')===id)
     .map(e=>{
@@ -61,7 +68,7 @@ const cachedEvent=(boards,source,id,game,milestone)=>{
   if(!scorePairMatches({...valid[0],source,eventId:id},game))return false;
   return {source,eventId:id,gameId:game.id,home:valid[0].home,away:valid[0].away,
     periods:valid[0].periods,period:valid[0].period,live:valid[0].live,
-    seconds:NaN,elapsedMinute:NaN,
+    seconds:valid[0].seconds??NaN,elapsedMinute:valid[0].elapsedMinute??NaN,
     period3:valid[0].periods?.[2]?
       {home:valid[0].periods[2].home,away:valid[0].periods[2].away}:null};
 };
@@ -82,9 +89,9 @@ const select=(boards,game,milestone,source,knownId=null)=>{
   const m=[...unique.values()][0];
   if(!scorePairMatches({...m,source,eventId:String(m.eventId)},game))return false;
   return {source,eventId:String(m.eventId),gameId:game.id,home:m.home,away:m.away,
-    // The provider clock and period are informational, never independent
-    // trade-entry requirements. Selected-period cushion uses Kalshi scores.
-    period:m.period,seconds:m.remainingSeconds,elapsedMinute:NaN,
+    // Carry current independently published time as well as score. A source
+    // with no clock never gains an invented timestamp from Kalshi here.
+    period:m.period,seconds:m.remainingSeconds,elapsedMinute:m.elapsedMinute??NaN,
     live:m.live,periods:m.periods||[],
     period3:m.periods?.[2]?{home:m.periods[2].home,away:m.periods[2].away}:null};
 };
@@ -112,7 +119,14 @@ export async function fetchIndependentMatchScore(game,milestone,{fetcher=fetch,e
     }
     return reading;
   };
-  const espn=()=>query(espnScoreboardUrls(espnFeed,game,milestone,dates),'ESPN');
+  const espn=async()=>{
+    const preferred=await query(espnScoreboardUrls(espnFeed,game,milestone,dates),'ESPN');
+    if(preferred!==null||espnFeed!=='soccer/all'||!espnSoccerLeagueFeed(milestone))
+      return preferred;
+    // An exact missing fixture, not a contradictory score or ambiguous team,
+    // may fall back to ESPN's larger general soccer scoreboard.
+    return query(espnScoreboardUrls(espnFeed,game,milestone,dates,{forceAll:true}),'ESPN');
+  };
   const fox=async()=>{
     if(!foxFeed)return null;
     const prefix=`https://api.foxsports.com/bifrost/v1/${foxFeed}`;

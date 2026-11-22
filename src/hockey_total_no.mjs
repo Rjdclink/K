@@ -1,5 +1,5 @@
 import {externalNoScore,externalNoPeriods} from './external_no_authority.mjs';
-import {verifyFreshEspnHockeyNo} from './hockey_espn_no.mjs';
+import {verifyFreshEspnHockeyNo,independentlyVerifiedHockeyGame} from './hockey_espn_no.mjs';
 import {espnMatches} from './score_verification.mjs';
 
 // Kalshi lists game-wide NHL goals separately from goals scored in period 3.
@@ -50,7 +50,9 @@ export function hockeyNoMarketSpec(game,market,{beforeWindow=false}={}){
 }
 
 export function hockeyTotalNo(game,market,{beforeWindow=false,external=null}={}){
-  const spec=hockeyNoMarketSpec(game,market,{beforeWindow});
+  const verified=external?independentlyVerifiedHockeyGame(game,external):null;
+  const sourceGame=verified||game;
+  const spec=hockeyNoMarketSpec(sourceGame,market,{beforeWindow});
   if(!spec)return null;
   if(external&&!validExternal(external,game))return null;
   const independent=external?externalNoScore(game,external):null;
@@ -104,6 +106,6 @@ export function independentHockeyTotalNoReading(scoreboard,game,milestone,market
 
 export async function verifyIndependentHockeyTotalNo(game,milestone,market,{fetcher=fetch}={}){
   if(!hockeyNoMarketSpec(game,market,{beforeWindow:true}))return null;
-  // ESPN alone, with exact current score, live period, clock, and response age.
+  // ESPN alone verifies the live fixture, scoring and period time.
   return verifyFreshEspnHockeyNo(game,milestone,{fetcher});
 }

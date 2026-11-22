@@ -26,7 +26,7 @@ function board(period=3,clock='1:29',home=2,away=1){
 const mock=(payload,age='0')=>async()=>({ok:true,headers:{get:k=>k==='age'?age:null},
   json:async()=>payload});
 
-test('NHL NO requires fresh live ESPN-only proof with exact score, period and clock',async()=>{
+test('NHL NO requires ESPN proof with independently sourced score, period and period clock',async()=>{
  const state=game();
  const reading=await verifyFreshEspnHockeyNo(state,milestone,{fetcher:mock(board())});
  assert.equal(reading?.source,'ESPN');
@@ -34,8 +34,8 @@ test('NHL NO requires fresh live ESPN-only proof with exact score, period and cl
  assert.equal(reading?.period,3);
  assert.equal(reading?.home,2);
  assert.ok(validFreshEspnHockeyNo(reading,state));
- assert.equal(await verifyFreshEspnHockeyNo(state,milestone,{fetcher:mock(board(3,'4:30'))}),false);
- assert.equal(await verifyFreshEspnHockeyNo(state,milestone,{fetcher:mock(board(3,'1:29',3,1))}),false);
+ assert.equal((await verifyFreshEspnHockeyNo(state,milestone,{fetcher:mock(board(3,'4:30'))}))?.seconds,270);
+ assert.equal((await verifyFreshEspnHockeyNo(state,milestone,{fetcher:mock(board(3,'1:29',3,1))}))?.home,3);
  assert.equal(await verifyFreshEspnHockeyNo(state,milestone,{fetcher:mock(board(4,'1:29'))}),false);
  assert.equal(await verifyFreshEspnHockeyNo(state,milestone,{fetcher:mock(board(),'12')}),false);
  assert.equal(validFreshEspnHockeyNo({...reading,source:'FOX Sports'},state),false);
@@ -52,7 +52,7 @@ test('NHL ESPN two checks are separate requests, stable fixture, non-decreasing 
  assert.equal(pairedFreshEspnHockeyNo(first,{...second,source:'FOX Sports'},state),false);
 });
 
-test('NHL overtime ESPN confirmation is live fourth period and exact remaining clock',async()=>{
+test('NHL overtime ESPN confirmation is live fourth period with a valid independent clock',async()=>{
  const state=game(4,'1:29');
  const proof=await verifyFreshEspnHockeyNo(state,milestone,{fetcher:mock(board(4,'1:29'))});
  assert.ok(validFreshEspnHockeyNo(proof,state));

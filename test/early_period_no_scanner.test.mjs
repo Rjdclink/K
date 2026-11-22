@@ -231,7 +231,7 @@ test('missing initial preflight or a final check failure always blocks early-per
 test('soccer first-half NO rejects stale and inconsistent ESPN evidence at both stages',async()=>{
  for(const bad of [
   {checkedAt:Date.now()-23000},{source:'FOX Sports'},
-  {live:false},{period:2},{elapsedMinute:12},{home:3}
+  {live:false},{period:2},{elapsedMinute:NaN},{home:-1}
  ]){
   const first=harness('Soccer',1,{firstProofOverride:bad});
   assert.equal(await first.scan(360),0);

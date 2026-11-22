@@ -5,17 +5,13 @@ import {espnScoreboardUrls} from './espn_scoreboards.mjs';
 // Same two-distinct-ESPN-request policy as soccer NO; NHL scoreboards report
 // a remaining period clock instead of an elapsed soccer regulation minute.
 export const HOCKEY_ESPN_POLICY='hockey-espn-two-distinct-requests-v1';
-export const HOCKEY_ESPN_MAX_CLOCK_SKEW_SECONDS=90;
+export const HOCKEY_ESPN_MAX_CLOCK_SKEW_SECONDS=90; // legacy setting, no Kalshi equality veto
 export const HOCKEY_ESPN_MAX_HTTP_AGE_SECONDS=10;
 
 const clockSeconds=value=>{
  const match=String(value||'').trim().match(/^(\d{1,2}):([0-5]\d)(?:\.\d{1,3})?$/);
  return match?Number(match[1])*60+Number(match[2]):NaN;
 };
-const currentClock=(reading,game)=>Number.isFinite(reading?.seconds)&&
- Number.isFinite(game?.remainingSeconds)&&
- Math.abs(reading.seconds-game.remainingSeconds)<=HOCKEY_ESPN_MAX_CLOCK_SKEW_SECONDS;
-
 export function validFreshEspnHockeyNo(reading,game,now=Date.now(),{allowHistorical=false}={}){
  const checked=Number(reading?.checkedAt);
  return Boolean(reading?.source==='ESPN'&&reading.verificationPolicy===HOCKEY_ESPN_POLICY&&
@@ -26,9 +22,7 @@ export function validFreshEspnHockeyNo(reading,game,now=Date.now(),{allowHistori
   Number.isInteger(reading.away)&&reading.away>=0&&
   Number.isFinite(checked)&&checked>0&&now>=checked&&
   now-checked<=(allowHistorical?30*60000:10000)&&
-  Number.isFinite(reading.seconds)&&
-  (allowHistorical||currentClock(reading,game)&&
-   reading.home===game.home&&reading.away===game.away));
+  Number.isFinite(reading.seconds)&&reading.seconds>=0&&reading.seconds<=1200);
 }
 
 export function pairedFreshEspnHockeyNo(first,second,game,now=Date.now()){
@@ -36,15 +30,25 @@ export function pairedFreshEspnHockeyNo(first,second,game,now=Date.now()){
   validFreshEspnHockeyNo(second,game,now)&&
   String(first.eventId)===String(second.eventId)&&
   first.requestId!==second.requestId&&first.checkedAt<=second.checkedAt&&
-  second.home>=first.home&&second.away>=first.away);
+  second.home>=first.home&&second.away>=first.away&&
+  second.seconds<=first.seconds);
+}
+
+// Use independently confirmed ESPN scoring and period time for NO risk
+// decisions. Never write these fields back to Kalshi's contract or portfolio.
+export function independentlyVerifiedHockeyGame(game,reading){
+ if(!validFreshEspnHockeyNo(reading,game))return null;
+ return {...game,home:reading.home,away:reading.away,
+  homeUnits:reading.home,awayUnits:reading.away,
+  remainingSeconds:reading.seconds,scoreKnown:true,scoreConsistent:true,
+  periodConsistent:true};
 }
 
 const daysFor=start=>[start,start-86400000,start+86400000]
  .map(ms=>new Date(ms).toISOString().slice(0,10).replaceAll('-',''));
 
-// Kalshi remains the clock for order eligibility, while two independent,
-// cache-busted ESPN HTTP responses must confirm the live fixture, score,
-// period, and a non-stale clock close to the current Kalshi observation.
+// Only ESPN determines the score and remaining clock for risk decisions.
+// Two fresh independent HTTP requests still establish the exact NHL fixture.
 export async function verifyFreshEspnHockeyNo(game,milestone,{fetcher=fetch}={}){
  const start=Date.parse(milestone?.start_date||'');
  if(game?.sport!=='NHL'||!['hockey_match','hockey_game'].includes(game.type)||
@@ -85,9 +89,11 @@ export async function verifyFreshEspnHockeyNo(game,milestone,{fetcher=fetch}={})
  if(!found.length)return null;
  if(found.some(match=>!match.eventId||match.live!==true||match.period!==game.period||
   !Number.isInteger(match.home)||!Number.isInteger(match.away)||
-  match.home!==game.home||match.away!==game.away||
-  !currentClock(match,game)))return false;
- if(new Set(found.map(m=>String(m.eventId))).size!==1)return false;
+  match.home<0||match.away<0||!Number.isFinite(match.seconds)||
+  match.seconds<0||match.seconds>1200))return false;
+ if(new Set(found.map(m=>String(m.eventId))).size!==1||
+   found.some(m=>m.home!==found[0].home||m.away!==found[0].away||
+     m.seconds!==found[0].seconds))return false;
  const at=Date.now(),match=found[0];
  const reading={source:'ESPN',verificationPolicy:HOCKEY_ESPN_POLICY,
   requestId,checkedAt:at,eventId:String(match.eventId),gameId:game.id,

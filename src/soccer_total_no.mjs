@@ -1,5 +1,5 @@
 import {externalNoScore} from './external_no_authority.mjs';
-import {verifyFreshEspnSoccerNo} from './soccer_espn_no.mjs';
+import {verifyFreshEspnSoccerNo,independentlyVerifiedSoccerGame} from './soccer_espn_no.mjs';
 import {soccerRegulationSeconds} from './strategy.mjs';
 import {espnMatches} from './score_verification.mjs';
 import {espnScoreboardUrls} from './espn_scoreboards.mjs';
@@ -18,8 +18,8 @@ const clockMinute=clock=>{
   if(!match)return NaN;
   return Number(match[1])+Number(match[3]||0)+Number(match[2]||0)/60;
 };
-// The independent check is precisely the fixture and matching scores.
-// Its countdown, period and publication status do not determine entry.
+// Independent fixture, score, and match time determine whether the exact
+// Kalshi contract has enough goal cushion within its regulation window.
 const currentExternal=(reading,game)=>Boolean(
   ['ESPN','FOX Sports','Sportradar'].includes(reading?.source)&&reading.eventId&&
   Boolean(externalNoScore(game,reading)));
@@ -63,24 +63,26 @@ export function soccerNoMarketSpec(game,market,{beforeWindow=false}={}){
 }
 
 export function soccerTotalNo(game,market,{beforeWindow=false,external=null}={}){
-  const spec=soccerNoMarketSpec(game,market,{beforeWindow});
+  const verified=external?independentlyVerifiedSoccerGame(game,external):null;
+  const sourceGame=verified||game;
+  const spec=soccerNoMarketSpec(sourceGame,market,{beforeWindow});
   if(!spec||external&&!currentExternal(external,game))return null;
   const score=external?externalNoScore(game,external):{home:game.home,away:game.away};
   if(!score)return null;
   const total=score.home+score.away;
   // 0–3 scored: 2.5-goal cushion. 4+: 3.5-goal cushion.
   // Only confirmed live stoppage AFTER 90 minutes returns to 1.5.
-  const required=soccerStoppageNoWindow(game)?1.5:total>=4?3.5:2.5;
+  const required=soccerStoppageNoWindow(sourceGame)?1.5:total>=4?3.5:2.5;
   if(spec.line-total<required)return null;
   return {...spec,total,reason:
     'Soccer full-game total NO over '+spec.line+'; '+total+
-    ' goals scored, '+(soccerStoppageNoWindow(game)?
-      'live regulation stoppage at '+game.soccerMinute+' minutes':
-      soccerRegulationSeconds(game)+'s to the 90-minute regulation clock')};
+    ' goals scored, '+(soccerStoppageNoWindow(sourceGame)?
+      'live regulation stoppage at '+sourceGame.soccerMinute+' minutes':
+      soccerRegulationSeconds(sourceGame)+'s to the 90-minute regulation clock')};
 }
 
-// Independent scoreboard verifies score, second-half status, exact fixture,
-// and displayed elapsed match minute; the exchange supplies final-whistle countdown.
+// Independent scoreboard reports fixture, live status, scores and elapsed
+// minute. The strict two-request validator establishes freshness before use.
 export function independentSoccerTotalNoReading(scoreboard,game,milestone,market){
   if(!soccerNoMarketSpec(game,market,{beforeWindow:true}))return null;
   const matches=espnMatches(scoreboard,game,milestone,{identityOnly:true});
@@ -95,6 +97,6 @@ export function independentSoccerTotalNoReading(scoreboard,game,milestone,market
 
 export async function verifyIndependentSoccerTotalNo(game,milestone,market,{fetcher=fetch}={}){
   if(!soccerNoMarketSpec(game,market,{beforeWindow:true}))return null;
-  // ESPN only. The scoreboard must be live, current, and agree on the score and minute.
+  // ESPN only. The scoreboard must be live and current; its score and clock control.
   return verifyFreshEspnSoccerNo(game,milestone,{fetcher});
 }
