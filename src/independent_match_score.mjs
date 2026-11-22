@@ -99,8 +99,8 @@ const select=(boards,game,milestone,source,knownId=null)=>{
 // identity, or null for coverage/unavailability. Never authorizes a trade.
 export async function fetchIndependentMatchScore(game,milestone,{fetcher=fetch,espnFeed,foxFeed=null,fixtureCache=activeFixtureCache,flashscoreLoad=loadFlashscore,market=null}={}){
   const gap=flashscoreCompetition(game,milestone);
-  if(!game?.verifiedLive||!Number.isInteger(game.home)||!Number.isInteger(game.away)||
-    (!espnFeed&&!gap)||!Number.isFinite(Date.parse(milestone?.start_date||'')))return null;
+  if(!game?.verifiedLive||(!espnFeed&&!gap)||
+    !Number.isFinite(Date.parse(milestone?.start_date||'')))return null;
   const dates=daysFor(Date.parse(milestone.start_date));
   const identifiedGame=contractBoundFixtureIdentity(game,milestone,market);
   const known=new Map();

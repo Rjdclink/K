@@ -56,11 +56,12 @@ test('basketball quarter-NO proof verifies the same score and attributed quarter
  assert.equal(basketballEarlyQuarterNo(g,market,{external:proof})?.total,30);
 });
 
-test('football generic external score agreement ignores provider clock but never team or score differences',()=>{
+test('football independently reported points clear only the contract line, regardless of Kalshi clock or score',()=>{
  const m=milestone('nfl-score','football_game','NFL','KXNFLGAME-26NOV20ALPBET');
  const g=game(m,{period:4,clock:'0:40',home_score:31,away_score:17});
+ const contract={event_ticker:'KXNFLTOTAL-TEST',floor_strike:47.5};
  const original=espnMatches(scoreboard(4,'12:00',31,17),g,m);
  assert.equal(original.length,1);
- assert.equal(scoreAgreement(g,[original]),true);
- assert.equal(scoreAgreement(g,[espnMatches(scoreboard(4,'0:40',30,17),g,m)]),false);
+ assert.equal(scoreAgreement(g,[original],contract),true);
+ assert.equal(scoreAgreement(g,[espnMatches(scoreboard(4,'0:40',30,17),g,m)],contract),false);
 });

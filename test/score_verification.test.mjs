@@ -44,14 +44,15 @@ test('ESPN last scoring play is used only with a complete verified scoring list'
   const state=gameState(soccer,{details:{status:'live',home_score:2,away_score:1,time:"65'",home_team_name:'Boston',away_team_name:'Brooklyn'}});
   const event=(plays)=>({events:[{id:'espn-1',date:start,status:{type:{state:'in'},period:2,displayClock:"65'"},competitions:[{status:{type:{state:'in'},period:2,displayClock:"65'"},competitors:[
     {homeAway:'home',score:'2',team:{displayName:'Boston'}},{homeAway:'away',score:'1',team:{displayName:'Brooklyn'}}],details:plays.map(scoreValue=>({scoringPlay:true,scoreValue}))}]}]});
-  const valid=event([1,1,1]);
+  const market={event_ticker:'KXSOCCERGAME-TEST',title:'Boston win',rules_primary:'Boston win'};
+ const valid=event([1,1,1]);
   assert.equal(espnMatches(valid,state,soccer)[0].lastScoringPlay,1);
-  assert.equal(await verifyIndependentOverDecision(state,soccer,{fetcher:async()=>({ok:true,json:async()=>valid})}),true);
+  assert.equal(await verifyIndependentOverDecision(state,soccer,{market,fetcher:async()=>({ok:true,json:async()=>valid})}),true);
   assert.equal(state.lastScoringPlay,1);
   const incomplete=event([1,1]);
   assert.equal(espnMatches(incomplete,state,soccer)[0].lastScoringPlay,null);
   const second=gameState(soccer,{details:{status:'live',home_score:2,away_score:1,time:"65'",home_team_name:'Boston',away_team_name:'Brooklyn'}});
-  assert.equal(await verifyIndependentOverDecision(second,soccer,{fetcher:async()=>({ok:true,json:async()=>incomplete})}),true);
+  assert.equal(await verifyIndependentOverDecision(second,soccer,{market,fetcher:async()=>({ok:true,json:async()=>incomplete})}),true);
   assert.equal(second.lastScoringPlay,undefined);
 });
 test('a provisional soccer scoreboard goal cannot clear an over until goal events establish the line',async()=>{
@@ -108,12 +109,13 @@ test('NHL city labels match the exact franchise but not a same-city rival',()=>{
 });
 test('Saudi soccer alias matches one exact live fixture and its score',()=>{
   const milestone={id:'saudi',type:'soccer_match',title:'Al-Shabab vs Al Ahli Saudi',start_date:start};
-  const state=gameState(milestone,{details:{status:'live',home_score:1,away_score:0,time:"20'"}});
-  const fixture={events:[{date:start,status:{type:{state:'in'},period:1,displayClock:"20'"},competitions:[{competitors:[
+  const state=gameState(milestone,{details:{status:'live',home_score:1,away_score:0,time:"20'",home_team_name:'Al-Shabab',away_team_name:'Al Ahli Saudi'}});
+  const market={event_ticker:'KXSAUDIPLGAME-TEST',title:'Al Shabab win',rules_primary:'Al Shabab win'};
+ const fixture={events:[{date:start,status:{type:{state:'in'},period:1,displayClock:"20'"},competitions:[{competitors:[
     {homeAway:'home',score:'1',team:{displayName:'Al Shabab'}},
     {homeAway:'away',score:'0',team:{displayName:'Al Ahli'}}]}]}]};
-  assert.equal(scoreAgreement(state,[espnMatches(fixture,state,milestone)]),true);
-  assert.equal(scoreAgreement(state,[espnMatches({...fixture,events:fixture.events.map(e=>({...e,competitions:[{competitors:[e.competitions[0].competitors[0],{homeAway:'away',score:'1',team:{displayName:'Al Ahli'}}]}]}))},state,milestone)]),false);
+  assert.equal(scoreAgreement(state,[espnMatches(fixture,state,milestone)],market),true);
+  assert.equal(scoreAgreement(state,[espnMatches({...fixture,events:fixture.events.map(e=>({...e,competitions:[{competitors:[e.competitions[0].competitors[0],{homeAway:'away',score:'1',team:{displayName:'Al Ahli'}}]}]}))},state,milestone)],market),false);
   assert.equal(espnMatches({...fixture,events:fixture.events.map(e=>({...e,competitions:[{competitors:[e.competitions[0].competitors[0],{homeAway:'away',score:'0',team:{displayName:'Al Ahli Doha'}}]}]}))},state,milestone).length,0);
 });
 test('clockless three-goal soccer lead still vetoes an ESPN score conflict',async()=>{
@@ -130,62 +132,65 @@ test('clockless three-goal soccer lead still vetoes an ESPN score conflict',asyn
 });
 test('club suffixes and provider abbreviations verify Le Havre versus PSG exactly',()=>{
   const milestone={id:'havre-psg',type:'soccer_match',title:'Le Havre vs PSG',start_date:start};
-  const state=gameState(milestone,{details:{status:'live',home_score:1,away_score:5,half:'2nd',time:"73'"}});
-  const fixture={events:[{date:start,status:{type:{state:'in'},period:2,displayClock:"77'"},competitions:[{competitors:[
+  const state=gameState(milestone,{details:{status:'live',home_score:1,away_score:5,half:'2nd',time:"73'",home_team_name:'Le Havre',away_team_name:'PSG'}});
+  const market={event_ticker:'KXLIGUE1TEAMTOTAL-TEST',title:'PSG team total',floor_strike:4.5};
+ const fixture={events:[{date:start,status:{type:{state:'in'},period:2,displayClock:"77'"},competitions:[{competitors:[
     {homeAway:'home',score:'1',team:{displayName:'Le Havre AC',shortDisplayName:'Le Havre AC',abbreviation:'HAC'}},
     {homeAway:'away',score:'5',team:{displayName:'Paris Saint-Germain',shortDisplayName:'PSG',abbreviation:'PSG'}}]}]}]};
-  assert.equal(scoreAgreement(state,[espnMatches(fixture,state,milestone)]),true);
+  assert.equal(scoreAgreement(state,[espnMatches(fixture,state,milestone)],market),true);
   assert.equal(scoreAgreement(state,[espnMatches({...fixture,events:[{...fixture.events[0],competitions:[{competitors:[
     fixture.events[0].competitions[0].competitors[0],
-    {...fixture.events[0].competitions[0].competitors[1],score:'4'}]}]}]},state,milestone)]),false);
+    {...fixture.events[0].competitions[0].competitors[1],score:'4'}]}]}]},state,milestone)],market),false);
   const rival={...fixture,events:[{...fixture.events[0],competitions:[{competitors:[
     {...fixture.events[0].competitions[0].competitors[0],team:{displayName:'Le Havre United',abbreviation:'LHU'}},
     fixture.events[0].competitions[0].competitors[1]]}]}]};
   assert.equal(espnMatches(rival,state,milestone).length,0);
 });
 
-test('independent scoreboards must match the exact live fixture and both team scores',()=>{
-  assert.equal(scoreAgreement(game,[espnMatches(espn(),game,m),foxMatches(fox(),game,m)]),true);
-  assert.equal(scoreAgreement(game,[espnMatches(espn(),game,m),foxMatches(fox(25),game,m)]),false,'one conflicting feed vetoes');
-  assert.equal(scoreAgreement(game,[espnMatches(espn(25),game,m),[]]),false);
-  assert.equal(scoreAgreement(game,[espnMatches(espn(),game,m),[]]),true);
-  assert.equal(scoreAgreement(game,[[],[]]),false,'no coverage');
-  assert.equal(scoreAgreement(game,[espnMatches(espn(20,24),game,m),[]]),false,'home and away cannot swap');
-  assert.equal(scoreAgreement(game,[espnMatches(espn(24,20,{date:new Date(Date.now()-86400000).toISOString()}),game,m),[]]),false,'wrong fixture time');
-  assert.equal(scoreAgreement(game,[espnMatches(espn(24,20,{status:{type:{state:'pre'},period:1,displayClock:'05:00'}}),game,m),[]]),false,'scheduled score');
-  assert.equal(scoreAgreement(game,[[],foxMatches(fox(24,20,{eventStatus:3}),game,m)]),false,'final score cannot confirm a live game');
-  assert.equal(scoreAgreement(game,[espnMatches(espn(24,20,{status:{type:{state:'in'},period:1,displayClock:'11:00'}}),game,m),[]]),true,'provider clock differences do not veto matching team scores');
-  assert.equal(scoreAgreement(game,[espnMatches({events:[...espn().events,...espn().events]},game,m),[]]),false,'ambiguous duplicate');
-  assert.equal(scoreAgreement(game,[[],foxMatches(fox(24,20,{entityLink:{layout:{tokens:{homeUri:'team-bkn',awayUri:'team-bos'}}}}),game,m)]),false,'FOX row orientation cannot be guessed');
+test('independent scoreboards cross-check one another and independently clear the contract line',()=>{
+  const market={event_ticker:'KXNBATOTAL-TEST',floor_strike:43.5};
+  assert.equal(scoreAgreement(game,[espnMatches(espn(),game,m),foxMatches(fox(),game,m)],market),true);
+  assert.equal(scoreAgreement(game,[espnMatches(espn(),game,m),foxMatches(fox(25),game,m)],market),false,'one conflicting feed vetoes');
+  assert.equal(scoreAgreement(game,[espnMatches(espn(25),game,m),[]],market),true);
+  assert.equal(scoreAgreement(game,[espnMatches(espn(),game,m),[]],market),true);
+  assert.equal(scoreAgreement(game,[[],[]],market),false,'no coverage');
+  assert.equal(scoreAgreement(game,[espnMatches(espn(20,24),game,m),[]],market),true,'an independently verified swapped score is not vetoed by Kalshi');
+  assert.equal(scoreAgreement(game,[espnMatches(espn(24,20,{date:new Date(Date.now()-86400000).toISOString()}),game,m),[]],market),false,'wrong fixture time');
+  assert.equal(scoreAgreement(game,[espnMatches(espn(24,20,{status:{type:{state:'pre'},period:1,displayClock:'05:00'}}),game,m),[]],market),false,'scheduled score');
+  assert.equal(scoreAgreement(game,[[],foxMatches(fox(24,20,{eventStatus:3}),game,m)],market),false,'final score cannot confirm a live game');
+  assert.equal(scoreAgreement(game,[espnMatches(espn(24,20,{status:{type:{state:'in'},period:1,displayClock:'11:00'}}),game,m),[]],market),true,'provider clock differences do not veto matching team scores');
+  assert.equal(scoreAgreement(game,[espnMatches({events:[...espn().events,...espn().events]},game,m),[]],market),false,'ambiguous duplicate');
+  assert.equal(scoreAgreement(game,[[],foxMatches(fox(24,20,{entityLink:{layout:{tokens:{homeUri:'team-bkn',awayUri:'team-bos'}}}}),game,m)],market),false,'FOX row orientation cannot be guessed');
 });
 
 test('every over preflight needs an exact independent source; missing data fails closed',async()=>{
+  const market={event_ticker:'KXNBATOTAL-TEST',floor_strike:43.5};
   const fetcher=async url=>({ok:true,json:async()=>url.includes('espn.com')?espn():fox()});
-  assert.equal(await verifyIndependentOver(game,m,{fetcher}),true);
-  assert.equal(await verifyIndependentOver(game,m,{fetcher:async url=>({ok:true,json:async()=>url.includes('espn.com')?espn(0,0):fox(0,0)})}),false);
-  assert.equal(await verifyIndependentOver(game,m,{fetcher:async()=>{throw Error('provider unavailable')}}),false);
+  assert.equal(await verifyIndependentOver(game,m,{fetcher,market}),true);
+  assert.equal(await verifyIndependentOver(game,m,{market,fetcher:async url=>({ok:true,json:async()=>url.includes('espn.com')?espn(0,0):fox(0,0)})}),false);
+  assert.equal(await verifyIndependentOver(game,m,{market,fetcher:async()=>{throw Error('provider unavailable')}}),false);
   const unknown={...m,type:'hockey_match',details:{league:'KHL'}};
   const unknownGame=gameState(unknown,{details:{status:'live',home_score:2,away_score:1}});
-  assert.equal(await verifyIndependentOver(unknownGame,unknown,{fetcher}),false,'unmapped league cannot borrow NBA scores');
+  assert.equal(await verifyIndependentOver(unknownGame,unknown,{fetcher,market}),false,'unmapped league cannot borrow NBA scores');
   const soccer={id:'cup-game',type:'soccer_match',title:'Dolomiti Bellunesi vs Desenzano',start_date:start};
   const soccerGame=gameState(soccer,{details:{status:'live',home_score:1,away_score:0,time:"20'"}});
-  assert.equal(await verifyIndependentOver(soccerGame,soccer,{fetcher}),false,'the incident game is absent from both providers');
-  assert.equal(await verifyIndependentOverDecision(soccerGame,soccer,{fetcher}),null,'no exact independent fixture permits only the restricted fallback');
-  assert.equal(await verifyIndependentOverDecision(game,m,{fetcher:async url=>({ok:true,json:async()=>url.includes('espn.com')?espn(0,0):fox(0,0)})}),false,'a confirmed contradiction cannot fall back');
+  assert.equal(await verifyIndependentOver(soccerGame,soccer,{fetcher,market}),false,'the incident game is absent from both providers');
+  assert.equal(await verifyIndependentOverDecision(soccerGame,soccer,{fetcher,market}),null,'no exact independent fixture permits only the restricted fallback');
+  assert.equal(await verifyIndependentOverDecision(game,m,{market,fetcher:async url=>({ok:true,json:async()=>url.includes('espn.com')?espn(0,0):fox(0,0)})}),false,'a confirmed contradiction cannot fall back');
 });
 
 test('FOX soccer home team may be the upper row',()=>{
   const fixture={id:'milan-game',type:'soccer_match',title:'AC Milan vs Bologna',start_date:start};
   const state=gameState(fixture,{details:{status:'live',home_score:2,away_score:1,time:"35'",home_team_name:'AC Milan',away_team_name:'Bologna'}});
   const data={sectionList:[{events:[{eventTime:start,eventStatus:1,statusLine:"35'",entityLink:{layout:{tokens:{homeUri:'milan',awayUri:'bologna'}}},upperTeam:{uri:'milan',longName:'AC Milan',score:2},lowerTeam:{uri:'bologna',longName:'Bologna',score:1}}]}]};
-  assert.equal(scoreAgreement(state,[[],foxMatches(data,state,fixture)]),true);
+  assert.equal(scoreAgreement(state,[[],foxMatches(data,state,fixture)],{event_ticker:'KXSOCCERTOTAL-TEST',floor_strike:2.5}),true);
 });
 test('a period total requires an independent matching period breakdown, not just game scores',()=>{
   const board={...game,periodScores:[{number:1,home:14,away:10}]};
-  const contract={event_ticker:'KXNBA1QTOTAL-26OCT28BOSBKN'};
+  const contract={event_ticker:'KXNBA1QTOTAL-26OCT28BOSBKN',floor_strike:23.5};
   const same={source:'ESPN',home:24,away:20,live:true,clockOk:true,periods:[{number:1,home:14,away:10}]};
   assert.equal(scoreAgreement(board,[[same],[]],contract),true);
-  assert.equal(scoreAgreement(board,[[{...same,periods:[{number:1,home:13,away:11}]}],[]],contract),false);
+  assert.equal(scoreAgreement(board,[[{...same,periods:[{number:1,home:13,away:10}]}],[]],contract),false);
   assert.equal(scoreAgreement(board,[[],[{source:'FOX Sports',home:24,away:20,live:true,clockOk:true}]],contract),false);
 });
 test('player point and PRA overs require the named ESPN athlete and matching boxscore stat',async()=>{
@@ -244,7 +249,7 @@ test('FOX is queried only when ESPN is unavailable, never as a veto of confirmed
     if(url.includes('cdn.nba.com')||url.includes('cbssports.com')||url.includes('yahoo.com')||url.includes('espn.com'))throw Error('unavailable');
     return {ok:true,json:async()=>fox(85,96,{statusLine:'09:47'})};
   };
-  assert.equal(await verifyIndependentOver(state,m,{market:{event_ticker:'KXNBATOTAL-DATE'},fetcher:fallback}),true);
+  assert.equal(await verifyIndependentOver(state,m,{market:{event_ticker:'KXNBATOTAL-DATE',floor_strike:179.5},fetcher:fallback}),true);
 });
 test('WTA game totals need the exact ESPN match and all set games',async()=>{
   const milestone={id:'wta',title:'Rakhimova vs Alexandrova',type:'tennis_tournament_singles',start_date:start,details:{tour:'WTA'}};
@@ -265,6 +270,6 @@ test('women college basketball uses its own ESPN scoreboard for independent veri
   const state=gameState(milestone,{details:{status:'live',home_score:24,away_score:20,period:1,home_team_name:'BOS Celtics',away_team_name:'BKN Nets'}});
   assert.equal(state.sport,'NCAAW');
   const urls=[];
-  assert.equal(await verifyIndependentOver(state,milestone,{fetcher:async url=>{urls.push(url);return {ok:true,json:async()=>espn()}}}),true);
+  assert.equal(await verifyIndependentOver(state,milestone,{market:{event_ticker:'KXNCAAWBTOTAL-TEST',floor_strike:43.5},fetcher:async url=>{urls.push(url);return {ok:true,json:async()=>espn()}}}),true);
   assert.ok(urls.some(url=>url.includes('womens-college-basketball')));
 });

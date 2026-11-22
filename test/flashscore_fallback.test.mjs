@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {flashscoreCompetition,parseFlashscoreFeed,loadFlashscore} from '../src/flashscore.mjs';
 import {fetchIndependentMatchScore} from '../src/independent_match_score.mjs';
 import {verifiedSourceReady,authoritativeGameState} from '../src/external_authority.mjs';
-import {verifyIndependentOverDecision} from '../src/score_verification.mjs';
+import {verifyIndependentOverDecision,verifyFlashscoreOver,scoreAgreement} from '../src/score_verification.mjs';
 
 const start='2026-11-22T16:00:00Z';
 const milestone={id:'kalshi-khl-1',title:'Spartak Moscow vs HC Sochi',start_date:start,details:{league:'KHL'}};
@@ -72,7 +72,7 @@ test('previous-day UTC-crossing hockey games use their actual Flashscore local s
    urls.push(url);return response(feed());
  }});
  assert.equal(urls.length,1);
- assert.match(urls[0],/f_4_-1_-5_en_1$/);
+ assert.match(urls[0],/f_4_-1_-5_en_1\?t=\d+$/);
 });
 test('non-NHL Kalshi hockey titles list away first; fallback resolves home and away without reversing points',async()=>{
  const m={...milestone,title:'Utica Comets vs Cleveland Monsters',details:{league:'AHL'}};
@@ -109,4 +109,54 @@ test('confirmed J2 soccer gap retries its real ESPN scoreboard once before Flash
  assert.equal(urls.filter(u=>u.includes('espn.com')).length,6);
  assert.equal(urls.filter(u=>u.includes('flashscore.ninja')).length,1);
  assert.equal(urls.some(u=>u.includes('foxsports.com')||u.includes('sportradar.com')),false);
+});
+
+test('Flashscore requests an uncached current board but still rejects stale provider headers',async()=>{
+ const league={...milestone,details:{league:'KHL'}};
+ const requests=[];
+ const fetcher=async(url)=>{requests.push(url);return {ok:true,headers:new Headers({age:'0'}),text:async()=>feed()};};
+ const result=await loadFlashscore(game,league,{fetcher,now:Date.parse(start)});
+ assert.equal(result?.length,1);
+ assert.match(requests[0],/\?t=\d+$/,'public scoreboard must be explicitly refreshed before relying on its scores');
+ const stale=await loadFlashscore(game,league,{fetcher:async()=>({ok:true,headers:new Headers({age:'25'}),text:async()=>feed()})});
+ assert.equal(stale,null);
+});
+
+test('verified league-specific aliases match independent Flashscore goals despite deliberately incorrect Kalshi scores',async()=>{
+ const m={id:'polish',title:'GKS Tychy vs Zaglebie Sosnowiec',start_date:start,details:{league:'Polska Hokej Liga'}};
+ const g={id:'polish',type:'hockey_tournament',sport:'Hockey',competition:'Polska Hokej Liga',verifiedLive:true,
+  homeName:'',awayName:'',period:3,home:99,away:99,scoreKnown:true};
+ const source=`SA÷4¬~ZA÷POLAND: Polish Hockey League¬ZL÷/hockey/poland/polish-hockey-league/¬~AA÷PolishA1¬AD÷${Date.parse(start)/1000}¬AB÷2¬AC÷16¬AE÷Zaglebie Sosnowiec¬AF÷Tychy¬AG÷1¬AH÷3¬BA÷0¬BB÷1¬BC÷1¬BD÷1¬BE÷0¬BF÷1¬`;
+ const proof=await fetchIndependentMatchScore(g,m,{espnFeed:null,fetcher:async()=>({ok:true,headers:new Headers({age:'0'}),text:async()=>source})});
+ assert.equal(proof?.source,'Flashscore');
+ assert.deepEqual([proof.home,proof.away],[1,3]);
+ const external=authoritativeGameState(g,proof);
+ assert.deepEqual([external.home,external.away],[1,3], 'external goals replace, never inherit, Kalshi goals');
+ assert.deepEqual([external.kalshiScore.home,external.kalshiScore.away],[99,99]);
+});
+
+test('independent providers veto one another on conflicting scores without consulting Kalshi goals',()=>{
+ const scoreGame={...game,home:99,away:99};
+ const total={event_ticker:'KXKHLTOTAL-TEST',floor_strike:3.5};
+ const espn={source:'ESPN',home:3,away:1,live:true};
+ const fox={source:'FOX Sports',home:2,away:2,live:true};
+ assert.equal(scoreAgreement(scoreGame,[[espn]],total),true,'independent 4 goals clear the line');
+ assert.equal(scoreAgreement(scoreGame,[[espn],[fox]],total),false,'two conflicting independent scores veto');
+});
+
+test('missing Kalshi score cannot prevent an independently identified live Flashscore fixture from supplying goals',async()=>{
+ const unscored={...game,home:NaN,away:NaN,scoreKnown:false};
+ const proof=await fetchIndependentMatchScore(unscored,milestone,{espnFeed:null,fetcher:async()=>response(feed())});
+ assert.equal(proof?.source,'Flashscore');
+ assert.deepEqual([proof.home,proof.away],[5,2]);
+ const score=authoritativeGameState(unscored,proof);
+ assert.deepEqual([score?.home,score?.away],[5,2]);
+ const over=await verifyFlashscoreOver(unscored,milestone,{market:{event_ticker:'KXKHLTOTAL-TEST',floor_strike:6.5},fetcher:async()=>response(feed())});
+ assert.equal(over,true);
+});
+
+test('independently attributed period goals can clear their line when Kalshi has no period scores',()=>{
+ const withoutKalshiPeriods={...game,home:NaN,away:NaN,periodScores:[]};
+ const source={source:'Flashscore',home:5,away:2,live:true,periods:[{number:1,home:2,away:1},{number:2,home:2,away:1},{number:3,home:1,away:0}]};
+ assert.equal(scoreAgreement(withoutKalshiPeriods,[[source]],{event_ticker:'KXKHL3PTOTAL-TEST',floor_strike:0.5}),true);
 });

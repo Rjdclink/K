@@ -248,6 +248,11 @@ export function foxMatches(data,game,milestone,{identityOnly=false}={}){
   }));
 }
 export function scoreAgreement(game,bySource,market,{minimumOverValue,onOverValue}={}){
+  // Only independent feeds decide scores. When two identified providers
+  // disagree, neither the Kalshi display nor a favorable total can break the tie.
+  const independent=(bySource||[]).flat();
+  if(independent.length>1&&independent.some(p=>
+    p.home!==independent[0].home||p.away!==independent[0].away))return false;
   const segment=String(market?.event_ticker||'').split('-')[0].match(/([1-9])(?:Q|P|H|INNING)(?:TEAM)?TOTAL$/);
   const tennisTotal=/^KX(?:ATP|WTA)GTOTAL$/.test(String(market?.event_ticker||'').split('-')[0]);
   const closeout=basketballCloseoutEntry(game)&&/win|winner|victory/i.test(`${market?.title||''} ${market?.rules_primary||''}`);
@@ -261,9 +266,11 @@ export function scoreAgreement(game,bySource,market,{minimumOverValue,onOverValu
     const player=Boolean(playerOverSpec(game,market));
     let expected=game,actual=m;
     if(segment){
-      expected=periodValue(game,market);
+      // Period scoring comes exclusively from the independently attributed
+      // source periods, not from Kalshi's optional period breakdown.
       actual=periodValue({type:game.type,sport:game.sport,periodScores:m.periods},market);
-      if(!expected||!actual)continue;
+      if(!actual)continue;
+      expected={};
     }
     if(tennisTotal&&(!Number.isInteger(m.totalGames)||m.totalGames<0))return false;
     if(!externalScoresQualify(game,m,market,{expected,actual,player,
@@ -344,7 +351,7 @@ async function json(url,fetcher){
 }
 async function verifyExistingOver(game,milestone,{fetcher=fetch,cache,market,source='ESPN',unavailableReasons=[],minimumOverValue,onOverValue}={}){
   const start=Date.parse(milestone.start_date||'');
-  if(!Number.isFinite(start)||!game.scoreKnown)return null;
+  if(!Number.isFinite(start))return null; // ESPN supplies its own score.
   const {espn,fox}=feeds(game,milestone);
   if(!espn&&!fox)return null;
   const dates=dateCandidates(start);
@@ -465,7 +472,7 @@ async function verifyNbaOver(game,milestone,{fetcher=fetch,market,minimumOverVal
 // A Flashscore fallback exists only for a statically confirmed ESPN coverage
 // gap. Unavailability is null; contradiction is false and vetoes every fallback.
 export async function verifyFlashscoreOver(game,milestone,options={}){
-  if(!flashscoreCompetition(game,milestone)||!game?.scoreKnown)return null;
+  if(!flashscoreCompetition(game,milestone))return null; // Flashscore supplies its own goals.
   const {market,minimumOverValue,onOverValue}=options;
   const readings=await loadFlashscore(game,milestone,options);
   if(!Array.isArray(readings))return null;

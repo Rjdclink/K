@@ -108,8 +108,8 @@ test('FOX fallback uses league calendar segments, football week segments and the
     const game={...captured.game,sport,type,period,homeName:'Alpha',awayName:'Beta',soccerMinute:75};
     const board={sectionList:[{events:[{eventTime:captured.milestone.start_date,eventStatus:1,statusLine:feed==='soccer'?"75'":`${period}ND 2:31`,
       entityLink:{layout:{tokens:{homeUri:'a',awayUri:'b'}}},upperTeam:{uri:'b',imageAltText:'Beta',score:10},lowerTeam:{uri:'a',imageAltText:'Alpha',score:10}}]}]};
-    const urls=[];
-    const result=await verifyIndependentOverDecision(game,captured.milestone,{fetcher:async url=>{
+    const urls=[],market={event_ticker:'KXTESTTOTAL-TEST',floor_strike:19.5};
+    const result=await verifyIndependentOverDecision(game,captured.milestone,{market,fetcher:async url=>{
       if(!url.includes('foxsports.com'))throw Error('preferred provider unavailable');
       urls.push(url);
       if(url.includes('/league/scores?'))return {ok:true,json:async()=>({currentSelectionId:'2026-8-1'})};

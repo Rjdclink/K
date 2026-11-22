@@ -29,9 +29,9 @@ export function externalScoresQualify(game,reading,market,{expected=game,actual=
     return qualifies(actual.home+actual.away,expected.home+expected.away);
   }
   if(minimumOverValue!==undefined)return false;
-  if(actual.home===expected.home&&actual.away===expected.away)return true;
+  // Agreement with Kalshi's displayed score is never verification.
   if(/^(?:draw|tie)(?:\b|\/)/i.test(String(market?.title||market?.yes_sub_title||'')))
-    return expected.home===expected.away&&actual.home===actual.away;
+    return actual.home===actual.away;
   if(!/win|winner|victory/i.test(`${market?.title||''} ${market?.rules_primary||''}`))return false;
   const side=selectedTeamSide(game,market);
   if(!side)return false;
