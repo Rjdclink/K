@@ -147,7 +147,7 @@ export function marketEntryProximity(game){
     if(period===2&&game.soccerMinute>90&&game.verifiedLive&&game.clockRunning===true)
       return -20000;
     if(period===1){remaining=(45-game.soccerMinute)*60;target=360;}
-    else if(period===2){remaining=(90-game.soccerMinute)*60;target=margin>=3?600:660;}
+    else if(period===2){remaining=(90-game.soccerMinute)*60;target=margin>=4?1200:margin>=3?900:660;}
     else return Infinity;
   }else if(/hockey/.test(type)){
     if([1,2].includes(period))target=360;

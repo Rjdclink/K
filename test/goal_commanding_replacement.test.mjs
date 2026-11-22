@@ -25,15 +25,17 @@ test('NHL commanding lead replaces legacy 6:45/3:45 with strict 10:00 +3 and 6:0
  assert.match(leadWatchReason(fixture('hockey_match','9:59',3).g),/10:00/);
  assert.match(leadWatchReason(fixture('hockey_match','5:59',2).g),/6:00/);
 });
-test('soccer commanding lead replaces legacy 15:00/3:30 with strict 10:00 +3 and 6:00 +2, no assumed stoppage',()=>{
- for(const [clock,margin,allowed] of [["79:59'",3,false],["80'",3,false],["80:01'",3,true],["84'",2,false],["84:01'",2,true],["86'",2,true],["90'",3,false],["93'",3,false],["83'",1,false]]){
+test('soccer commanding lead permits +4 strictly under 20:00, +3 under 15:00, +2 under 6:00, with no assumed stoppage',()=>{
+ for(const [clock,margin,allowed] of [["69:59'",4,false],["70:00'",4,false],["70:01'",4,true],["74:59'",3,false],["75:00'",3,false],["75:01'",3,true],["84'",2,false],["84:01'",2,true],["86'",2,true],["90'",4,false],["93'",4,false],["83'",1,false]]){
   const {g,market}=fixture('soccer_match',clock,margin);
   assert.equal(Boolean(goalCommandingLeadEntry(g)),allowed,clock+' +'+margin);
   assert.equal(Boolean(leadSignal(g,market)),allowed,'winner signal '+clock+' +'+margin);
   assert.equal(endWindow(g),allowed,'endWindow '+clock+' +'+margin);
   assert.equal(soccerWinnerWindowOpen(g),margin<2||allowed && (90-g.soccerMinute)*60>5,'dispatch '+clock+' +'+margin);
  }
- assert.match(leadWatchReason(fixture('soccer_match',"80:01'",3).g),/10:00/);
+ assert.match(leadWatchReason(fixture('soccer_match',"69:00'",4).g),/20:00/);
+ assert.match(leadWatchReason(fixture('soccer_match',"74:00'",3).g),/15:00/);
+ assert.match(leadWatchReason(fixture('soccer_match',"75:01'",3).g),/late winner rule reached/);
  assert.match(leadWatchReason(fixture('soccer_match',"84:01'",2).g),/6:00/);
 });
 test('all hockey and soccer commanding winner allocation paths cap at 15% with zero purchase minimum',()=>{
