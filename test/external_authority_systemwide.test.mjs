@@ -46,7 +46,7 @@ test('wrong fixture, malformed score, stale source, mismatched period and invali
   {...proof(120,94),period:3},{...proof(120,94),periods:[{number:1,home:0,away:0}]}])
   assert.equal(authoritativeGameState(game,bad,now),null,JSON.stringify(bad));
  const verified=authoritativeGameState(game,proof(120,94),now);
- assert.equal(verifiedSourceReady(verified,now+12000),false);
+ assert.equal(verifiedSourceReady(verified,now+16000),false);
  assert.equal(verifiedSourceReady(verified,now+3000),true);
 });
 test('a validated external player stat controls threshold, not a conflicting Kalshi player stat',()=>{

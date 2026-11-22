@@ -290,7 +290,8 @@ async function sharedCandidateScoreboardFetch(url,opts={}){
   const task=(async()=>{
    const response=await fetch(url,{...opts,cache:'no-store'});
    if(!response.ok)throw Error('External scoreboard unavailable: '+response.status);
-   return response.json();
+   const flashscore=url.startsWith('https://global.flashscore.ninja/');
+   return {data:flashscore?await response.text():await response.json(),headers:response.headers};
   })();
   entry={task,at:now};candidateScoreboards.set(url,entry);
   if(candidateScoreboards.size>180){
@@ -300,8 +301,8 @@ async function sharedCandidateScoreboardFetch(url,opts={}){
   }
  }
  try{
-  const data=await entry.task;
-  return {ok:true,json:async()=>data};
+  const {data,headers}=await entry.task;
+  return {ok:true,headers,json:async()=>data,text:async()=>data};
  }catch(error){
   if(candidateScoreboards.get(url)===entry)candidateScoreboards.delete(url);
   throw error;
@@ -4632,7 +4633,7 @@ async function scanVariablePlayerOvers(games,events,signalSink=null){
   if(!live())return 0;
   const candidates=[];
   for(const {milestone,state} of games){
-    if(!state?.verifiedLive||!state.scoreConsistent||!playerPropEarlyWindow(state))continue;
+    if(!state?.verifiedLive||!playerPropEarlyWindow(state))continue;
     for(const ticker of linkedEventTickers(milestone)){
       const event=events.get(ticker);
       if(event?.category!=='Sports')continue;
@@ -4674,7 +4675,10 @@ async function scanVariablePlayerOvers(games,events,signalSink=null){
         Number.isFinite(firstAt)&&firstAt>0&&firstAt<=Date.now()&&
         Date.now()-firstAt<6*3600000);
       if(!valid){
-        const proof=await verifyIndependentVariableOver(c.state,c.milestone,c.market);
+        // Share each live provider scoreboard for at most two seconds within
+        // candidate discovery; final trading proof remains an uncached read.
+        const proof=await verifyIndependentVariableOver(c.state,c.milestone,c.market,
+          typeof sharedCandidateScoreboardFetch==='function'?{fetcher:sharedCandidateScoreboardFetch}:{});
         if(!proof){report(c,'First ESPN verification and retry (or conditional FOX fallback) unavailable or contradictory');continue;}
         await pool.query('INSERT INTO variable_player_over_windows '+
           '(market_ticker,game_id,contract_key,player_id,metric,first_requested_at,first_proof) '+
@@ -4741,7 +4745,7 @@ async function scanVariablePlayerOvers(games,events,signalSink=null){
       const proof=await verifyIndependentVariableOver(fresh,c.milestone,seller);
       const verifiedAt=Date.now();
       if(!proof||!variableProofValid(first,proof,fresh,seller,verifiedAt)||
-        verifiedAt-fresh.observedAt>10000){
+        verifiedAt-fresh.observedAt>15000){
         report(c,'Entry blocked: second independent check, 3:30 interval or later play failed');
         continue;
       }

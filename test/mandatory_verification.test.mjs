@@ -13,11 +13,11 @@ test('an internal passed record or a large cushion never substitutes for indepen
   assert.throws(()=>assertExternalPurchase('/communications/rfqs/R/quotes/Q/accept','PUT',{accepted_side:'no'},undefined,now));
   assert.doesNotThrow(()=>assertExternalPurchase('/portfolio/events/orders','POST',{ticker:'OVER',side:'ask',reduce_only:true},undefined,now));
 });
-test('the dispatch gate requires fresh proof of the same contract and audit record within thirty seconds',()=>{
+test('the dispatch gate requires fresh proof of the same contract and audit record within fifteen seconds',()=>{
   const g={...game};rememberIndependentEntry(g,market,'external',now);
   const entries=[{game:g,market}],body={ticker:'OVER',side:'bid'};
-  assert.doesNotThrow(()=>assertExternalPurchase('/portfolio/events/orders','POST',body,entries,now+30000));
-  assert.throws(()=>assertExternalPurchase('/portfolio/events/orders','POST',body,entries,now+30001));
+  assert.doesNotThrow(()=>assertExternalPurchase('/portfolio/events/orders','POST',body,entries,now+15000));
+  assert.throws(()=>assertExternalPurchase('/portfolio/events/orders','POST',body,entries,now+15001));
   assert.throws(()=>assertExternalPurchase('/portfolio/events/orders','POST',{...body,ticker:'OTHER'},entries,now));
   assert.throws(()=>assertExternalPurchase('/portfolio/events/orders','POST',body,[{game:g,market:{...market,rules_secondary:'Changed'}}],now));
   assert.equal(independentEntryValid({...g,verificationId:'internal'},market,now),false);

@@ -6,13 +6,17 @@ export function sportsContractKey(game,market){
     cap:market.cap_strike,strikeType:market.strike_type,close:market.close_time,custom:market.custom_strike||{},collection:market.mve_collection_ticker,legs:market.mve_selected_legs}));
 }
 export function rememberIndependentEntry(game,market,verificationId,requestedAt,overValue){
-  game.independentEntry={contractKey:sportsContractKey(game,market),verificationId,requestedAt,overValue};
+  // A newly stored proof cannot make an older independently sourced score new.
+  const sourceAt=Number(game.externalScore?.checkedAt);
+  const proofAt=Number.isFinite(sourceAt)&&sourceAt>0?Math.min(sourceAt,requestedAt):requestedAt;
+  game.independentEntry={contractKey:sportsContractKey(game,market),verificationId,
+    requestedAt:proofAt,overValue};
 }
 export function independentEntryValid(game,market,now=Date.now()){
   const proof=game?.independentEntry;
   return Boolean(proof&&market&&proof.verificationId===game.verificationId&&
     proof.contractKey===sportsContractKey(game,market)&&Number.isFinite(proof.requestedAt)&&
-    now>=proof.requestedAt&&now-proof.requestedAt<=30000);
+    now>=proof.requestedAt&&now-proof.requestedAt<=15000);
 }
 export function assertExternalPurchase(path,method,body,entries,now=Date.now()){
   const route=path.split('?')[0];

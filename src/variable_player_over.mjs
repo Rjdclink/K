@@ -3,6 +3,7 @@ import {espnMatches,foxMatches,foxPlayerStat,playerStatValue} from './score_veri
 import {espnRetryThenFox} from './source_fallback.mjs';
 import {espnScoreboardUrls} from './espn_scoreboards.mjs';
 import {sportsContractKey} from './entry_verification.mjs';
+import {scoreFeedAgeMs} from './score_feed_freshness.mjs';
 
 export const VARIABLE_CONFIRM_DELAY_MS=210000;
 const groups={
@@ -28,16 +29,34 @@ const familyFor=game=>/football/.test(game?.type||'')?'football':
   /basketball/.test(game?.type||'')?'basketball':
   /baseball/.test(game?.type||'')?'baseball':null;
 
+// Kalshi identifies the named contract and strike, not the statistic.
+// Missing exchange player_stats must not suppress a valid ESPN player reading.
+function contractedPlayer(game,market){
+  const metric=String(market?.event_ticker||'').split('-')[0]
+    .match(/(PASSYDS|RUSHYDS|RECYDS|PTS|PRA|RBI)$/)?.[1];
+  const family=familyFor(game);
+  if(!metric||!family)return null;
+  const keys=Object.entries(market?.custom_strike||{})
+    .filter(([key,id])=>key.endsWith('_player')&&typeof id==='string'&&id.length>0);
+  if(keys.length!==1||keys[0][0]!==family+'_player')return null;
+  const name=String(market?.yes_sub_title||market?.title||'').split(':')[0].trim();
+  const line=Number(market?.floor_strike);
+  const shown=String(market?.yes_sub_title||market?.title||'').match(/:\s*(\d+)\s*\+/);
+  if(!name||!shown||market?.floor_strike==null||!Number.isFinite(line)||
+    Number(shown[1])!==line+.5)return null;
+  const known=playerOverSpec(game,market);
+  return {id:keys[0][1],name,metric,line,value:known?.value??null};
+}
+
 export function variablePlayerOverSpec(game,market,now=Date.now()){
-  const player=playerOverSpec(game,market),rule=groups[player?.metric],family=familyFor(game);
+  const player=contractedPlayer(game,market),rule=groups[player?.metric],family=familyFor(game);
   if(!player||!rule?.sports.includes(game.sport)||!family||!playerPropEarlyWindow(game)||
-    !game.verifiedLive||!game.scoreKnown||!game.scoreConsistent||!game.periodConsistent||
+    !game.verifiedLive||!game.periodConsistent||
     game.feedId!==game.id||!Number.isFinite(game.observedAt)||game.observedAt>now||
-    now-game.observedAt>10000||!Number.isInteger(game.home)||!Number.isInteger(game.away)||
+    now-game.observedAt>15000||
     !['active','open'].includes(market.status)||market.result&&!['','not_determined'].includes(String(market.result))||
     !['greater','greater_than'].includes(market.strike_type)||
-    !String(market.ticker||'').startsWith(String(market.event_ticker||'')+'-')||
-    !Number.isInteger(player.value))return null;
+    !String(market.ticker||'').startsWith(String(market.event_ticker||'')+'-'))return null;
   const n=Math.round(player.line+.5),metric=rule.label;
   const title=String(market.title||''),primary=String(market.rules_primary||'');
   const verboseTitle=new RegExp('^'+escapeRx(player.name)+':\\s*'+n+'\\+\\s*'+escapeRx(metric)+'$','i').test(title);
@@ -80,7 +99,7 @@ export function laterPlayConfirmed(first,second,gameFamily){
 
 export function variableProofValid(first,second,game,market,now=Date.now()){
   const initial=Number(first?.requestedAt),final=Number(second?.requestedAt);
-  const player=playerOverSpec(game,market);
+  const player=variablePlayerOverSpec(game,market,now)?.player;
   const key=sportsContractKey(game,market);
   return Boolean(player&&first?.contractKey===key&&second?.contractKey===key&&
     first?.source&&first.source===second.source&&
@@ -89,7 +108,7 @@ export function variableProofValid(first,second,game,market,now=Date.now()){
     first.metric===player.metric&&second.metric===player.metric&&
     first.playerId===player.id&&second.playerId===player.id&&
     Number.isFinite(initial)&&Number.isFinite(final)&&initial>=0&&
-    final-initial>=VARIABLE_CONFIRM_DELAY_MS&&final<=now&&now-final<=10000&&
+    final-initial>=VARIABLE_CONFIRM_DELAY_MS&&final<=now&&now-final<=15000&&
     Number.isInteger(first.playerValue)&&first.playerValue>player.line&&
     Number.isInteger(second.playerValue)&&second.playerValue>=first.playerValue&&
     second.playerValue>player.line&&
@@ -185,9 +204,12 @@ export async function verifyIndependentVariableOver(game,milestone,market,{fetch
   if(!Number.isFinite(start))return null;
   const dates=[start,start-86400000,start+86400000]
     .map(t=>new Date(t).toISOString().slice(0,10).replaceAll('-',''));
+  let maxSourceAgeMs=0;
   const request=async url=>{
     const r=await fetcher(url,{signal:AbortSignal.timeout(6500),cache:'no-store'});
-    if(!r.ok)throw Error('Source unavailable');
+    const age=scoreFeedAgeMs(r);
+    if(!r.ok||age===null)throw Error('Source unavailable or stale');
+    maxSourceAgeMs=Math.max(maxSourceAgeMs,age);
     return r.json();
   };
   const espn=async()=>{
@@ -238,7 +260,7 @@ export async function verifyIndependentVariableOver(game,milestone,market,{fetch
     }
     return null;
   };
-  const requestedAt=Date.now();
   const decision=await espnRetryThenFox({espn,fox});
-  return decision&&decision!==false?{...decision,requestedAt}:null;
+  // The proof age begins at the oldest source representation, not at local parsing time.
+  return decision&&decision!==false?{...decision,requestedAt:Date.now()-maxSourceAgeMs}:null;
 }

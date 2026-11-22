@@ -131,7 +131,7 @@ test('soccer first-half NO at four or more goals requires a 3.5-goal cushion',()
 test('first-half NO entry uses the independent ESPN minute rather than the exchange countdown',async()=>{
  const g=state("42'",0,1),m=market(3.5);
  const prove=async minute=>verifyIndependentSoccerFirstHalfNo(g,milestone,m,{
-  fetcher:async()=>({ok:true,headers:{get:()=>0},json:async()=>board(minute,0,1)})
+  fetcher:async()=>({ok:true,headers:{get:name=>name.toLowerCase()==='age'?'0':null},json:async()=>board(minute,0,1)})
  });
  const early=await prove("39'"),late=await prove("43'");
  assert.equal(early?.elapsedMinute,39);
