@@ -96,3 +96,11 @@ test('bounded near-entry checks reserve capacity for each of the four sport fami
  assert.deepEqual([...new Set(selected.map(g=>g.state.type))].sort(),['basketball_game','football_game','hockey_game','soccer_game']);
  assert.ok(prioritizeNearCheckGames(fixtures,8,1).some(g=>g.milestone.id.endsWith('-2')));
 });
+
+test('two-minute discovery trigger executes only one comprehensive scan per invocation',()=>{
+ const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
+ const route=source.slice(source.indexOf("if(req.method==='POST'&&(url.pathname==='/tick'||url.pathname==='/tick/discovery'))"),
+   source.indexOf("if(req.method==='GET'&&url.pathname==='/login')"));
+ assert.match(route,/while\(Date\.now\(\)<until&&cycles<1\)/,
+  'discovery must not run another full scan 3 seconds after a fast completion');
+});
