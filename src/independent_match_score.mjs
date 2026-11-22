@@ -1,4 +1,4 @@
-import {espnMatches,foxMatches,sameFixture} from './score_verification.mjs';
+import {espnMatches,foxMatches,sameFixture,contractBoundFixtureIdentity} from './score_verification.mjs';
 import {loadSportradar} from './sportradar.mjs';
 import {espnScoreboardUrls} from './espn_scoreboards.mjs';
 import {espnRetryThenFox} from './source_fallback.mjs';
@@ -91,10 +91,11 @@ const select=(boards,game,milestone,source,knownId=null)=>{
 
 // Returns verified reading, false for matched score contradiction/ambiguous
 // identity, or null for coverage/unavailability. Never authorizes a trade.
-export async function fetchIndependentMatchScore(game,milestone,{fetcher=fetch,espnFeed,foxFeed=null,fixtureCache=activeFixtureCache,sportradarLoad=loadSportradar}={}){
+export async function fetchIndependentMatchScore(game,milestone,{fetcher=fetch,espnFeed,foxFeed=null,fixtureCache=activeFixtureCache,sportradarLoad=loadSportradar,market=null}={}){
   if(!game?.verifiedLive||!Number.isInteger(game.home)||!Number.isInteger(game.away)||
     !espnFeed||!Number.isFinite(Date.parse(milestone?.start_date||'')))return null;
   const dates=daysFor(Date.parse(milestone.start_date));
+  const identifiedGame=contractBoundFixtureIdentity(game,milestone,market);
   const known=new Map();
   const query=async(urls,source)=>{
     let id=known.get(source);
@@ -104,7 +105,7 @@ export async function fetchIndependentMatchScore(game,milestone,{fetcher=fetch,e
       known.set(source,id||null);
     }
     const results=await Promise.allSettled(urls.map(u=>pull(u,fetcher)));
-    const reading=select(results.filter(r=>r.status==='fulfilled').map(r=>r.value),game,milestone,source,id);
+    const reading=select(results.filter(r=>r.status==='fulfilled').map(r=>r.value),identifiedGame,milestone,source,id);
     if(reading&&reading!==false&&fixtureCache){
       try{if(await fixtureCache.put(game,milestone,source,reading.eventId)===false)return false}
       catch{} // The current independently matched scoreboard remains authoritative.

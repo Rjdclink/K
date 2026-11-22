@@ -5,13 +5,26 @@ const aliases=t=>[t?.name,t?.market,t?.alias,t?.abbreviation,`${t?.alias||t?.abb
 const clean=s=>String(person(s)||'').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]/g,'');
 const nextRequest=new Map();
 const collegeHierarchy=new Map();
-export async function sportradarJson(url,{fetcher=fetch,apiKey=process.env.SPORTRADAR_API_KEY,minInterval=1100}={}){
-  const product=new URL(url).pathname.split('/')[1],now=Date.now(),slot=Math.max(now,nextRequest.get(product)||0);
+// One worker respects a provider-wide quota cooldown across every sport.
+// No missing independent score can be marked verified during cooldown.
+const sportradarQuota={blockedUntil:0};
+export async function sportradarJson(url,{fetcher=fetch,apiKey=process.env.SPORTRADAR_API_KEY,minInterval=1100,quotaState=sportradarQuota}={}){
+  const product=new URL(url).pathname.split('/')[1],now=Date.now();
+  if(quotaState.blockedUntil>now)throw Error('HTTP 429 quota cooldown active');
+  const slot=Math.max(now,nextRequest.get(product)||0);
   if(slot-now>2200)throw Error('rate limit busy');
   nextRequest.set(product,slot+minInterval);
   if(slot>now)await new Promise(resolve=>setTimeout(resolve,slot-now));
+  if(quotaState.blockedUntil>Date.now())throw Error('HTTP 429 quota cooldown active');
   const response=await fetcher(url,{headers:{accept:'application/json','x-api-key':apiKey},signal:AbortSignal.timeout(4000)});
-  if(!response.ok)throw Error(`HTTP ${response.status}`);
+  if(response.status===429){
+    const retry=String(response.headers?.get?.('retry-after')||'').trim();
+    const seconds=Number(retry),retryAt=Date.parse(retry);
+    const delay=retry&&Number.isFinite(seconds)&&seconds>=0?seconds*1000:
+      Number.isFinite(retryAt)?Math.max(0,retryAt-Date.now()):300000;
+    quotaState.blockedUntil=Math.max(quotaState.blockedUntil||0,Date.now()+Math.min(1800000,Math.max(60000,delay)));
+  }
+  if(!response.ok)throw Error('HTTP '+response.status);
   const age=Number(response.headers?.get('age')||0);
   if(!url.endsWith('/schedule.json')&&!url.endsWith('/league/hierarchy.json')&&age>10)throw Error('stale response');
   return response.json();
@@ -150,5 +163,5 @@ export async function loadSportradar(game,milestone,{fetcher=fetch,apiKey=proces
     if(reading){reading.homeAliases.push(...aliases(identities.get((detail.home||detail.summary?.home)?.id)));
       reading.awayAliases.push(...aliases(identities.get((detail.away||detail.summary?.away)?.id)));}
     return reading?[reading]:null;
-  }catch(error){unavailableReasons.push(`Sportradar: ${error.name==='TimeoutError'?'timeout':/^HTTP \d+$/.test(error.message)?error.message:'request failed'}`);return null;}
+  }catch(error){unavailableReasons.push(`Sportradar: ${error.name==='TimeoutError'?'timeout':/^HTTP 429/.test(error.message)?'HTTP 429 quota exhausted/cooling down':/^HTTP \d+$/.test(error.message)?error.message:'request failed'}`);return null;}
 }

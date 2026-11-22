@@ -269,7 +269,9 @@ const externalSportFeeds=game=>{
   NCAAB:['basketball/mens-college-basketball','cbk'],
   NCAAW:['basketball/womens-college-basketball',null],
   NFL:['football/nfl','nfl'],CFB:['football/college-football','cfb'],
-  NHL:['hockey/nhl','nhl'],Soccer:['soccer/all','soccer']};
+  NHL:['hockey/nhl','nhl'],
+  'College Hockey':['hockey/mens-college-hockey',null],
+  Soccer:['soccer/all','soccer']};
  return supported[league]||(/soccer/.test(String(game?.type||''))?supported.Soccer:null);
 };
 // Candidate discovery may reuse the same public league scoreboard for up to
@@ -300,14 +302,14 @@ async function sharedCandidateScoreboardFetch(url,opts={}){
   throw error;
  }
 }
-async function externallyScoredGame(game,milestone,{fresh=false}={}){
+async function externallyScoredGame(game,milestone,{fresh=false,market=null}={}){
  if(!game?.verifiedLive||!milestone?.id)return null;
  const feeds=externalSportFeeds(game);
  if(!feeds)return null;
  const cached=sourceScoreReads.get(game.id),now=Date.now();
  let reading=!fresh&&cached&&now-cached.at<2500?cached.reading:null;
  if(!reading){
-  reading=await fetchIndependentMatchScore(game,milestone,{espnFeed:feeds[0],foxFeed:feeds[1],
+  reading=await fetchIndependentMatchScore(game,milestone,{espnFeed:feeds[0],foxFeed:feeds[1],market,
    fetcher:fresh?fetch:sharedCandidateScoreboardFetch});
   if(!reading||reading===false)return null;
   sourceScoreReads.set(game.id,{reading,at:Date.now()});
@@ -316,7 +318,7 @@ async function externallyScoredGame(game,milestone,{fresh=false}={}){
 }
 
 async function externallyScoredOverState(game,milestone,market){
- const source=await externallyScoredGame(game,milestone,{fresh:true});
+ const source=await externallyScoredGame(game,milestone,{fresh:true,market});
  if(!source)return null;
  const player=market&&playerOverSpec(source,market);
  if(!player)return source;
@@ -3863,8 +3865,10 @@ async function scanEarlyPeriodNos(games,events,signalSink=null,sport='NHL',phase
           (hockey?validFreshEspnHockeyNo(marked,game):validFreshEspnSoccerNo(marked,game)))&&
           policy.signal(game,c.market,{beforeWindow:true,external:marked});
         if(!signal){
-          report(c,proof===false?'Independent fixture identity or period score is contradictory':
-            proof==null?(sport==='Soccer'?'No current live ESPN fixture, score and minute verified':
+          report(c,proof===false?(sport==='Soccer'&&game.verificationIssue||
+              'Independent fixture identity or period score is contradictory'):
+            proof==null?(sport==='Soccer'?(game.verificationIssue||
+                'No current live ESPN fixture, score and minute verified'):
               hockey?'No current live ESPN fixture, score and period clock verified':
               'No matching fixture and score verified by ESPN (including retry) or FOX'):
             'Independent matchup/score could not be validated');continue;
@@ -4191,8 +4195,10 @@ async function scanSoccerTotalNos(games,events,signalSink=null,phase='all'){
         const signal=marked&&validFreshEspnSoccerNo(marked,game)&&
           soccerTotalNo(game,c.market,{beforeWindow:true,external:marked});
         if(!signal){
-          report(c,proof===false?'Independent matched fixture or source score is contradictory':
-            proof==null?'No current live ESPN fixture, score and minute verified':
+          report(c,proof===false?(game.verificationIssue||
+              'Independent matched fixture or source score is contradictory'):
+            proof==null?(game.verificationIssue||
+              'No current live ESPN fixture, score and minute verified'):
             'Independent matchup/score could not be validated');continue;
         }
         await pool.query('INSERT INTO soccer_total_no_windows '+
@@ -4299,7 +4305,8 @@ async function scanSoccerTotalNos(games,events,signalSink=null,phase='all'){
         validate:proof=>Boolean(validFreshEspnSoccerNo(proof,fresh)&&
           soccerTotalNo(fresh,current,{external:proof}))});
       c.finalCheck={...finalCheck,attemptedAt:Date.now()};
-      if(!finalCheck.ok){report(c,'Final independent verification attempted: '+finalCheck.reason);continue;}
+      if(!finalCheck.ok){report(c,'Final independent verification attempted: '+finalCheck.reason+
+        (fresh.verificationIssue?'; '+fresh.verificationIssue:''));continue;}
       report(c,'Final independent score verified; checking last dispatch freshness');
       const proof=finalCheck.newCheck&&Date.now()-finalCheck.at<8000?
         finalCheck.proof:await verifyIndependentSoccerTotalNo(fresh,c.milestone,current);
@@ -4308,8 +4315,10 @@ async function scanSoccerTotalNos(games,events,signalSink=null,phase='all'){
         pairedFreshEspnSoccerNo(window.first_evidence,proof,fresh)&&
         soccerTotalNo(fresh,current,{external:proof});
       if(!signal||externalCheckedAt-fresh.observedAt>10000){
-        report(c,proof===false?'Entry blocked: final independent source/fixture evidence is contradictory':
-          'Entry blocked: live ESPN fixture, score and minute not verified',null,ask);
+        report(c,proof===false?(fresh.verificationIssue||
+          'Entry blocked: final independent source/fixture evidence is contradictory'):
+          (fresh.verificationIssue||
+            'Entry blocked: live ESPN fixture, score and minute not verified'),null,ask);
         continue;
       }
       const verificationId=randomUUID();

@@ -49,6 +49,7 @@ const daysFor=start=>[start,start-86400000,start+86400000]
 // ESPN's endpoint does not expose a guaranteed per-score update timestamp:
 // reject on any unavailable or contradictory evidence, do not invent freshness.
 export async function verifyFreshEspnSoccerNo(game,milestone,{fetcher=fetch}={}){
+ if(game)delete game.verificationIssue;
  const start=Date.parse(milestone?.start_date||'');
  if(game?.sport!=='Soccer'||!/^soccer_/.test(String(game.type||''))||
   !game.verifiedLive||!game.scoreKnown||!game.scoreConsistent||
@@ -74,7 +75,10 @@ export async function verifyFreshEspnSoccerNo(game,milestone,{fetcher=fetch}={})
   if(r.status!=='fulfilled')continue;
   const {board,age}=r.value,matched=espnMatches(board,game,milestone,{identityOnly:true});
   if(!matched.length)continue;
-  if(!Number.isFinite(age)||age<0||age>SOCCER_ESPN_MAX_HTTP_AGE_SECONDS)return false;
+  if(!Number.isFinite(age)||age<0||age>SOCCER_ESPN_MAX_HTTP_AGE_SECONDS){
+   game.verificationIssue='ESPN response exceeded the 10-second CDN freshness threshold';
+   return false;
+  }
   for(const m of matched){
    const evt=(board.events||[]).find(e=>String(e.id)===String(m.eventId));
    const status=evt?.competitions?.[0]?.status||evt?.status;
@@ -83,12 +87,34 @@ export async function verifyFreshEspnSoccerNo(game,milestone,{fetcher=fetch}={})
     status?.type?.completed!==true});
   }
  }
- if(!found.length)return null;
- if(found.some(m=>!m.eventId||m.live!==true||m.period!==game.period||
-  !Number.isInteger(m.home)||!Number.isInteger(m.away)||
-  m.home!==game.home||m.away!==game.away||!currentClock(m,game)))return false;
+ if(!found.length){
+  game.verificationIssue=replies.every(r=>r.status==='rejected')?
+   'ESPN soccer scoreboards could not be retrieved':
+   'No exact matching fixture on the ESPN soccer scoreboard for this league and date';
+  return null;
+ }
+ if(found.some(m=>!m.eventId||m.live!==true)){
+  game.verificationIssue='ESPN identified the fixture but does not report it as live';
+  return false;
+ }
+ if(found.some(m=>m.period!==game.period)){
+  game.verificationIssue='ESPN match period does not match the exchange regulation period';
+  return false;
+ }
+ if(found.some(m=>!Number.isInteger(m.home)||!Number.isInteger(m.away)||
+  m.home!==game.home||m.away!==game.away)){
+  game.verificationIssue='ESPN match score independently contradicts the exchange soccer score';
+  return false;
+ }
+ if(found.some(m=>!currentClock(m,game))){
+  game.verificationIssue='ESPN match clock missing or more than 90 seconds different';
+  return false;
+ }
  const eventIds=new Set(found.map(m=>String(m.eventId)));
- if(eventIds.size!==1)return false;
+ if(eventIds.size!==1){
+  game.verificationIssue='More than one independent ESPN fixture matched the soccer event';
+  return false;
+ }
  const at=Date.now(),first=found[0];
  const reading={source:'ESPN',verificationPolicy:SOCCER_ESPN_POLICY,
   requestId,checkedAt:at,eventId:String(first.eventId),gameId:game.id,

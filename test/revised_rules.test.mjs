@@ -89,7 +89,11 @@ test('revised hockey and inning-based baseball winners reject superseded thresho
  assert.equal(signal('hockey_match','NHL',1,3,119),null);
  assert.equal(signal('hockey_match','NHL',2,3,360),null);
  assert.ok(signal('hockey_match','NHL',2,3,226));
- assert.equal(signal('hockey_match','NHL',3,3,600),null);
+ assert.equal(signal('hockey_match','NHL',3,3,900),null);
+ assert.ok(signal('hockey_match','NHL',3,3,600));
+ assert.equal(signal('hockey_match','NHL',5,2,301),null);
+ assert.ok(signal('hockey_match','NHL',5,2,300));
+ assert.ok(signal('hockey_match','NHL',4,3,1200));
  assert.ok(signal('hockey_match','NHL',3,3,599));
  assert.ok(signal('hockey_match','NHL',2,3,210));
  const baseball=(margin,inning,half,outs)=>team('baseball_game','MLB',margin,inning,0,{inning,inning_half:half,outs,clock:''});
@@ -275,15 +279,17 @@ test('college women use the fourth quarter rather than a second-half period numb
  assert.ok(signal('basketball_game','NCAAW',14,4,104));
 });
 
-test('hockey commanding lead replaces legacy windows: +3 strictly under 10:00 or +2 strictly under 6:00',()=>{
+test('hockey winner timing uses a five-goal second-period tier plus strict third-period 4/3/2-goal thresholds',()=>{
  for(const league of ['NHL','Germany DEL']){
-  for(const [margin,seconds,allowed] of [[3,600,false],[3,599,true],[3,405,true],
+  for(const [margin,seconds,allowed] of [[4,1200,true],[3,1200,false],[3,900,false],[3,899,true],[3,405,true],
     [2,600,false],[2,360,false],[2,359,true],[2,225,true],[1,225,false],[4,0,false]]){
    const {state,market}=team('hockey_match',league,margin,3,seconds);
    assert.equal(Boolean(leadSignal(state,market)),allowed,`${league}: ${margin} at ${seconds}`);
    assert.equal(kalshiSingleReadLead(state,market,now),allowed);
   }
-  assert.equal(signal('hockey_match',league,4,2,405),null,'second period never qualifies');
+  assert.equal(signal('hockey_match',league,4,2,300),null,'four goals alone do not qualify in period two');
+  assert.equal(signal('hockey_match',league,5,2,301),null,'five goals before the final five minutes must wait');
+  assert.ok(signal('hockey_match',league,5,2,300),'five goals enter at exactly 5:00 in P2');
   assert.match(leadWatchReason(team('hockey_match',league,3,3,405).state),/score and clock qualify/);
   assert.match(leadWatchReason(team('hockey_match',league,2,3,405).state),/waiting for clock threshold/);
  }
