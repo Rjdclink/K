@@ -56,3 +56,14 @@ test('first external proof occurs at eligibility and second at least 3:30 later'
  const contradictory={...game,externalScore:{source:'ESPN',eventId:'different-match'}};
  assert.equal(noncushionedPlayerState(contradictory,market,last),null);
 });
+
+test('reject provider player-stat responses with HTTP cache age older than fifteen seconds',async()=>{
+ const {verifyNoncushionedPlayerStat}=await import('../src/noncushioned_player_over.mjs');
+ let parsed=0;
+ const stale=async()=>({ok:true,headers:{get:key=>key.toLowerCase()==='age'?'25':null},
+  json:async()=>{parsed++;return {events:[]}}});
+ const result=await verifyNoncushionedPlayerStat(game,
+  {id:game.id,start_date:new Date().toISOString()},market,{fetcher:stale});
+ assert.equal(result,null);
+ assert.equal(parsed,0,'stale ESPN or FOX HTTP bodies must not be accepted for independent player proof');
+});

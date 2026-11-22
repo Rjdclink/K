@@ -12,8 +12,7 @@ function database(){
     const [ticker,gameId,side,updated]=args,id=key({ticker,game_id:gameId,side});
     const first=records.get(id),last=recovery.get(id),timestamp=updated?Date.parse(updated):null;
     if(first===undefined||now-first<30000)return {rows:[]};
-    if(timestamp!==null&&timestamp<=first)return {rows:[]};
-    if(last&&(timestamp!==null?timestamp<=last.market:now-last.checked<60000))return {rows:[]};
+    if(last&&now-last.checked<10000)return {rows:[]};
     recovery.set(id,{checked:now,market:timestamp??0});return {rows:[{market_ticker:ticker}]};
   }
   const [raw,side]=args;const items=JSON.parse(raw);
@@ -85,14 +84,26 @@ test('dedupe multi-scan candidates and ignore invalid game IDs and sides',async(
  assert.equal((await gate.missing([m],'invalid')).size,0);
  assert.equal(db.records.size,1);
 });
-test('an expired absent-ask candidate is rechecked only on new potential seller evidence',async()=>{
+test('an expired absent-ask candidate can recheck current liquidity despite a stale exchange summary',async()=>{
  const db=database(),gate=createNoAskTimeout(db.query),c=market('SOC-NO','game-42');
  await gate.observeMissing(c,'no');db.advance(30_000);
  assert.equal(await gate.isRetired(c,'no'),true);
- assert.equal(await gate.claimRecovery(c,'no'),false,'no new summary ask means no book scan');
+ assert.equal(await gate.claimRecovery(c,'no'),true,'an eligible contract may check its live book even with no summary ask');
  const offered={...c,market:{...c.market,no_ask_dollars:'0.2500',updated_time:'2026-11-20T20:35:00Z'}};
- assert.equal(await gate.claimRecovery(offered,'no'),true,'new provider ask may trigger a live book recheck');
- assert.equal(await gate.claimRecovery(offered,'no'),false,'unchanged market update must not cause endless rechecks');
+ assert.equal(await gate.claimRecovery(offered,'no'),false,'one probe per 10 seconds');
+ db.advance(10000);
+ assert.equal(await gate.claimRecovery(offered,'no'),true,'the recovery check is still allowed after 10 seconds');
  await gate.available([offered],'no');
  assert.equal(await gate.isRetired(offered,'no'),false,'the live NO book, not elapsed timer, decides if the quote is executable');
+});
+test('expired qualifying opportunities recheck the live orderbook every ten seconds even without a new summary ask',async()=>{
+ const db=database(),gate=createNoAskTimeout(db.query),m=market('RECOVER-LIVE','game');
+ await gate.observeMissing(m,'yes');db.advance(30000);
+ assert.equal(await gate.isRetired(m,'yes'),true);
+ assert.equal(await gate.claimRecovery(m,'yes'),true,'summary asks may be absent despite new live-book depth');
+ assert.equal(await gate.claimRecovery(m,'yes'),false,'no duplicate book recheck in the same 10-second interval');
+ db.advance(9999);assert.equal(await gate.claimRecovery(m,'yes'),false);
+ db.advance(1);assert.equal(await gate.claimRecovery(m,'yes'),true);
+ await gate.available([m],'yes');
+ assert.equal(await gate.isRetired(m,'yes'),false,'confirmed executable depth cancels earlier retirement');
 });

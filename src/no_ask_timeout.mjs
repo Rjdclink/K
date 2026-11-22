@@ -1,10 +1,10 @@
 // Persist liquidity decisions across concurrent scanner instances. Missing YES
 // asks and missing NO asks are independent markets on the same Kalshi ticker.
 // A still-empty candidate has 30 real seconds from first observation, after
-// which empty books are skipped until the market reports changed quotes. A
-// subsequently confirmed executable offer always clears the absence timer.
+// which the candidate is deferred. An eligible contract can retry its live
+// book once per ten seconds; only actual executable depth clears the timer.
 export const NO_ASK_GRACE_MS=30_000;
-export const NO_ASK_RETIRED='No executable ask after 30 seconds; candidate skipped';
+export const NO_ASK_RETIRED='No executable ask after 30 seconds; live book recovery check pending';
 export function potentialSeller(market,side){
   if(!market||!['yes','no'].includes(side))return false;
   const price=Number(market[side+'_ask_dollars']);
@@ -87,24 +87,21 @@ export function createNoAskTimeout(query){
   };
   const claimRecovery=async(candidate,side)=>{
     const c=clean(candidate,side),market=candidate.market||candidate;
-    if(!valid(c,side)||!potentialSeller(market,side))return false;
+    if(!valid(c,side))return false;
     await ensure();
     const update=Date.parse(market.updated_time||market.updated_at||market.last_updated_time||'');
     const updated=Number.isFinite(update)?new Date(update).toISOString():null;
-    // Book rechecks are triggered by updated quotes, not by repeated empty
-    // scan cycles. If source timestamps are unavailable, at most one probe
-    // per minute is allowed for a market now advertising an ask.
+    // Exchange summary asks or timestamps can remain unchanged after actual
+    // executable orderbook depth recovers. Atomically allow one live-book
+    // probe per market and side each 10 seconds, never an order without depth.
     const response=await query(`UPDATE no_ask_timeouts SET
       recovery_checked_at=clock_timestamp(),
       recovery_market_at=COALESCE($4::timestamptz,recovery_market_at)
       WHERE market_ticker=$1 AND game_id=$2 AND side=$3
         AND first_missing_at<=clock_timestamp()-interval '30 seconds'
-        AND (
-          $4::timestamptz IS NOT NULL AND $4::timestamptz>first_missing_at AND
-          (recovery_market_at IS NULL OR recovery_market_at<$4::timestamptz)
-          OR recovery_checked_at IS NULL AND $4::timestamptz IS NULL
-          OR recovery_checked_at<=clock_timestamp()-interval '60 seconds' AND $4::timestamptz IS NULL
-        ) RETURNING market_ticker`,[c.ticker,c.game_id,side,updated]);
+        AND (recovery_checked_at IS NULL OR
+          recovery_checked_at<=clock_timestamp()-interval '10 seconds')
+      RETURNING market_ticker`,[c.ticker,c.game_id,side,updated]);
     return Boolean(response.rows.length);
   };
   const isRetired=async(candidate,side)=>Boolean((await retired([candidate],side)).size);

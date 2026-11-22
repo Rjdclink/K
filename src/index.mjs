@@ -430,15 +430,15 @@ async function verifyCommandingLead(game,milestone,market,cache,event){
   return lateCommandingLead(game,market)&&leadSignal(game,market)?true:null;
 }
 async function verifiedEntryQuote(game,milestone,market,cache,strategy='lead',onRawQuote){
-  if(await noAskTimeout.isRetired({market,game},'yes')&&
-    !await noAskTimeout.claimRecovery({market,game},'yes'))return null;
+  // The exact entry preflight always reads current executable depth;
+  // an old no-ask timeout can never override a confirmed live orderbook.
   const readQuote=async()=>{
     const current=await recoverSummaryAsk((await kalshi('/markets/'+encodeURIComponent(market.ticker))).market,{fresh:true});
     onRawQuote?.(current);
     const executable=current&&hasAsk(current)?await executableQuote(current):null;
     if(!executable)await noAskTimeout.observeMissing({market,game},'yes');
     else await noAskTimeout.available([{market,game}],'yes');
-    return executable&&!await noAskTimeout.isRetired({market,game},'yes')?executable:null;
+    return executable;
   };
   if(strategy!=='lead'||!basketballCloseoutEntry(game))return readQuote();
   if(Date.now()-game.observedAt>5000){
@@ -2519,8 +2519,8 @@ async function watchLeadWindows(until){
           if(!event||event.category!=='Sports')continue;
           for(const market of event.markets||[]){
             if(Date.now()>=until||market.event_ticker!==main)continue;
-            if(await noAskTimeout.isRetired({market,game:first},'yes')&&
-              !await noAskTimeout.claimRecovery({market,game:first},'yes'))continue;
+            // Never discard a qualifying external lead before the live
+            // executable book can be evaluated at the final quote gate.
             const decision={source:'fast_lead',market,signal:{strategy:'lead'},game:first,
               stage:'entry_rule',outcome:'skipped',startedAt:Date.now()};
             try{
@@ -2548,7 +2548,6 @@ async function watchLeadWindows(until){
                 const gap=await noAskTimeout.observeMissing({market,game:first},'yes');
                 decision.detail=waitingOnAsk(gap);continue;
               }
-              if(await noAskTimeout.isRetired({market,game:first},'yes'))continue;
               const firstSignal=leadSignal(first,offered)||
                 earlyLeadSignal(first,offered)||additionalLeadSignal(first,offered);
               if(!firstSignal)continue;
@@ -3363,9 +3362,13 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null,phase='all
             firstProofs.set(game.id,firstProof);
           }
           const marked=tagNoPreflight(firstProof);
-          if(!marked||!qualifies(game,c.market,{beforeWindow:true,external:marked})){
+          if(!marked){
             report(c,firstProof===false?'External fixture identity or score evidence is contradictory':
               'No matching fixture and score verified by ESPN (including retry) or FOX');
+            continue;
+          }
+          if(!qualifies(game,c.market,{beforeWindow:true,external:marked})){
+            report(c,'Independent ESPN fixture verified; scoring cushion or exact contract not eligible');
             continue;
           }
           await pool.query(
@@ -3400,22 +3403,19 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null,phase='all
         report(c,'Entry blocked: market or score no longer qualifies');continue;
       }
       if(unresolved.rowCount){report(c,'Unresolved basketball/football NO order; new entry deferred');continue;}
-      if(await noAskTimeout.isRetired(c,'no')&&
-        !await noAskTimeout.claimRecovery(c,'no')){
-        report(c,NO_ASK_RETIRED);continue;
-      }
+      // A stored valid first ESPN proof is not invalidated by a previously
+      // empty orderbook. Check current executable NO depth immediately.
       const {orderbook_fp}=await kalshi('/markets/'+encodeURIComponent(current.ticker)+'/orderbook');
       const ask=bestNoAsk(orderbook_fp);
       if(!ask||ask.size<minimumCount(current)||noDepthAtAsk(orderbook_fp,ask.price,ask.size)<minimumCount(current)){
         const gap=await noAskTimeout.observeMissing(c,'no');
         scheduleNoLiquidityRecheck(current,fresh);
-        report(c,gap?.retired?NO_ASK_RETIRED:waitingOnAsk(gap));continue;
+        report(c,gap?.retired?
+          'Verified ESPN preflight retained; no executable NO seller in current orderbook':
+          waitingOnAsk(gap));continue;
       }
       report(c,'NO seller available; checking cash, fees and profitability',ask);
       await noAskTimeout.available([c],'no');
-      if(await noAskTimeout.isRetired(c,'no')){
-        report(c,NO_ASK_RETIRED);continue;
-      }
       const prior=await pool.query(`SELECT 1 FROM trade_attempts WHERE market_ticker=$1 AND status IN
         ('filled','reserved','check_order','retrying','combo_pending') LIMIT 1`,[current.ticker]);
       if(prior.rowCount){report(c,'Entry blocked: existing order or filled position',ask);continue;}
@@ -3656,21 +3656,18 @@ async function scanHockeyTotalNos(games,events,signalSink=null,phase='all'){
         report(c,'Entry blocked: contract identity, NHL period or clock no longer matches');continue;
       }
       if(pending.rowCount){report(c,'Unresolved NHL NO order; new entry deferred');continue;}
-      if(await noAskTimeout.isRetired(c,'no')&&
-        !await noAskTimeout.claimRecovery(c,'no')){
-        report(c,NO_ASK_RETIRED);continue;
-      }
+      // A stored valid first ESPN proof is not invalidated by a previously
+      // empty orderbook. Check current executable NO depth immediately.
       const {orderbook_fp}=await kalshi('/markets/'+encodeURIComponent(current.ticker)+'/orderbook');
       const ask=bestNoAsk(orderbook_fp);
       if(!ask||ask.size<minimumCount(current)||noDepthAtAsk(orderbook_fp,ask.price,ask.size)<minimumCount(current)){
         const gap=await noAskTimeout.observeMissing(c,'no');
         scheduleNoLiquidityRecheck(current,fresh);
-        report(c,gap?.retired?NO_ASK_RETIRED:waitingOnAsk(gap));continue;
+        report(c,gap?.retired?
+          'Verified ESPN preflight retained; no executable NO seller in current orderbook':
+          waitingOnAsk(gap));continue;
       }
       await noAskTimeout.available([c],'no');
-      if(await noAskTimeout.isRetired(c,'no')){
-        report(c,NO_ASK_RETIRED);continue;
-      }
       const prior=await pool.query(
         "SELECT 1 FROM trade_attempts WHERE market_ticker=$1 AND status IN ('filled','reserved','check_order','retrying','combo_pending') LIMIT 1",
         [current.ticker]);
@@ -3991,22 +3988,19 @@ async function scanEarlyPeriodNos(games,events,signalSink=null,sport='NHL',phase
         continue;
       }
       if(pending.rowCount){report(c,'Unresolved shared NO order; new entry deferred');continue;}
-      if(await noAskTimeout.isRetired(c,'no')&&
-        !await noAskTimeout.claimRecovery(c,'no')){
-        report(c,NO_ASK_RETIRED);continue;
-      }
+      // A stored valid first ESPN proof is not invalidated by a previously
+      // empty orderbook. Check current executable NO depth immediately.
       const {orderbook_fp}=await kalshi('/markets/'+encodeURIComponent(current.ticker)+'/orderbook');
       const ask=bestNoAsk(orderbook_fp);
       if(!ask||ask.size<minimumCount(current)||
         noDepthAtAsk(orderbook_fp,ask.price,ask.size)<minimumCount(current)){
         const gap=await noAskTimeout.observeMissing(c,'no');
         scheduleNoLiquidityRecheck(current,fresh);
-        report(c,gap?.retired?NO_ASK_RETIRED:waitingOnAsk(gap));continue;
+        report(c,gap?.retired?
+          'Verified ESPN preflight retained; no executable NO seller in current orderbook':
+          waitingOnAsk(gap));continue;
       }
       await noAskTimeout.available([c],'no');
-      if(await noAskTimeout.isRetired(c,'no')){
-        report(c,NO_ASK_RETIRED);continue;
-      }
       const prior=await pool.query(
         "SELECT 1 FROM trade_attempts WHERE market_ticker=$1 AND status IN ('filled','reserved','check_order','retrying','combo_pending') LIMIT 1",
         [current.ticker]);
@@ -4318,22 +4312,19 @@ async function scanSoccerTotalNos(games,events,signalSink=null,phase='all'){
         report(c,'Entry blocked: soccer total contract or final match clock changed');continue;
       }
       if(pending.rowCount){report(c,'Unresolved soccer NO order; new entry deferred');continue;}
-      if(await noAskTimeout.isRetired(c,'no')&&
-        !await noAskTimeout.claimRecovery(c,'no')){
-        report(c,NO_ASK_RETIRED);continue;
-      }
+      // A stored valid first ESPN proof is not invalidated by a previously
+      // empty orderbook. Check current executable NO depth immediately.
       const {orderbook_fp}=await kalshi('/markets/'+encodeURIComponent(current.ticker)+'/orderbook');
       const ask=bestNoAsk(orderbook_fp);
       if(!ask||ask.size<minimumCount(current)||
         noDepthAtAsk(orderbook_fp,ask.price,ask.size)<minimumCount(current)){
         const gap=await noAskTimeout.observeMissing(c,'no');
         scheduleNoLiquidityRecheck(current,fresh);
-        report(c,gap?.retired?NO_ASK_RETIRED:waitingOnAsk(gap));continue;
+        report(c,gap?.retired?
+          'Verified ESPN preflight retained; no executable NO seller in current orderbook':
+          waitingOnAsk(gap));continue;
       }
       await noAskTimeout.available([c],'no');
-      if(await noAskTimeout.isRetired(c,'no')){
-        report(c,NO_ASK_RETIRED);continue;
-      }
       const prior=await pool.query(
         "SELECT 1 FROM trade_attempts WHERE market_ticker=$1 AND status IN ('filled','reserved','check_order','retrying','combo_pending') LIMIT 1",
         [current.ticker]);
@@ -4880,11 +4871,18 @@ async function scanNearPriorityGames(){
   await Promise.allSettled([
     scanCollegeTotalNos(ready,events,'football',null,'initial'),
     scanCollegeTotalNos(ready,events,'basketball',null,'initial'),
+    scanCollegeTotalNos(ready,events,'football',null,'final'),
+    scanCollegeTotalNos(ready,events,'basketball',null,'final'),
     scanHockeyTotalNos(ready,events,null,'initial'),
     scanEarlyPeriodNos(ready,events,null,'NHL','initial'),
     scanSoccerTotalNos(ready,events,null,'initial'),
     scanEarlyPeriodNos(ready,events,null,'Soccer','initial'),
-    scanEarlyPeriodNos(ready,events,null,'Basketball','initial')
+    scanEarlyPeriodNos(ready,events,null,'Basketball','initial'),
+    scanHockeyTotalNos(ready,events,null,'final'),
+    scanEarlyPeriodNos(ready,events,null,'NHL','final'),
+    scanSoccerTotalNos(ready,events,null,'final'),
+    scanEarlyPeriodNos(ready,events,null,'Soccer','final'),
+    scanEarlyPeriodNos(ready,events,null,'Basketball','final')
   ].map(p=>p.catch(e=>{console.warn('Near-entry first check deferred:',e.message);return null})));
   return promoted;
 }
@@ -5260,7 +5258,7 @@ async function scan(cachedMilestones,discoveryCount){
               !row.hasCushion?`${row.value} recorded; one additional credited statistic required`:
               `${row.value} recorded; removable cushion; independent check at entry`,
             execution:!row.entryWindowOpen?'Player-prop entry window closed':
-              row.variableValue?'Variable player market identity or independent verification unavailable':
+              row.variableValue?'Variable player crossing awaiting independent ESPN proof':
               !row.hasCushion?'Player-stat cushion not established':'Independent player-stat check immediately before entry'})),
         ...(snapshotRows.get(id).leadWatch&&!candidates.some(c=>c.signal.strategy==='lead')?
           [{strategy:'watch',title:'Commanding lead watch',execution:snapshotRows.get(id).leadWatch}]:[])
