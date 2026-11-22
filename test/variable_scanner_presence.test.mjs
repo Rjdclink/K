@@ -6,7 +6,7 @@ import {gameState} from '../src/strategy.mjs';
 const src=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
 
 test('variable-value player prop scan is connected without weakening other over entry routes',()=>{
- assert.match(src,/async function scanVariablePlayerOvers\(games,events,signalSink=null\)/);
+ assert.match(src,/async function scanVariablePlayerOvers\(games,events,signalSink=null,\{maxMarkets=Infinity\}=\{\}\)/);
  assert.match(src,/submitted\+=await scanVariablePlayerOvers\(marketGames,events,variableOverSignals\)/);
  assert.match(src,/\.\.\.\(variableOverSignals\.get\(id\)\|\|\[\]\)/);
  assert.match(src,/variableProofValid\(first,proof,fresh,seller/);

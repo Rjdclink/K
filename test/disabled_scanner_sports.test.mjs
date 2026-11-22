@@ -90,7 +90,7 @@ test('live dashboard and clock refresh exclude removed sports while historical f
     const region=src.slice(src.indexOf(from),src.indexOf(to));
     assert.match(region,/sport_family ~\* '\^\(basketball\|hockey\|soccer\|football\)_'/,label);
   }
-  const cron=src.slice(src.indexOf("if(req.method==='POST'&&url.pathname==='/tick')"),
+  const cron=src.slice(src.indexOf("if(req.method==='POST'&&(url.pathname==='/tick'||url.pathname==='/tick/discovery'))"),
     src.indexOf("if(req.method==='GET'&&url.pathname==='/login')"));
   assert.match(cron,/g.sport_family ~\* '\^\(basketball\|hockey\|soccer\|football\)_'/,
     'cached cron live-game list must not reintroduce disabled sports');
