@@ -122,23 +122,26 @@ test('preview, initial order, and retry no longer enforce an obsolete 15% comman
  assert.equal((source.match(/estimatedCostCents\([^\n]+<minimumThreeGoalSpend\(/g)||[]).length,0);
 });
 
-test('soccer commanding winner replaces legacy windows: +3 strictly under 10:00 or +2 strictly under 6:00',()=>{
+test('soccer commanding winner uses +4 under 20:00, +3 under 15:00, or +2 under 6:00',()=>{
  const soccer=(margin,minute,remaining=undefined)=>team('soccer_match','Soccer',margin,2,0,
    {half:'2nd',time:`${minute}'`,match_remaining_seconds:remaining,clock:''});
  const {market}=soccer(3,47);
  for(const [margin,time,allowed] of [
-   [3,'79:59',false],[3,80,false],[3,'80:01',true],[3,83,true],
+   [4,'69:59',false],[4,70,false],[4,'70:01',true],[4,74,true],
+   [3,'74:59',false],[3,75,false],[3,'75:01',true],[3,83,true],
    [2,84,false],[2,'84:01',true],[2,87,true],[1,89,false],
-   [3,90,false],[3,93,false]]){
+   [4,90,false],[4,93,false]]){
   assert.equal(Boolean(leadSignal(soccer(margin,time).state,market)),allowed,`+${margin} at ${time}`);
  }
- assert.equal(leadSignal(soccer(3,75,899).state,market),null,'no legacy fifteen-minute route');
+ assert.equal(leadSignal(soccer(3,75,899).state,market),null,'strict fifteen-minute boundary is not yet eligible');
  assert.ok(leadSignal(soccer(3,'80:01',NaN).state,market),'entry derives from regulation clock, not a speculative feed countdown');
  assert.equal(leadSignal(soccer(2,84,299).state,market),null,'feed countdown cannot override elapsed regulation clock');
  assert.equal(leadSignal(soccer(3,93,200).state,market),null,'stoppage cannot extend entry');
  assert.equal(confirmedSoccerWinnerClock(soccer(2,87).state,soccer(2,'87:01').state),true);
  assert.equal(confirmedSoccerWinnerClock(soccer(2,87).state,soccer(2,87).state),false);
- assert.match(leadWatchReason(soccer(3,79).state),/10:00/);
+ assert.match(leadWatchReason(soccer(3,74).state),/waiting for score and clock threshold/);
+ assert.match(leadWatchReason(soccer(4,69).state),/20:00/);
+ assert.match(leadWatchReason(soccer(3,79).state),/15:00/);
  assert.match(leadWatchReason(soccer(3,83).state),/late winner rule reached/);
  assert.match(leadWatchReason(soccer(2,83).state),/waiting for score and clock threshold/);
  assert.match(leadWatchReason(soccer(2,85).state),/late winner rule reached/);
