@@ -152,8 +152,8 @@ function harness(sport,period=1,{firstUnavail=false,finalUnavail=false,wrongFina
      fraction=pct;budget=budgetCents;return 1;
    },estimatedCostCents,profitableCount:()=>unprofitable?0:1,
    auditTable:async()=>{},randomUUID:()=> 'verified-early',rememberIndependentEntry,
-   reserve:async signal=>{trace.push('reserve');assert.equal(signal.fraction,.05);return 'early-order';},
-   withEntryProfitFloor:async(opts,submit)=>{assert.equal(opts.fraction,.05);return submit();},
+   reserve:async signal=>{trace.push('reserve');assert.equal(signal.fraction,.15);return 'early-order';},
+   withEntryProfitFloor:async(opts,submit)=>{assert.equal(opts.fraction,.15);return submit();},
    invalidateBalance:async()=>{}
  });
  vm.runInContext(code,context);
@@ -186,7 +186,7 @@ test('NHL P1/P2, soccer 1H and NBA quarter NO each require initial and final ver
    assert.equal(await h.scan(boundary-1),1,sport+' '+period+' final purchase');
    assert.equal(h.verified,2,sport+' '+period+' both independent checks');
    assert.equal(h.orders,1,sport+' '+period+' exactly one order');
-   assert.equal(h.fraction,.05);
+   assert.equal(h.fraction,.15);
    assert.ok(h.trace.lastIndexOf('orderbook')<h.trace.lastIndexOf('external'),
      'final independent score check must occur AFTER executable liquidity evaluation');
    assert.ok(h.trace.lastIndexOf('external')<h.trace.indexOf('reserve'));
@@ -263,13 +263,13 @@ test('global unresolved NO orders block execution but not independent early-peri
  }
 });
 
-test('existing held NO position and paid fees reduce the new 5% allocation',async()=>{
+test('existing held NO position and paid fees reduce the new 15% allocation',async()=>{
  for(const sport of ['NHL','Soccer','Basketball']){
   const h=harness(sport,1,{existingExposure:true});
   const first=sport==='Basketball'?120:360,boundary=sport==='Basketball'?90:300;
   await h.scan(first);await h.scan(boundary-1);
-  assert.equal(h.fraction,.05);
-  assert.equal(h.budget,50,'$5.00 budget less $4.00 exposure and 50 cents fees leaves 50 cents');
+  assert.equal(h.fraction,.15);
+  assert.equal(h.budget,1050,'$15.00 budget less $4.00 exposure and 50 cents fees leaves $10.50');
  }
 });
 

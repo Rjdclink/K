@@ -12,15 +12,15 @@ test('all ordinary entries require 50 cents net, commanding leads require only p
  }
  assert.equal(netSettlementProfitCents(10,0.80,2)>0,true);
 });
-test('all ordinary and leading entry fractions including winner combos cap at 5% bankroll',()=>{
+test('all ordinary and lead entries, including winner combinations, cap at fifteen percent',()=>{
  for(const strategy of ['no','lead','over','weather','combo']){
-  assert.equal(automaticEntryFraction({strategy,fraction:.60}),.05);
-  assert.equal(automaticEntryFraction({strategy,fraction:.20}),.05);
+  assert.equal(automaticEntryFraction({strategy,fraction:.60}),.15);
+  assert.equal(automaticEntryFraction({strategy,fraction:.20}),.15);
  }
- assert.equal(orderSize(100000,.40,1000,.25,1,100000,Infinity,2),orderSize(100000,.40,1000,.05,1,100000,Infinity,2));
- assert.equal(comboAllocation(),.05);
- assert.equal(comboLegAllocation([{signal:{strategy:'lead',externallyVerified:true}}],.35),.05);
- assert.equal(comboMinimumCents(.05,10000),0);
+ assert.equal(orderSize(100000,.40,1000,.25,1,100000,Infinity,2),orderSize(100000,.40,1000,.15,1,100000,Infinity,2));
+ assert.equal(comboAllocation(),.15);
+ assert.equal(comboLegAllocation([{signal:{strategy:'lead',externallyVerified:true}}],.35),.15);
+ assert.equal(comboMinimumCents(.15,10000),0);
 });
 test('verified cushioned OVER retains exception with its own net profit and allocation gates',()=>{
  const signal={strategy:'over',fraction:.45};

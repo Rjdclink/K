@@ -508,7 +508,7 @@ export function cricketOverSignal(game,market){
   const scored=home?game.home:game.away;
   if(!Number.isInteger(scored)||scored<=line)return null;
   if(market.yes_ask_dollars!=null&&Number(market.yes_ask_dollars)>0&&Number(market.yes_ask_dollars)<.8)return null;
-  return {strategy:'over',reason:`${matched[1]} has ${scored} runs; team total ${line} crossed`,fraction:.05};
+  return {strategy:'over',reason:`${matched[1]} has ${scored} runs; team total ${line} crossed`,fraction:.15};
 }
 export function playerOverSpec(game,market){
   const family=String(game?.type||'');
@@ -1047,5 +1047,5 @@ export function overBudget(balanceCents, portfolioValueCents) {
   if (![cash,value].every(Number.isFinite) || Math.min(cash,value)<0) return 0;
   // Each ordinary over has its own 15% bankroll limit. Existing positions do not
   // reduce another trade's limit; cash availability is checked separately.
-  return Math.floor((cash+value)*0.05);
+  return Math.floor((cash+value)*0.15);
 }

@@ -36,17 +36,17 @@ test('soccer commanding lead replaces legacy 15:00/3:30 with strict 10:00 +3 and
  assert.match(leadWatchReason(fixture('soccer_match',"80:01'",3).g),/10:00/);
  assert.match(leadWatchReason(fixture('soccer_match',"84:01'",2).g),/6:00/);
 });
-test('all hockey and soccer commanding winner allocation paths cap at 5% with zero 15% minimum purchase',()=>{
+test('all hockey and soccer commanding winner allocation paths cap at 15% with zero purchase minimum',()=>{
  for(const [type,clock,margin] of [['hockey_match','9:59',3],['hockey_match','5:59',2],['soccer_match',"80:01'",3],['soccer_match',"84:01'",2]]){
   const {g,market}=fixture(type,clock,margin);
   const signal=leadSignal(g,market);assert.ok(signal);
   assert.equal(signal.fraction,.05,type+' initial signal allocation');
   assert.equal(directLeadFraction(g,signal,market),.05,type+' direct allocation');
-  assert.equal(finalLeadFraction(g,g,signal,true,market),.05,type+' independently verified allocation');
+  assert.equal(finalLeadFraction(g,g,signal,true,market),.15,type+' independently verified allocation');
   assert.equal(finalLeadFraction(g,g,signal,false,market),.05,type+' Kalshi-only allocation');
-  assert.equal(leadEntryFraction(g,g,signal,market,true,false),.05,type+' final verified fraction');
+  assert.equal(leadEntryFraction(g,g,signal,market,true,false),.15,type+' final verified fraction');
   assert.equal(leadEntryFraction(g,g,signal,market,null,true),.05,type+' final direct fraction');
-  assert.equal(independentlyVerifiedLeadFraction(g,market),.05);
+  assert.equal(independentlyVerifiedLeadFraction(g,market),.15);
   assert.equal(minimumThreeGoalSpend(g,signal,market,10000),0,'no contradictory 15% spend floor');
  }
 });

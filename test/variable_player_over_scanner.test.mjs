@@ -82,8 +82,8 @@ function harness({ageMs=211000,initialUnavailable=false,finalUnavailable=false,
     profitableCount:n=>n,
     auditTable:async()=>{},randomUUID:()=> 'test-proof',
     rememberIndependentEntry,independentEntryValid,
-    reserve:async signal=>{trace.push('reserve');assert.equal(signal.fraction,.05);return 'order-1';},
-    withEntryProfitFloor:async(opt,send)=>{assert.equal(opt.fraction,.05);return send();},
+    reserve:async signal=>{trace.push('reserve');assert.equal(signal.fraction,.15);return 'order-1';},
+    withEntryProfitFloor:async(opt,send)=>{assert.equal(opt.fraction,.15);return send();},
     invalidateBalance:async()=>{},
   });
   vm.runInContext(src.slice(a,b),source);
@@ -103,7 +103,7 @@ test('variable NBA prop persists initial proof then purchases only after 3:30 an
   assert.equal(await h.scan(),1);
   assert.equal(h.verified,2);
   assert.equal(h.orders,1);
-  assert.equal(h.spentFraction,.05);
+  assert.equal(h.spentFraction,.15);
   assert.ok(h.trace.indexOf('external-2')<h.trace.indexOf('reserve'));
   assert.ok((h.dashboard.get(milestone.id)||[]).some(s=>s.player_prop&&s.ticker===market.ticker));
 });

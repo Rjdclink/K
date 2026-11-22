@@ -192,7 +192,7 @@ test('dashboard serializes actual NO signals alongside existing strategies in pe
   assert.equal(signals[1].execution,'Original strategy unchanged');
 });
 
-test('all basketball NO leagues share one 5% fee-inclusive pool without affecting football',async()=>{
+test('all basketball NO leagues share one 15% fee-inclusive pool without affecting football',async()=>{
   const f=fixture('NBA','0:29'),m=market('NBA',185);
   const held={ticker:'KXNCAAMBTOTAL-EXISTING',position_fp:-1,market_exposure_dollars:'4.00',fees_paid_dollars:'0.50'};
   const src=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
@@ -225,8 +225,8 @@ test('all basketball NO leagues share one 5% fee-inclusive pool without affectin
     orderSize:(cash,ask,depth,fraction,min,bankroll,pool)=>{allocated=fraction;budget=pool;return 1;},
     profitableCount:n=>n,estimatedCostCents:()=>0,
     auditTable:async()=>{},randomUUID:()=> 'verify',rememberIndependentEntry,
-    reserve:async signal=>{assert.equal(signal.fraction,.05);return 'order-id';},
-    withEntryProfitFloor:async(options,fn)=>{assert.equal(options.fraction,.05);return fn();},
+    reserve:async signal=>{assert.equal(signal.fraction,.15);return 'order-id';},
+    withEntryProfitFloor:async(options,fn)=>{assert.equal(options.fraction,.15);return fn();},
     invalidateBalance:async()=>{}
   });
   vm.runInContext(code,ctx);
@@ -234,8 +234,8 @@ test('all basketball NO leagues share one 5% fee-inclusive pool without affectin
     new Map([[m.event_ticker,{category:'Sports',event_ticker:m.event_ticker,markets:[m]}]]),'basketball',new Map());
   assert.equal(count,1);
   assert.equal(orders,1);
-  assert.equal(allocated,.05);
-  assert.equal(budget,50,'5% of $100 ($5) less $4.50 held exposure and fees leaves 50 cents');
+  assert.equal(allocated,.15);
+  assert.equal(budget,1050,'15% of $100 ($15) less $4.50 held exposure and fees leaves $10.50');
   assert.ok(patterns.includes('College basketball %')&&patterns.includes('Basketball total NO %'),
-    'legacy NCAA and new pro/international NO holdings must share the same 5% ceiling');
+    'legacy NCAA and new pro/international NO holdings must share the same 15% ceiling');
 });

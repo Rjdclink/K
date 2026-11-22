@@ -99,7 +99,7 @@ test('revised hockey and inning-based baseball winners reject superseded thresho
    assert.equal(earlyLeadSignal(state,market),null);
  }
 });
-test('three-goal hockey winner has a 5% maximum with no contradictory 15% minimum',()=>{
+test('three-goal hockey winner has a 15% maximum with no contradictory 15% minimum',()=>{
  const {state,market}=team('hockey_match','NHL',3,3,405),winner=leadSignal(state,market);
  assert.ok(winner);
  assert.equal(minimumThreeGoalSpend(state,winner,market,10000),0);
@@ -108,13 +108,13 @@ test('three-goal hockey winner has a 5% maximum with no contradictory 15% minimu
  assert.equal(finalLeadFraction(state,state,winner,false,market),.05);
  assert.equal(minimumThreeGoalSpend(state,winner,{...market,yes_ask_dollars:'.50'},10000),0);
 });
-test('soccer commanding winners share the same 5% limit; draw remains a separate strategy',()=>{
+test('soccer commanding winners share the same 15% limit; draw remains a separate strategy',()=>{
  const {state,market}=team('soccer_match','Soccer',3,2,0,
    {half:'2nd',time:"85'",match_remaining_seconds:299,clock:''}),winner=leadSignal(state,market);
  assert.ok(winner);
  assert.equal(minimumThreeGoalSpend(state,winner,market,10000),0);
  assert.equal(directLeadFraction(state,winner,market),.05);
- assert.equal(finalLeadFraction(state,state,winner,true,market),.05);
+ assert.equal(finalLeadFraction(state,state,winner,true,market),.15);
  assert.equal(minimumThreeGoalSpend({...state,homeUnits:state.awayUnits+2},{...winner},market,10000),0);
 });
 test('preview, initial order, and retry no longer enforce an obsolete 15% commanding-lead floor',()=>{
@@ -200,16 +200,16 @@ test('crossed player props are candidates through the ten-minute boundary',()=>{
  assert.equal(overSignal({...game(3),remainingSeconds:599},market),null);
 });
 
-test('winner eligibility signals are unchanged, but all winner combos cap at five percent',()=>{
+test('winner eligibility signals are unchanged, but all winner combos cap at fifteen percent',()=>{
  const lead={strategy:'lead',fraction:.05},over={strategy:'over',fraction:.40};
- assert.equal(finalLeadFraction({}, {},lead,true),.05);
+ assert.equal(finalLeadFraction({}, {},lead,true),.15);
  assert.equal(finalLeadFraction({}, {},lead,false),.05);
  assert.equal(finalLeadFraction({}, {},over,true),.40);
  const verified={signal:{strategy:'lead',externallyVerified:true}},fallback={signal:{strategy:'lead',externallyVerified:false}};
- assert.equal(comboAllocation(),.05);
- assert.equal(comboLegAllocation([verified,verified],comboAllocation()),.05);
- assert.equal(comboLegAllocation([verified,fallback],comboAllocation()),.05);
- assert.equal(comboLegAllocation([verified,{signal:{strategy:'over',externallyVerified:true}}],comboAllocation()),.05);
+ assert.equal(comboAllocation(),.15);
+ assert.equal(comboLegAllocation([verified,verified],comboAllocation()),.15);
+ assert.equal(comboLegAllocation([verified,fallback],comboAllocation()),.15);
+ assert.equal(comboLegAllocation([verified,{signal:{strategy:'over',externallyVerified:true}}],comboAllocation()),.15);
 });
 
 test('active crossed-prop games join the urgent scan instead of the rotating early-game budget',()=>{

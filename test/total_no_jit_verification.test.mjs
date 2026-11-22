@@ -85,8 +85,8 @@ function harness(sport,{ageMs=61000,failSecond=false,legacyFirstClock=null,final
     shardCash:()=>10000,marketShard:()=>0,singleSpendableCash:v=>v,
     feeReserve:()=>0,orderSize:()=>1,profitableCount:n=>unprofitable?0:n,estimatedCostCents:()=>0,
     auditTable:async()=>{},randomUUID:()=> 'proof',rememberIndependentEntry,
-    reserve:async signal=>{trace.push('reserve');assert.equal(signal.fraction,.05);return 'order-id';},
-    withEntryProfitFloor:async(options,fn)=>{assert.equal(options.fraction,.05);return fn();},
+    reserve:async signal=>{trace.push('reserve');assert.equal(signal.fraction,.15);return 'order-id';},
+    withEntryProfitFloor:async(options,fn)=>{assert.equal(options.fraction,.15);return fn();},
     invalidateBalance:async()=>{}
   });
   vm.runInContext(code,context);
