@@ -166,9 +166,9 @@ test('game list prioritizes preflights then available asks in descending counts'
   assert.deepEqual(games.sort(compare).map(g=>g.title),['Two preflights','One preflight','Recent preflight','Two asks','One ask','No asks']);
   const mixed={title:'Mixed',sport:'Soccer',away:1,home:2,time_left:'4 minutes',signals:[noAsk,ask(.60),ask(.80,'Awaiting score verification'),ask(.90)]};
   const shown=render(mixed).children.slice(2).map(c=>c.textContent);
-  assert.match(shown[0],/80¢ ask/);
-  assert.match(shown[1],/90¢ ask/);
-  assert.match(shown[2],/60¢ ask/);
+  assert.match(shown[0],/80¢ quoted ask/);
+  assert.match(shown[1],/90¢ quoted ask/);
+  assert.match(shown[2],/60¢ quoted ask/);
   assert.match(shown[3],/No ask liquidity/);
   const lead={title:'Houston wins',strategy:'lead',execution:'No ask liquidity'};
   const withLead={...mixed,sport:'NBA',signals:[noAsk,lead,noAsk]};
@@ -186,7 +186,7 @@ test('crossed player props show the actual statistic, ask, and execution blocker
   const row=make({title:'Cleveland at Atlanta'},{ticker:'KXNBAREB-26OCT29-PLAYER-4',title:'Okongwu over 3.5 rebounds',reason:'4 REB; line 3.5 already passed',ask:'0.9800',ask_size:'25.00',execution:'Awaiting independent score confirmation'});
   assert.equal(row.children[0].textContent,'Okongwu over 3.5 rebounds');
   assert.match(row.children[1].textContent,/4 REB; line 3.5 already passed/);
-  assert.match(row.children[2].textContent,/98.00¢ ask · 25 available · Awaiting independent score confirmation/);
+  assert.match(row.children[2].textContent,/98.00¢ quoted ask · 25 displayed [(]not verified executable[)] · Awaiting independent score confirmation/);
   assert.match(page,/id="props"/);
 });
 

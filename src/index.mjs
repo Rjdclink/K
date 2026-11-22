@@ -8,6 +8,7 @@ import { golfSignal, verifyGolfDecision, verifySportradarGolf } from './golf.mjs
 import { randomUUID } from 'node:crypto';
 import { apiPriority, withApiPriority, createPriorityGate } from './api_priority.mjs';
 import { createExecutionAudit } from './execution_audit.mjs';
+import {overRetryExplanation} from './over_retry_status.mjs';
 import { finalLeadFraction, directLeadFraction, leadEntryFraction, lateCommandingLead, verifiedOverFraction } from './lead_allocation.mjs';
 import { createFillComboQueue } from './fill_combo_queue.mjs';
 import pg from 'pg';
@@ -492,25 +493,37 @@ async function pairedOverRead(first,milestone,market,decorate=state=>state){
   return {state:second,pairedAt,externalId:first.verificationId,overValue:first.independentEntry?.overValue};
 }
 async function confirmedIndependentOver(first,milestone,market,{decorate=state=>state}={}){
+  const original=first;
   if(await noAskTimeout.isRetired({market,game:first},'yes')&&
     !await noAskTimeout.claimRecovery({market,game:first},'yes'))return null;
   // An actual executable YES offer is required before any external
   // scoreboard request, including the ESPN-first independent score lookup.
   // Do not accept an advertised ask without resting orderbook depth.
   const current=(await kalshi('/markets/'+encodeURIComponent(market.ticker))).market;
-  if(!current||overContractKey(first,current)!==overContractKey(first,market))return null;
+  if(!current||overContractKey(first,current)!==overContractKey(first,market)){
+    original.verificationIssue='Selected OVER contract is no longer the same live market';
+    return null;
+  }
   const quoted=await recoverSummaryAsk(current,{fresh:true});
   const seller=quoted&&hasAsk(quoted)?await executableQuote(quoted):null;
-  if(!seller){await noAskTimeout.observeMissing({market,game:first},'yes');return null;}
+  if(!seller){
+    original.verificationIssue='No executable YES seller in live Kalshi orderbook; quoted ask is not executable depth';
+    await noAskTimeout.observeMissing({market,game:first},'yes');return null;
+  }
   await noAskTimeout.available([{market,game:first}],'yes');
   if(await noAskTimeout.isRetired({market,game:first},'yes'))return null;
   if(externalSportFeeds(first)){
     const independent=await externallyScoredOverState(first,milestone,seller);
-    if(!independent)return null;
+    if(!independent){
+      original.verificationIssue=original.verificationIssue||
+        'No independently verified live fixture and score from a supported provider';
+      return null;
+    }
     first=decorate(independent);
   }
   await ensureOverWindows();
   if(overCushion(first,market)===null){
+    original.verificationIssue='Independent score did not establish the required removable OVER scoring cushion';
     await pool.query('DELETE FROM over_verification_windows WHERE market_ticker=$1 AND game_id=$2',[market.ticker,first.id]);
     return null;
   }
@@ -540,7 +553,10 @@ async function confirmedIndependentOver(first,milestone,market,{decorate=state=>
     await pool.query('DELETE FROM over_verification_windows WHERE market_ticker=$1',[market.ticker]);
     return null;
   }
-  if(overCushion(first,seller)===null)return null;
+  if(overCushion(first,seller)===null){
+    original.verificationIssue='Fresh live score no longer satisfies the required removable OVER scoring cushion';
+    return null;
+  }
   const now=Date.now(),key=overContractKey(first,seller);
   if(overCushion(first,seller)!==null){
     const id=randomUUID(),proof={route:'seller_cushion',contractKey:key,sellerAt:now,cushionUnits:overCushion(first,seller)};
@@ -2535,8 +2551,9 @@ async function watchLeadWindows(until){
 // event link in the latest scan, so a full catalog pass is unnecessary before
 // independently confirmed score, live orderbook, cash and the final buy gate.
 async function watchReadyOverTickets(until,{onlyTickers=null,once=false}={}){
-  if(!live())return;
+  if(!live())return new Map();
   await ensureLeadWatch();
+  const retryReasons=new Map();
   while(Date.now()<until){
     const started=Date.now();
     try{
@@ -2618,8 +2635,12 @@ async function watchReadyOverTickets(until,{onlyTickers=null,once=false}={}){
             outcome='filled';console.info('Fast over ticket filled:',market.ticker);
           }
         }catch(e){outcome='error';detail=String(e.message);console.warn('Fast over ticket deferred:',ticket.ticker,e.message)}
-        finally{await recordDecision({source:'fast_over',market:market||{ticker:ticket.ticker},
-          signal:verified||{strategy:'over'},game:state||{id:milestone.id},stage,outcome,detail,startedAt:checkedAt})}
+        finally{
+          if(onlyTickers?.has(ticket.ticker))
+            retryReasons.set(ticket.ticker,overRetryExplanation({stage,outcome,detail}));
+          await recordDecision({source:'fast_over',market:market||{ticker:ticket.ticker},
+            signal:verified||{strategy:'over'},game:state||{id:milestone.id},stage,outcome,detail,startedAt:checkedAt});
+        }
       }
     }catch(e){console.warn('Fast over tickets deferred:',e.message)}
     if(once)break;
@@ -2627,6 +2648,7 @@ async function watchReadyOverTickets(until,{onlyTickers=null,once=false}={}){
     if(Date.now()+pause>=until)break;
     if(pause)await new Promise(resolve=>setTimeout(resolve,pause));
   }
+  return retryReasons;
 }
 
 // Retry ONLY the requested game and contract lines, allowing the existing
@@ -2688,19 +2710,21 @@ async function watchEntryRechecks(until){
       const due=await entryRechecks.claimDue(12);
       for(const group of groupEntryRechecks(due)){
         if(Date.now()>=until)break;
-        let reason='recheck attempted';
+        let reason='recheck attempted',overRetryReasons=null;
         try{
           if(group[0].strategy==='over'){
-            await watchReadyOverTickets(until,{
+            overRetryReasons=await watchReadyOverTickets(until,{
               onlyTickers:new Set(group.map(t=>t.market_ticker)),once:true});
-            reason='OVER proof, executable ask and profit rechecked';
+            reason='No fresh qualifying OVER signal was available for this recheck';
           }else reason=await retryGroupedNoTickets(group);
         }catch(error){
           reason='recheck unavailable: '+String(error.message).slice(0,120);
           console.warn('Urgent entry group deferred:',group[0].game_id,error.message);
         }finally{
           for(const candidate of group){
-            await entryRechecks.finish(candidate.market_ticker,candidate.game_id,reason)
+            const candidateReason=group[0].strategy==='over'?
+              overRetryReasons?.get(candidate.market_ticker)||reason:reason;
+            await entryRechecks.finish(candidate.market_ticker,candidate.game_id,candidateReason)
               .catch(error=>console.warn('Retry state update deferred:',error.message));
             if(candidate.strategy==='over'&&candidate.attempts>=2){
               // A failed independent check must not be displayed indefinitely
@@ -2715,8 +2739,8 @@ async function watchEntryRechecks(until){
                 "AND t.status IN ('filled','reserved','retrying','check_order','combo_pending')) "+
                 "AND g.signals @> jsonb_build_array(jsonb_build_object('ticker',$2::text))",
                 [candidate.game_id,candidate.market_ticker,
-                  'Two prioritized entry rechecks completed; no eligible order ('+
-                  String(reason).slice(0,90)+')'])
+                  'Two prioritized entry rechecks completed; '+
+                  String(candidateReason).slice(0,170)])
                 .catch(error=>console.warn('Over retry dashboard status deferred:',error.message));
             }
           }
