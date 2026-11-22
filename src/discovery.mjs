@@ -110,8 +110,13 @@ export function nearEntryPhase(game){
       pro&&period===4&&seconds<=480||
       Boolean(profile)&&period>=profile.period&&seconds<=profile.tiers[0][1]+90);
   }
-  if(/hockey/.test(type))return (period===1||period===2)&&seconds>0&&seconds<=360||
-    period>=3&&seconds>=0&&seconds<=900;
+  if(/hockey/.test(type)){
+    const margin=Number.isFinite(game.homeUnits)&&Number.isFinite(game.awayUnits)?
+      Math.abs(game.homeUnits-game.awayUnits):0;
+    return (period===1||period===2)&&seconds>0&&seconds<=360||
+      period>=3&&seconds>=0&&seconds<=900||
+      period===3&&seconds>0&&(margin>=4&&seconds<=1200||margin>=3&&seconds<=960);
+  }
   if(/soccer/.test(type))return period===1&&!game.soccerExtraTime&&
     Number.isFinite(game.soccerMinute)&&game.soccerMinute>=38&&game.soccerMinute<45||
     period===2&&!game.soccerExtraTime&&Number.isFinite(game.soccerMinute)&&
@@ -151,7 +156,7 @@ export function marketEntryProximity(game){
     else return Infinity;
   }else if(/hockey/.test(type)){
     if([1,2].includes(period))target=360;
-    else if(period===3)target=margin>=3?600:margin>=2?360:420;
+    else if(period===3)target=margin>=4?1200:margin>=3?900:margin>=2?360:420;
   }else if(/basketball/.test(type)){
     if(['NBA','WNBA'].includes(game.sport)){
       if([1,2,3].includes(period))target=150;

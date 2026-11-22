@@ -267,8 +267,8 @@ export function periodValue(game,market){
   if(!parts.length||parts.some(p=>!p))return null;
   return {home:parts.reduce((s,p)=>s+p.home,0),away:parts.reduce((s,p)=>s+p.away,0),number:n,unit};
 }
-// Sole commanding-winner threshold for NHL regulation P3 and soccer regulation P2.
-// Scans, dispatch and all allocation levels must use exactly this rule.
+// Sole commanding-winner eligibility for NHL regulation P2/P3 and soccer P2.
+// Scans, dispatch and allocation decisions must use this common rule.
 export function goalCommandingLeadEntry(game){
   const type=String(game?.type||''),soccer=/soccer/.test(type),hockey=/hockey/.test(type);
   if(!soccer&&!hockey||!game.verifiedLive||!game.scoreKnown||
@@ -276,12 +276,16 @@ export function goalCommandingLeadEntry(game){
     !Number.isFinite(game.homeUnits)||!Number.isFinite(game.awayUnits))return false;
   const margin=Math.abs(game.homeUnits-game.awayUnits);
   const seconds=hockey?game.remainingSeconds:soccerRegulationSeconds(game);
-  if(hockey&&game.period!==3||soccer&&(game.period!==2||game.soccerExtraTime||
-    game.clockRunning===false))return false;
-  return Number.isFinite(seconds)&&seconds>0&&
-    (hockey?(margin>=3&&seconds<600||margin>=2&&seconds<360):
-      margin>=5&&seconds<=1500||margin>=4&&seconds<1200||
-      margin>=3&&seconds<900||margin>=2&&seconds<360);
+  if(soccer&&(game.period!==2||game.soccerExtraTime||game.clockRunning===false))return false;
+  if(!Number.isFinite(seconds)||seconds<=0)return false;
+  if(hockey){
+    // 25 minutes of regulation remaining means P2 at 5:00, not P3 at 25:00.
+    if(game.period===2)return margin>=5&&seconds<=300;
+    return game.period===3&&seconds<=1200&&
+      (margin>=4||margin>=3&&seconds<900||margin>=2&&seconds<360);
+  }
+  return margin>=5&&seconds<=1500||margin>=4&&seconds<1200||
+    margin>=3&&seconds<900||margin>=2&&seconds<360;
 }
 export function endWindow(game){
   if(!game.verifiedLive||!game.scoreKnown||!game.periodConsistent)return false;
@@ -320,8 +324,11 @@ export function leadWatchReason(game){
     }
   }
   if(/hockey/.test(type)){
-    if(game.period===3&&Number.isFinite(seconds)&&seconds>0&&seconds<=690&&margin>=2)
-      return `Tracking ${margin}-goal lead; entry requires +3 strictly under 10:00 or +2 strictly under 6:00 in period 3; ${goalCommandingLeadEntry(game)?'score and clock qualify; checking seller':'waiting for clock threshold'}`;
+    const watchP2=game.period===2&&margin>=5&&Number.isFinite(seconds)&&seconds>0&&seconds<=360;
+    const watchP3=game.period===3&&Number.isFinite(seconds)&&seconds>0&&
+      (margin>=4&&seconds<=1200||margin>=3&&seconds<=960||margin>=2&&seconds<=420);
+    if(watchP2||watchP3)
+      return `Tracking ${margin}-goal lead; entry requires +5 with 5:00 or less left in P2, +4 from the start of P3, +3 strictly under 15:00 in P3, or +2 strictly under 6:00 in P3; ${goalCommandingLeadEntry(game)?'score and clock qualify; checking seller':'waiting for clock threshold'}`;
   }
   if(/baseball/.test(type)&&
     game.period===8&&game.inningHalf===2&&game.outs>=1&&margin>=5)
@@ -732,9 +739,10 @@ export function leadSignal(game, market) {
   const soccerSecondHalf=soccer&&goalCommandingLeadEntry(game);
   const baseballEighth=baseball&&game.period===8&&game.inningHalf===2&&game.outs===2;
   const finalTime=baseball?baseballEighth:soccer?soccerSecondHalf:
+    hockey?game.periodConsistent&&goalCommandingLeadEntry(game):
     game.period===segments&&game.periodConsistent&&Number.isFinite(seconds)&&seconds>0&&
     (basketball?Boolean(basketballEntryTier(game)):
-      hockey?goalCommandingLeadEntry(game):game.sport==='CFB'?cfbLeadWindow(game):seconds<=450);
+      game.sport==='CFB'?cfbLeadWindow(game):seconds<=450);
   if (!game.verifiedLive || !game.scoreKnown || soccer&&!game.scoreConsistent || !finalTime || market.status!=='active' && market.status!=='open') return null;
   const h=game.homeUnits,a=game.awayUnits;
   if (!Number.isFinite(h)||!Number.isFinite(a)) return null;
