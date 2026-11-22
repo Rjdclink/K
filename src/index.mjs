@@ -5804,7 +5804,9 @@ async function handleRequest(req){const url=new URL(req.url);
     cached=knownLive.map(row=>row.milestone);
     if(!cached.length){await discoveryJob;if(discovered){cached=discovered;discoveryCount=discovered.length;discoveryApplied=true}}
     try{
-      while(Date.now()<until){
+      // Discovery is scheduled every two minutes: never repeat its costly
+      // comprehensive scan inside the same one-minute cron invocation.
+      while(Date.now()<until&&cycles<1){
         if(discovered&&!discoveryApplied&&(cycles>0||!cached.length)){
           cached=discovered;discoveryCount=discovered.length;discoveryApplied=true;
         }
