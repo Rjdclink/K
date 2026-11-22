@@ -1,7 +1,7 @@
-// No order may exceed five percent of total bankroll unless it is a
+// No automatic order may exceed fifteen percent of total bankroll unless it is a
 // specifically verified, still-cushioned OVER. Caller-provided signal fractions
 // never independently grant an exception.
-export const ORDINARY_ENTRY_MAX_FRACTION=.05;
+export const ORDINARY_ENTRY_MAX_FRACTION=.15;
 export function hasIndependentCushionedOverProof(game){
  const over=game?.overVerification,entry=game?.independentEntry;
  return Boolean(over&&entry&&

@@ -93,8 +93,8 @@ function harness({ageMs=61000,canVerify=true,hasSeller=true,unprofitable=false,e
     },
     profitableCount:n=>unprofitable?0:n,estimatedCostCents:()=>0,
     auditTable:async()=>{},randomUUID:()=> 'hockey-verification',rememberIndependentEntry,
-    reserve:async signal=>{trace.push('reserve');assert.equal(signal.fraction,.05);return 'hockey-order';},
-    withEntryProfitFloor:async(options,fn)=>{assert.equal(options.fraction,.05);return fn();},
+    reserve:async signal=>{trace.push('reserve');assert.equal(signal.fraction,.15);return 'hockey-order';},
+    withEntryProfitFloor:async(options,fn)=>{assert.equal(options.fraction,.15);return fn();},
     invalidateBalance:async()=>{}
   });
   vm.runInContext(code,context);
@@ -118,7 +118,7 @@ test('NHL NO checks both full-game and P3, with independent 7:00 preflight then 
   assert.equal(h.orders,0,'strictly under 360s required');
   assert.equal(await h.scan('5:59'),2);
   assert.equal(h.orders,2,'both distinct markets can qualify');
-  assert.equal(h.allocation,.05);
+  assert.equal(h.allocation,.15);
   assert.ok(h.trace.lastIndexOf('external')<h.trace.lastIndexOf('reserve'),'external immediately precedes reservation');
   assert.ok(h.trace.indexOf('external',h.trace.indexOf('external')+1)<h.trace.indexOf('orderbook'),'first eligible final check precedes first NO book probe');
   assert.ok(h.trace.lastIndexOf('orderbook')<h.trace.lastIndexOf('external'),'last contract verifies ESPN only after its executable NO seller is established');
@@ -179,12 +179,12 @@ test('pending NHL order cannot suppress the first independent check for another 
  assert.equal(h.orders,0);
 });
 
-test('NHL total NO caps full-game and P3 entries in one shared fee-inclusive 5% pool',async()=>{
+test('NHL total NO caps full-game and P3 entries in one shared fee-inclusive 15% pool',async()=>{
   const h=harness({existingExposure:true});
   await h.scan('7:00');
   await h.scan('5:59');
-  assert.equal(h.allocation,.05);
-  assert.equal(h.availablePool,50,'$5 total cap minus existing $4 exposure and $0.50 fees leaves $0.50');
+  assert.equal(h.allocation,.15);
+  assert.equal(h.availablePool,1050,'$15 total cap minus existing $4 exposure and $0.50 fees leaves $10.50');
 });
 
 test('hockey NO dashboard signals are persisted alongside existing strategies, without changing football or basketball scans',()=>{

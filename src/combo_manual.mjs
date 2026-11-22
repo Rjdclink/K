@@ -6,7 +6,7 @@ export function manualComboQuote(market,book,position,account,fraction=.15,budge
   if(Number(position?.position_fp??position?.position)<=0)return {reason:'Combo position is no longer held'};
   const best=bestYesAsk(book);
   if(!best)return {reason:'No YES seller is available'};
-  fraction=Math.min(.05,fraction);
+  fraction=Math.min(.15,fraction);
   const price=best.price,bankroll=Number(account?.balance)+Number(account?.portfolio_value);
   const exposure=Number(position?.market_exposure_dollars),fees=Number(position?.fees_paid_dollars);
   if(!Number.isFinite(bankroll)||!Number.isFinite(exposure)||!Number.isFinite(fees))return {reason:'Balance or position cost unavailable'};
@@ -22,6 +22,6 @@ export function manualComboQuote(market,book,position,account,fraction=.15,budge
   if(count<(market.fractional_trading_enabled===false?1:.01))return {reason:'Ask is too small for the available cash'};
   const cost=Math.ceil(100*count*price)+Math.ceil(feeFactor*count*price*(1-price));
   if(!comboMeetsMinimum(fraction,bankroll,cost,Math.ceil((exposure+fees)*100)))
-    return {reason:'Combo allocation exceeds five-percent bankroll ceiling'};
+    return {reason:'Combo allocation exceeds fifteen-percent bankroll ceiling'};
   return {price,count,max_cost_cents:cost,estimated_profit_cents:Math.floor(100*count)-cost};
 }

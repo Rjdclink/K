@@ -2852,7 +2852,7 @@ async function executeVerifiedMention(item){
   const ask=side==='yes'?bestYesAsk(orderbook_fp):bestNoAsk(orderbook_fp);
   if(!ask||!mentionEntryPrice(ask.price)||ask.size<minimumCount(current))return;
   const fee=feeReserve(event,current),spendable=Math.min(singleSpendableCash(account.balance),local);
-  const raw=orderSize(spendable,ask.price,ask.size,.05,.40,bankroll,budget,fee);
+  const raw=orderSize(spendable,ask.price,ask.size,.15,.40,bankroll,budget,fee);
   const count=current.fractional_trading_enabled===false?Math.floor(raw):raw;
   if(count<minimumCount(current)||estimatedCostCents(count,ask.price,fee)>budget||
     netSettlementProfitCents(count,ask.price,fee)<minimumProfitCents('mention',bankroll))return;
@@ -3090,8 +3090,8 @@ async function scanThirdQuarterNos(games,events){
       const unreported=awaiting.reduce((sum,row)=>sum+estimatedCostCents(Number(row.fill_count),Number(row.limit_price)),0);
       const accounted=held+unreported;
       if(baselineHeld===null)baselineHeld=accounted;
-      const budget=Math.max(0,Math.floor(bankroll*.30)-Math.max(accounted,baselineHeld+spent)),fees=feeReserve(c.event,refreshed);
-      const price=ask.price,count=orderSize(Math.min(singleSpendableCash(account.balance),local),price,ask.size,.05,1,bankroll,budget,fees);
+      const budget=Math.max(0,Math.floor(bankroll*.15)-Math.max(accounted,baselineHeld+spent)),fees=feeReserve(c.event,refreshed);
+      const price=ask.price,count=orderSize(Math.min(singleSpendableCash(account.balance),local),price,ask.size,.15,1,bankroll,budget,fees);
       const quantity=refreshed.fractional_trading_enabled===false?Math.floor(count):count;
       if(quantity<minimumCount(refreshed)||!profitableCount(quantity,price,fees,'no',bankroll,game.type,game.remainingSeconds,{game,market:refreshed}))continue;
       await auditTable();const verificationId=randomUUID(),verifiedAt=Date.now();
@@ -3099,11 +3099,11 @@ async function scanThirdQuarterNos(games,events){
         [verificationId,refreshed.ticker,JSON.stringify({mode:'independent_yardage_zero_no',game,milestone:c.milestone,
           firstAt:window.first_at,secondAt:new Date(verifiedAt),player,ask:price,depth:ask.size})]);
       game.verificationId=verificationId;rememberIndependentEntry(game,refreshed,verificationId,verifiedAt);
-      const signal={strategy:'no',fraction:.30,reason:`NO ${player.name} ${player.metric} ${player.line+.5}+; verified zero in period ${game.period}`};
+      const signal={strategy:'no',fraction:.15,reason:`NO ${player.name} ${player.metric} ${player.line+.5}+; verified zero in period ${game.period}`};
       const id=await reserve(signal,game,c.event,refreshed,quantity,price,account.balance);
       if(!id)continue;
       try{
-        const result=await withEntryProfitFloor({ticker:refreshed.ticker,count:quantity,price,fees,strategy:'no',fraction:.30,bankroll,game,market:refreshed},
+        const result=await withEntryProfitFloor({ticker:refreshed.ticker,count:quantity,price,fees,strategy:'no',fraction:.15,bankroll,game,market:refreshed},
           ()=>kalshi('/portfolio/events/orders',{method:'POST',auth:true,entryVerifications:[{game,market:refreshed}],
             beforeDispatch:()=>{if(!thirdQuarterYardageNo(game,refreshed)||Date.now()-game.observedAt>10000)
               throw Object.assign(Error('NO zero or quarter proof expired'),{code:'LOCAL_EXTERNAL_VERIFICATION_REQUIRED'})},
@@ -3140,7 +3140,7 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null,phase='all
   const basketball=sport==='basketball',qualifies=basketball?collegeBasketballTotalNo:collegeFootballTotalNo;
   const prewindow=360,entry=300;
   const label=basketball?'College basketball':'Football';
-  const allocation=.05;
+  const allocation=.15;
   const reasonPatterns=basketball?['College basketball %','Basketball total NO %',
     'Basketball early-quarter NO %']:['CFB %','NFL %'];
   // NO diagnostics are separate from YES over/winner entry signals.
@@ -3354,7 +3354,7 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null,phase='all
       const count=orderSize(Math.min(singleSpendableCash(account.balance),local),ask.price,ask.size,allocation,1,bankroll,budget,fees);
       const quantity=current.fractional_trading_enabled===false?Math.floor(count):count;
       if(quantity<minimumCount(current)||!profitableCount(quantity,ask.price,fees,'no',bankroll,fresh.type,fresh.remainingSeconds,{game:fresh,market:current})){
-        report(c,'Entry blocked: 5% bankroll pool, fees or required net profit',ask);continue;
+        report(c,'Entry blocked: 15% bankroll pool, fees or required net profit',ask);continue;
       }
       // All executable-liquidity, bankroll, fee and profit gates passed.
       // Obtain the required independent final score proof immediately before entry.
@@ -3423,7 +3423,7 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null,phase='all
   return filled;
 }
 async function scanHockeyTotalNos(games,events,signalSink=null,phase='all'){
-  const allocation=.05,entry=360,start=420,reasonPattern='NHL hockey total NO %';
+  const allocation=.15,entry=360,start=420,reasonPattern='NHL hockey total NO %';
   const noDiagnostics=new Map();
   const auditNoCandidate=(c,execution,quote=null)=>{
     const candidate=c;
@@ -3627,7 +3627,7 @@ async function scanHockeyTotalNos(games,events,signalSink=null,phase='all'){
       const quantity=current.fractional_trading_enabled===false?Math.floor(count):count;
       if(quantity<minimumCount(current)||!profitableCount(quantity,ask.price,fees,
         'no',bankroll,fresh.type,fresh.remainingSeconds,{game:fresh,market:current})){
-        report(c,'Entry blocked: 5% shared NHL total-NO cap, fees or net profit',null,ask);continue;
+        report(c,'Entry blocked: 15% shared NHL total-NO cap, fees or net profit',null,ask);continue;
       }
       // Executable orderbook depth and all risk/profit checks passed.
       // Only now run independent final NHL ESPN verification.
@@ -3711,7 +3711,7 @@ async function scanHockeyTotalNos(games,events,signalSink=null,phase='all'){
 // period-three and soccer full-game scanners. All NO variants share the sport's
 // fee-inclusive bankroll cap and the normal exchange order safeguards.
 async function scanEarlyPeriodNos(games,events,signalSink=null,sport='NHL',phase='all'){
-  const hockey=sport==='NHL',basketball=sport==='Basketball',allocation=.05,
+  const hockey=sport==='NHL',basketball=sport==='Basketball',allocation=.15,
     entry=basketball?90:300,start=basketball?150:360,minFirst=basketball?120:210;
   const policy=hockey?{
     spec:hockeyEarlyNoMarketSpec,signal:hockeyEarlyPeriodNo,
@@ -3942,7 +3942,7 @@ async function scanEarlyPeriodNos(games,events,signalSink=null,sport='NHL',phase
         tickers.has(p.ticker)&&Number(p.position_fp??p.position)<0);
       if(negative.some(p=>![p.market_exposure_dollars,p.fees_paid_dollars].every(v=>
         v!=null&&Number.isFinite(Number(v))))){
-        report(c,'Entry blocked: existing 5% NO exposure cannot be measured',null,ask);continue;
+        report(c,'Entry blocked: existing 15% NO exposure cannot be measured',null,ask);continue;
       }
       const held=negative.reduce((sum,p)=>sum+
         Math.ceil(100*Number(p.market_exposure_dollars))+
@@ -3964,7 +3964,7 @@ async function scanEarlyPeriodNos(games,events,signalSink=null,sport='NHL',phase
       const quantity=current.fractional_trading_enabled===false?Math.floor(count):count;
       if(quantity<minimumCount(current)||!profitableCount(quantity,ask.price,fees,
         'no',bankroll,fresh.type,policy.seconds(fresh),{game:fresh,market:current})){
-        report(c,'Entry blocked: shared 5% bankroll/fees ceiling or net-profit check',null,ask);
+        report(c,'Entry blocked: shared 15% bankroll/fees ceiling or net-profit check',null,ask);
         continue;
       }
       // Complete final ESPN verification only with an executable seller,
@@ -4074,7 +4074,7 @@ async function scanEarlyPeriodNos(games,events,signalSink=null,sport='NHL',phase
 }
 
 async function scanSoccerTotalNos(games,events,signalSink=null,phase='all'){
-  const allocation=.05,entry=480,start=660,reasonPattern='Soccer %total NO %';
+  const allocation=.15,entry=480,start=660,reasonPattern='Soccer %total NO %';
   const noDiagnostics=new Map();
   const auditNoCandidate=(candidate,execution,quote=null)=>{
     if(!candidate?.market?.ticker||!candidate?.state||!execution)return;
@@ -4287,7 +4287,7 @@ async function scanSoccerTotalNos(games,events,signalSink=null,phase='all'){
       const quantity=current.fractional_trading_enabled===false?Math.floor(count):count;
       if(quantity<minimumCount(current)||!profitableCount(quantity,ask.price,fees,
         'no',bankroll,fresh.type,fresh.matchRemainingSeconds,{game:fresh,market:current})){
-        report(c,'Entry blocked: shared 5% soccer total-NO cap, fees or net profit',null,ask);continue;
+        report(c,'Entry blocked: shared 15% soccer total-NO cap, fees or net profit',null,ask);continue;
       }
       // With executable liquidity and positive net profit confirmed,
       // perform the separate required final live ESPN verification.
@@ -4410,7 +4410,7 @@ async function scanNoncushionedPlayerOvers(games,events,signalSink=null){
  const eligible=candidates.filter(c=>windows.has(c.market.ticker));
  let filled=0;
  // All matured markets are compared using actual executable asks, liquidity,
- // the fee reserve and the ordinary 5% bankroll ceiling. Neither discovery
+ // the fee reserve and the ordinary 15% bankroll ceiling. Neither discovery
  // order nor apparent ROI is allowed to choose the next five-slot entry.
  const firstChecks=eligible.filter(c=>!windows.get(c.market.ticker).first_proof);
  const ready=eligible.filter(c=>{
@@ -4434,7 +4434,7 @@ async function scanNoncushionedPlayerOvers(games,events,signalSink=null){
      if(local===null||local<=0)return null;
      const price=Number(quote.yes_ask_dollars),fees=feeReserve(c.event,quote);
      const count=contractCount(Math.min(singleSpendableCash(account.balance),local),
-       quote,.05,bankroll,Infinity,fees,{strategy:'over',game:c.state});
+       quote,.15,bankroll,Infinity,fees,{strategy:'over',game:c.state});
      if(!Number.isFinite(count)||count<=0)return null;
      return {c,ticker:c.market.ticker,netProfitCents:netSettlementProfitCents(count,price,fees),
        costCents:estimatedCostCents(count,price,fees)};
@@ -4508,7 +4508,7 @@ async function scanNoncushionedPlayerOvers(games,events,signalSink=null){
     firstEventId:first.eventId,secondEventId:second.eventId,
     firstAt:first.requestedAt,secondAt:second.requestedAt};
    if(!timedOverEntryValid(checked,seller))return;
-   const signal={strategy:'over',fraction:.05,
+   const signal={strategy:'over',fraction:.15,
     reason:NONCUSHIONED_PLAYER_TAG+'; '+spec.player.name+' '+spec.player.metric+
     ' externally '+second.playerValue+' above '+spec.player.line+
     ', first external check at eligibility and second at least 3:30 later immediately before entry'};
@@ -4525,7 +4525,7 @@ async function scanNoncushionedPlayerOvers(games,events,signalSink=null){
 }
 
 async function scanVariablePlayerOvers(games,events,signalSink=null){
-  const fraction=.05,reasonPrefix='Variable player over: ';
+  const fraction=.15,reasonPrefix='Variable player over: ';
   const report=(c,execution,proof=null)=>{
     if(!signalSink)return;
     const list=signalSink.get(c.state.id)||[];
@@ -4647,7 +4647,7 @@ async function scanVariablePlayerOvers(games,events,signalSink=null){
         Math.min(singleSpendableCash(account.balance),local),seller,fraction,bankroll,
         Math.floor(bankroll*fraction),fees),price,fees,'over',bankroll,
         fresh.type,fresh.remainingSeconds,{game:fresh,market:seller});
-      if(!count){report(c,'Entry blocked: YES seller, fees, profit or 25% player cap');continue;}
+      if(!count){report(c,'Entry blocked: YES seller, fees, profit or 15% ordinary player cap');continue;}
       const proof=await verifyIndependentVariableOver(fresh,c.milestone,seller);
       const verifiedAt=Date.now();
       if(!proof||!variableProofValid(first,proof,fresh,seller,verifiedAt)||
@@ -4855,7 +4855,7 @@ async function scan(cachedMilestones,discoveryCount){
     const collegeBasketballGames=[...marketGames,...noOnlyBasketballGames],
       collegeBasketballEvents=new Map([...events,...noOnlyEvents]);
     // Final ESPN verifications are urgent across ALL four sports.
-    // Each sport starts independently; full/segment variants sharing a 5%
+    // Each sport starts independently; full/segment variants sharing a 15%
     // bankroll are serialized for safe order accounting. A routine initial
     // preflight must NEVER keep an eligible final ticket in a queue.
     submitted+=await withApiPriority('preflight_final',()=>runImmediateNoFinalPass([

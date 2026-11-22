@@ -5,7 +5,7 @@ export function threeGoalWinner(game,signal,market){
   return Boolean(market&&signal?.strategy==='lead'&&/hockey|soccer/.test(game?.type||'')&&
     Math.abs(game.homeUnits-game.awayUnits)>=3&&leadSignal(game,market));
 }
-// Legacy 15% purchase minimum conflicts with the new 5% hockey/soccer ceiling.
+// No minimum spend is required for commanding winners; the ordinary maximum is 15%.
 // Eligibility stays at the exact winner/clock gate; no separate minimum spend.
 export const minimumThreeGoalSpend=()=>0;
 
@@ -31,7 +31,7 @@ export function lateCommandingLead(game,market){
   return false;
 }
 function unboundedIndependentLeadFraction(game,market){
-  if(/hockey|soccer/.test(game?.type||''))return .05;
+  if(/hockey|soccer/.test(game?.type||''))return .15;
   if(!lateCommandingLead(game,market))return .20;
   const margin=Math.abs(game.homeUnits-game.awayUnits),type=game.type||'';
   const top=/basketball/.test(type)?game.sport==='NBA'?30:25:/hockey/.test(type)?7:/football/.test(type)?28:/soccer/.test(type)?4:Infinity;
@@ -39,13 +39,13 @@ function unboundedIndependentLeadFraction(game,market){
 }
 
 function unboundedDirectLeadFraction(game,signal,market){
-  if(signal?.strategy==='lead'&&/hockey|soccer/.test(game?.type||''))return .05;
+  if(signal?.strategy==='lead'&&/hockey|soccer/.test(game?.type||''))return KALSHI_ONLY_FRACTION;
   if(threeGoalWinner(game,signal,market))return .20;
   return signal?.strategy==='lead'&&lateCommandingLead(game,market)?.20:
     Math.min(.15,signal?.fraction??.15);
 }
 export function leadEntryFraction(first,second,signal,market,independent,direct){
-  if(basketballCloseoutEntry(second)||second.basketballVerification)return independent===true?.05:null;
+  if(basketballCloseoutEntry(second)||second.basketballVerification)return independent===true?.15:null;
   return independent===true?finalLeadFraction(first,second,signal,true,market):
     direct?directLeadFraction(second,signal,market):finalLeadFraction(first,second,signal,false,market);
 }
@@ -68,7 +68,7 @@ function unboundedFinalLeadFraction(first,second,signal,externallyVerified,marke
   if(basketballCloseoutEntry(second)||second.basketballVerification)return .15;
   if(/^Restricted 5% draw\b/.test(signal.reason||''))return .05;
   if(/^Restricted 2% lead\b/.test(signal.reason||''))return .02;
-  if(/hockey|soccer/.test(second?.type||''))return .05;
+  if(/hockey|soccer/.test(second?.type||''))return externallyVerified?.15:KALSHI_ONLY_FRACTION;
   if(externallyVerified&&lateCommandingLead(second,market))return independentlyVerifiedLeadFraction(second,market);
   if(proBasketballLeadRules(second)){
     const margin=Math.abs(second.homeUnits-second.awayUnits),seconds=second.remainingSeconds;
@@ -82,15 +82,15 @@ function unboundedFinalLeadFraction(first,second,signal,externallyVerified,marke
   return externallyVerified||market&&strongKalshiOnlyLead(first,second,market)?.20:KALSHI_ONLY_FRACTION;
 }
 // A lead verification selects eligibility, never permission to spend more than
-// five percent of bankroll. Preserve OVER-specific fractions separately.
+// fifteen percent of bankroll. Preserve OVER-specific fractions separately.
 export function independentlyVerifiedLeadFraction(game,market){
- return Math.min(.05,unboundedIndependentLeadFraction(game,market));
+ return Math.min(.15,unboundedIndependentLeadFraction(game,market));
 }
 export function directLeadFraction(game,signal,market){
  const raw=unboundedDirectLeadFraction(game,signal,market);
- return signal?.strategy==='lead'&&Number.isFinite(raw)?Math.min(.05,raw):raw;
+ return signal?.strategy==='lead'&&Number.isFinite(raw)?Math.min(.15,raw):raw;
 }
 export function finalLeadFraction(first,second,signal,externallyVerified,market){
  const raw=unboundedFinalLeadFraction(first,second,signal,externallyVerified,market);
- return signal?.strategy==='lead'&&Number.isFinite(raw)?Math.min(.05,raw):raw;
+ return signal?.strategy==='lead'&&Number.isFinite(raw)?Math.min(.15,raw):raw;
 }

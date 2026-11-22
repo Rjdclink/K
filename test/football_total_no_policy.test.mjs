@@ -102,7 +102,7 @@ test('NFL total NO independently verifies teams and scores, not ESPN clock',asyn
   assert.equal(independentCollegeTotalNoReading(clockConflict,f.state,f.milestone,m)?.home,20);
 });
 
-test('football scanner enforces shared 5% NO pool including NFL, CFB and fees',async()=>{
+test('football scanner enforces shared 15% NO pool including NFL, CFB and fees',async()=>{
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
   const code=source.slice(source.indexOf('async function scanCollegeTotalNos('),source.indexOf('async function scan(cachedMilestones'));
   assert.ok(code.includes('async function scanCollegeTotalNos'));
@@ -142,8 +142,8 @@ test('football scanner enforces shared 5% NO pool including NFL, CFB and fees',a
     orderSize:(cash,price,depth,fraction,min,bankroll,b)=>{allocation=fraction;budget=b;return b>=5?1:0;},
     profitableCount:n=>n,estimatedCostCents:()=>0,auditTable:async()=>{},
     randomUUID:()=> 'proof',rememberIndependentEntry,
-    reserve:async signal=>{assert.equal(signal.fraction,.05);return 'order-1';},
-    withEntryProfitFloor:async(options,fn)=>{assert.equal(options.fraction,.05);return fn();},
+    reserve:async signal=>{assert.equal(signal.fraction,.15);return 'order-1';},
+    withEntryProfitFloor:async(options,fn)=>{assert.equal(options.fraction,.15);return fn();},
     invalidateBalance:async()=>{}
   });
   vm.runInContext(code,context);
@@ -154,8 +154,8 @@ test('football scanner enforces shared 5% NO pool including NFL, CFB and fees',a
   assert.equal(await run(later),1,'second proof after 30 seconds authorizes entry');
   assert.equal(checks,2);
   assert.equal(orders,1);
-  assert.equal(allocation,.05);
-  assert.equal(budget,100,'$100 bankroll, with $3 CFB exposure and $1 fee, leaves only $1');
+  assert.equal(allocation,.15);
+  assert.equal(budget,1100,'$100 bankroll, with $3 CFB exposure and $1 fee, leaves $11');
   assert.ok(patterns.some(p=>Array.isArray(p)&&p.includes('CFB %')&&p.includes('NFL %')),
-    'open holdings for both football leagues must be pooled into a single 5% limit');
+    'open holdings for both football leagues must be pooled into a single 15% limit');
 });

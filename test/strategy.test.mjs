@@ -3,15 +3,16 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {gameState,overSignal,singleReadCushionedOver,confirmedOver,kalshiOnlyOver,kalshiOnlyLead,fallbackOverFraction,fallbackLeadFraction,confirmedExternalLead,leadSignal,earlyLeadSignal,leadWatchReason,confirmedSoccerWinnerClock,soccerWinnerWindowOpen,soccerOverStable,soccerOverWaitMs,externallyVerifiedEarlySoccerLead,tennisSignal,tableTennisSignal,orderSize,estimatedCostCents,overBudget,minimumProfitCents,netSettlementProfitCents,profitableCount,timedProfitExitAllowed,comeback,KALSHI_ONLY_FRACTION} from '../src/strategy.mjs';
 
-test('ordinary trades cannot exceed five percent of full bankroll including fee reservations',()=>{
+test('ordinary trades cap at fifteen percent inclusive of fees without forcing smaller risk tiers upward',()=>{
  const bankroll=14600,alreadyHeld=4372;
- assert.equal(overBudget(10228,alreadyHeld),730);
+ assert.equal(overBudget(10228,alreadyHeld),2190);
  assert.equal(overBudget(10228,alreadyHeld),overBudget(10228,alreadyHeld,0));
- const a=orderSize(10228,'.98','1000',.10,1,bankroll,1460,2);
- const b=orderSize(10228,'.98','1000',.15,1,bankroll,Infinity,2);
- const c=orderSize(10228,'.98','1000',.05,1,bankroll,Infinity,2);
- assert.equal(a,b);assert.equal(b,c);
- assert.ok(estimatedCostCents(b,.98,2)<=730);
+ const smaller=orderSize(10228,'.98','1000',.05,1,bankroll,Infinity,2);
+ const medium=orderSize(10228,'.98','1000',.10,1,bankroll,1460,2);
+ const maximum=orderSize(10228,'.98','1000',.15,1,bankroll,Infinity,2);
+ assert.ok(smaller<medium&&medium<maximum);
+ assert.equal(estimatedCostCents(maximum,.98,2),2190);
+ assert.ok(estimatedCostCents(maximum+.01,.98,2)>2190);
 });
 test('table tennis enters only at ten points to five or fewer in the deciding set without a clock',()=>{
   const m={id:'liga',type:'table_tennis_match',title:'Oleg Moshnikov vs Iurii Krivenkii',details:{league:'Russia Liga Pro',best_of:5,first_competitor_id:'oleg',second_competitor_id:'iurii'},related_event_tickers:['KXLIGAPROMATCH-DATE']};
@@ -222,8 +223,8 @@ test('limited-over cricket team run totals need exact team, crossed line, and tw
   const now=Date.now();
   const state=(at,updated,home=170,away=0)=>gameState(m,{milestone_id:m.id,_observed_at:new Date(at).toISOString(),details:{status:'live',home_score:home,away_score:away,inning:1,home_team_name:'Ajman',away_team_name:'Abu Dhabi',last_updated_ts:updated/1000}});
   const first=state(now-12000,now-13000),second=state(now,now-1000,171);
-  assert.equal(overSignal(first,market)?.fraction,.05);
-  assert.equal(overSignal(first,{...market,yes_sub_title:'Over 149.5 runs scored'})?.fraction,.05);
+  assert.equal(overSignal(first,market)?.fraction,.15);
+  assert.equal(overSignal(first,{...market,yes_sub_title:'Over 149.5 runs scored'})?.fraction,.15);
   assert.equal(kalshiOnlyOver(first,second,market),false,'a cricket delivery has no safe upper bound without a play record');
   assert.equal(kalshiOnlyOver(first,state(now-4000,now-1000,171),market),false);
   assert.equal(kalshiOnlyOver(first,state(now,now-13000,171),market),false);
@@ -437,24 +438,24 @@ test('small basketball leads below every configured minimum never enter',()=>{
     assert.equal(kalshiOnlyLead(at(now-12000,4,'00:20','away'),at(now,4),market),false);
   }
 });
-test('ordinary order sizing enforces five percent even when callers pass bigger fractions',()=>{
+test('ordinary order sizing enforces fifteen percent even when callers pass bigger fractions',()=>{
  const bankroll=10000;
  const count=orderSize(10000,'0.50','400',.8);
- assert.equal(count,orderSize(10000,'0.50','400',.05));
- assert.ok(estimatedCostCents(count,.5,2)<=500);
- assert.ok(estimatedCostCents(count+.01,.5,2)>500);
+ assert.equal(count,orderSize(10000,'0.50','400',.15));
+ assert.ok(estimatedCostCents(count,.5,2)<=1500);
+ assert.ok(estimatedCostCents(count+.01,.5,2)>1500);
  assert.equal(orderSize(10000,'0.50',undefined,.8),0);
  assert.equal(orderSize(10000,'0.50','0.37',.8),.37);
  assert.equal(orderSize(1,'0.50','0.37',1),0);
  assert.equal(orderSize(10000,'0.99','400',.8,.98),0);
- assert.ok(estimatedCostCents(orderSize(10000,'.95','1000',.9),.95)<=500);
+ assert.ok(estimatedCostCents(orderSize(10000,'.95','1000',.9),.95)<=1500);
  assert.equal(orderSize(10000,'0.50','400',.2,1,20000),orderSize(10000,'0.50','400',.3,1,20000));
 });
-test('ordinary OVER allocation is five percent independent of held positions',()=>{
- assert.equal(overBudget(10000,0,0),500);
- assert.equal(overBudget(2000,8000,8000),500);
- assert.equal(overBudget(6000,4000,3000),500);
- assert.equal(overBudget(10000,0,9000),500);
+test('ordinary OVER allocation is fifteen percent independent of held positions',()=>{
+ assert.equal(overBudget(10000,0,0),1500);
+ assert.equal(overBudget(2000,8000,8000),1500);
+ assert.equal(overBudget(6000,4000,3000),1500);
+ assert.equal(overBudget(10000,0,9000),1500);
 });
 test('entry submissions use full fills and ordinary profit targets remain policy-gated',()=>{
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
