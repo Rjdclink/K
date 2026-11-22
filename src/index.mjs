@@ -1,4 +1,5 @@
 import {basketballNoOnlyInternational} from './basketball_no_leagues.mjs';
+import {scanTier,prioritizeNearCheckGames,runScanTierWindow} from './scan_tiers.mjs';
 import {parallelBasketballVerification,assertBasketballVerification} from './basketball_verification.mjs';
 import {verifyExternalOverExposure,assertOverExposure} from './over_exposure.mjs';
 import {rememberIndependentEntry,independentEntryValid,assertExternalPurchase} from './entry_verification.mjs';
@@ -4615,7 +4616,7 @@ async function scanNoncushionedPlayerOvers(games,events,signalSink=null){
  return filled;
 }
 
-async function scanVariablePlayerOvers(games,events,signalSink=null){
+async function scanVariablePlayerOvers(games,events,signalSink=null,{maxMarkets=Infinity}={}){
   const fraction=.15,reasonPrefix='Variable player over: ';
   const report=(c,execution,proof=null)=>{
     if(!signalSink)return;
@@ -4647,22 +4648,21 @@ async function scanVariablePlayerOvers(games,events,signalSink=null){
     }
   }
   if(!candidates.length)return 0;
+  // The urgent 10-second worker handles a bounded, rotating subset; the
+  // discovery worker retains its original unlimited market coverage.
+  const offset=Number.isFinite(maxMarkets)&&maxMarkets<candidates.length?
+    Math.floor(Date.now()/10000)*maxMarkets%candidates.length:0;
+  const selected=Number.isFinite(maxMarkets)?
+    [...candidates.slice(offset),...candidates.slice(0,offset)].slice(0,maxMarkets):candidates;
   await pool.query('CREATE TABLE IF NOT EXISTS variable_player_over_windows ('+
     'market_ticker text PRIMARY KEY,game_id text NOT NULL,contract_key text NOT NULL,'+
     'player_id text NOT NULL,metric text NOT NULL,first_requested_at bigint NOT NULL,'+
     'first_proof jsonb NOT NULL,updated_at timestamptz NOT NULL DEFAULT now())');
   let filled=0;
-  for(const c of candidates){
+  for(const c of selected){
     try{
       if(await noAskTimeout.isRetired(c,'yes')&&
         !await noAskTimeout.claimRecovery(c,'yes')){
-        report(c,NO_ASK_RETIRED);continue;
-      }
-      if(!hasAsk(c.market)){
-        const gap=await noAskTimeout.observeMissing(c,'yes');
-        report(c,waitingOnAsk(gap));continue;
-      }
-      if(await noAskTimeout.isRetired(c,'yes')){
         report(c,NO_ASK_RETIRED);continue;
       }
       const key=c.spec.contractKey;
@@ -4675,6 +4675,15 @@ async function scanVariablePlayerOvers(games,events,signalSink=null){
         Number.isFinite(firstAt)&&firstAt>0&&firstAt<=Date.now()&&
         Date.now()-firstAt<6*3600000);
       if(!valid){
+        // Check executable ask depth immediately, before starting a fresh
+        // independent player proof. No 10- or 20-second liquidity dwell.
+        const liveMarket=await recoverSummaryAsk(c.market,{fresh:true});
+        const liveAsk=liveMarket&&hasAsk(liveMarket)?await executableQuote(liveMarket):null;
+        if(!liveAsk||!hasAsk(liveAsk)){
+          const gap=await noAskTimeout.observeMissing(c,'yes');
+          report(c,waitingOnAsk(gap));continue;
+        }
+        await noAskTimeout.available([c],'yes');
         // Share each live provider scoreboard for at most two seconds within
         // candidate discovery; final trading proof remains an uncached read.
         const proof=await verifyIndependentVariableOver(c.state,c.milestone,c.market,
@@ -4749,6 +4758,12 @@ async function scanVariablePlayerOvers(games,events,signalSink=null){
         report(c,'Entry blocked: second independent check, 3:30 interval or later play failed');
         continue;
       }
+      // A qualified external proof does not make an old orderbook executable.
+      // Recheck the live ask now, before reserving or dispatching an order.
+      const finalAsk=await executableQuote(seller);
+      if(!finalAsk||!hasAsk(finalAsk)||Number(finalAsk.yes_ask_size_fp)<count){
+        report(c,'Entry blocked: immediate final live ask unavailable');continue;
+      }
       await auditTable();
       const verificationId=randomUUID();
       await pool.query('INSERT INTO verification_records(id,market_ticker,passed,evidence) '+
@@ -4801,6 +4816,131 @@ async function scanVariablePlayerOvers(games,events,signalSink=null){
   return filled;
 }
 
+// Independent scanner workers share only a small promotion queue in Postgres.
+// Its clock and exchange metadata select games; neither supplies trade proof.
+let scanTierReady;
+function ensureScanTiers(){return scanTierReady??=pool.query(`CREATE TABLE IF NOT EXISTS sports_scan_tiers (
+  game_id text PRIMARY KEY,milestone jsonb NOT NULL,tier integer NOT NULL
+    CHECK (tier IN (10,30,120)),
+  seen_at timestamptz NOT NULL DEFAULT now(),
+  fast_checked_at timestamptz)`)
+  .catch(e=>{scanTierReady=null;throw e})}
+async function promoteScanGames(games){
+  const relevant=games.filter(g=>supportedScannerSport(g.milestone)&&
+    supportedScannerSport(g.state)&&!internationalBasketball(g.state));
+  if(!relevant.length)return 0;
+  await Promise.all([ensureScanTiers(),ensurePropWindows()]);
+  const ids=relevant.map(g=>g.milestone.id);
+  const [crossings,held]=await Promise.all([
+    pool.query(`SELECT DISTINCT game_id FROM player_prop_windows
+      WHERE game_id=ANY($1::text[]) AND last_seen>now()-interval '12 minutes'`,[ids]),
+    pool.query(`SELECT DISTINCT game_id FROM trade_attempts
+      WHERE game_id=ANY($1::text[]) AND status='filled'`,[ids])]);
+  const crossed=new Set(crossings.rows.map(r=>r.game_id)),heldIds=new Set(held.rows.map(r=>r.game_id));
+  const rows=relevant.map(({milestone,state})=>({game_id:milestone.id,milestone,
+    tier:scanTier({...state,start_date:milestone.start_date},{
+      playerCrossed:crossed.has(milestone.id),held:heldIds.has(milestone.id)})})).filter(r=>r.tier!==null);
+  const terminal=relevant.filter(g=>scanTier({...g.state,start_date:g.milestone.start_date})===null)
+    .filter(g=>/^(?:final|finished|completed|complete|closed|ended|cancelled|canceled)$/i.test(String(g.state.status||'')))
+    .map(g=>g.milestone.id);
+  if(terminal.length)await pool.query('DELETE FROM sports_scan_tiers WHERE game_id=ANY($1::text[])',[terminal]);
+  if(!rows.length)return 0;
+  // LEAST ensures discovery can never demote a game that the 30-second
+  // worker already promoted. Old and finished games age out of this queue.
+  await pool.query(`INSERT INTO sports_scan_tiers(game_id,milestone,tier,seen_at)
+    SELECT game_id,milestone,tier,clock_timestamp()
+    FROM jsonb_to_recordset($1::jsonb) AS r(game_id text,milestone jsonb,tier integer)
+    ON CONFLICT(game_id) DO UPDATE SET
+      milestone=EXCLUDED.milestone,tier=LEAST(sports_scan_tiers.tier,EXCLUDED.tier),
+      seen_at=clock_timestamp()`,[JSON.stringify(rows)]);
+  return rows.length;
+}
+async function scanNearPriorityGames(){
+  await ensureScanTiers();
+  const {rows}=await pool.query(`SELECT milestone FROM sports_scan_tiers
+    WHERE tier<=30 AND seen_at>now()-interval '5 minutes'
+    ORDER BY tier ASC,seen_at DESC LIMIT 90`);
+  const ms=rows.map(row=>row.milestone).filter(supportedScannerSport);
+  if(!ms.length)return 0;
+  const latest=await withApiPriority('preflight',()=>liveBatch(ms));
+  const games=ms.map(milestone=>({milestone,state:gameState(milestone,latest.get(milestone.id))}));
+  const promoted=await promoteScanGames(games);
+  const candidates=games.filter(g=>g.state.verifiedLive&&eligibleForMarkets(g.state)&&scanTier(g.state)===10);
+  const ready=prioritizeNearCheckGames(candidates,8);
+  if(!ready.length)return promoted;
+  const events=await withApiPriority('preflight',()=>marketMap(
+    ready.flatMap(g=>entryEventTickers(g.milestone,g.state))));
+  // A costly market catalog cannot cause the game observation to expire.
+  const fresh=await withApiPriority('preflight',()=>liveBatch(ready.map(g=>g.milestone)));
+  for(const g of ready){const reading=fresh.get(g.milestone.id);if(reading)g.state=gameState(g.milestone,reading)}
+  // Initial confirmation begins now, not after the two-minute discovery pass.
+  // Existing score-source and trade execution rules are unchanged.
+  await Promise.allSettled([
+    scanCollegeTotalNos(ready,events,'football',null,'initial'),
+    scanCollegeTotalNos(ready,events,'basketball',null,'initial'),
+    scanHockeyTotalNos(ready,events,null,'initial'),
+    scanEarlyPeriodNos(ready,events,null,'NHL','initial'),
+    scanSoccerTotalNos(ready,events,null,'initial'),
+    scanEarlyPeriodNos(ready,events,null,'Soccer','initial'),
+    scanEarlyPeriodNos(ready,events,null,'Basketball','initial')
+  ].map(p=>p.catch(e=>{console.warn('Near-entry first check deferred:',e.message);return null})));
+  return promoted;
+}
+async function scanFastPriorityGames(until){
+  if(!live()||Date.now()>=until)return 0;
+  await ensureScanTiers();
+  // Round-robin fairness prevents one fixture from monopolizing repeated scans.
+  const {rows}=await pool.query(`WITH chosen AS (
+    SELECT game_id FROM sports_scan_tiers WHERE tier=10
+      AND seen_at>now()-interval '5 minutes'
+      AND (fast_checked_at IS NULL OR fast_checked_at<clock_timestamp()-interval '10 seconds')
+    ORDER BY fast_checked_at NULLS FIRST,seen_at DESC LIMIT 2
+    FOR UPDATE SKIP LOCKED)
+    UPDATE sports_scan_tiers t SET fast_checked_at=clock_timestamp()
+      FROM chosen WHERE t.game_id=chosen.game_id RETURNING t.milestone`);
+  const ms=rows.map(row=>row.milestone).filter(supportedScannerSport);
+  if(!ms.length||Date.now()>=until)return 0;
+  const first=await withApiPriority('preflight_final',()=>liveBatch(ms));
+  let games=ms.map(milestone=>({milestone,state:gameState(milestone,first.get(milestone.id))}))
+    .filter(g=>g.state.verifiedLive&&playerPropEarlyWindow(g.state));
+  if(!games.length||Date.now()>=until)return 0;
+  const events=await withApiPriority('preflight',()=>marketMap(
+    games.flatMap(g=>entryEventTickers(g.milestone,g.state))));
+  // The slow market catalog cannot make the first external player check stale.
+  const fresh=await withApiPriority('preflight_final',()=>liveBatch(games.map(g=>g.milestone)));
+  games=games.map(g=>({...g,state:gameState(g.milestone,fresh.get(g.milestone.id))}))
+    .filter(g=>g.state.verifiedLive&&playerPropEarlyWindow(g.state));
+  if(Date.now()>=until)return 0;
+  // Exact contract, ESPN box score, independent second proof, later play,
+  // liquidity, cash and final order authorization remain completely unchanged.
+  return scanVariablePlayerOvers(games,events,null,{maxMarkets:6});
+}
+const scanMinuteEnd=()=>Math.min(Date.now()+55000,
+  (Math.floor(Date.now()/60000)+1)*60000-1500);
+async function runFastSportsTick(){
+  const until=scanMinuteEnd();
+  const watchers=[
+    withApiPriority('preflight_final',()=>watchEntryRechecks(until)),
+    withApiPriority('risk_exit',()=>watchCorrectedOvers(until)),
+    withApiPriority('preflight',()=>watchReadyOverTickets(until)),
+    withApiPriority('preflight',()=>watchLeadWindows(until))
+  ].map(p=>p.catch(e=>console.warn('Urgent independent scan deferred:',e.message)));
+  const cycles=await runScanTierWindow('fast',async()=>{
+    try{await scanFastPriorityGames(until)}
+    catch(e){console.warn('Fast player scan deferred:',e.message)}
+  },{until});
+  await Promise.all(watchers);
+  return {tier:'fast',cycles};
+}
+async function runNearSportsTick(){
+  const until=scanMinuteEnd();
+  const cycles=await runScanTierWindow('near',async()=>{
+    try{await scanNearPriorityGames()}
+    catch(e){console.warn('Near-entry scan deferred:',e.message)}
+  },{until});
+  return {tier:'near',cycles};
+}
+
 async function scan(cachedMilestones,discoveryCount){
   // A transaction-scoped lock is released by Postgres even if an invocation is terminated.
   // Snapshot writes use other pool connections so the dashboard sees each completed cycle.
@@ -4827,6 +4967,8 @@ async function scan(cachedMilestones,discoveryCount){
       g.state.verifiedLive||Date.parse(g.milestone.start_date||'')>Date.now()-3600000);
     const active=games.filter(g=>g.state.verifiedLive && g.state.scoreKnown);
     scanned=active.length;
+    // Promote candidates before slow market catalog or account operations.
+    await promoteScanGames(games);
     // Publish fresh live scores before quote discovery or cash/combination
     // work. A slow exchange response must not empty the dashboard's live list.
     await ensureScoreTime();
@@ -5633,22 +5775,20 @@ async function handleRequest(req){const url=new URL(req.url);
     if(!req.headers.get('x-neon-trigger-invocation-id'))return json({error:'Forbidden'},403);
     return json(await withApiPriority('background',()=>scanOfficialMentions()));
   }
-  if(req.method==='POST'&&url.pathname==='/tick'){
+  if(req.method==='POST'&&url.pathname==='/tick/fast'){
+    if(!req.headers.get('x-neon-trigger-invocation-id'))return json({error:'Forbidden'},403);
+    return json(await runFastSportsTick());
+  }
+  if(req.method==='POST'&&url.pathname==='/tick/near'){
+    if(!req.headers.get('x-neon-trigger-invocation-id'))return json({error:'Forbidden'},403);
+    return json(await runNearSportsTick());
+  }
+  if(req.method==='POST'&&(url.pathname==='/tick'||url.pathname==='/tick/discovery')){
     if(!req.headers.get('x-neon-trigger-invocation-id'))return json({error:'Forbidden'},403);
     // Neon cron has minute resolution. Short invocations keep the three-second loop alive
     // without relying on one function instance surviving for a full quarter hour.
     const now=Date.now();const until=Math.min(now+55000,(Math.floor(now/60000)+1)*60000-2000);let cached=null,discoveryCount,cycles=0,last={};
-    // Due finals leave the gate before catalog discovery, account staging,
-    // routine live checks, and noncritical dashboard activity. Protective
-    // exits retain the same highest urgency to avoid adding risk.
-    const entryRecheckJob=withApiPriority('preflight_final',()=>watchEntryRechecks(until))
-      .catch(e=>console.error('Urgent entry rechecks failed:',e));
-    const correctionJob=withApiPriority('risk_exit',()=>watchCorrectedOvers(until))
-      .catch(e=>console.error('Fast correction watcher failed:',e));
-    const readyOverJob=withApiPriority('preflight',()=>watchReadyOverTickets(until))
-      .catch(e=>console.error('Fast over ticket watcher failed:',e));
-    const leadWatchJob=withApiPriority('preflight',()=>watchLeadWindows(until))
-      .catch(e=>console.error('Fast lead watcher failed:',e));
+    // The discovery worker does not run or await urgent scans.
     await ensureLeadWatch();
     const {rows:knownLive}=await pool.query(`SELECT w.milestone FROM lead_watch_milestones w
       JOIN game_snapshots g ON g.id=w.game_id
@@ -5674,7 +5814,7 @@ async function handleRequest(req){const url=new URL(req.url);
         await new Promise(resolve=>setTimeout(resolve,pause));
       }
     }finally{
-      await Promise.all([correctionJob,leadWatchJob,readyOverJob,entryRecheckJob,discoveryJob]);
+      await discoveryJob;
       if(discoveryError)console.warn('Sports discovery deferred:',discoveryError.message);
     }
     const {next,...summary}=last;return json({...summary,cycles});
