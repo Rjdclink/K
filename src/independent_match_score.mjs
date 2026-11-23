@@ -103,9 +103,9 @@ const select=(boards,game,milestone,source,knownId=null)=>{
 
 // Returns verified reading, false for matched score contradiction/ambiguous
 // identity, or null for coverage/unavailability. Never authorizes a trade.
-export async function fetchIndependentMatchScore(game,milestone,{fetcher=fetch,espnFeed,foxFeed=null,fixtureCache=activeFixtureCache,flashscoreLoad=loadFlashscore,market=null}={}){
+export async function fetchIndependentMatchScore(game,milestone,{fetcher=fetch,espnFeed,foxFeed=null,fixtureCache=activeFixtureCache,flashscoreLoad=loadFlashscore,market=null,requireKalshiLive=true}={}){
   const gap=flashscoreCompetition(game,milestone);
-  if(!game?.verifiedLive||(!espnFeed&&!gap)||
+  if((requireKalshiLive&&!game?.verifiedLive)||(!espnFeed&&!gap)||
     !Number.isFinite(Date.parse(milestone?.start_date||'')))return null;
   const dates=daysFor(Date.parse(milestone.start_date));
   const identifiedGame=contractBoundFixtureIdentity(game,milestone,market);

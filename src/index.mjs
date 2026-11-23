@@ -38,6 +38,7 @@ import { authorized, checkCredentials, sessionCookie, loginPage } from './dashbo
 import { refreshDiscovery, scanMilestones, supportedScannerSport, isScannerExcludedSport, eligibleForMarkets, internationalBasketball, prioritizeMarketGames, linkedEventTickers, playerPropEntryClosed, entryEventTickers, winnerEventTickers, readyOverTickets, prioritizeReadyOverTickets, gameTimeLabel, storedClockSeconds, mapBatches, mergeScannerMilestones } from './discovery.mjs';
 import {upcomingScannedGames} from './dashboard_upcoming.mjs';
 import {publishPendingSportsPreview} from './scanner_pending_preview.mjs';
+import {nearScanExternalObservations,promotedFromExternalObservation} from './scanner_external_observation.mjs';
 import {selectStaleReviews,classifyStaleLive,retainedAfterStaleReview} from './stale_review.mjs';
 import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOverDecision, verifyIndependentTableTennisLeadDecision, verifyIndependentTableTennisMatch } from './score_verification.mjs';
@@ -4821,6 +4822,38 @@ async function scanVariablePlayerOvers(games,events,signalSink=null,{maxMarkets=
   return filled;
 }
 
+// Independent near-tier scoreboard observations are diagnostic, not trade
+// evidence. Keep each provider's score and clock in a separate table so a
+// stale Kalshi live state cannot overwrite a freshly checked external view.
+let externalSportsReady;
+function ensureExternalSportsObservations(){
+  return externalSportsReady??=pool.query('CREATE TABLE IF NOT EXISTS sports_external_observations ('+
+    'game_id text PRIMARY KEY,sport_family text NOT NULL,checked_at timestamptz NOT NULL,'+
+    'status text NOT NULL,source text,event_id text,home integer,away integer,'+
+    'period integer,clock_seconds numeric,elapsed_minute numeric,time_left text,reason text)')
+    .catch(error=>{externalSportsReady=null;throw error});
+}
+async function publishNearExternalObservations(observations){
+  if(!observations?.length)return 0;
+  await ensureExternalSportsObservations();
+  await pool.query(`INSERT INTO sports_external_observations AS old
+    (game_id,sport_family,checked_at,status,source,event_id,home,away,period,
+     clock_seconds,elapsed_minute,time_left,reason)
+    SELECT game_id,sport_family,checked_at,status,source,event_id,home,away,period,
+      clock_seconds,elapsed_minute,time_left,reason
+    FROM jsonb_to_recordset($1::jsonb) AS r(
+      game_id text,sport_family text,checked_at timestamptz,status text,
+      source text,event_id text,home integer,away integer,period integer,
+      clock_seconds numeric,elapsed_minute numeric,time_left text,reason text)
+    ON CONFLICT (game_id) DO UPDATE SET
+      sport_family=EXCLUDED.sport_family,checked_at=EXCLUDED.checked_at,
+      status=EXCLUDED.status,source=EXCLUDED.source,event_id=EXCLUDED.event_id,
+      home=EXCLUDED.home,away=EXCLUDED.away,period=EXCLUDED.period,
+      clock_seconds=EXCLUDED.clock_seconds,elapsed_minute=EXCLUDED.elapsed_minute,
+      time_left=EXCLUDED.time_left,reason=EXCLUDED.reason
+    WHERE old.checked_at<=EXCLUDED.checked_at`,[JSON.stringify(observations)]);
+  return observations.length;
+}
 // Independent scanner workers share only a small promotion queue in Postgres.
 // Its clock and exchange metadata select games; neither supplies trade proof.
 let scanTierReady;
@@ -4859,9 +4892,8 @@ async function promoteScanGames(games){
 }
 async function scanNearPriorityGames(){
   await ensureScanTiers();
-  // This worker is independent of both 2-minute discovery and 10-second
-  // candidate trading. It promotes first; it does not hold up promotion
-  // while fetching market catalogs or waiting for external proof.
+  // 30-second scans run independently of urgent entry and slow discovery.
+  // First promote every Kalshi-ready fixture: ESPN must never delay this.
   const {rows}=await pool.query(`SELECT milestone FROM sports_scan_tiers
     WHERE tier<=30 AND seen_at>now()-interval '5 minutes'
     ORDER BY tier ASC,seen_at DESC LIMIT 90`);
@@ -4870,9 +4902,31 @@ async function scanNearPriorityGames(){
   const latest=await withApiPriority('live',()=>liveBatch(ms));
   const games=ms.map(milestone=>({milestone,state:gameState(milestone,latest.get(milestone.id))}));
   const promoted=await promoteScanGames(games);
-  console.info('Near-entry promotion:',JSON.stringify({
-    checked:games.length,urgent:games.filter(g=>scanTier({
-      ...g.state,start_date:g.milestone.start_date})===10).length
+  // All enabled sports receive independent fixture, live score AND live clock
+  // checks. This is observational: the 10-second worker independently
+  // reloads Kalshi plus fresh contract-specific first/final proof before buy.
+  const observations=await nearScanExternalObservations(games,{
+    verify:async({milestone,state})=>{
+      const feeds=externalSportFeeds(state);
+      if(!feeds)return null;
+      return fetchIndependentMatchScore(state,milestone,{
+        espnFeed:feeds[0],foxFeed:feeds[1],
+        requireKalshiLive:false,fetcher:sharedCandidateScoreboardFetch
+      });
+    }
+  });
+  await publishNearExternalObservations(observations);
+  // An independently sourced clock may promote the game even while Kalshi
+  // reports a delayed/scheduled status. Promotion never grants trade entry.
+  await promoteScanGames(games.map((game,i)=>
+    promotedFromExternalObservation(game,observations[i])));
+  const statusCounts={};
+  for(const item of observations)statusCounts[item.status]=(statusCounts[item.status]||0)+1;
+  console.info('Near-entry external score coverage:',JSON.stringify({
+    checked:observations.length,statuses:statusCounts,
+    nfl:observations.filter(o=>o.sport_family.startsWith('football_')).length,
+    hockey:observations.filter(o=>o.sport_family.startsWith('hockey_')).length,
+    soccer:observations.filter(o=>o.sport_family.startsWith('soccer_')).length
   }));
   return promoted;
 }
@@ -5575,10 +5629,27 @@ async function refreshOpenClocks(){
 // When account/position APIs delay the full dashboard, the sports panel still
 // has a fast, read-only DB-backed feed. Neither this path nor the catalog
 // projection performs an orderbook lookup or grants trading eligibility.
-const DASHBOARD_GAMES_SQL=`SELECT id,title,sport,home,away,possession_side,status,time_left,scanned_at,score_observed_at,signals FROM game_snapshots
-    WHERE status IN ('live','inprogress','started') AND GREATEST(score_observed_at,scanned_at)>now()-interval '15 minutes'
-      AND sport_family ~* '^(hockey|soccer|football)_'
-    ORDER BY jsonb_array_length(signals) DESC,title`;
+// External scores/periods/clocks become visible as soon as the 30-second
+// worker independently verifies a fixture, including when Kalshi's game
+// status is behind. These are informational values, not purchase proof.
+const DASHBOARD_GAMES_SQL=`SELECT g.id,g.title,g.sport,
+    CASE WHEN e.game_id IS NOT NULL THEN e.home ELSE g.home END AS home,
+    CASE WHEN e.game_id IS NOT NULL THEN e.away ELSE g.away END AS away,
+    g.possession_side,
+    CASE WHEN e.game_id IS NOT NULL THEN 'live' ELSE g.status END AS status,
+    CASE WHEN e.game_id IS NOT NULL THEN e.time_left ELSE g.time_left END AS time_left,
+    GREATEST(g.scanned_at,COALESCE(e.checked_at,g.scanned_at)) AS scanned_at,
+    CASE WHEN e.game_id IS NOT NULL THEN e.checked_at ELSE g.score_observed_at END AS score_observed_at,
+    g.signals
+  FROM game_snapshots g
+  LEFT JOIN sports_external_observations e ON e.game_id=g.id
+    AND e.status='live' AND e.checked_at>now()-interval '75 seconds'
+    AND g.status<>'final'
+  WHERE ((g.status IN ('live','inprogress','started')
+    AND GREATEST(g.score_observed_at,g.scanned_at)>now()-interval '15 minutes')
+    OR e.game_id IS NOT NULL)
+    AND g.sport_family ~* '^(hockey|soccer|football)_'
+  ORDER BY jsonb_array_length(g.signals) DESC,g.title`;
 async function dashboardDiscovery(){
   return pool.query("SELECT milestones FROM sports_discovery_cache WHERE id=1 AND discovered_at>now()-interval '15 minutes'")
     .catch(error=>{console.warn('Dashboard game catalog unavailable:',error.message);
@@ -5597,23 +5668,30 @@ function dashboardFreshness(game,now=Date.now()){
   return game;
 }
 async function dashboardGamesFeed(){
-  const [snap,stats,discovery]=await Promise.all([
-    pool.query(DASHBOARD_GAMES_SQL),pool.query('SELECT * FROM scan_status WHERE id=1'),dashboardDiscovery()
+  await ensureExternalSportsObservations();
+  const [snap,stats,discovery,terminal]=await Promise.all([
+    pool.query(DASHBOARD_GAMES_SQL),pool.query('SELECT * FROM scan_status WHERE id=1'),
+    dashboardDiscovery(),pool.query(`SELECT id FROM game_snapshots
+      WHERE status='final' AND scanned_at>now()-interval '24 hours'
+        AND sport_family ~* '^(hockey|soccer|football)_'`)
   ]);
-  const upcoming=upcomingScannedGames(discovery.rows[0]?.milestones,{
-    excludeIds:new Set(snap.rows.map(game=>game.id))});
+  // Final games must not reappear under "awaiting live score" merely because
+  // Kalshi's discovery catalog still labels their milestone in progress.
+  const excludeIds=new Set([...snap.rows,...terminal.rows].map(game=>game.id));
+  const upcoming=upcomingScannedGames(discovery.rows[0]?.milestones,{excludeIds});
   return {games:snap.rows.map(game=>dashboardFreshness(game)),
     upcoming,discoveryError:discovery.error||null,scan:stats.rows[0]||null};
 }
 let recentDashboardPositions=null;
 const dashboardDeadline=ms=>new Promise(resolve=>setTimeout(()=>resolve(null),ms));
 async function state(){
+  await ensureExternalSportsObservations();
   await ensureScoreTime();
   await ensureMentionTables();
   await pool.query(`CREATE TABLE IF NOT EXISTS combo_diagnostics (id bigserial PRIMARY KEY,
     checked_at timestamptz NOT NULL DEFAULT now(),leg_tickers jsonb NOT NULL,
     collection_ticker text,status text NOT NULL,detail text)`);
-  const [snap,stats,attempts,mentionStatus,discovery]=await Promise.all([
+  const [snap,stats,attempts,mentionStatus,discovery,terminal]=await Promise.all([
   pool.query(DASHBOARD_GAMES_SQL),
   pool.query('SELECT * FROM scan_status WHERE id=1'),
   pool.query(`SELECT a.market_ticker,a.game_id,a.sport,a.strategy,a.reason,a.combo_legs,a.fill_count,a.limit_price,g.status AS game_status,g.title AS game_title,g.signals AS game_signals,g.sport_family,g.possession_side,g.home AS home_score,g.away AS away_score,GREATEST(g.score_observed_at,g.scanned_at) AS score_scanned_at,g.clock_seconds,g.clock_label,g.clock_observed_at,g.time_left,
@@ -5625,9 +5703,12 @@ async function state(){
     WHERE a.status='filled' ORDER BY a.created_at DESC`),
   pool.query('SELECT checked_at,stats FROM mention_scan_status WHERE id=1'),
   dashboardDiscovery(),
+  pool.query(`SELECT id FROM game_snapshots WHERE status='final'
+    AND scanned_at>now()-interval '24 hours'
+    AND sport_family ~* '^(hockey|soccer|football)_'`),
 ]);
   const upcoming=upcomingScannedGames(discovery.rows[0]?.milestones,{
-    excludeIds:new Set(snap.rows.map(game=>game.id))});
+    excludeIds:new Set([...snap.rows,...terminal.rows].map(game=>game.id))});
   const comboGameIds=[...new Set(attempts.rows.flatMap(o=>Array.isArray(o.combo_legs)?o.combo_legs.map(l=>l.game_id).filter(Boolean):[]))];
   const comboScores=new Map(comboGameIds.length?(await pool.query(`SELECT id,home,away,status,
     COALESCE(score_observed_at,scanned_at) AS observed_at FROM game_snapshots WHERE id=ANY($1::text[])`,[comboGameIds])).rows.map(g=>[g.id,g]):[]);
