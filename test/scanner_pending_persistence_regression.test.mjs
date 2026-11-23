@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
+import vm from 'node:vm';
+import {gameTimeLabel,storedClockSeconds} from '../src/discovery.mjs';
 import {publishPendingSportsPreview} from '../src/scanner_pending_preview.mjs';
 
 const monitored=(id,type,sport='NFL',status='scheduled',verifiedLive=false)=>({
@@ -73,4 +75,39 @@ test('a Kalshi start-delayed MLS fixture is persisted as an unverified observati
  assert.equal(calls[0].params[0],game.milestone.id);
  assert.match(calls[0].sql,/home=NULL,away=NULL/);
  assert.ok(calls[0].sql.includes("signals='[]'::jsonb"));
+});
+
+test('the later scanner snapshot write never turns a delayed 0–0 into a verified score, but preserves genuinely final scores',()=>{
+ const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
+ const start=source.indexOf('function snapshotRow(');
+ const end=source.indexOf('async function publishLivePreview(',start);
+ assert.ok(start>0&&end>start);
+ const snapshotRow=vm.runInNewContext(source.slice(start,end)+';snapshotRow',
+   {gameTimeLabel,storedClockSeconds});
+ const milestone={id:'soccer-delayed',type:'soccer_tournament_multi_leg',
+   title:'Vancouver vs Salt Lake',start_date:'2026-11-23T01:30:00Z',
+   details:{league:'MLS',status:'not_started'}};
+ const observedAt=new Date('2026-11-23T01:40:00Z');
+ const liveMap=new Map([[milestone.id,{_observed_at:observedAt.toISOString()}]]);
+ const unconfirmed={id:milestone.id,title:milestone.title,sport:'Soccer',
+   type:milestone.type,status:'delayed',verifiedLive:false,
+   scoreKnown:true,home:0,away:0,period:1,soccerMinute:0,progress:0};
+ const row=snapshotRow({milestone,state:unconfirmed},liveMap,observedAt);
+ assert.equal(row[4],null,'zero score before kickoff is not verified evidence');
+ assert.equal(row[5],null);
+ assert.equal(row[6],'inactive');
+ assert.equal(row[7],null,'unverified game progress cannot be presented as live');
+ assert.equal(row[8],'','unverified first period is not a live quarter or half');
+ assert.deepEqual(row[14],'[]','no actionable quote or preflight is generated');
+ const verified=snapshotRow({milestone,state:{...unconfirmed,verifiedLive:true,
+   status:'live',scoreKnown:true,home:2,away:1,period:2,soccerMinute:85,
+   matchRemainingSeconds:300,progress:.9}},liveMap,observedAt);
+ assert.equal(verified[4],2);
+ assert.equal(verified[5],1);
+ assert.equal(verified[6],'live');
+ const final=snapshotRow({milestone,state:{...unconfirmed,status:'final',
+   verifiedLive:false,scoreKnown:true,home:3,away:2,period:2}},liveMap,observedAt);
+ assert.equal(final[4],3,'confirmed final scores remain visible for historical holdings');
+ assert.equal(final[5],2);
+ assert.equal(final[6],'final');
 });

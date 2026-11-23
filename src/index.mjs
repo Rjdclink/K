@@ -3038,12 +3038,16 @@ async function scanOfficialMentions(){
 }
 function snapshotRow({milestone,state},liveMap,scanStarted){
   const baseball=/baseball/.test(state.type),tennis=/tennis/.test(state.type),soccer=/soccer/.test(state.type);
-  const timeLeft=gameTimeLabel(state);
+  // Delayed fixtures can report a placeholder 0-0 before live confirmation.
+  // Preserve separately confirmed terminal scores for held positions.
+  const terminal=/^(?:final|finished|complete|completed|closed|ended)$/.test(state.status);
+  const scoreConfirmed=(state.verifiedLive||terminal)&&state.scoreKnown;
+  const timeLeft=state.verifiedLive||terminal?gameTimeLabel(state):'Awaiting verified live score';
   const preciseClockSeconds=state.verifiedLive?(soccer&&Number.isFinite(state.matchRemainingSeconds)?state.matchRemainingSeconds:soccer&&Number.isFinite(state.soccerMinute)&&state.soccerMinute<90?Math.max(0,(90-state.soccerMinute)*60):!baseball&&!tennis&&!soccer&&Number.isFinite(state.remainingSeconds)?state.remainingSeconds:null):null;
   const clockSeconds=storedClockSeconds(preciseClockSeconds,state.clockRunning);
   const clockLabel=state.golf?'Round progress':/esports/.test(state.type)?'Match phase':/cricket/.test(state.type)?'Innings progress':soccer?state.soccerMinute>=90?'Regulation expired':'Regulation left':baseball?'Inning progress':tennis?'Set progress':state.sport==='NCAAB'? `Half ${state.period||'?'} left`:/hockey/.test(state.type)?`Period ${state.period||'?'} left`:/football|basketball/.test(state.type)?`Quarter ${state.period||'?'} left`:'Game clock';
-  const displayClockLabel=clockSeconds!=null&&state.clockRunning===false?`${clockLabel} · paused`:clockLabel;
-  return [state.id,state.title||'Sports game',state.sport,state.type,state.scoreKnown?state.home:null,state.scoreKnown?state.away:null,state.verifiedLive?'live':/^(final|finished|complete|completed|closed|ended)$/.test(state.status)?'final':'inactive',Number.isFinite(state.progress)?state.progress:null,String(state.period||''),timeLeft,clockSeconds,displayClockLabel,liveMap.get(milestone.id)?._observed_at||null,scanStarted,'[]',state.possessionSide,state.homeTeamId||null,state.awayTeamId||null];
+  const displayClockLabel=!state.verifiedLive&&!terminal?'Awaiting live confirmation':clockSeconds!=null&&state.clockRunning===false?`${clockLabel} · paused`:clockLabel;
+  return [state.id,state.title||'Sports game',state.sport,state.type,scoreConfirmed?state.home:null,scoreConfirmed?state.away:null,state.verifiedLive?'live':terminal?'final':'inactive',(state.verifiedLive||terminal)&&Number.isFinite(state.progress)?state.progress:null,(state.verifiedLive||terminal)?String(state.period||''):'',timeLeft,clockSeconds,displayClockLabel,liveMap.get(milestone.id)?._observed_at||null,scanStarted,'[]',state.possessionSide,state.homeTeamId||null,state.awayTeamId||null];
 }
 async function publishLivePreview(active,liveMap,scanStarted){
   for(let i=0;i<active.length;i+=100){
