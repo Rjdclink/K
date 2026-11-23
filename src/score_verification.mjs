@@ -84,7 +84,7 @@ function expectedNames(game,milestone){
   // its home/away order is explicit.
   return {home:game.homeName||fallback.home||'',away:game.awayName||fallback.away||''};
 }
-function sameTeam(expected,aliases,sport){
+function sameTeam(expected,aliases,sport,league=''){
   const key=clean(expected);
   const variants=teamAbbreviationVariants(expected,sport).map(clean);
   // Kalshi NHL milestones often use only a city, while ESPN/FOX append the
@@ -99,7 +99,14 @@ function sameTeam(expected,aliases,sport){
     Seattle:'Seattle Kraken','St. Louis':'St Louis Blues','Tampa Bay':'Tampa Bay Lightning',
     Toronto:'Toronto Maple Leafs',Utah:'Utah Mammoth',Vancouver:'Vancouver Canucks',
     Vegas:'Vegas Golden Knights',Washington:'Washington Capitals',Winnipeg:'Winnipeg Jets'};
-  const soccer={'Atletico Mineiro':'Atletico MG','Al Ahli Saudi':'Al Ahli','GA Eagles':'Go Ahead Eagles'};
+  const leagueAliases={
+    'ligue 2':{'Sochaux-Montbeliard':'Sochaux'},
+    'bolivia premier division':{'GV Club Deportivo San Jose de Oruro':'GV San José'},
+    'apf division de honor':{'CS 2 de Mayo':'2 de Mayo','San Lorenzo':'Sportivo San Lorenzo'},
+    'uruguay primera division':{'Las Piedras':'Juventud','Defensor':'Defensor Sporting'}
+  };
+  const soccer={'Atletico Mineiro':'Atletico MG','Al Ahli Saudi':'Al Ahli','GA Eagles':'Go Ahead Eagles',
+    ...(leagueAliases[String(league).toLowerCase()]||{})};
   const franchise=sport==='NHL'&&hockey[expected]?clean(hockey[expected]):soccer[expected]?clean(soccer[expected]):null;
   // ESPN shortens Chilean club names such as "Deportes La Serena" to
   // "La Serena". Remove only the generic, standalone soccer club prefix;
@@ -135,7 +142,9 @@ export function sameFixture(game,milestone,home,away,time,externalScores=null,{i
   const names=expectedNames(game,milestone),start=Date.parse(milestone.start_date||'');
   const other=Date.parse(time||'');
   if(!Number.isFinite(start)||!Number.isFinite(other)||Math.abs(start-other)>3*3600000)return false;
-  if(sameTeam(names.home,home,game.sport)&&sameTeam(names.away,away,game.sport))return true;
+  const aliasLeague=Math.abs(start-other)<=15*60000?milestone?.details?.league:'';
+  if(sameTeam(names.home,home,game.sport,aliasLeague)&&
+    sameTeam(names.away,away,game.sport,aliasLeague))return true;
   // Relaxed names identify a possible fixture, not a confirmed score.
   // The source still must present BOTH independently identifiable teams
   // within fifteen minutes of Kalshi's kickoff; downstream score checks

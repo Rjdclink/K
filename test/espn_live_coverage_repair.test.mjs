@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {espnScoreboardUrls} from '../src/espn_scoreboards.mjs';
-import {espnMatches} from '../src/score_verification.mjs';
+import {espnMatches,sameFixture} from '../src/score_verification.mjs';
 import {verifyFreshEspnSoccerNo} from '../src/soccer_espn_no.mjs';
 import {fetchIndependentMatchScore} from '../src/independent_match_score.mjs';
 import {teamAbbreviationVariants} from '../src/team_identity.mjs';
@@ -52,12 +52,28 @@ test('covered soccer leagues route to directly verified ESPN league feeds, but u
   ['Austrian Bundesliga','aut.1'],['Serie A','ita.1'],
   ['Eredivisie','ned.1'],['EPL','eng.1'],
   ['Serie B','ita.2'],['Ligue 2','fra.2'],['La Liga','esp.1'],['Spanish Liga F','esp.w.1'],
+  ['APF Division de Honor','par.1'],['Uruguay Primera Division','uru.1'],
   ['NCAAB','all'] // a soccer label cannot use college basketball feeds
  ])assert.ok(urls(league)[0].includes('/soccer/'+slug+'/scoreboard'),league);
  for(const league of ['Slovakia Niké liga','Ekstraklasa','Serie C','KHL','Unidentified League'])
   assert.ok(urls(league)[0].includes('/soccer/all/scoreboard'),league);
  assert.ok(espnScoreboardUrls('hockey/nhl',{sport:'NHL'},{},['20261122'])[0].includes('/hockey/nhl/'));
  assert.ok(espnScoreboardUrls('hockey/mens-college-hockey',{sport:'College Hockey'},{},['20261122'])[0].includes('/hockey/mens-college-hockey/'));
+});
+
+test('league-specific ESPN club aliases match only the confirmed teams and near-exact kickoff',()=>{
+ for(const [title,league,homeName,awayName,at] of [
+  ['Sochaux-Montbeliard vs Dunkerque','Ligue 2','Sochaux','Dunkerque','2026-11-23T19:45:00Z'],
+  ['Universitario de Vinto vs GV Club Deportivo San Jose de Oruro','Bolivia Premier Division','Universitario de Vinto','GV San José','2026-11-23T21:15:00Z'],
+  ['CS 2 de Mayo vs San Lorenzo','APF Division de Honor','2 de Mayo','Sportivo San Lorenzo','2026-11-23T21:00:00Z'],
+  ['Las Piedras vs Defensor','Uruguay Primera Division','Juventud','Defensor Sporting','2026-11-23T19:30:00Z']
+ ]){
+  const {game,milestone,board}=soccer({title,league,homeName,awayName,at:Date.parse(at)});
+  assert.equal(espnMatches(board,game,milestone,{identityOnly:true}).length,1,title);
+  assert.equal(sameFixture(game,{...milestone,details:{league:'Unrelated League'}},[homeName],[awayName],at),false,title+' wrong league');
+  assert.equal(sameFixture(game,milestone,[homeName],[awayName],new Date(Date.parse(at)+20*60000).toISOString()),false,title+' wrong kickoff');
+  assert.equal(sameFixture(game,milestone,[homeName],['Other Club'],at),false,title+' wrong opponent');
+ }
 });
 
 test('soccer-NO exact ESPN proof falls back to all only after covered league board lacks the fixture',async()=>{

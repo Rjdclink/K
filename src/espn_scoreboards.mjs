@@ -29,6 +29,8 @@ const soccerLeagueSlugs={
  'chile liga de primera':'chi.1',
  'argentine nacional b':'arg.2',
  'argentina primera division':'arg.1',
+ 'apf division de honor':'par.1',
+ 'uruguay primera division':'uru.1',
  'liga mx':'mex.1',
  'bolivia premier division':'bol.1'
 };
