@@ -2,7 +2,8 @@ import {supportedScannerSport} from './discovery.mjs';
 
 // Pre-live fixture observations are informational only. Kalshi's scheduled
 // 0-0 is not a confirmed score and cannot authorize any order or preflight.
-const PRELIVE=new Set(['scheduled','not_started','unplayed','pregame','pre_game','created']);
+const PRELIVE=new Set(['scheduled','not_started','unplayed','pregame','pre_game','created',
+  'delayed','start_delayed']);
 
 export async function publishPendingSportsPreview(games,query,observedAt=new Date()){
   const pending=(Array.isArray(games)?games:[]).filter(({milestone,state}={})=>
