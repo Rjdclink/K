@@ -22,6 +22,15 @@ export function supportedScannerSport(item){
   return true;
 }
 
+// The discovery worker must keep the tracked live set AND admit new fixtures
+// from its persisted catalog. A nonempty live set is not a substitute for
+// current discovery; otherwise new games can starve until every old one ends.
+export function mergeScannerMilestones(knownLive=[],catalog=[]){
+  const ordered=[...(Array.isArray(knownLive)?knownLive:[]),
+    ...(Array.isArray(catalog)?catalog:[])].filter(m=>m?.id&&supportedScannerSport(m));
+  return [...new Map(ordered.map(m=>[m.id,m])).values()];
+}
+
 export async function mapBatches(items,limit,task){
   const results=new Array(items.length);let next=0;
   await Promise.all(Array.from({length:Math.min(items.length,Math.max(1,Math.floor(limit)))},async()=>{
