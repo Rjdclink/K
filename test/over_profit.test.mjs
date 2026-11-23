@@ -87,7 +87,8 @@ test('the serialized final gate blocks exchange dispatch below the per-purchase 
     const client={query:async sql=>({rows:sql.includes('pg_try_advisory_xact_lock')?[{acquired:true}]:rows}),
       release:()=>{released=true}};
     const context=vm.createContext({ensureManualCombos:async()=>{},setTimeout,minimumProfitCents,netSettlementProfitCents,estimatedCostCents,automaticEntryFraction,filledOrderGateCount,
-      pool:{connect:async()=>client},allOpenPositions:async()=>({market_positions:rows.map(r=>({ticker:r.market_ticker,position_fp:'1'}))})});
+      pool:{connect:async()=>client},accountBalance:async()=>({balance:5000,portfolio_value:0}),
+      allOpenPositions:async()=>({market_positions:rows.map(r=>({ticker:r.market_ticker,position_fp:'1'}))})});
     vm.runInContext(gate,context);
     const result=await context.withEntryProfitFloor({ticker:'PROP',count:1,price,fees:2,strategy:'over',bankroll:5000,
       fraction:.05,game:game(period),market:market()},async()=>{sends++;return 'sent'});

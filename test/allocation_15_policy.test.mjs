@@ -77,7 +77,7 @@ test('unverified hockey/soccer lead proof route metadata is unchanged while the 
 test('the five unsettled uncushioned player-prop slots and their profit floor remain mandatory',()=>{
  const code=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
  assert.match(code,/open\.size>5/);
- assert.match(code,/minimumProfitCents\(strategy,bankroll/);
+ assert.match(code,/minimumProfitCents\(strategy,latestBankroll/);
  assert.match(code,/withEntryProfitFloor\(/);
 });
 

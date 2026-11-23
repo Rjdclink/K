@@ -55,7 +55,7 @@ test('manual combination additions count all existing cost and fees under 100%',
 
 test('sport and verification rules are preserved, with only bankroll pools changed',()=>{
  const code=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
- for(const fragment of ['open.size>5','minimumProfitCents(strategy,bankroll',
+ for(const fragment of ['open.size>5','minimumProfitCents(strategy,latestBankroll',
   'assertOverExposure(game,market,signal.fraction)','assertFreshLead(game,market)',
   'Math.floor(bankroll*allocation)-held-unreported','const allocation=1',
   'remainingMentionCents(total,latestExposure.heldCents,latestExposure.pendingCents)'])

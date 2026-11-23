@@ -904,6 +904,7 @@ async function manualBuyCombo(body){
     await client.query('COMMIT');
     try{
       const result=await withEntryProfitFloor({ticker:body.ticker,manual:true,count:quote.count,price:quote.price,
+        maxCostCents:quote.max_cost_cents,
         fees:Math.max(2,2*Number(marketResponse.market.fee_multiplier_override||0)),strategy:attempt.strategy,
         bankroll:Number(account.balance)+Number(account.portfolio_value)},()=>kalshi('/portfolio/events/orders',{method:'POST',auth:true,entryVerifications,body:{ticker:body.ticker,
         client_order_id:body.id,side:'bid',count:quote.count.toFixed(2),price:quote.price.toFixed(4),
@@ -974,7 +975,10 @@ async function manualBuyPosition(body){
     q.count=Math.min(q.count,body.count);
     if(q.count<(current.market.fractional_trading_enabled===false?1:.01))return reject('Confirmed quantity is too small');
     try{
-      const result=await withEntryProfitFloor({ticker:body.ticker,manual:true},()=>kalshi('/portfolio/events/orders',{method:'POST',auth:true,entryVerifications:current.entryVerifications,
+      const result=await withEntryProfitFloor({ticker:body.ticker,manual:true,
+        count:q.count,price:q.price,fees:Math.max(2,2*current.fees.multiplier),
+        maxCostCents:estimatedCostCents(q.count,q.price,Math.max(2,2*current.fees.multiplier))+1},
+        ()=>kalshi('/portfolio/events/orders',{method:'POST',auth:true,entryVerifications:current.entryVerifications,
         beforeDispatch:()=>{if(Date.now()-current.checkedAt>30000)throw Object.assign(Error('Manual purchase quote expired; review a fresh quote'),{code:'LOCAL_MANUAL_QUOTE_EXPIRED'})},onDispatch:()=>{dispatched=true},
         body:{ticker:body.ticker,client_order_id:body.id,side:'bid',count:q.count.toFixed(2),price:q.price.toFixed(4),
           time_in_force:'fill_or_kill',self_trade_prevention_type:'taker_at_cross',post_only:false}}));
@@ -1177,7 +1181,7 @@ async function allOpenPositions({strict=false}={}){
 // Serialize final buy decisions across the scan's parallel singles, weather and
 // combo jobs. Count the same filled, open positions shown on the dashboard;
 // recent in-flight attempts occupy a slot until Kalshi reports their fill.
-async function withEntryProfitFloor({ticker,count,price,fees,strategy,fraction,bankroll,game,market,manual=false},send){
+async function withEntryProfitFloor({ticker,count,price,fees,strategy,fraction,bankroll,game,market,manual=false,maxCostCents},send){
   await ensureManualCombos();
   for(;;){
     const client=await pool.connect();let busy=false;
@@ -1188,16 +1192,27 @@ async function withEntryProfitFloor({ticker,count,price,fees,strategy,fraction,b
       else{
         const noncushionedPlayer=game?.overVerification?.route==='noncushioned_player_two_proof';
         const positions=await allOpenPositions({strict:manual||noncushionedPlayer||strategy==='over'&&fraction>=.45});
+        const latestAccount=await accountBalance({fresh:true});
+        const latestCash=Number(latestAccount?.balance),latestBankroll=latestCash+Number(latestAccount?.portfolio_value);
+        const estimated=estimatedCostCents(count,price,fees);
+        const debit=manual?Math.max(estimated,Number(maxCostCents)):estimated;
+        if(!Number.isFinite(latestCash)||latestCash<0||!Number.isFinite(latestBankroll)||latestBankroll<=0||
+          !Number.isFinite(debit)||debit<=0||debit>Math.floor(latestCash)||debit>Math.floor(latestBankroll)){
+          await client.query('COMMIT');return null;
+        }
         if(manual){
-          if(!positions.market_positions.some(p=>p.ticker===ticker&&Number(p.position_fp??p.position)>0)){await client.query('COMMIT');return null}
+          const held=positions.market_positions.find(p=>p.ticker===ticker&&Number(p.position_fp??p.position)>0);
+          const exposure=Number(held?.market_exposure_dollars),paidFees=Number(held?.fees_paid_dollars);
+          if(!held||held.market_exposure_dollars==null||held.fees_paid_dollars==null||
+            !Number.isFinite(exposure)||exposure<0||!Number.isFinite(paidFees)||paidFees<0||
+            Math.ceil((exposure+paidFees)*100)+debit>Math.floor(latestBankroll)){
+            await client.query('COMMIT');return null;
+          }
           const result=await send();await client.query('COMMIT');return result;
         }
         const pendingManual=await client.query("SELECT 1 FROM manual_combo_buys WHERE ticker=$1 AND status='pending' LIMIT 1",[ticker]);
         if(pendingManual.rowCount){await client.query('COMMIT');return null}
         if(strategy==='over'&&fraction>=.45){
-          const latestAccount=await accountBalance({fresh:true});
-          const latestBankroll=Number(latestAccount.balance)+Number(latestAccount.portfolio_value);
-          if(!Number.isFinite(latestBankroll)||latestBankroll<=0){await client.query('COMMIT');return null}
           const held=positions.market_positions?.find(p=>p.ticker===ticker);
           const remaining=held?remainingVerifiedOverCents(held,latestBankroll,fraction):Math.floor(latestBankroll*automaticEntryFraction({strategy,fraction,game}));
           if(estimatedCostCents(count,price,fees)>remaining){await client.query('COMMIT');return null}
@@ -1220,11 +1235,10 @@ async function withEntryProfitFloor({ticker,count,price,fees,strategy,fraction,b
           }
         }
         const appliedFraction=automaticEntryFraction({strategy,fraction,game});
-        if(!Number.isFinite(bankroll)||bankroll<=0||
-          estimatedCostCents(count,price,fees)>Math.floor(bankroll*appliedFraction)){
+        if(debit>Math.floor(latestBankroll*appliedFraction)){
           await client.query('COMMIT');return null;
         }
-        const required=minimumProfitCents(strategy,bankroll,'',NaN,filledOrderGateCount(positions,rows,ticker),{game,market});
+        const required=minimumProfitCents(strategy,latestBankroll,'',NaN,filledOrderGateCount(positions,rows,ticker),{game,market});
         if(netSettlementProfitCents(count,price,fees)<required){await client.query('COMMIT');return null}
         const result=await send();
         await client.query('COMMIT');

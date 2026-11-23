@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
 import {takerFeeSpec,tradeFeeCents,manualPositionQuote,cashoutEstimate} from '../src/manual_position.mjs';
 import {cashoutQuote} from '../src/sell.mjs';
+import {estimatedCostCents} from '../src/strategy.mjs';
 const standard={type:'quadratic',multiplier:1};
 const market={ticker:'OVER',event_ticker:'EVENT',status:'active',fractional_trading_enabled:true};
 const position={ticker:'OVER',position_fp:'46.01',market_exposure_dollars:'41.50',fees_paid_dollars:'.04'};
@@ -55,7 +56,7 @@ function harness({price=.9,old=null,expired=false,uncertain=false,result=null,ve
   const client={query:async(sql,args)=>{
     writes.push([sql,args]);return sql.startsWith('SELECT * FROM manual_combo_buys')?{rows:old?[old]:[],rowCount:old?1:0}:{rows:[],rowCount:0};
   },release(){released=true}};
-  const context=vm.createContext({console,URLSearchParams,manualPositionQuote,
+  const context=vm.createContext({console,URLSearchParams,manualPositionQuote,estimatedCostCents,
     live:()=>true,ensureManualCombos:async()=>{},pool:{connect:async()=>client,query:async(sql,args)=>{writes.push([sql,args]);return {rows:[]}}},
     currentManualBuy:async()=>{
       assert.equal(released,true,'release the intent transaction before network reads');
