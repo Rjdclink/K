@@ -135,10 +135,10 @@ test('college first-half retains 12 and under 1:30; both college full-game use 4
     }
     assert.equal(collegeBasketballTotalNo(stateAt(halfPeriod,'0:29'),full),null);
     assert.equal(collegeBasketballTotalNo(stateAt(gamePeriod,'0:29'),half),null);
-    assert.equal(nearEntryPhase(stateAt(halfPeriod,'4:30')),true);
+    assert.equal(nearEntryPhase(stateAt(halfPeriod,'4:30')),false);
     const linked={...fixture,related_event_tickers:[`${prefix}GAME-TEST`]};
-    assert.ok(entryEventTickers(linked,stateAt(halfPeriod,'4:30')).includes(half.event_ticker));
-    assert.ok(entryEventTickers(linked,stateAt(gamePeriod,'4:30')).includes(full.event_ticker));
+    assert.deepEqual(entryEventTickers(linked,stateAt(halfPeriod,'4:30')),[]);
+    assert.deepEqual(entryEventTickers(linked,stateAt(gamePeriod,'4:30')),[]);
     const board={events:[{id:'401',date:fixture.start_date,competitions:[{status:{period:halfPeriod,displayClock:'0:29',type:{state:'in'}},
       competitors:[{id:'1',homeAway:'home',team:{displayName:'Home',abbreviation:'HOM'},score:'30'},
         {id:'2',homeAway:'away',team:{displayName:'Away',abbreviation:'AWY'},score:'20'}]}]}]};
@@ -172,8 +172,8 @@ test('football Q4 total NO enters after two external checks at least 30 seconds 
     accountBalance:async()=>({balance:10000,portfolio_value:0}),shardCash:()=>10000,marketShard:()=>0,
     singleSpendableCash:v=>v,feeReserve:()=>0,orderSize:()=>10,profitableCount:n=>n,
     estimatedCostCents:()=>500,auditTable:async()=>{},randomUUID:()=> 'proof',
-    rememberIndependentEntry,reserve:async signal=>{assert.equal(signal.fraction,.15);return 'order-1'}, 
-    withEntryProfitFloor:async(options,fn)=>{assert.equal(options.fraction,.15);return fn()}, 
+    rememberIndependentEntry,reserve:async signal=>{assert.equal(signal.fraction,1);return 'order-1'}, 
+    withEntryProfitFloor:async(options,fn)=>{assert.equal(options.fraction,1);return fn()}, 
     invalidateBalance:async()=>{}});
   vm.runInContext(code,context);
   const args=g=>[[{milestone,state:g}],new Map([[half.event_ticker,event]])];

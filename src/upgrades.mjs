@@ -7,7 +7,8 @@ export function remainingVerifiedOverCents(position,bankroll,fraction=.15){
   if(!Number.isFinite(held)||held<=0||position?.market_exposure_dollars==null||
     position?.fees_paid_dollars==null||!Number.isFinite(exposure)||exposure<0||
     !Number.isFinite(fees)||fees<0||!Number.isFinite(bankroll)||bankroll<=0||![BASKETBALL_COUNT_PROP_MAX_FRACTION,.15,.20,PLAYER_PROP_MAX_FRACTION,.40,.45,.60].includes(fraction))return 0;
-  return Math.max(0,Math.floor(bankroll*fraction)-Math.ceil(exposure*100)-Math.ceil(fees*100));
+  // Preserve tier validation above; every tier now has the same 100% budget.
+  return Math.max(0,Math.floor(bankroll)-Math.ceil(exposure*100)-Math.ceil(fees*100));
 }
 export function upgradeEligible(fill,position,candidate){
   return Boolean(fill&&position&&candidate&&fill.status==='filled'&&

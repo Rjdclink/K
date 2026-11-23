@@ -270,14 +270,14 @@ test('filled order timer is bright red, advances each second and reanchors to li
     game_status:'inactive',score_scanned_at:new Date(start).toISOString()},start);
   assert.match(chosen.innerHTML,/Last score · <strong class="chosen-score">Basaksehir 3<\/strong> · Samsunspor 1/);
 
-  assert.match(page,/Only basketball, hockey, soccer and football are scanned/);
+  assert.match(page,/Only hockey, soccer and football are scanned/);
   assert.match(page,/30 seconds of actual elapsed time/);
   assert.match(page,/Soccer full-game and first-half NO now use/);
   assert.match(page,/ESPN only/);
   assert.match(page,/Cached or contradictory ESPN evidence blocks the trade/);
   assert.match(page,/soccer first-half and full-game NO require a 2\.5-goal cushion/);
   assert.match(page,/only live full-game regulation stoppage after 90:00 permits a 1\.5-goal cushion/);
-  assert.match(page,/15% maximum including fees/);
+  assert.match(page,/100% maximum including fees/);
   assert.doesNotMatch(page,/Tennis requires the selected player serving on match point in the final deciding set/);
   const tennis=order({...base,sport:'Tennis',sport_family:'tennis_tournament_singles',game_title:'Berrettini vs de Minaur',strategy:'lead',selected_name:'Alex de Minaur'});
   assert.equal(tennis.children[0].children[0].className,'chosen-name');
@@ -584,4 +584,22 @@ test('filled soccer countdown advances between minute-based exchange clock obser
     'Last exchange clock 02:00 · delayed','do not extrapolate stopped clocks in other sports');
   assert.equal(display({...live,clock_seconds:60,clock_observed_at:new Date(start+60000).toISOString()},start+61000),
     '00:59','reanchor on a newly observed exchange minute');
+});
+test('disabled basketball/player positions remain visible and sellable, but show no invest-more form',()=>{
+ const element=()=>({children:[],style:{},classList:{add(){},remove(){},toggle(){}},
+  setAttribute(){},addEventListener(){},append(...items){this.children.push(...items)}});
+ const document={getElementById:element,createElement:element,querySelectorAll:()=>[]};
+ const context=vm.createContext({document,window:{addEventListener(){}},navigator:{},
+  localStorage:{getItem(){return null}},fetch:()=>new Promise(()=>{}),AbortSignal,setInterval(){}});
+ vm.runInContext(page.match(/<script>([\s\S]*?)<\/script>/)[1],context);
+ const make=vm.runInContext('order',context);
+ const position={market_ticker:'KXNBAGAME-TEST',strategy:'lead',sport:'NBA',
+  game_title:'Home at Away',reason:'lead',allocated_cents:500,potential_profit_cents:40,
+  sell_quote:{count:1,price:0.80},new_entry_allowed:false};
+ const flatten=node=>[node,...(node.children||[]).flatMap(flatten)];
+ const blocked=flatten(make(position));
+ assert.equal(blocked.filter(x=>x.className==='invest-controls').length,0);
+ assert.equal(blocked.some(x=>x.ariaLabel==='Sell position'),true);
+ const permitted=flatten(make({...position,new_entry_allowed:true,sport:'NHL',market_ticker:'KXNHLGAME-TEST'}));
+ assert.equal(permitted.filter(x=>x.className==='invest-controls').length,1);
 });

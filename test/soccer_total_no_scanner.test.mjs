@@ -108,10 +108,10 @@ function harness({canVerify=true,hasSeller=true,unprofitable=false,initialAgeMs=
     profitableCount:n=>!unprofitable&&n>0,estimatedCostCents,
     auditTable:async()=>{},randomUUID:()=> 'soccer-verification',rememberIndependentEntry,
     reserve:async signal=>{
-      trace.push('reserve');assert.equal(signal.fraction,.15);return 'soccer-order';
+      trace.push('reserve');assert.equal(signal.fraction,1);return 'soccer-order';
     },
     withEntryProfitFloor:async(options,send)=>{
-      assert.equal(options.fraction,.15);return send();
+      assert.equal(options.fraction,1);return send();
     },
     invalidateBalance:async()=>{}
   });
@@ -205,7 +205,7 @@ test('soccer NO checks once near 11:00 and once just before entry strictly under
   assert.equal(await h.scan(479),1);
   assert.equal(h.verifications,2);
   assert.equal(h.orders,1);
-  assert.equal(h.lastFraction,.15);
+  assert.equal(h.lastFraction,1);
   assert.ok(h.lastQuantity>0);
   assert.ok(h.trace.lastIndexOf('orderbook')<h.trace.lastIndexOf('external'),
      'final independent score check must occur AFTER executable liquidity evaluation');
@@ -254,13 +254,13 @@ test('pending soccer NO order does not prevent first independent preflight of an
  assert.equal(h.orders,0);
 });
 
-test('soccer NO cumulatively caps held exposure plus fees at fifteen percent',async()=>{
+test('soccer NO cumulatively caps held exposure plus fees at 100 percent',async()=>{
   const h=harness({existingExposure:true});
   await h.scan(660);
   await h.scan(479);
-  assert.equal(h.lastFraction,.15);
-  assert.equal(h.lastBudget,1050,'$15.00 cap less $4 exposure and 50-cent fees leaves $10.50');
-  assert.ok(estimatedCostCents(h.lastQuantity,.5,2)<=1050,'new trade including fees fits the remaining $10.50');
+  assert.equal(h.lastFraction,1);
+  assert.equal(h.lastBudget,9550,'$100.00 cap less $4 exposure and 50-cent fees leaves $95.50');
+  assert.ok(estimatedCostCents(h.lastQuantity,.5,2)<=9550,'new trade including fees fits the remaining $95.50');
 });
 
 test('live 90+ stoppage NO still requires a first independent score check and 30 real seconds before final entry',async()=>{
@@ -332,7 +332,7 @@ test('soccer NO signals are published to the dashboard without removing other st
   vm.runInNewContext(src.slice(begin,end),{
     snapshotRows,snapshotCandidates,soccerNoSignals,hockeyNoSignals,basketballNoSignals,variableOverSignals:new Map(),
     crossingRows:[],filled:new Set(),account:{},balance:0,bankroll:0,signalExecution:()=>''});
-  assert.deepEqual(JSON.parse(row[14]).map(s=>s.ticker||s.execution).slice(0,3),[market.ticker,'NHL','Basketball state']);
+  assert.deepEqual(JSON.parse(row[14]).map(s=>s.ticker||s.execution),[market.ticker,'NHL']);
 });
 
 test('due soccer final ESPN check runs before ordinary first checks',async()=>{

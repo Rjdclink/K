@@ -110,12 +110,10 @@ test('the live exit path never takes tennis profit at ten percent, half-profit, 
   assert.deepEqual(await runExit({price:'.99',count:'5'}),[],'partial depth cannot re-enable profit taking');
 });
 
-test('other sports and combinations retain their existing profitable exits and uncertain-sell protection',async()=>{
+test('basketball and basketball-derived combinations do not enter automated exit scans, while manual sales remain available',async()=>{
   for(const owner of [{...original,sport:'NBA'},
     {...original,sport:'NBA',combo_legs:[{sport:'NFL'},{sport:'NBA'}]}]){
-    const orders=await runExit({owner});assert.equal(orders.length,1,JSON.stringify(owner));
-    assert.equal(orders[0].time_in_force,owner.combo_legs?'immediate_or_cancel':'fill_or_kill');
-    assert.equal(orders[0].reduce_only,true);
+    const orders=await runExit({owner});assert.deepEqual(orders,[],JSON.stringify(owner));
   }
   assert.deepEqual(await runExit({owner:{...original,sport:'Soccer'}}),[]);
   assert.deepEqual(await runExit({owner:{...original,sport:'NBA'},pending:true}),[]);

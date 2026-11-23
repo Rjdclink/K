@@ -39,12 +39,13 @@ const scenarios=[
  ['College women full game',make('college-w4','basketball_game','NCAAW',4,480),
   'KXNCAAWBTOTAL-TEST'],
 ];
-test('every early-period, total-NO and commanding window is prioritized well before preflight and still discovers exact event families',()=>{
+test('only hockey, soccer and football windows are prioritized; all basketball markets are excluded',()=>{
  for(const [name,g,ticker] of scenarios){
-  assert.equal(nearEntryPhase(g.state),true,name+' urgent before first proof');
-  assert.ok(entryEventTickers(g.milestone,g.state).includes(ticker),name+' catalog discovery');
+  const excluded=g.state.type==='basketball_game';
+  assert.equal(nearEntryPhase(g.state),!excluded,name+' scanner eligibility');
+  assert.equal(entryEventTickers(g.milestone,g.state).includes(ticker),!excluded,name+' catalog discovery');
   const result=prioritizeMarketGames([g],{lowBudget:0});
-  assert.equal(result.length,1,name+' checked even when rotating sweep disabled');
+  assert.equal(result.length,excluded?0:1,name+' priority');
  }
 });
 test('normal live games receive a market catalog sweep at least once in a minute when there are at most 48',()=>{
@@ -55,23 +56,24 @@ test('normal live games receive a market catalog sweep at least once in a minute
  assert.equal(chosen.length,40);
  assert.deepEqual(new Set(chosen.map(g=>g.milestone.id)),new Set(nonUrgent.map(g=>g.milestone.id)));
 });
-test('the scanner executes all due sport NO finals before any routine first checks or player scans',()=>{
+test('the scanner prioritizes permitted football, hockey and soccer NO finals; prohibited entries are absent',()=>{
  const src=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
  const fragment=src.slice(src.indexOf('const events=await marketMap('),src.indexOf('await candidateTable();'));
  const first=fragment.indexOf("submitted+=await withApiPriority('preflight_final',()=>runImmediateNoFinalPass([");
  const initial=fragment.indexOf("scanCollegeTotalNos(marketGames,events,'football',null,'initial')");
  const props=fragment.indexOf('scanVariablePlayerOvers(marketGames,events,variableOverSignals)');
- assert.ok(first>=0&&initial>first&&props>initial,'due finals precede first checks and props');
+ assert.ok(first>=0&&initial>first&&props===-1,'due finals precede first checks and player props are disabled');
  for(const required of [
-  "'football',null,'final'", "'basketball',basketballNoSignals,'final'",
+  "'football',null,'final'",
   "hockeyNoSignals,'final'", "hockeyNoSignals,'NHL','final'",
   "soccerNoSignals,'final'", "soccerNoSignals,'Soccer','final'",
-  "basketballNoSignals,'Basketball','final'",
-  "'football',null,'initial'", "'basketball',basketballNoSignals,'initial'",
+  "'football',null,'initial'",
   "hockeyNoSignals,'initial'", "hockeyNoSignals,'NHL','initial'",
   "soccerNoSignals,'initial'", "soccerNoSignals,'Soccer','initial'",
-  "basketballNoSignals,'Basketball','initial'"
- ])assert.ok(fragment.includes(required),'missing due-final or initial path: '+required);
+
+ ])assert.ok(fragment.includes(required),'missing permitted due-final or initial path: '+required);
+ assert.ok(!fragment.includes("'basketball',basketballNoSignals"));
+ assert.ok(!fragment.includes("'Basketball','final'"));
 });
 
 test('priority allocates limited catalog checks to games closest to preflight rather than discovery order',()=>{
@@ -92,10 +94,10 @@ test('already eligible games are checked ahead of approaching threshold games',(
   make('nba-approach','basketball_game','NBA',3,285)
  ];
  assert.deepEqual(prioritizeMarketGames(rows,{lowBudget:0}).map(g=>g.milestone.id),
-  ['nba-ready','soccer-ready','nhl-approach','nba-approach']);
+  ['soccer-ready','nhl-approach']);
 });
 test('rotation reserves some capacity for other games instead of starving a distant eligible sport forever',()=>{
- const rows=Array.from({length:20},(_,i)=>make('nba-'+i,'basketball_game','NBA',1,450+i*10));
+ const rows=Array.from({length:20},(_,i)=>make('nhl-'+i,'hockey_match','NHL',1,900+i*10));
  const seen=new Set();
  for(let cycle=0;cycle<20;cycle++)
   for(const g of prioritizeMarketGames(rows,{lowBudget:5,cycle}))seen.add(g.milestone.id);

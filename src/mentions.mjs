@@ -2,7 +2,7 @@ import {createHash} from 'node:crypto';
 
 export const MENTION_DELAY_MS=45_000;
 export const MENTION_MAX_PRICE=0.40;
-export const MENTION_MAX_FRACTION=0.15;
+export const MENTION_MAX_FRACTION=1;
 
 const clean=value=>String(value||'').normalize('NFKC').replace(/[\u2018\u2019]/g,"'").trim();
 const label=value=>clean(value).replace(/\s+/g,' ').toLowerCase();

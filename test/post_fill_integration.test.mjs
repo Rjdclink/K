@@ -81,7 +81,7 @@ test('the immediate check reloads held fills, bypasses the retry timer, and uses
   await context.checkCurrentHeldCombinations({id:'id-1',market_ticker:'NEW'},{verifiedSince:new Date(),superseded:()=>false});
   assert.equal(executions,1,'a repeated confirmed fill cannot launch a second ticket attempt');
 });
-test('historical fills from cricket, darts, golf or table tennis cannot become new combo-buy legs',async()=>{
+test('historical fills from disallowed sports, including basketball, cannot become new combo-buy legs',async()=>{
   const rows=[
     {market_ticker:'CRICKET',game_family:'cricket_match',sport:'ODI (M)'},
     {market_ticker:'DARTS',game_family:'darts_match',sport:'Darts'},
@@ -99,7 +99,7 @@ test('historical fills from cricket, darts, golf or table tennis cannot become n
   vm.runInContext(source.slice(source.indexOf('async function checkCurrentHeldCombinations('),
     source.indexOf('async function checkHeldCombinations(')),context);
   await context.checkCurrentHeldCombinations(null,{verifiedSince:new Date(),superseded:()=>false});
-  assert.deepEqual(seen.map(row=>row.market_ticker),['NHL','NBA']);
+  assert.deepEqual(seen.map(row=>row.market_ticker),['NHL']);
 });
 
 test('immediate planner includes the newly filled leg even at a high historical rotation',()=>{

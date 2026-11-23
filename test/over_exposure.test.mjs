@@ -148,22 +148,22 @@ test('existing player-prop caps and combinations are not raised by the new tier'
   rememberIndependentEntry(g,prop,g.verificationId,now);
   assert.equal(verifiedOverFraction(overSignal(g,prop),g,prop),.10);
 });
-test('double-cushion 45% allocation honors existing holdings and fees',()=>{
+test('double-cushion proof route keeps existing holdings and fees within 100%',()=>{
   const position={ticker:'OVER',position_fp:'40',market_exposure_dollars:'39',fees_paid_dollars:'1'};
-  assert.equal(remainingVerifiedOverCents(position,10000,.45),500);
-  assert.equal(remainingVerifiedOverCents({...position,market_exposure_dollars:'45'},10000,.45),0);
+  assert.equal(remainingVerifiedOverCents(position,10000,.45),6000);
+  assert.equal(remainingVerifiedOverCents({...position,market_exposure_dollars:'99'},10000,.45),0);
   const fill={status:'filled',strategy:'over',market_ticker:'OVER',event_ticker:'E',game_id:'g'};
   assert.equal(upgradeEligible(fill,position,{market:{ticker:'OVER'},event:{event_ticker:'E'},milestone:{id:'g'},signal:{strategy:'over',fraction:.45}}),true);
   assert.equal(upgradeEligible(fill,position,{market:{ticker:'OVER'},event:{event_ticker:'E'},milestone:{id:'g'},signal:{strategy:'over',fraction:.50}}),false);
 });
-test('sixty percent subtracts held exposure and paid fees from the entire position budget',()=>{
+test('triple-cushion proof route subtracts held exposure and paid fees from full bankroll',()=>{
   const position={ticker:'OVER',position_fp:'40',market_exposure_dollars:'39',fees_paid_dollars:'1'};
   const budget=remainingVerifiedOverCents(position,10000,.60);
-  assert.equal(budget,2000);
+  assert.equal(budget,6000);
   const verified={verificationId:'v',independentEntry:{verificationId:'v'},overVerification:{route:'cushion'}};
   const count=orderSize(10000,.91,1000,.60,1,10000,budget,2,{strategy:'over',game:verified});
-  assert.ok(count>0);assert.ok(estimatedCostCents(count,.91,2)+4000<=6000);
-  assert.equal(remainingVerifiedOverCents({...position,market_exposure_dollars:'59'},10000,.60),0);
+  assert.ok(count>0);assert.ok(estimatedCostCents(count,.91,2)+4000<=10000);
+  assert.equal(remainingVerifiedOverCents({...position,market_exposure_dollars:'99'},10000,.60),0);
   const fill={status:'filled',strategy:'over',market_ticker:'OVER',event_ticker:'E',game_id:'g'};
   assert.equal(upgradeEligible(fill,position,{market:{ticker:'OVER'},event:{event_ticker:'E'},milestone:{id:'g'},signal:{strategy:'over',fraction:.60}}),true);
 });
@@ -178,7 +178,7 @@ test('the final serialized gate includes holdings and fees for initial buys, upg
     let sent=0;
     const verified={verificationId:'v',independentEntry:{verificationId:'v'},overVerification:{route:'cushion'}};
     const run=count=>context.withEntryProfitFloor({ticker:'OVER',count,price:.91,fees:2,strategy:'over',fraction:.60,bankroll:10000,game:verified},async()=>++sent);
-    assert.equal(await run(70),null);assert.equal(sent,0);
+    assert.equal(await run(110),null);assert.equal(sent,0);
     assert.equal(await run(held?21:60),1);assert.equal(sent,1);
   }
   assert.equal((source.match(/assertOverExposure\(game,market,signal.fraction\)/g)||[]).length,2);
@@ -212,7 +212,7 @@ test('an existing forty percent fill can top up once through its separate sixty 
       {state:game,kalshiOnly:false},original);
     assert.equal(result.filled,status==='filled');assert.equal(sent.length,status==='filled'?1:0);
     assert.equal(reserved.length,status==='filled'?1:0);
-    if(sent.length)assert.ok(estimatedCostCents(Number(sent[0].count),.91,2)+4000<=6000);
+    if(sent.length)assert.ok(estimatedCostCents(Number(sent[0].count),.91,2)+4000<=10000);
   }
 });
 test('sixty percent position reads reject a malformed exchange response',async()=>{

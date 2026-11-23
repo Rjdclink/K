@@ -216,16 +216,16 @@ test('winner eligibility signals are unchanged, but all winner combos cap at fif
  assert.equal(finalLeadFraction({}, {},lead,false),.05);
  assert.equal(finalLeadFraction({}, {},over,true),.40);
  const verified={signal:{strategy:'lead',externallyVerified:true}},fallback={signal:{strategy:'lead',externallyVerified:false}};
- assert.equal(comboAllocation(),.15);
- assert.equal(comboLegAllocation([verified,verified],comboAllocation()),.15);
- assert.equal(comboLegAllocation([verified,fallback],comboAllocation()),.15);
- assert.equal(comboLegAllocation([verified,{signal:{strategy:'over',externallyVerified:true}}],comboAllocation()),.15);
+ assert.equal(comboAllocation(),1);
+ assert.equal(comboLegAllocation([verified,verified],comboAllocation()),1);
+ assert.equal(comboLegAllocation([verified,fallback],comboAllocation()),1);
+ assert.equal(comboLegAllocation([verified,{signal:{strategy:'over',externallyVerified:true}}],comboAllocation()),1);
 });
 
-test('active crossed-prop games join the urgent scan instead of the rotating early-game budget',()=>{
+test('excluded basketball and prior player-crossing signals never enter urgent scans',()=>{
  const games=['prop','early'].map(id=>({milestone:{id,type:'basketball_game',details:{league:'NBA'}},state:{verifiedLive:true,type:'basketball_game',sport:'NBA',period:1,remainingSeconds:600},watchable:false}));
  const selected=prioritizeMarketGames(games,{signaledIds:new Set(['prop']),lowBudget:0});
- assert.deepEqual(selected.map(g=>g.milestone.id),['prop']);
+ assert.deepEqual(selected.map(g=>g.milestone.id),[]);
 });
 
 

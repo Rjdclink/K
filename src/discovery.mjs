@@ -1,25 +1,24 @@
-import {basketballTotalNoSupported} from './basketball_no_leagues.mjs';
 // Only fetch event families used by the two entry strategies and comeback exits.
 // The exchange remains authoritative: a guessed ticker is ignored unless an
 // open event and its market are actually returned by Kalshi.
-import { cfbLeadApproaching, basketballLeadProfile, sportName } from './strategy.mjs';
-// Exactly four sport families have automated scanning. Historical positions,
-// settlements and user-directed account actions remain available separately.
-// When the type is missing, only unambiguous four-sport league identifiers
+import { cfbLeadApproaching, basketballLeadProfile } from './strategy.mjs';
+import {allowsNewEntry} from './entry_exclusions.mjs';
+// Only hockey, soccer and football remain within automated scanning.
+// Historical basketball positions, settlements and user-directed account actions
+// remain accessible separately. When type is missing, only those three leagues
 // may pass; unknown leagues never authorize a new automated scan.
 export function isScannerExcludedSport(item){
   const type=String(item?.type||item?.sport_family||'').toLowerCase().replaceAll('-','_');
-  if(type)return !/^(?:basketball|hockey|soccer|football)_/.test(type);
+  if(type)return !/^(?:hockey|soccer|football)_/.test(type);
   const league=String(item?.sport||item?.details?.league||'').trim().toUpperCase();
-  return !/^(?:NBA|WNBA|NCAAB|NCAAW|NCAAMB|NCAAWB|NHL|SOCCER|NFL|CFB|NCAAF|NCAAFB)$/.test(league);
+  return !/^(?:NHL|SOCCER|NFL|CFB|NCAAF|NCAAFB)$/.test(league);
 }
 // Only families with implemented, currently enabled entries belong in scans.
 export function supportedScannerSport(item){
   if(isScannerExcludedSport(item))return false;
   const type=String(item?.type||'').toLowerCase();
-  if(!/^(?:basketball|football|hockey|soccer)_/.test(type))return false;
+  if(!/^(?:football|hockey|soccer)_/.test(type))return false;
   if(/esports/i.test(`${type} ${item?.sport||''} ${item?.details?.league||''}`))return false;
-  if(type.startsWith('basketball_'))return basketballTotalNoSupported(item.sport)||basketballTotalNoSupported(sportName(item));
   return true;
 }
 
@@ -200,7 +199,7 @@ export function prioritizeMarketGames(games,{signaledIds=new Set(),heldIds=new S
 
 export function readyOverTickets(rows,limit=12,activeTickers=new Set()){
   return rows.flatMap(({milestone,signals})=>isScannerExcludedSport(milestone)?[]:(signals||[])
-    .filter(signal=>signal.strategy==='over'&&
+    .filter(signal=>signal.strategy==='over'&&allowsNewEntry(milestone,{ticker:signal.ticker})&&
       (activeTickers.has(signal.ticker)||/^(?:Awaiting score verification|Waiting for first external check|First external check passed; waiting for paired checks|External score matched)/.test(signal.execution||''))&&
       signal.ticker&&Number(signal.ask)>0&&Number(signal.ask)<1&&Number(signal.ask_size)>0)
     .map(signal=>({milestone,signal}))).slice(0,limit);
@@ -256,7 +255,9 @@ export function playerPropEntryClosed(game){
 
 export function entryEventTickers(milestone,game){
   if(isScannerExcludedSport(milestone)||isScannerExcludedSport(game))return [];
-  const tickers=linkedEventTickers(milestone);
+  // Linked historical player markets remain discoverable for account history,
+  // but no player-stat event enters active scanner market fetches.
+  const tickers=linkedEventTickers(milestone).filter(ticker=>allowsNewEntry(game,{ticker}));
   if(!playerPropEntryClosed(game))return tickers;
   return tickers.filter(ticker=>{
     const series=String(ticker).split('-')[0];

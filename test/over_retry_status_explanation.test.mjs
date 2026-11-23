@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
 import {overRetryExplanation} from '../src/over_retry_status.mjs';
+import {allowsNewEntry} from '../src/entry_exclusions.mjs';
 const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
 
 test('a visible ask with missing independent fixture has an actionable explanation, not generic no eligible order',()=>{
@@ -24,7 +25,7 @@ test('fast OVER retry returns the exact reason for the individual ticker when a 
  const ticker='KXSOCCERTOTAL-TEST-3',market={ticker,event_ticker:'KXSOCCERTOTAL-TEST',status:'active'};
  const decisions=[];
  const ctx=vm.createContext({
-  Date,Set,Map,Promise,Math,Number,JSON,console,overRetryExplanation,
+  Date,Set,Map,Promise,Math,Number,JSON,console,overRetryExplanation,allowsNewEntry,
   live:()=>true,ensureLeadWatch:async()=>{},
   pool:{query:async sql=>sql.includes('SELECT w.milestone')?
     {rows:[{milestone,live_score:{_observed_at:new Date().toISOString()},signals:[{strategy:'over',ticker}]}]}:

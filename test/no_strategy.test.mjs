@@ -75,8 +75,8 @@ test('a NO opening ask requires independent proof; reduce-only YES sales remain 
   assert.throws(()=>assertExternalPurchase('/portfolio/events/orders','POST',
     {ticker:m.ticker,side:'ask',reduce_only:false},[]),/independent external/);
   rememberIndependentEntry(proof,m,'v',Date.now());
-  assert.doesNotThrow(()=>assertExternalPurchase('/portfolio/events/orders','POST',
-    {ticker:m.ticker,side:'ask',reduce_only:false},[{game:proof,market:m}]));
+  assert.throws(()=>assertExternalPurchase('/portfolio/events/orders','POST',
+    {ticker:m.ticker,side:'ask',reduce_only:false},[{game:proof,market:m}]),{code:'LOCAL_ENTRY_EXCLUDED'});
   assert.doesNotThrow(()=>assertExternalPurchase('/portfolio/events/orders','POST',
     {ticker:m.ticker,side:'ask',reduce_only:true},[]));
 });

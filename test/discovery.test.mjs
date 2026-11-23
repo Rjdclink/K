@@ -21,22 +21,22 @@ test('international basketball is excluded from new market scanning',()=>{
   for(const sport of ['China CBA','EuroLeague','International Basketball'])
     assert.equal(eligibleForMarkets({...live,sport}),false,sport);
   for(const sport of ['NBA','WNBA','NCAAB','NCAAW'])
-    assert.equal(eligibleForMarkets({...live,sport}),true,sport);
+    assert.equal(eligibleForMarkets({...live,sport}),false,sport);
 });
 
 test('fast over queue reuses only executable over tickets awaiting independent verification from the last scan',()=>{
-  const rows=[{milestone:{id:'a',type:'basketball_game',details:{league:'NBA'}},signals:[
+  const rows=[{milestone:{id:'a',type:'hockey_match',details:{league:'NHL'}},signals:[
     {ticker:'A',strategy:'over',execution:'Awaiting score verification',ask:'.96',ask_size:'8'},
     {ticker:'B',strategy:'over',execution:'No ask liquidity',ask:'1.0000',ask_size:'0'},
     {ticker:'C',strategy:'over',execution:'Awaiting score verification',ask:'1.0000',ask_size:'10'},
     {ticker:'D',strategy:'lead',execution:'Awaiting score verification',ask:'.90',ask_size:'10'}
-  ]},{milestone:{id:'b',type:'basketball_game',details:{league:'NBA'}},signals:[{ticker:'E',strategy:'over',execution:'Awaiting score verification',ask:'.98',ask_size:'1'}]}];
+  ]},{milestone:{id:'b',type:'hockey_match',details:{league:'NHL'}},signals:[{ticker:'E',strategy:'over',execution:'Awaiting score verification',ask:'.98',ask_size:'1'}]}];
   assert.deepEqual(readyOverTickets(rows,1).map(item=>item.signal.ticker),['A']);
   assert.deepEqual(readyOverTickets(rows).map(item=>item.signal.ticker),['A','E']);
 });
 
 test('fast over queue retains active seller-backed windows despite a changed dashboard status',()=>{
-  const rows=[{milestone:{id:'a',type:'basketball_game',details:{league:'NBA'}},signals:[
+  const rows=[{milestone:{id:'a',type:'hockey_match',details:{league:'NHL'}},signals:[
     {ticker:'ACTIVE',strategy:'over',execution:'Verification pending; shard transfer needed if confirmed',ask:'.96',ask_size:'8'},
     {ticker:'COLD',strategy:'over',execution:'Verification pending; shard transfer needed if confirmed',ask:'.96',ask_size:'8'},
     {ticker:'NOASK',strategy:'over',execution:'Verification pending; shard transfer needed if confirmed',ask:'1.00',ask_size:'0'}
@@ -80,7 +80,7 @@ test('live scan omits old inactive milestones while retaining active and long-ru
     ['new','long-live','previously-live']);
 });
 
-test('market pass prioritizes imminent entry windows across all four allowed sports',()=>{
+test('market pass prioritizes imminent windows for hockey, soccer and football only',()=>{
  const game=(id,type,period,remainingSeconds,sport='',extra={})=>({
   milestone:{id,type,details:{league:sport}},state:{type,period,remainingSeconds,sport,...extra}});
  const games=[
@@ -93,16 +93,17 @@ test('market pass prioritizes imminent entry windows across all four allowed spo
   game('baseball-blocked','baseball_game',9,0,'MLB'),
   game('tennis-blocked','tennis_match',3,0,'ATP')
  ];
- for(const id of ['nba-near','nhl-near','cfb-near','soccer-near']){
+ for(const id of ['nhl-near','cfb-near','soccer-near']){
   const item=games.find(g=>g.milestone.id===id);
   assert.equal(nearEntryPhase(item.state),true,id);
  }
+ assert.equal(nearEntryPhase(games.find(g=>g.milestone.id==='nba-near').state),false);
  const selected=prioritizeMarketGames(games,{cycle:0,lowBudget:2});
  assert.deepEqual(selected.map(g=>g.milestone.id),[
-  'nba-near','nhl-near','cfb-near','soccer-near','wnba-far','nfl-far']);
+  'nhl-near','cfb-near','soccer-near','nfl-far']);
  assert.ok(!selected.some(g=>/blocked/.test(g.milestone.id)));
  const none=prioritizeMarketGames(games,{lowBudget:0});
- assert.deepEqual(none.map(g=>g.milestone.id),['nba-near','nhl-near','cfb-near','soccer-near']);
+ assert.deepEqual(none.map(g=>g.milestone.id),['nhl-near','cfb-near','soccer-near']);
 });
 
 test('ready over watcher revisits oldest active windows before newer tickets',()=>{
@@ -124,9 +125,9 @@ test('fast market checks start near each sport entry rather than at the start of
   assert.equal(nearEntryPhase({type:'football_game',sport:'CFB',period:4,remainingSeconds:301,homeUnits:37,awayUnits:20}),true);
   assert.equal(nearEntryPhase({type:'basketball_game',sport:'NBA',period:4,remainingSeconds:660}),false);
   assert.equal(nearEntryPhase({type:'basketball_game',sport:'NBA',period:4,remainingSeconds:500}),false);
-  assert.equal(nearEntryPhase({type:'basketball_game',sport:'NBA',period:4,remainingSeconds:359}),true);
-  assert.equal(nearEntryPhase({type:'basketball_game',sport:'NCAAB',period:1,remainingSeconds:290}),true);
-  assert.equal(nearEntryPhase({type:'basketball_game',sport:'NCAAW',period:2,remainingSeconds:290}),true);
+  assert.equal(nearEntryPhase({type:'basketball_game',sport:'NBA',period:4,remainingSeconds:359}),false);
+  assert.equal(nearEntryPhase({type:'basketball_game',sport:'NCAAB',period:1,remainingSeconds:290}),false);
+  assert.equal(nearEntryPhase({type:'basketball_game',sport:'NCAAW',period:2,remainingSeconds:290}),false);
   assert.equal(nearEntryPhase({type:'rugby_match',period:2,remainingSeconds:1900}),false);
   assert.equal(nearEntryPhase({type:'rugby_match',period:2,remainingSeconds:170}),false);
   assert.equal(nearEntryPhase({type:'soccer_game',period:2,soccerMinute:46,homeUnits:3,awayUnits:0}),true);
@@ -154,18 +155,19 @@ test('historic baseball event links remain parseable but are excluded from autom
   assert.deepEqual(winnerEventTickers(m),[]);
 });
 
-test('closed player-prop entries stop catalog lookups while third-quarter yardage NO remains eligible',()=>{
+test('all player-stat event tickers are absent from live scanning while historical event links remain parseable',()=>{
   const nba={type:'basketball_game',related_event_tickers:['KXNBAGAME-DATE','KXNBAPTS-DATE','KXNBAREB-DATE']};
   const open={type:'basketball_game',sport:'NBA',period:4,remainingSeconds:600};
-  assert.ok(entryEventTickers(nba,open).includes('KXNBAPTS-DATE'));
-  assert.ok(entryEventTickers(nba,{...open,period:1,remainingSeconds:700}).includes('KXNBAPTS-DATE'));
-  assert.deepEqual(entryEventTickers(nba,{...open,remainingSeconds:599}).filter(t=>/PTS|REB/.test(t)),[]);
-  assert.ok(entryEventTickers(nba,{...open,remainingSeconds:599}).includes('KXNBAGAME-DATE'));
+  assert.deepEqual(entryEventTickers(nba,open),[]);
+  assert.deepEqual(entryEventTickers(nba,{...open,period:1,remainingSeconds:700}),[]);
+  assert.ok(linkedEventTickers(nba).includes('KXNBAPTS-DATE'),'historical link remains');
   const nfl={type:'football_game',related_event_tickers:['KXNFLGAME-DATE','KXNFLRUSHYDS-DATE','KXNFLRECYDS-DATE','KXNFLPASSYDS-DATE']};
   const closed={type:'football_game',sport:'NFL',period:4,remainingSeconds:599};
-  assert.ok(entryEventTickers(nfl,closed).includes('KXNFLRUSHYDS-DATE'));
-  assert.ok(entryEventTickers(nfl,closed).includes('KXNFLRECYDS-DATE'));
-  assert.ok(!entryEventTickers(nfl,closed).includes('KXNFLPASSYDS-DATE'));
+  assert.ok(entryEventTickers(nfl,closed).includes('KXNFLGAME-DATE'));
+  for(const metric of ['RUSHYDS','RECYDS','PASSYDS']){
+    assert.ok(linkedEventTickers(nfl).includes('KXNFL'+metric+'-DATE'));
+    assert.ok(!entryEventTickers(nfl,closed).includes('KXNFL'+metric+'-DATE'));
+  }
   assert.equal(playerPropEntryClosed({type:'soccer_game',soccerMinute:79}),false);
   assert.equal(playerPropEntryClosed({type:'soccer_game',soccerMinute:81}),true);
   assert.equal(playerPropEntryClosed({type:'baseball_game',period:8}),true);
@@ -277,7 +279,7 @@ test('unsupported sports and esports stay excluded even in retained caches and r
  for(const type of ['baseball_game','tennis_tournament_singles','tennis_tournament_doubles',
    'handball_match','rugby_match','lacrosse_match','volleyball_match'])
   excluded.push({id:type,type,start_date:at});
- supported.push({id:'college',type:'basketball_game',start_date:at,details:{league:'NCAAWB'}});
+ excluded.push({id:'college',type:'basketball_game',start_date:at,details:{league:'NCAAWB'}});
  for(const type of ['table_tennis_match','darts_match','cricket_match'])
   excluded.push({id:type,type,start_date:at});
  excluded.push({id:'golf',type:'golf_tournament',start_date:at,details:{tour:'pga'}});

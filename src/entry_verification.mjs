@@ -1,3 +1,4 @@
+import {assertNewEntryAllowed} from './entry_exclusions.mjs';
 const sorted=value=>Array.isArray(value)?value.map(sorted):value&&typeof value==='object'?
   Object.fromEntries(Object.keys(value).sort().map(key=>[key,sorted(value[key])])):value;
 export function sportsContractKey(game,market){
@@ -28,4 +29,5 @@ export function assertExternalPurchase(path,method,body,entries,now=Date.now()){
   if(!Array.isArray(entries)||!entries.length||entries.some(entry=>!independentEntryValid(entry.game,entry.market,now))||
     single&&(entries.length!==1||body.ticker!==entries[0].market.ticker))
     throw Object.assign(Error('Fresh independent external verification is mandatory before a purchase'),{code:'LOCAL_EXTERNAL_VERIFICATION_REQUIRED'});
+  for(const {game,market} of entries)assertNewEntryAllowed(game,market);
 }

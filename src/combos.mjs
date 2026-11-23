@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import {automaticEntryFraction,automaticEntryCapCents,ORDINARY_ENTRY_MAX_FRACTION} from './automatic_entry_policy.mjs';
 // Kalshi combinations are separate YES markets. Two confirmed, still-held
 // single fills qualify as legs; an RFQ alone is never a fill.
 // Creating markets and waiting for an RFQ maker can take longer than a scan.
@@ -8,8 +9,8 @@ export const VERIFY_DWELL_MS=10000;
 export const COMBO_RFQ_PLANS=12;
 export const COMBO_CASH_RESERVE_CENTS=0;
 export const singleSpendableCash=cash=>Math.max(0,Math.floor(Number(cash)||0)-COMBO_CASH_RESERVE_CENTS);
-export function comboAllocation(){return .15;}
-export function comboAllowedCents(fraction,bankrollCents){return Math.floor(Math.min(.15,fraction)*bankrollCents);}
+export function comboAllocation(){return ORDINARY_ENTRY_MAX_FRACTION;}
+export function comboAllowedCents(fraction,bankrollCents){return automaticEntryCapCents({strategy:'combo',fraction},bankrollCents);}
 export function comboMinimumCents(){return 0;}
 export function comboMeetsMinimum(fraction,bankrollCents,newCostCents,heldCostCents=0){
   return heldCostCents+newCostCents>=comboMinimumCents(fraction,bankrollCents);
@@ -17,18 +18,18 @@ export function comboMeetsMinimum(fraction,bankrollCents,newCostCents,heldCostCe
 // Maker RFQs quote close to target cost; leave room for the fee before asking.
 export function comboRfqTargetCents(budgetCents){return Math.max(0,Math.floor(budgetCents*.97));}
 export function comboLegAllocation(legs,verifiedFraction){
-  // All automatic combinations have a 15% fee-inclusive exposure maximum.
-  // Verified cushioned OVER singles retain their own separate exposure tiers.
-  return Math.min(.15,verifiedFraction);
+  // Combo legs retain their eligibility metadata; every valid combo receives
+  // the same fee-inclusive full-bankroll ceiling as a single trade.
+  return automaticEntryFraction({strategy:'combo',fraction:verifiedFraction});
 }
 export function comboHeldFraction(legs){return comboLegAllocation(legs.map(l=>({signal:{strategy:l.strategy,
   externallyVerified:l.externallyVerified===true||l.kalshiOnly===false}})),comboAllocation())}
-export function remainingVerifiedComboCents(position,bankroll,fraction=.15){
+export function remainingVerifiedComboCents(position,bankroll,fraction=1){
   const held=Number(position?.position_fp),exposure=Number(position?.market_exposure_dollars),fees=Number(position?.fees_paid_dollars);
   if(!Number.isFinite(held)||held<=0||position?.market_exposure_dollars==null||
     position?.fees_paid_dollars==null||!Number.isFinite(exposure)||exposure<0||
     !Number.isFinite(fees)||fees<0||!Number.isFinite(bankroll)||bankroll<=0)return 0;
-  return Math.max(0,Math.floor(bankroll*Math.min(.15,fraction))-Math.ceil(exposure*100)-Math.ceil(fees*100));
+  return Math.max(0,comboAllowedCents(fraction,bankroll)-Math.ceil(exposure*100)-Math.ceil(fees*100));
 }
 export function availableComboFills(fills){
   return fills.filter(r=>!/Restricted 20% cricket final innings/i.test(r.reason||''));
