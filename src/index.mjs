@@ -2,6 +2,7 @@ import {scanTier,fastEntryCandidates,prioritizeNearCheckGames,runScanTierWindow}
 import {parallelBasketballVerification,assertBasketballVerification} from './basketball_verification.mjs';
 import {verifyExternalOverExposure,assertOverExposure} from './over_exposure.mjs';
 import {rememberIndependentEntry,independentEntryValid,assertExternalPurchase} from './entry_verification.mjs';
+import {finalFiveEntryEligible} from './final_five_entry.mjs';
 import {createComboPlanner} from './combo_planner.mjs';
 import { sameSportsContract, overContractKey, freshOverObservation, freshOverState, overCushion, overTiming, sameOverReading, timedOverEntryValid, OVER_FRESH_MS, OVER_EXTERNAL_DELAY_MS } from './over_verification.mjs';
 import { golfSignal, verifyGolfDecision } from './golf.mjs';
@@ -1335,6 +1336,9 @@ async function marketMap(tickers){
   for(const [ticker,item] of eventCache)if(Date.now()-item.at>30000)eventCache.delete(ticker);return map;
 }
 async function reserve(signal,game,event,market,count,price,balance){
+  // A hard purchase cutoff is also checked again at actual Kalshi dispatch.
+  // No reserve row is created for an early soccer/hockey entry.
+  if(!finalFiveEntryEligible(game))return null;
   if(isTieOutcomeMarket(market))return null;
   const id=randomUUID();
   const {rowCount}=await pool.query(`INSERT INTO trade_attempts(id,market_ticker,event_ticker,game_id,sport,strategy,reason,fraction,count,limit_price,available_cents)
@@ -1494,6 +1498,7 @@ async function freshPlayerPropForEntry(game,milestone,market,decorate=state=>sta
   return checked&&overCushion(checked,market)!==null&&timedOverEntryValid(checked,market)?checked:null;
 }
 async function submit(signal,game,event,market,balance,bankroll,budgetCents=Infinity,availableCents=bankroll,cashCents=balance){
+  if(!finalFiveEntryEligible(game))return false;
   if(isTieOutcomeMarket(market))return false;
   if(internationalBasketball(game))return false;
   balance=Math.min(balance,singleSpendableCash(cashCents));
@@ -1537,6 +1542,7 @@ async function submit(signal,game,event,market,balance,bankroll,budgetCents=Infi
   }catch(e){const message=String(e.message),noLiquidity=/^Kalshi 409 .*fill or kill insufficient resting volume/i.test(message),terminal=/^Kalshi (400|401|403|404|422) /.test(message);await pool.query(`UPDATE trade_attempts SET status=$2,error=$3,updated_at=now() WHERE id=$1`,[id,noLiquidity||['LOCAL_OVER_PROOF_EXPIRED','LOCAL_EXTERNAL_VERIFICATION_REQUIRED'].includes(e.code)||e.code==='LOCAL_LEAD_SCORE_EXPIRED'?'unfilled':terminal?'rejected':'check_order',message.slice(0,250)]);if(/insufficient balance/i.test(message))await invalidateBalance();console.error('Order response:',market.ticker,e.message);return false}
 }
 async function recoverPending(signal,game,event,market,balance,bankroll,budgetCents=Infinity,availableCents=bankroll,cashCents=balance){
+  if(!finalFiveEntryEligible(game))return false;
   balance=Math.min(balance,singleSpendableCash(cashCents));
   if(signal.strategy==='lead'&&/Kalshi-only live score and executable seller checked/.test(signal.reason||'')&&
     (!kalshiSingleReadLead(game,market)||!hasAsk(market)))return false;
@@ -3592,6 +3598,9 @@ async function scanHockeyTotalNos(games,events,signalSink=null,phase='all'){
   let watching=games.filter(({state})=>state.sport==='NHL'&&
     ['hockey_match','hockey_game'].includes(state.type)&&[3,4].includes(state.period)&&
     Number.isFinite(state.remainingSeconds)&&state.remainingSeconds>0&&state.remainingSeconds<=start);
+  // Keep initial ESPN preflights early, but never queue a final proof or
+  // new NHL purchase before five minutes from the END of the game.
+  if(phase==='final')watching=watching.filter(g=>finalFiveEntryEligible(g.state));
   if(!live()||!watching.length)return 0;
   let dueWindows=null;
   if(phase==='final'){
@@ -3867,6 +3876,10 @@ async function scanEarlyPeriodNos(games,events,signalSink=null,sport='NHL',phase
     patterns:['Soccer full-game total NO %','Soccer first-half total NO %'],
     title:'Soccer first-half NO'
   };
+  // First-half and P1/P2 contracts cannot satisfy a *game-ending* last
+  // five-minute purchase limit. Initial proof may still be collected for
+  // monitoring; never send an early-segment final order.
+  if(phase==='final'&&(hockey||sport==='Soccer'))return 0;
   const noDiagnostics=new Map();
   const auditNoCandidate=(c,execution,quote=null)=>{
     const candidate=c;
@@ -4240,6 +4253,10 @@ async function scanSoccerTotalNos(games,events,signalSink=null,phase='all'){
     Number.isFinite(state.matchRemainingSeconds)&&
     (state.matchRemainingSeconds>0&&state.matchRemainingSeconds<=start||
      soccerStoppageNoWindow(state)));
+  // Full-match ESPN first checks remain scheduled before five minutes,
+  // preserving the mandatory 30-second real-time separation. A final check
+  // cannot preempt a due entry in another game until this match is at 85'+.
+  if(phase==='final')watching=watching.filter(g=>finalFiveEntryEligible(g.state));
   if(!live()||!watching.length)return 0;
   let dueWindows=null;
   if(phase==='final'){

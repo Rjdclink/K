@@ -26,10 +26,10 @@ function harness({goals=4,unavailable=false,stale=false}={}){
    if(sql.startsWith('INSERT INTO verification_records')){records.push(args);return {rows:[]}};
    throw Error(sql);
   }},kalshi:async path=>({market:markets.get(decodeURIComponent(path.split('/').at(-1)))}),
-  liveMilestone:async()=>({milestone_id:'fixture',details:{status:'live',home_score:2,away_score:2,time:"68'",half:'2nd'}}),
+  liveMilestone:async()=>({milestone_id:'fixture',details:{status:'live',home_score:2,away_score:2,time:"86'",half:'2nd'}}),
   auditedOver:async(g,m,{market:contract})=>{
    const values=[];
-   const event={id:'401844258',date:start,status:{period:2,displayClock:"68'",type:{state:'in'}},competitions:[{competitors:[
+   const event={id:'401844258',date:start,status:{period:2,displayClock:"86'",type:{state:'in'}},competitions:[{competitors:[
     {homeAway:'home',score:String(goals),team:{displayName:'Atletico Rafaela'}},{homeAway:'away',score:'0',team:{displayName:'Patronato'}}],
     details:Array.from({length:goals},()=>({scoringPlay:true,scoreValue:1}))}]};
    const passed=await verifyIndependentOverDecision(g,m,{market:contract,onOverValue:value=>values.push(value),

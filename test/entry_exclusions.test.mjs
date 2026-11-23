@@ -60,7 +60,8 @@ test('final Kalshi single-order pre-dispatch rejects restricted entries and pres
   const entries=verified(g,m);
   assert.throws(()=>assertExternalPurchase('/portfolio/events/orders','POST',{ticker:m.ticker,side:'bid'},entries),{code:'LOCAL_ENTRY_EXCLUDED'});
  }
- const g=game('hockey_match','NHL'),m=market('KXNHLTOTAL');
+ const g={...game('hockey_match','NHL'),verifiedLive:true,scoreKnown:true,periodConsistent:true,
+   period:3,remainingSeconds:240,clockRunning:true},m=market('KXNHLTOTAL');
  assert.doesNotThrow(()=>assertExternalPurchase('/portfolio/events/orders','POST',{ticker:m.ticker,side:'bid'},verified(g,m)));
 });
 test('exits and position-reducing orders remain untouched regardless of sport',()=>{
@@ -88,7 +89,8 @@ function requireIndex(){return readFileSync(new URL('../src/index.mjs',import.me
 
 test('the final Kalshi combo RFQ acceptance rejects excluded component contracts',()=>{
  const component=market('KXNHLGOALS',{hockey_player:'player-1'});
- const componentGame=game('hockey_match','NHL');
+ const componentGame={...game('hockey_match','NHL'),verifiedLive:true,scoreKnown:true,
+   periodConsistent:true,period:3,remainingSeconds:260,clockRunning:true};
  const group=market('KXMVESPORTS');
  group.mve_selected_legs=[{event_ticker:component.event_ticker,market_ticker:component.ticker,side:'yes'}];
  const comboGame={id:'combo',verificationId:'combo-verification',entryComponents:[{game:componentGame,market:component}]};
