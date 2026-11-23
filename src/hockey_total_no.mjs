@@ -19,7 +19,7 @@ const sums=periods=>({
   home:periods.reduce((n,p)=>n+p.home,0),
   away:periods.reduce((n,p)=>n+p.away,0)
 });
-const validExternal=(external,game)=>['ESPN','Sofascore'].includes(external?.source)&&
+const validExternal=(external,game)=>['ESPN','NHL'].includes(external?.source)&&
   Boolean(externalNoScore(game,external));
 
 export function hockeyNoMarketSpec(game,market,{beforeWindow=false}={}){

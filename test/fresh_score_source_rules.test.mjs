@@ -45,7 +45,7 @@ test('absent ESPN player or wrong exact contract cannot become a qualified indep
 });
 test('verification proofs stay eligible for 15 seconds and never 16',()=>{
  const game={id:'id',type:'hockey_tournament',sport:'KHL',verifiedLive:true,period:2};
- const proof={source:'Sofascore',eventId:'123456',gameId:game.id,home:1,away:2,period:2,live:true};
+ const proof={source:'NHL',eventId:'123456',gameId:game.id,home:1,away:2,period:2,live:true};
  const enriched=authoritativeGameState(game,proof,now);
  assert.equal(verifiedSourceReady(enriched,now+15000),true);
  assert.equal(verifiedSourceReady(enriched,now+16000),false);
@@ -58,19 +58,20 @@ test('Sofascore enforces 15-second CDN Age bound without increasing it to 30',as
  assert.ok((await read(14))?.length>0);
  assert.equal(await read(16),null);
 });
-test('candidate source reader preserves JSON Sofascore and ESPN scoreboards',async()=>{
+test('candidate source reader preserves both HTML and JSON scoreboards',async()=>{
  const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
  const a=source.indexOf('const sourceScoreReads=new Map();'),b=source.indexOf('async function externallyScoredGame(',a);
  assert.ok(a>=0&&b>a);
  let requests=0;
  const ctx=vm.createContext({Map,Date,Error,fetch:async(url)=>{
    requests++;
-   return {ok:true,status:200,headers:new Headers({age:'0'}),json:async()=>({events:[{id:'score'}]})};
+   return {ok:true,status:200,headers:new Headers({age:'0'}),text:async()=>
+    url.includes('bbc.com')?'<html>fixture</html>':JSON.stringify({events:[{id:'score'}]})};
  }});
  vm.runInContext(source.slice(a,b),ctx);
- const sofa=await ctx.sharedCandidateScoreboardFetch('https://www.sofascore.com/api/v1/sport/football/scheduled-events/2026-11-23');
- assert.equal((await sofa.json()).events[0].id,'score');
- assert.equal(sofa.headers.get('age'),'0');
+ const bbc=await ctx.sharedCandidateScoreboardFetch('https://www.bbc.com/sport/football/scores-fixtures/2026-11-23');
+ assert.equal(await bbc.text(),'<html>fixture</html>');
+ assert.equal(bbc.headers.get('age'),'0');
  const espn=await ctx.sharedCandidateScoreboardFetch('https://site.api.espn.com/scores');
  assert.equal((await espn.json()).events[0].id,'score');
  assert.equal(requests,2);

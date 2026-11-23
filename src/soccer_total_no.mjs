@@ -21,7 +21,7 @@ const clockMinute=clock=>{
 // Independent fixture, score, and match time determine whether the exact
 // Kalshi contract has enough goal cushion within its regulation window.
 const currentExternal=(reading,game)=>Boolean(
-  ['ESPN','FOX Sports','Sofascore'].includes(reading?.source)&&reading.eventId&&
+  ['ESPN','FOX Sports','BBC Sport'].includes(reading?.source)&&reading.eventId&&
   Boolean(externalNoScore(game,reading)));
 
 // Kalshi full-game totals include regulation stoppage, but not the separate
@@ -98,6 +98,6 @@ export function independentSoccerTotalNoReading(scoreboard,game,milestone,market
 
 export async function verifyIndependentSoccerTotalNo(game,milestone,market,{fetcher=fetch}={}){
   if(!soccerNoMarketSpec(game,market,{beforeWindow:true}))return null;
-  // ESPN first; if the exact fixture is absent, require a live matched Sofascore score.
+  // ESPN first; if the exact fixture is absent, require a live matched BBC Sport score.
   return verifyFreshEspnSoccerNo(game,milestone,{fetcher});
 }

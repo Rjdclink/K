@@ -34,16 +34,16 @@ test('known abbreviations preserve fixture vetoes while accepting contract-suffi
   assert.equal(await check({...captured.game},{events:[...captured.espn.events,...captured.espn.events]}),false);
 });
 
-test('Sofascore cannot invent a player statistic when ESPN is unavailable',async()=>{
+test('NFL scores page cannot invent a player statistic when ESPN is unavailable',async()=>{
   const urls=[],game=structuredClone(captured.game);
   assert.equal(foxPlayerStat(foxBox,playerOverSpec(game,market),'11262'),11);
   assert.equal(await verifyIndependentOverDecision(game,captured.milestone,{market,fetcher:async url=>{
     urls.push(url);
     if(url.includes('espn.com'))throw Error('ESPN unavailable');
-    assert.match(url,/sofascore\.com/);
+    assert.match(url,/nfl\.com/);
     return {ok:false,status:403};
   }}),null);
-  assert.ok(urls.some(url=>url.includes('sofascore.com')));
+  assert.ok(urls.some(url=>url.includes('nfl.com')));
   assert.equal(foxPlayerStat(foxBox,{...playerOverSpec(game,market),metric:'RUSHYDS'},'11262'),null,'receiving yards cannot verify rushing yards');
   assert.equal(foxPlayerStat(foxBox,playerOverSpec(game,market),'wrong-event'),null);
 });
@@ -115,10 +115,10 @@ test('unaffected basketball and baseball over routes retain their FOX calendar f
   }
 });
 
-test('missing providers name Sofascore while FOX fixture parsing remains strict',async()=>{
+test('missing providers name the official source while FOX fixture parsing remains strict',async()=>{
   const game=structuredClone(captured.game);
   assert.equal(await verifyIndependentOverDecision(game,captured.milestone,{market,fetcher:async()=>({ok:false,status:404})}),null);
-  assert.match(game.verificationIssue,/Sofascore unavailable/);
+  assert.match(game.verificationIssue,/official score source unavailable/);
   const event=foxBoard.sectionList[0].events[0];
   assert.equal(foxMatches({sectionList:[{events:[{...event,statusLine:'2ND 12:00'}]}]},captured.game,captured.milestone)[0].clockOk,true);
   assert.equal(foxMatches({sectionList:[{events:[{...event,statusLine:'1ST 2:31'}]}]},captured.game,captured.milestone)[0].stale,true);

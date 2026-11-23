@@ -1,7 +1,7 @@
 // A single independently identified fixture controls sporting scores; Kalshi
 // remains responsible for contractual terms, executable quotes and cash.
 // This conversion never creates a verified fixture from a Kalshi-only reading.
-const sources=new Set(['ESPN','FOX Sports','Sofascore']);
+const sources=new Set(['ESPN','FOX Sports','BBC Sport','NHL','NFL']);
 const whole=n=>Number.isInteger(n)&&n>=0;
 export const EXTERNAL_GAME_FRESH_MS=15000;
 export function authoritativeGameState(game,reading,now=Date.now()){

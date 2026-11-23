@@ -3,7 +3,7 @@
 // contract, period and entry clock. This helper never identifies a fixture:
 // only fetchIndependentMatchScore can supply a verified source/event pair.
 export function externalNoScore(game,reading){
- if(!['ESPN','FOX Sports','Sofascore'].includes(reading?.source)||
+ if(!['ESPN','FOX Sports','BBC Sport','NHL','NFL'].includes(reading?.source)||
     !String(reading.eventId||'').trim()||
     reading.gameId&&reading.gameId!==game?.id||
     !Number.isInteger(reading.home)||reading.home<0||

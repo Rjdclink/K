@@ -55,16 +55,18 @@ test('independent source score overrides Kalshi, but a different team still fail
  assert.equal(espnMatches({events:[unrelated]},soccer,soccerM).length,0);
 });
 
-test('Sofascore fallback requests the fixture date after ESPN absence',async()=>{
- const calls=[],sofa={events:[{id:4019,startTimestamp:Math.floor(Date.parse(start)/1000),
-  homeTeam:{name:'Ind. del Valle'},awayTeam:{name:'Macará'},homeScore:{current:0},awayScore:{current:1},
-  lastPeriod:'period2',status:{type:'inprogress'}}]};
- const fetcher=async url=>{calls.push(url);return {ok:true,json:async()=>
-   url.includes('espn.com')?{events:[]}:sofa};};
+test('BBC Sport fallback requests the fixture date after ESPN absence',async()=>{
+ const calls=[],event={id:'s-4019',startDateTime:start,status:'MidEvent',
+  home:{fullName:'Ind. del Valle',score:'0'},away:{fullName:'Macará',score:'1'},periodLabel:{value:"88'"}};
+ const html='window.__INITIAL_DATA__='+JSON.stringify(JSON.stringify({data:{
+  'sport-data-scores-fixtures?test':{data:{eventGroups:[{secondaryGroups:[{events:[event]}]}]}}
+ }}));
+ const fetcher=async url=>{calls.push(url);return {ok:true,
+  json:async()=>({events:[]}),text:async()=>url.endsWith('/2026-11-20')?html:''};};
  const result=await fetchIndependentMatchScore(soccer,soccerM,{fetcher,espnFeed:'soccer/all'});
- assert.equal(result?.source,'Sofascore');assert.equal(result?.home,0);assert.equal(result?.away,1);
+ assert.equal(result?.source,'BBC Sport');assert.equal(result?.home,0);assert.equal(result?.away,1);
  assert.equal(calls.filter(url=>url.includes('espn.com')).length,6);
- assert.ok(calls.some(url=>url.includes('/scheduled-events/2026-11-20')));
+ assert.ok(calls.some(url=>url.includes('/scores-fixtures/2026-11-20')));
 });
 
 test('ESPN Grambling Lady Tigers at Central Arkansas Sugar Bears matches Kalshi Grambling St. without relaxing the other team or score',async()=>{

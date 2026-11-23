@@ -19,7 +19,7 @@ export function goalScoreBelowFive(game,now=Date.now()){
   // have been scored. The independent fixture and freshness must be known.
   if(!validGoals(game)||all.some(score=>score&&validGoals(score)&&
     scoreTotal(score)>=GOAL_ENTRY_CEILING))return false;
-  return Boolean(validGoals(proof)&&['ESPN','FOX Sports','Sofascore'].includes(proof.source)&&
+  return Boolean(validGoals(proof)&&['ESPN','FOX Sports','BBC Sport','NHL','NFL'].includes(proof.source)&&
     String(proof.eventId||'').trim()&&proof.gameId===game.id&&
     Number.isFinite(proof.checkedAt)&&now>=proof.checkedAt&&
     now-proof.checkedAt<=15000&&scoreTotal(proof)<GOAL_ENTRY_CEILING);

@@ -13,7 +13,7 @@ export function rememberIndependentEntry(game,market,verificationId,requestedAt,
   const proofAt=Number.isFinite(sourceAt)&&sourceAt>0?Math.min(sourceAt,requestedAt):requestedAt;
   // NHL and soccer NO strategies can carry a separately validated, exact
   // external fixture score even when their game state still shows Kalshi's score.
-  const scored=score&&['ESPN','FOX Sports','Sofascore'].includes(score.source)&&
+  const scored=score&&['ESPN','FOX Sports','BBC Sport','NHL','NFL'].includes(score.source)&&
     String(score.eventId||'').trim()&&Number.isInteger(score.home)&&score.home>=0&&
     Number.isInteger(score.away)&&score.away>=0;
   game.independentEntry={contractKey:sportsContractKey(game,market),verificationId,

@@ -3,7 +3,7 @@ import {espnScoreboardUrls,espnSoccerLeagueFeed} from './espn_scoreboards.mjs';
 import { alternateCheck } from './alternate_scores.mjs';
 import { teamAbbreviationVariants } from './team_identity.mjs';
 import { relaxedTeamCompatibility } from './fixture_aliases.mjs';
-import {loadSofascore,sofascoreSport} from './sofascore.mjs';
+import {loadOfficialScores,officialFallbackSport} from './official_score_fallback.mjs';
 import {scoreFeedAgeMs} from './score_feed_freshness.mjs';
 // ESPN and FOX publish the scoreboards used by their sites. These endpoints
 // are not contractual data APIs; a changed schema or unavailable fixture must
@@ -498,7 +498,7 @@ async function verifyNbaOver(game,milestone,{fetcher=fetch,market,minimumOverVal
 export async function verifyIndependentOverDecision(game,milestone,options={}){
   delete game.verificationIssue;
   const unavailableReasons=[],rankedOptions={...options,unavailableReasons};
-  const knownGap=Boolean(sofascoreSport(game));
+  const knownGap=Boolean(officialFallbackSport(game));
   const nbaTask=verifyNbaOver(game,milestone,options);
   const preferred=await verifyExistingOver(game,milestone,rankedOptions);
   // Repeat ESPN once, only for a competition confirmed to lack ESPN coverage.
@@ -511,11 +511,12 @@ export async function verifyIndependentOverDecision(game,milestone,options={}){
   if(preferred!==null)return preferred;
   if(retried!==null)return retried;
   if(knownGap){
-    const readings=await loadSofascore(game,milestone,rankedOptions);
-    if(!Array.isArray(readings)){
-      game.verificationIssue='ESPN fixture absent; Sofascore unavailable';return null;
-    }
     const named=contractBoundFixtureIdentity(game,milestone,options.market);
+    const readings=await loadOfficialScores(game,milestone,{...rankedOptions,
+      matchFixture:r=>sameFixture(named,milestone,r.homeAliases,r.awayAliases,r.time)});
+    if(!Array.isArray(readings)){
+      game.verificationIssue='ESPN fixture absent; official score source unavailable';return null;
+    }
     const candidates=readings.filter(r=>sameFixture(named,milestone,r.homeAliases,
       r.awayAliases,r.time));
     const matches=[...new Map(candidates.map(r=>[r.eventId,r])).values()];
@@ -525,13 +526,13 @@ export async function verifyIndependentOverDecision(game,milestone,options={}){
         other.period!==r.period||other.live!==r.live);
     }))return false;
     if(matches.length>1)return false;
-    if(!matches.length){game.verificationIssue='No exact live fixture on Sofascore';return null}
+    if(!matches.length){game.verificationIssue='No exact live fixture on official score source';return null}
     const match=matches[0];
     if(!match.live||!Number.isInteger(match.period)||
       Number.isInteger(game.period)&&match.period!==game.period)return false;
     if(playerOverSpec(game,options.market))return null;
     // A soccer full-game total needs a documented goal timeline to establish
-    // that its line was passed; Sofascore's score alone cannot supply one.
+    // that its line was passed; the alternate source's score alone cannot supply one.
     if(/soccer/.test(game.type)&&/TOTAL$/.test(String(options.market?.event_ticker||'').split('-')[0]))return null;
     if(periodValue(game,options.market)&&!periodValue({...game,periodScores:match.periods},options.market))return null;
     return scoreAgreement(game,[[match]],options);

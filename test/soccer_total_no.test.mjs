@@ -52,7 +52,7 @@ test('soccer NO requires 2.5 goals above current total below four scored and 3.5
   assert.equal(soccerTotalNo(game(299,3,1),market(4.5)),null);
 });
 
-test('soccer total NO checks Sofascore after ESPN is unavailable',async()=>{
+test('soccer total NO checks BBC Sport after ESPN is unavailable',async()=>{
  const urls=[],g=game(),m=market();
  const proof=await verifyIndependentSoccerTotalNo(g,milestone,m,{fetcher:async url=>{
   urls.push(url);return {ok:true,headers:{get:()=>null},json:async()=>({events:[]})};
@@ -60,8 +60,8 @@ test('soccer total NO checks Sofascore after ESPN is unavailable',async()=>{
  assert.equal(proof,null);
  assert.ok(urls.length>0);
  assert.ok(urls.some(url=>url.startsWith('https://site.api.espn.com/')));
- assert.ok(urls.some(url=>url.startsWith('https://www.sofascore.com/')));
- assert.ok(urls.every(url=>/espn\.com|sofascore\.com/.test(url)));
+ assert.ok(urls.some(url=>url.startsWith('https://www.bbc.com/')));
+ assert.ok(urls.every(url=>/espn\.com|bbc\.com/.test(url)));
 });
 test('only exchange-identified whole-game 90-minutes-plus-stoppage soccer totals qualify',()=>{
   const state=game();

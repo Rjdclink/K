@@ -18,7 +18,7 @@ const clockMinute=value=>{
 };
 export function validFreshEspnSoccerNo(reading,game,now=Date.now(),{allowHistorical=false}={}){
  const checked=Number(reading?.checkedAt);
- return Boolean(['ESPN','Sofascore'].includes(reading?.source)&&reading.verificationPolicy===SOCCER_ESPN_POLICY&&
+ return Boolean(['ESPN','BBC Sport'].includes(reading?.source)&&reading.verificationPolicy===SOCCER_ESPN_POLICY&&
   reading.gameId===game?.id&&String(reading.eventId||'').trim()&&
   typeof reading.requestId==='string'&&reading.requestId.length>=16&&
   reading.live===true&&reading.period===game?.period&&
@@ -26,9 +26,7 @@ export function validFreshEspnSoccerNo(reading,game,now=Date.now(),{allowHistori
   Number.isInteger(reading.away)&&reading.away>=0&&
   Number.isFinite(checked)&&checked>0&&now>=checked&&
   now-checked<=(allowHistorical?30*60000:15000)&&
-  (reading.source==='Sofascore'&&Number.isFinite(game.soccerMinute)&&
-    game.soccerMinute>=0&&game.soccerMinute<=180||
-    Number.isFinite(reading.elapsedMinute)&&reading.elapsedMinute>=0&&reading.elapsedMinute<=180));
+  Number.isFinite(reading.elapsedMinute)&&reading.elapsedMinute>=0&&reading.elapsedMinute<=180);
 }
 export function pairedFreshEspnSoccerNo(first,second,game,now=Date.now()){
  return Boolean(validFreshEspnSoccerNo(first,game,now,{allowHistorical:true})&&
@@ -103,11 +101,11 @@ export async function verifyFreshEspnSoccerNo(game,milestone,{fetcher=fetch}={})
    'ESPN soccer scoreboards could not be retrieved':
    'No exact matching fixture on the ESPN soccer scoreboard for this league and date';
   const fallback=await fetchIndependentMatchScore(game,milestone,{fetcher,espnFeed:null});
-  if(fallback===false){game.verificationIssue='Sofascore fixture is ambiguous or not live';return false}
-  if(!fallback){game.verificationIssue='ESPN fixture absent; Sofascore unavailable or no exact live fixture';return null}
+  if(fallback===false){game.verificationIssue='BBC Sport fixture is ambiguous or not live';return false}
+  if(!fallback){game.verificationIssue='ESPN fixture absent; BBC Sport unavailable or no exact live fixture';return null}
   if(fallback.live!==true||!Number.isInteger(fallback.period)||fallback.period!==game.period||
     !Number.isInteger(fallback.home)||!Number.isInteger(fallback.away)){
-    game.verificationIssue='Sofascore fixture period or score cannot be verified';return false;
+    game.verificationIssue='BBC Sport fixture period or score cannot be verified';return false;
   }
   const at=Date.now(),age=fallback.sourceAgeMs||0;
   const proof={...fallback,verificationPolicy:SOCCER_ESPN_POLICY,requestId,

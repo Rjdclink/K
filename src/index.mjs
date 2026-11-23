@@ -43,7 +43,7 @@ import {nearScanExternalObservations,promotedFromExternalObservation} from './sc
 import {selectStaleReviews,classifyStaleLive,retainedAfterStaleReview} from './stale_review.mjs';
 import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOverDecision, verifyIndependentTableTennisLeadDecision, verifyIndependentTableTennisMatch, externalScoreFeeds } from './score_verification.mjs';
-import {sofascoreSport} from './sofascore.mjs';
+import {officialFallbackSport} from './official_score_fallback.mjs';
 import { verificationStatus, completedOverWait, verificationWindowStatus } from './verification_status.mjs';
 import { COMBO_ATTEMPT_MS, VERIFY_DWELL_MS, COMBO_RFQ_PLANS, singleSpendableCash, comboAllocation, comboLegAllocation, comboHeldFraction, comboAllowedCents, comboMinimumCents, comboMeetsMinimum, comboRfqTargetCents, remainingVerifiedComboCents, availableComboFills, comboPairDiagnostics, comboExclusionKey, exchangeComboExclusion, comboLegs, filledComboWindow, heldComboLeg, quoteForYes, collectionsForEvents, selectedComboMarkets, liveComboMarket, missingQuoteFill, comboFillPages } from './combos.mjs';
 import { selectedTeamName, selectedTeamSide } from './selected_team.mjs';
@@ -278,7 +278,7 @@ function upgradeTables(){return upgradesReady??=Promise.all([
 const externalSportFeeds=(game,milestone=null)=>{
  const {espn,fox}=externalScoreFeeds(game,milestone);
  if(espn||fox)return [espn,fox];
- return sofascoreSport(game)?[null,null]:null;
+ return officialFallbackSport(game)?[null,null]:null;
 };
 // Candidate discovery may reuse the same public league scoreboard for up to
 // 2 seconds. Independent preflight/final proof always bypasses this cache.
@@ -291,7 +291,9 @@ async function sharedCandidateScoreboardFetch(url,opts={}){
   const task=(async()=>{
    const response=await fetch(url,{...opts,cache:'no-store'});
    if(!response.ok)throw Error('External scoreboard unavailable: '+response.status);
-   return {data:await response.json(),headers:response.headers};
+   const raw=await response.text();let data;
+   try{data=JSON.parse(raw)}catch{data=raw}
+   return {data,raw,headers:response.headers};
   })();
   entry={task,at:now};candidateScoreboards.set(url,entry);
   if(candidateScoreboards.size>180){
@@ -301,8 +303,8 @@ async function sharedCandidateScoreboardFetch(url,opts={}){
   }
  }
  try{
-  const {data,headers}=await entry.task;
-  return {ok:true,headers,json:async()=>data,text:async()=>data};
+  const {data,raw,headers}=await entry.task;
+  return {ok:true,headers,json:async()=>data,text:async()=>raw};
  }catch(error){
   if(candidateScoreboards.get(url)===entry)candidateScoreboards.delete(url);
   throw error;
@@ -356,7 +358,7 @@ async function auditedOver(game,milestone,options={}){
       const r=await fetch(url,{...opts,cache:'no-store'}),raw=await r.text();let data;try{data=JSON.parse(raw)}catch{data=raw}
       return {ok:r.ok,status:r.status,headers:r.headers,data,raw,requested_at:at,received_at:new Date().toISOString()};
     })();
-    try{const r=await task;observations.push({source:url.includes('espn.com')?'ESPN':url.includes('sofascore.com')?'Sofascore':url.includes('cdn.nba.com')?'NBA':url.includes('cbssports.com')?'CBS':url.includes('yahoo.com')?'Yahoo':'FOX',url,requested_at:r.requested_at,received_at:r.received_at,status:r.status,data:r.data});return {ok:r.ok,status:r.status,headers:r.headers,json:async()=>r.data}}
+    try{const r=await task;observations.push({source:url.includes('espn.com')?'ESPN':url.includes('nhle.com')?'NHL':url.includes('bbc.com')?'BBC Sport':url.includes('nfl.com')?'NFL':url.includes('cdn.nba.com')?'NBA':url.includes('cbssports.com')?'CBS':url.includes('yahoo.com')?'Yahoo':'FOX',url,requested_at:r.requested_at,received_at:r.received_at,status:r.status,data:r.data});return {ok:r.ok,status:r.status,headers:r.headers,json:async()=>r.data,text:async()=>r.raw}}
     catch(e){observations.push({url,requested_at:at,error:String(e.message)});throw e}
   };
   // Separate reads retain the exact source response used for this decision.
@@ -5917,7 +5919,7 @@ async function settlementAlerts(since){
   return rows;
 }
 async function handleRequest(req){const url=new URL(req.url);
-  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),mentionsConfigured:Boolean(process.env.MENTION_OFFICIAL_SOURCES),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'sofascore-five-minute-20261123',verification:{primary:'ESPN',fallback:'Sofascore after ESPN absence and retry',espnRetries:1}});
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),mentionsConfigured:Boolean(process.env.MENTION_OFFICIAL_SOURCES),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'official-score-fallback-20261123',verification:{primary:'ESPN',fallback:'NHL, BBC Sport, or NFL after ESPN absence and retry',espnRetries:1}});
   if(req.method==='GET'&&url.pathname==='/manifest.webmanifest')return response(manifest,'application/manifest+json');
   if(req.method==='GET'&&url.pathname==='/sw.js')return new Response(worker,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','service-worker-allowed':'/','x-content-type-options':'nosniff'}});
   if(req.method==='GET'&&/^\/icon-(192|512)\.png$/.test(url.pathname))return response(Buffer.from(icons[Number(url.pathname.match(/\d+/)[0])],'base64'),'image/png');

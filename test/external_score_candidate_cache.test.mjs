@@ -10,7 +10,7 @@ test('concurrent candidate games share short-lived league scoreboard while fresh
  let calls=0,now=1000000;
  class Clock extends Date{static now(){return now}}
  const ctx=vm.createContext({Date:Clock,Map,Error,fetch:async()=>{
-  calls++;return {ok:true,json:async()=>({events:[{id:'game',score:calls}]})};
+  calls++;return {ok:true,text:async()=>JSON.stringify({events:[{id:'game',score:calls}]})};
  }});
  vm.runInContext(source.slice(a,b),ctx);
  const [first,other]=await Promise.all([

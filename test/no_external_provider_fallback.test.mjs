@@ -12,21 +12,23 @@ const foxScore=(a=3,b=3)=>({sectionList:[{events:[{eventTime:start,eventStatus:1
  upperTeam:{uri:'a',name:'Beta',score:b},lowerTeam:{uri:'h',name:'Alpha',score:a}}]}]});
 const read=(data,ok=true)=>({ok,json:async()=>data});
 
-test('two unavailable ESPN attempts precede Sofascore exact fixture verification',async()=>{
+test('two unavailable ESPN attempts precede BBC Sport exact fixture verification',async()=>{
+ const fixture={id:'s-123456',startDateTime:start,status:'MidEvent',periodLabel:{value:"84'"},
+  home:{fullName:'Alpha',score:'3'},away:{fullName:'Beta',score:'3'}};
+ const html='window.__INITIAL_DATA__='+JSON.stringify(JSON.stringify({data:{
+  'sport-data-scores-fixtures?test':{data:{eventGroups:[{secondaryGroups:[{events:[fixture]}]}]}}
+ }}));
  const calls=[],fetcher=async url=>{
   calls.push(url);
-  return /espn/.test(url)?read({events:[]}):read({events:[{
-    id:123456,startTimestamp:Math.floor(Date.parse(start)/1000),
-    homeTeam:{name:'Alpha'},awayTeam:{name:'Beta'},
-    homeScore:{current:3},awayScore:{current:3},lastPeriod:'period2',status:{type:'inprogress'}}]});
+  return /espn/.test(url)?read({events:[]}):{ok:true,text:async()=>html};
  };
  const result=await fetchIndependentMatchScore(g,m,{fetcher,espnFeed:'soccer/all',foxFeed:'soccer'});
- assert.equal(result?.source,'Sofascore');
- assert.equal(result?.eventId,'123456');
+ assert.equal(result?.source,'BBC Sport');
+ assert.equal(result?.eventId,'s-123456');
  assert.equal(result?.home,3);
  assert.equal(result?.away,3);
  assert.equal(calls.filter(url=>/espn/.test(url)).length,6);
- assert.ok(calls.findIndex(url=>/sofascore/.test(url))>calls.findLastIndex(url=>/espn/.test(url)));
+ assert.ok(calls.findIndex(url=>/bbc.com/.test(url))>calls.findLastIndex(url=>/espn/.test(url)));
  const proof=tagNoPreflight(result);
  assert.equal(proof?.preflight_policy,NO_PREFLIGHT_POLICY);
  assert.equal(validNoPreflight({game_id:'foo',contract_key:'key',period:2,first_clock:420,first_evidence:proof,first_at:new Date(Date.now()-61000)},
@@ -57,11 +59,11 @@ test('wrong teams and ambiguous fixtures fail closed; source scores need not equ
  assert.equal(uncertain,false);
 });
 
-test('ESPN first and Sofascore second can verify one matched Kalshi game without sharing provider event IDs',()=>{
+test('ESPN first and BBC Sport second can verify one matched Kalshi game without sharing provider event IDs',()=>{
  const first={source:'ESPN',eventId:'espn-first',gameId:'foo',home:2,away:2};
- const second={source:'Sofascore',eventId:'123456',gameId:'foo',home:3,away:3};
+ const second={source:'BBC Sport',eventId:'s-123456',gameId:'foo',home:3,away:3};
  assert.equal(pairedExternalMatch(first,second,g),true);
  assert.equal(pairedExternalMatch(first,{...second,gameId:'unrelated'},g),false);
- assert.equal(pairedExternalMatch({...first,source:'Sofascore',eventId:'other'},second,g),false);
+ assert.equal(pairedExternalMatch({...first,source:'BBC Sport',eventId:'other'},second,g),false);
  assert.equal(pairedExternalMatch(first,{...second,home:1},g),false,'external score must not regress');
 });

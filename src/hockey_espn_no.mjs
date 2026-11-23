@@ -16,7 +16,7 @@ const clockSeconds=value=>{
 };
 export function validFreshEspnHockeyNo(reading,game,now=Date.now(),{allowHistorical=false}={}){
  const checked=Number(reading?.checkedAt);
- return Boolean(['ESPN','Sofascore'].includes(reading?.source)&&reading.verificationPolicy===HOCKEY_ESPN_POLICY&&
+ return Boolean(['ESPN','NHL'].includes(reading?.source)&&reading.verificationPolicy===HOCKEY_ESPN_POLICY&&
   game?.sport==='NHL'&&reading.gameId===game?.id&&String(reading.eventId||'').trim()&&
   typeof reading.requestId==='string'&&reading.requestId.length>=16&&
   reading.live===true&&reading.period===game?.period&&
@@ -24,9 +24,7 @@ export function validFreshEspnHockeyNo(reading,game,now=Date.now(),{allowHistori
   Number.isInteger(reading.away)&&reading.away>=0&&
   Number.isFinite(checked)&&checked>0&&now>=checked&&
   now-checked<=(allowHistorical?30*60000:15000)&&
-  (reading.source==='Sofascore'&&Number.isFinite(game.remainingSeconds)&&
-    game.remainingSeconds>=0&&game.remainingSeconds<=1200||
-    Number.isFinite(reading.seconds)&&reading.seconds>=0&&reading.seconds<=1200));
+  Number.isFinite(reading.seconds)&&reading.seconds>=0&&reading.seconds<=1200);
 }
 
 export function pairedFreshEspnHockeyNo(first,second,game,now=Date.now()){
