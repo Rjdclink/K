@@ -9,6 +9,7 @@ const soccerLeagueSlugs={
  'ligue 1':'fra.1','french ligue 1':'fra.1',
  'eredivisie':'ned.1','dutch eredivisie':'ned.1',
  'la liga':'esp.1','laliga':'esp.1','spanish la liga':'esp.1',
+ 'spanish liga f':'esp.w.1',
  'la liga 2':'esp.2','laliga 2':'esp.2','spanish segunda division':'esp.2',
  'austrian bundesliga':'aut.1',
  'greece super league':'gre.1','greek super league':'gre.1',

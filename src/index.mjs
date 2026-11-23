@@ -4995,10 +4995,10 @@ async function scanNearPriorityGames(options={}){
   // reloads Kalshi plus fresh contract-specific first/final proof before buy.
   const observations=await nearScanExternalObservations(games,{
     verify:async({milestone,state})=>{
-      const feeds=externalSportFeeds(state);
+      const feeds=externalSportFeeds(state,milestone);
       if(!feeds)return null;
       return fetchIndependentMatchScore(state,milestone,{
-        espnFeed:feeds.espn,foxFeed:feeds.fox,
+        espnFeed:feeds[0],foxFeed:feeds[1],
         requireKalshiLive:false,fetcher:sharedCandidateScoreboardFetch
       });
     }

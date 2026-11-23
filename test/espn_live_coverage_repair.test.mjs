@@ -51,7 +51,7 @@ test('covered soccer leagues route to directly verified ESPN league feeds, but u
   ['Bundesliga','ger.1'],['Greece Super League','gre.1'],
   ['Austrian Bundesliga','aut.1'],['Serie A','ita.1'],
   ['Eredivisie','ned.1'],['EPL','eng.1'],
-  ['Serie B','ita.2'],['La Liga','esp.1'],
+  ['Serie B','ita.2'],['La Liga','esp.1'],['Spanish Liga F','esp.w.1'],
   ['NCAAB','all'] // a soccer label cannot use college basketball feeds
  ])assert.ok(urls(league)[0].includes('/soccer/'+slug+'/scoreboard'),league);
  for(const league of ['Slovakia Niké liga','Ekstraklasa','Serie C','KHL','Unidentified League'])
