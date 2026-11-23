@@ -3802,7 +3802,7 @@ async function scanHockeyTotalNos(games,events,signalSink=null,phase='all'){
           finalAt:new Date(externalCheckedAt),finalExternal:proof,period:signal.period,ask:ask.price
         })]);
       fresh.verificationId=verificationId;
-      rememberIndependentEntry(fresh,current,verificationId,externalCheckedAt);
+      rememberIndependentEntry(fresh,current,verificationId,externalCheckedAt,undefined,proof);
       const id=await reserve({strategy:'no',fraction:allocation,reason:signal.reason},
         fresh,c.event,current,quantity,ask.price,account.balance);
       if(!id){report(c,'Entry blocked: duplicate or pending order',signal,ask);continue;}
@@ -4163,7 +4163,8 @@ async function scanEarlyPeriodNos(games,events,signalSink=null,sport='NHL',phase
           period:signal.period,ask:ask.price
         })]);
       fresh.verificationId=verificationId;
-      rememberIndependentEntry(fresh,current,verificationId,externalCheckedAt);
+      rememberIndependentEntry(fresh,current,verificationId,externalCheckedAt,undefined,
+        (hockey||sport==='Soccer')?proof:undefined);
       const id=await reserve({strategy:'no',fraction:allocation,reason:signal.reason},
         fresh,c.event,current,quantity,ask.price,account.balance);
       if(!id){report(c,'Entry blocked: duplicate or pending order',signal,ask);continue;}
@@ -4470,7 +4471,7 @@ async function scanSoccerTotalNos(games,events,signalSink=null,phase='all'){
           finalAt:new Date(externalCheckedAt),finalExternal:proof,period:signal.period,ask:ask.price
         })]);
       fresh.verificationId=verificationId;
-      rememberIndependentEntry(fresh,current,verificationId,externalCheckedAt);
+      rememberIndependentEntry(fresh,current,verificationId,externalCheckedAt,undefined,proof);
       const id=await reserve({strategy:'no',fraction:allocation,reason:signal.reason},
         fresh,c.event,current,quantity,ask.price,account.balance);
       if(!id){report(c,'Entry blocked: duplicate or pending order',signal,ask);continue;}
