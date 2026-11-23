@@ -4,6 +4,27 @@
 // Do not apply to settlement, held-position monitoring, or reduce-only exits.
 export const FINAL_FIVE_SECONDS=300;
 
+// Purchase-only goal ceiling. Consider both Kalshi's displayed game score and
+// independently matched game scores; either reading at five is a veto.
+const GOAL_ENTRY_CEILING=5;
+const validGoals=score=>Number.isInteger(score?.home)&&score.home>=0&&
+  Number.isInteger(score?.away)&&score.away>=0;
+const scoreTotal=score=>score.home+score.away;
+export function goalScoreBelowFive(game,now=Date.now()){
+  const family=String(game?.type||game?.sport_family||'').toLowerCase();
+  if(!family.startsWith('soccer_')&&!family.startsWith('hockey_'))return true;
+  const proof=game?.independentEntry?.score||game?.externalScore;
+  const all=[game,game?.kalshiScore,game?.externalScore,game?.independentEntry?.score];
+  // A missing or malformed game score cannot prove that fewer than five goals
+  // have been scored. The independent fixture and freshness must be known.
+  if(!validGoals(game)||all.some(score=>score&&validGoals(score)&&
+    scoreTotal(score)>=GOAL_ENTRY_CEILING))return false;
+  return Boolean(validGoals(proof)&&['ESPN','FOX Sports','Flashscore'].includes(proof.source)&&
+    String(proof.eventId||'').trim()&&proof.gameId===game.id&&
+    Number.isFinite(proof.checkedAt)&&now>=proof.checkedAt&&
+    now-proof.checkedAt<=15000&&scoreTotal(proof)<GOAL_ENTRY_CEILING);
+}
+
 export function finalFiveEntryEligible(game){
  const family=String(game?.type||game?.sport_family||'').toLowerCase();
  const soccer=family.startsWith('soccer_'),hockey=family.startsWith('hockey_');
@@ -46,6 +67,9 @@ export function assertFinalFiveEntry(entries){
          ' position blocked: entry is allowed only within the final five minutes of the game'),
        {code:'LOCAL_FINAL_FIVE_WINDOW_REQUIRED'});
    }
+   if(!goalScoreBelowFive(game))throw Object.assign(
+     Error('New soccer/hockey position blocked: combined game score must remain below five goals'),
+     {code:'LOCAL_GOAL_SCORE_LIMIT'});
    const components=game.entryComponents;
    if(Array.isArray(market?.mve_selected_legs)&&market.mve_selected_legs.length>1&&
      (!Array.isArray(components)||components.length!==market.mve_selected_legs.length))
