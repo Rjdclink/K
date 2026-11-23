@@ -34,7 +34,12 @@ function harness({goals=4,unavailable=false,stale=false}={}){
     details:Array.from({length:goals},()=>({scoringPlay:true,scoreValue:1}))}]};
    const passed=await verifyIndependentOverDecision(g,m,{market:contract,onOverValue:value=>values.push(value),
     fetcher:async()=>({ok:true,json:async()=>({events:unavailable?[]:[event]})})});
-   if(passed===true){g.verificationId=String(++ids);rememberIndependentEntry(g,contract,g.verificationId,Date.now()-(stale?30001:0),Math.min(...values))}
+   if(passed===true){
+    g.externalScore={source:'ESPN',eventId:'401844258',gameId:g.id,
+      home:goals,away:0,live:true,checkedAt:Date.now()};
+    g.verificationId=String(++ids);
+    rememberIndependentEntry(g,contract,g.verificationId,Date.now()-(stale?30001:0),Math.min(...values));
+   }
    return passed;
   }};
  const ctx=vm.createContext(bindings);vm.runInContext(segment,ctx);return {ctx,records};
