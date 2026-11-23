@@ -60,20 +60,22 @@ test('finished games leave active scanning rather than retaining obsolete fast p
  assert.equal(scanTier(retired),null);
 });
 
-test('near-entry worker evaluates initial NO preflights for all four sports and reserves fast worker for due finals',()=>{
+test('near-entry worker evaluates football, hockey and soccer preflights but excludes basketball purchases',()=>{
  const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
  const a=source.indexOf('async function scanNearPriorityGames(){');
  const b=source.indexOf('async function scanFastPriorityGames(',a);
  const near=source.slice(a,b);
  for(const call of [
   "scanCollegeTotalNos(ready,events,'football',null,'initial')",
-  "scanCollegeTotalNos(ready,events,'basketball',null,'initial')",
   "scanHockeyTotalNos(ready,events,null,'initial')",
   "scanEarlyPeriodNos(ready,events,null,'NHL','initial')",
   "scanSoccerTotalNos(ready,events,null,'initial')",
   "scanEarlyPeriodNos(ready,events,null,'Soccer','initial')",
-  "scanEarlyPeriodNos(ready,events,null,'Basketball','initial')"
+
  ])assert.ok(near.includes(call),call);
+ assert.doesNotMatch(near,/scanCollegeTotalNos\(ready,events,'basketball'/);
+ assert.doesNotMatch(near,/scanEarlyPeriodNos\(ready,events,null,'Basketball'/);
+ assert.match(near,/candidates\.filter\(g=>allowsNewEntry\(g\.state,null\)\)/);
  assert.doesNotMatch(near,/stageCashAcrossShards|reconcileCombos|fillComboQueue|dashboard/);
  assert.match(near,/g\.state\.verifiedLive&&eligibleForMarkets\(g\.state\)&&scanTier\(g\.state\)===10/,
    'thirty-second worker must reserve expensive first-check catalogs for games promoted into the urgent tier');

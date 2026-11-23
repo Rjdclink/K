@@ -172,8 +172,8 @@ test('football Q4 total NO enters after two external checks at least 30 seconds 
     accountBalance:async()=>({balance:10000,portfolio_value:0}),shardCash:()=>10000,marketShard:()=>0,
     singleSpendableCash:v=>v,feeReserve:()=>0,orderSize:()=>10,profitableCount:n=>n,
     estimatedCostCents:()=>500,auditTable:async()=>{},randomUUID:()=> 'proof',
-    rememberIndependentEntry,reserve:async signal=>{assert.equal(signal.fraction,.15);return 'order-1'}, 
-    withEntryProfitFloor:async(options,fn)=>{assert.equal(options.fraction,.15);return fn()}, 
+    rememberIndependentEntry,reserve:async signal=>{assert.equal(signal.fraction,1);return 'order-1'}, 
+    withEntryProfitFloor:async(options,fn)=>{assert.equal(options.fraction,1);return fn()}, 
     invalidateBalance:async()=>{}});
   vm.runInContext(code,context);
   const args=g=>[[{milestone,state:g}],new Map([[half.event_ticker,event]])];

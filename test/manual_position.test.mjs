@@ -125,7 +125,7 @@ test('manual quote detects filled K NO before allowing a YES market add-on',asyn
     allOpenPositions:async()=>({market_positions:[position]}),
     accountBalance:async()=>account,
     kalshi:async(path)=>path.includes('/orderbook')?{orderbook_fp:book}:{market},
-    currentFeeSpec:async()=>standard,verifiedPurchaseEntries:async()=>[],
+    currentFeeSpec:async()=>standard,verifiedPurchaseEntries:async()=>[],allowsNewEntry:()=>true,
     marketShard:()=>3,shardCash:()=>10000,manualPositionQuote
   });
   vm.runInContext(chunk,ctx);

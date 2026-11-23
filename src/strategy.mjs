@@ -1043,8 +1043,8 @@ export function estimatedCostCents(count,price,feeMultiplier=2) {
   return Math.ceil(count*price*100-1e-8)+Math.ceil(7*count*price*(1-price)*feeMultiplier-1e-8);
 }
 export function orderSize(balanceCents, askDollars, askSize, fraction, cap=1, bankrollCents=balanceCents, maxSpendCents=Infinity, feeMultiplier=2,entry={}) {
-  // The sizing gate cannot accept a caller-declared larger fraction unless
-  // the verified cushioned OVER exception is actually present on the game.
+  // Signal tiers select strategies and proof routes, not spending ceilings.
+  // The shared gate allows up to 100% of bankroll, subject to cash and fees.
   fraction=automaticEntryFraction({...entry,fraction});
   const price=N(askDollars),size=N(askSize),cash=N(balanceCents),bankroll=N(bankrollCents),limit=N(maxSpendCents);
   if (!Number.isFinite(price)||price<=0||!Number.isFinite(cap)||cap<=0||price>Math.min(1,cap)||!Number.isFinite(size)||size<0.01||!Number.isFinite(cash)||cash<=0||!Number.isFinite(bankroll)||bankroll<0||!Number.isFinite(fraction)||fraction<=0||fraction>1||!(Number.isFinite(limit)||limit===Infinity)||limit<0||!Number.isFinite(feeMultiplier)||feeMultiplier<1) return 0;
@@ -1056,7 +1056,7 @@ export function orderSize(balanceCents, askDollars, askSize, fraction, cap=1, ba
 export function overBudget(balanceCents, portfolioValueCents) {
   const cash=N(balanceCents), value=N(portfolioValueCents);
   if (![cash,value].every(Number.isFinite) || Math.min(cash,value)<0) return 0;
-  // Each ordinary over has its own 15% bankroll limit. Existing positions do not
-  // reduce another trade's limit; cash availability is checked separately.
-  return Math.floor((cash+value)*0.15);
+  // Each ordinary over may use up to 100% of total bankroll. Existing positions
+  // do not reduce another trade's limit; cash availability is separate.
+  return Math.floor(cash+value);
 }

@@ -13,8 +13,8 @@ import {singleSpendableCash} from '../src/combos.mjs';
 import {filledOrderGateCount} from '../src/entry_floor.mjs';
 
 const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
-test('a held basketball count prop tops up within 10% only when the new purchase meets its quarter profit floor',async()=>{
-  for(const [period,price,exposure,allowed] of [[1,.89,9,true],[1,.90,9,false],[2,.93,9,true],[2,.94,9,false],[1,.89,10,false]]){
+test('a held basketball count prop can top up to 100% only when the new purchase meets its quarter profit floor',async()=>{
+  for(const [period,price,exposure,allowed] of [[1,.89,9,true],[1,.90,9,true],[2,.93,9,true],[2,.94,9,true],[1,.89,10,true]]){
     const now=Date.now(),milestone={id:'g',type:'basketball_game',details:{league:'NBA'}};
     const market={ticker:'KXNBAREB-TEST-P',event_ticker:'KXNBAREB-TEST',status:'active',floor_strike:5.5,
       custom_strike:{basketball_player:'p'},yes_sub_title:'Pat: 6+',title:'Pat: 6+ rebounds',
@@ -49,7 +49,7 @@ test('a held basketball count prop tops up within 10% only when the new purchase
     assert.equal(immediateChecks,allowed?1:0,'add-on verifies externally only at the final qualifying entry gate');
     if(allowed){
       const count=Number(sent[0].count);
-      assert.ok(estimatedCostCents(count,price,2)+exposure*100<=1000);
+      assert.ok(estimatedCostCents(count,price,2)+exposure*100<=10000);
       assert.ok(netSettlementProfitCents(count,price,2)>=(period===1?9:6));
     }
   }

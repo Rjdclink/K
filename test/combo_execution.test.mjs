@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
 import {mapBatches} from '../src/discovery.mjs';
+import {allowsNewEntry} from '../src/entry_exclusions.mjs';
 import {nextComboBatch,comboPairDiagnostics,comboExclusionKey,comboLegAllocation,comboAllowedCents,comboMinimumCents,comboMeetsMinimum,comboRfqTargetCents,selectedComboMarkets,quoteForYes} from '../src/combos.mjs';
 import {marketShard,shardCash,comboShardBudget} from '../src/funding.mjs';
 const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
@@ -26,7 +27,7 @@ function harness({interruptAfterMarket=Infinity}={}){
  };
  const context=vm.createContext({console:{info(){},warn(){},error(){}},Date:Clock,Number,Math,JSON,Map,Set,Promise,URLSearchParams,
   COMBO_ATTEMPT_MS:45000,COMBO_RFQ_PLANS:12,comboPlanner:planner,comboExclusionKey,comboPairDiagnostics,comboLegAllocation,comboAllowedCents,comboMinimumCents,comboMeetsMinimum,comboRfqTargetCents,selectedComboMarkets,quoteForYes,
-  marketShard,shardCash,comboShardBudget,mapBatches,ensureComboAudit:async()=>{},collectionsForEvents:async()=>[c],
+  marketShard,shardCash,comboShardBudget,mapBatches,allowsNewEntry,ensureComboAudit:async()=>{},collectionsForEvents:async()=>[c],
   recordComboRejection:async()=>{},exchangeComboExclusion:()=>null,feeReserve:()=>2,profitableCount:()=>1,
   pool:{query:async()=>({rows:[],rowCount:0})},setTimeout:callback=>{time+=45000;callback()},
   kalshi:async(path,options={})=>{

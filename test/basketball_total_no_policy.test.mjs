@@ -55,7 +55,7 @@ test('both college full games require 40 points strictly under 7:00; first halve
     }
   }
 });
-test('men college full-game NO verifies at 8:00 and enters under 7:00 after 60 real seconds at 15% cap',async()=>{
+test('men college full-game NO verifies at 8:00 and enters under 7:00 after 60 real seconds at 100% cap',async()=>{
   const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
   const code=source.slice(source.indexOf('async function scanCollegeTotalNos('),
     source.indexOf('async function scan(cachedMilestones'));
@@ -120,10 +120,10 @@ test('men college full-game NO verifies at 8:00 and enters under 7:00 after 60 r
   assert.equal(await run(last.state),1,'second fresh check authorizes entry immediately under 7:00');
   assert.equal(checks,2);
   assert.equal(orders,1);
-  assert.equal(reserved.fraction,.15,'risk reservation must use 15%');
-  assert.equal(floor.fraction,.15,'final profit validation must use 15%');
-  assert.equal(orderSizing[3],.15,'per-order allocation must use 15%');
-  assert.equal(orderSizing[6],1500,'the aggregate 15% pool of a $100 bankroll is $15');
+  assert.equal(reserved.fraction,1,'risk reservation must use 100%');
+  assert.equal(floor.fraction,1,'final profit validation must use 100%');
+  assert.equal(orderSizing[3],1,'per-order allocation must use 100%');
+  assert.equal(orderSizing[6],10000,'the aggregate 100% pool of a $100 bankroll is $100');
 });
 
 test('college first-half NO requires first proof at >=2:00 and enters strictly under 1:30',async()=>{

@@ -64,8 +64,8 @@ test('40 cents is inclusive and the aggregate bankroll budget deducts held and p
   assert.equal(mentionEntryPrice('0.4000'),true);
   assert.equal(mentionEntryPrice('0.4001'),false);
   assert.equal(mentionEntryPrice('0'),false);
-  assert.equal(remainingMentionCents(10000,900,150),450);
-  assert.equal(remainingMentionCents(10000,1500,1),0);
+  assert.equal(remainingMentionCents(10000,900,150),8950);
+  assert.equal(remainingMentionCents(10000,1500,1),8499);
 });
 test('official transcript extraction requires exact markers and rejects an unapproved host',async()=>{
   const descriptor={eventTicker:event.event_ticker,eventDate:'2026-11-04',url:'https://www.whitehouse.gov/remarks/test',

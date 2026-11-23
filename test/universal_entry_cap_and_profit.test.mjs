@@ -12,18 +12,18 @@ test('all ordinary entries require 50 cents net, commanding leads require only p
  }
  assert.equal(netSettlementProfitCents(10,0.80,2)>0,true);
 });
-test('all ordinary and lead entries, including winner combinations, cap at fifteen percent',()=>{
+test('all ordinary and lead entries, including winner combinations, cap at 100 percent',()=>{
  for(const strategy of ['no','lead','over','weather','combo']){
-  assert.equal(automaticEntryFraction({strategy,fraction:.60}),.15);
-  assert.equal(automaticEntryFraction({strategy,fraction:.20}),.15);
+  assert.equal(automaticEntryFraction({strategy,fraction:.60}),1);
+  assert.equal(automaticEntryFraction({strategy,fraction:.20}),1);
  }
  assert.equal(orderSize(100000,.40,1000,.25,1,100000,Infinity,2),orderSize(100000,.40,1000,.15,1,100000,Infinity,2));
- assert.equal(comboAllocation(),.15);
- assert.equal(comboLegAllocation([{signal:{strategy:'lead',externallyVerified:true}}],.35),.15);
+ assert.equal(comboAllocation(),1);
+ assert.equal(comboLegAllocation([{signal:{strategy:'lead',externallyVerified:true}}],.35),1);
  assert.equal(comboMinimumCents(.15,10000),0);
 });
-test('verified cushioned OVER retains exception with its own net profit and allocation gates',()=>{
+test('verified cushioned OVER retains its proof gate and shares the fee-inclusive 100% cap',()=>{
  const signal={strategy:'over',fraction:.45};
  const proof={verificationId:'a',contractKey:'k',route:'cushion'};
- assert.equal(automaticEntryFraction({...signal,game:{overVerification:proof,independentEntry:{verificationId:'a'},verificationId:'a'}}),.45);
+ assert.equal(automaticEntryFraction({...signal,game:{overVerification:proof,independentEntry:{verificationId:'a'},verificationId:'a'}}),1);
 });

@@ -5,7 +5,7 @@ export function threeGoalWinner(game,signal,market){
   return Boolean(market&&signal?.strategy==='lead'&&/hockey|soccer/.test(game?.type||'')&&
     Math.abs(game.homeUnits-game.awayUnits)>=3&&leadSignal(game,market));
 }
-// No minimum spend is required for commanding winners; the ordinary maximum is 15%.
+// No minimum spend is required for commanding winners; the order cap is 100%.
 // Eligibility stays at the exact winner/clock gate; no separate minimum spend.
 export const minimumThreeGoalSpend=()=>0;
 
@@ -81,8 +81,8 @@ function unboundedFinalLeadFraction(first,second,signal,externallyVerified,marke
   if(threeGoalWinner(second,signal,market))return .20;
   return externallyVerified||market&&strongKalshiOnlyLead(first,second,market)?.20:KALSHI_ONLY_FRACTION;
 }
-// A lead verification selects eligibility, never permission to spend more than
-// fifteen percent of bankroll. Preserve OVER-specific fractions separately.
+// A lead verification selects eligibility; its fractions preserve route/proof
+// metadata while the sizing gate independently applies 100% of bankroll.
 export function independentlyVerifiedLeadFraction(game,market){
  return Math.min(.15,unboundedIndependentLeadFraction(game,market));
 }

@@ -8,7 +8,7 @@ import {playerStatAgreement} from '../src/score_verification.mjs';
 import {remainingVerifiedOverCents} from '../src/upgrades.mjs';
 import {orderSize,estimatedCostCents} from '../src/strategy.mjs';
 
-test('basketball count props and add-ons stay within ten percent of bankroll',()=>{
+test('basketball count props and add-ons keep 10% signal metadata but spend at most full bankroll',()=>{
   const now=Date.now(),milestone={id:'g',type:'basketball_game',details:{league:'NBA'}};
   const game=gameState(milestone,{milestone_id:'g',_observed_at:new Date(now).toISOString(),details:{status:'live',home_score:30,away_score:20,period:1,clock:'08:00',player_stats:{p:{rebounds:7}}}});
   const market={ticker:'KXNBAREB-TEST-P',event_ticker:'KXNBAREB-TEST',status:'active',floor_strike:5.5,
@@ -21,8 +21,8 @@ test('basketball count props and add-ons stay within ten percent of bankroll',()
   const position={position_fp:'5',market_exposure_dollars:'4.00',fees_paid_dollars:'.25'};
   const budget=remainingVerifiedOverCents(position,10000,fraction);
   const count=orderSize(10000,.95,1000,fraction,1,10000,budget,2);
-  assert.ok(count>0);assert.ok(estimatedCostCents(count,.95,2)+425<=1000);
-  assert.equal(remainingVerifiedOverCents({...position,market_exposure_dollars:'10.00'},10000,fraction),0);
+  assert.ok(count>0);assert.ok(estimatedCostCents(count,.95,2)+425<=10000);
+  assert.equal(remainingVerifiedOverCents({...position,market_exposure_dollars:'100.00'},10000,fraction),0);
 });
 
 test('basketball count metrics share the cap; variable points and combined totals have no YES signal',()=>{

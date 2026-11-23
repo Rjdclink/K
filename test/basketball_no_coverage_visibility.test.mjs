@@ -139,13 +139,13 @@ test('multiple qualifying NO lines receive independent tracked windows and dashb
     'dashboard must display the precise rejection reason for both contracts');
 });
 
-test('basketball NO dashboard snapshots are populated from actual scanner results, not hypothetical OVER signals',()=>{
+test('basketball remains in the live dashboard, but new NO-entry scanners are never scheduled',()=>{
   const src=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
   assert.match(src,/basketballNoSignals/);
   assert.match(src,/basketballNoSignals\.get\(id\)/);
   assert.match(src,/noOnlyBasketballGames/);
-  assert.match(src,/collegeBasketballEvents,'basketball',basketballNoSignals,'final'/);
-  assert.match(src,/collegeBasketballEvents,'basketball',basketballNoSignals,'initial'/);
+  assert.doesNotMatch(src,/collegeBasketballEvents,'basketball',basketballNoSignals,'final'/);
+  assert.doesNotMatch(src,/collegeBasketballEvents,'basketball',basketballNoSignals,'initial'/);
   assert.match(src,/checkedIds\.add/);
 });
 
@@ -183,7 +183,7 @@ test('dashboard serializes actual NO signals alongside existing strategies in pe
     crossingRows:[],playerOverSpec:()=>null,filled:new Set(),account:{},balance:0,bankroll:0,
     retiredYes:new Set(),emptyAge:new Map(),noAskKey,NO_ASK_RETIRED,waitingOnAsk,
     leadFinalResults:new Map(),finalLeadKey:()=> 'none',executableSummaryAsk:()=>false,
-    signalExecution:()=> 'Original strategy unchanged'});
+    allowsNewEntry:()=>true,entryExclusionReason:()=>null,signalExecution:()=> 'Original strategy unchanged'});
   const signals=JSON.parse(row[14]);
   assert.equal(signals.length,2);
   assert.equal(signals[0].strategy,'no');
@@ -192,7 +192,7 @@ test('dashboard serializes actual NO signals alongside existing strategies in pe
   assert.equal(signals[1].execution,'Original strategy unchanged');
 });
 
-test('all basketball NO leagues share one 15% fee-inclusive pool without affecting football',async()=>{
+test('all basketball NO leagues share one 100% fee-inclusive pool without affecting football',async()=>{
   const f=fixture('NBA','0:29'),m=market('NBA',185);
   const held={ticker:'KXNCAAMBTOTAL-EXISTING',position_fp:-1,market_exposure_dollars:'4.00',fees_paid_dollars:'0.50'};
   const src=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
@@ -225,8 +225,8 @@ test('all basketball NO leagues share one 15% fee-inclusive pool without affecti
     orderSize:(cash,ask,depth,fraction,min,bankroll,pool)=>{allocated=fraction;budget=pool;return 1;},
     profitableCount:n=>n,estimatedCostCents:()=>0,
     auditTable:async()=>{},randomUUID:()=> 'verify',rememberIndependentEntry,
-    reserve:async signal=>{assert.equal(signal.fraction,.15);return 'order-id';},
-    withEntryProfitFloor:async(options,fn)=>{assert.equal(options.fraction,.15);return fn();},
+    reserve:async signal=>{assert.equal(signal.fraction,1);return 'order-id';},
+    withEntryProfitFloor:async(options,fn)=>{assert.equal(options.fraction,1);return fn();},
     invalidateBalance:async()=>{}
   });
   vm.runInContext(code,ctx);
@@ -234,8 +234,8 @@ test('all basketball NO leagues share one 15% fee-inclusive pool without affecti
     new Map([[m.event_ticker,{category:'Sports',event_ticker:m.event_ticker,markets:[m]}]]),'basketball',new Map());
   assert.equal(count,1);
   assert.equal(orders,1);
-  assert.equal(allocated,.15);
-  assert.equal(budget,1050,'15% of $100 ($15) less $4.50 held exposure and fees leaves $10.50');
+  assert.equal(allocated,1);
+  assert.equal(budget,9550,'100% of $100 less $4.50 held exposure and fees leaves $95.50');
   assert.ok(patterns.includes('College basketball %')&&patterns.includes('Basketball total NO %'),
-    'legacy NCAA and new pro/international NO holdings must share the same 15% ceiling');
+    'legacy NCAA and new pro/international NO holdings must share the same 100% ceiling');
 });

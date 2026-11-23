@@ -55,23 +55,24 @@ test('normal live games receive a market catalog sweep at least once in a minute
  assert.equal(chosen.length,40);
  assert.deepEqual(new Set(chosen.map(g=>g.milestone.id)),new Set(nonUrgent.map(g=>g.milestone.id)));
 });
-test('the scanner executes all due sport NO finals before any routine first checks or player scans',()=>{
+test('the scanner prioritizes permitted football, hockey and soccer NO finals; prohibited entries are absent',()=>{
  const src=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
  const fragment=src.slice(src.indexOf('const events=await marketMap('),src.indexOf('await candidateTable();'));
  const first=fragment.indexOf("submitted+=await withApiPriority('preflight_final',()=>runImmediateNoFinalPass([");
  const initial=fragment.indexOf("scanCollegeTotalNos(marketGames,events,'football',null,'initial')");
  const props=fragment.indexOf('scanVariablePlayerOvers(marketGames,events,variableOverSignals)');
- assert.ok(first>=0&&initial>first&&props>initial,'due finals precede first checks and props');
+ assert.ok(first>=0&&initial>first&&props===-1,'due finals precede first checks and player props are disabled');
  for(const required of [
-  "'football',null,'final'", "'basketball',basketballNoSignals,'final'",
+  "'football',null,'final'",
   "hockeyNoSignals,'final'", "hockeyNoSignals,'NHL','final'",
   "soccerNoSignals,'final'", "soccerNoSignals,'Soccer','final'",
-  "basketballNoSignals,'Basketball','final'",
-  "'football',null,'initial'", "'basketball',basketballNoSignals,'initial'",
+  "'football',null,'initial'",
   "hockeyNoSignals,'initial'", "hockeyNoSignals,'NHL','initial'",
   "soccerNoSignals,'initial'", "soccerNoSignals,'Soccer','initial'",
-  "basketballNoSignals,'Basketball','initial'"
- ])assert.ok(fragment.includes(required),'missing due-final or initial path: '+required);
+
+ ])assert.ok(fragment.includes(required),'missing permitted due-final or initial path: '+required);
+ assert.ok(!fragment.includes("'basketball',basketballNoSignals"));
+ assert.ok(!fragment.includes("'Basketball','final'"));
 });
 
 test('priority allocates limited catalog checks to games closest to preflight rather than discovery order',()=>{
