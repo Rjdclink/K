@@ -52,3 +52,25 @@ test('active team-game score polling does not request prohibited player-stat dat
  assert.doesNotMatch(source.slice(from,to),/include_player_stats/,
   'active sports polling must not request banned player prop statistics');
 });
+
+test('a Kalshi start-delayed MLS fixture is persisted as an unverified observation, never a live score or trade signal',async()=>{
+ const game={
+  milestone:{id:'3c7bc653-e22b-5546-88c7-03c22b7a2ef0',
+   title:'Vancouver vs Salt Lake',type:'soccer_tournament_multi_leg',
+   start_date:'2026-11-23T01:30:00Z',
+   details:{league:'MLS',status:'not_started'}},
+  state:{id:'3c7bc653-e22b-5546-88c7-03c22b7a2ef0',
+   title:'Vancouver vs Salt Lake',type:'soccer_tournament_multi_leg',
+   sport:'Soccer',verifiedLive:false,status:'delayed',scoreKnown:true,
+   home:0,away:0}
+ };
+ const calls=[];
+ const count=await publishPendingSportsPreview([game],async(sql,params)=>{
+  calls.push({sql,params});return {rowCount:1};
+ },new Date('2026-11-23T01:36:00Z'));
+ assert.equal(count,1,'Kalshi delayed kickoff still requires a real scan observation');
+ assert.equal(calls.length,1);
+ assert.equal(calls[0].params[0],game.milestone.id);
+ assert.match(calls[0].sql,/home=NULL,away=NULL/);
+ assert.ok(calls[0].sql.includes("signals='[]'::jsonb"));
+});
