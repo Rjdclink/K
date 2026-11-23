@@ -37,6 +37,17 @@ test('a valid external score with too little NO cushion is labelled as a cushion
  assert.match(h.dashboard.get(milestone.id)?.[0]?.execution||'',/score verified; contract lacks required goal cushion/i);
 });
 
+test('dashboard shows saved NO preflight and the initial pass completes a newly due final check',async()=>{
+ const h=harness();
+ await h.scan(540,'initial');
+ await h.scan(480,'final');
+ assert.match(h.dashboard.get(milestone.id)?.[0]?.execution||'',/First independent score check saved/);
+ assert.doesNotMatch(h.dashboard.get(milestone.id)?.[0]?.execution||'',/first.*pending/i);
+ assert.equal(await h.scan(479,'initial'),1,'the same pass completes final ESPN and buys only after all gates pass');
+ assert.equal(h.verifications,2);
+ assert.equal(h.dashboard.get(milestone.id)?.[0]?.final_verification_passed,true);
+});
+
 function harness({canVerify=true,hasSeller=true,unprofitable=false,initialAgeMs=61000,existingExposure=false,
   afterRefreshScore=3,missingClock=false,finalExternalFails=false,duplicate=false,globalPending=false,
   firstProofOverride=null,finalProofOverride=null,noAskPolicy=noAskTimeout}={}){
@@ -76,7 +87,7 @@ function harness({canVerify=true,hasSeller=true,unprofitable=false,initialAgeMs=
       }
       if(sql.startsWith('SELECT 1 FROM trade_attempts')){
         const isGlobal=sql.includes("WHERE strategy='no'");
-        const blocked=isGlobal?globalPending:duplicate;
+        const blocked=isGlobal?globalPending:duplicate||orders>0;
         return {rows:blocked?[{id:'existing'}]:[],rowCount:blocked?1:0};
       }
       if(sql.startsWith('SELECT market_ticker,fill_count'))

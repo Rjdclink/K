@@ -3443,7 +3443,7 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null,phase='all
         const due=eligibleNoFinal(window,game,{contractKey:key,
           firstSeconds:firstClock,entrySeconds:entryClock,
           remainingSeconds:game.remainingSeconds});
-        if(phase==='final'&&!due||phase==='initial'&&due)continue;
+        if(phase==='final'&&!due)continue;
         if(!validNoPreflight(window,{gameId:game.id,contractKey:key,period:game.period,
           maxFirstSeconds:firstClock})){
           if(game.remainingSeconds>firstClock){
@@ -3719,7 +3719,7 @@ async function scanHockeyTotalNos(games,events,signalSink=null,phase='all'){
         firstSeconds:first,entrySeconds:entry,remainingSeconds:dueSeconds,
         minWaitSeconds:timing?.waitSeconds??30,
         validFirst:proof=>validFreshEspnHockeyNo(proof,game,Date.now(),{allowHistorical:true})});
-      if(phase==='final'&&!due||phase==='initial'&&due)continue;
+      if(phase==='final'&&!due)continue;
       const invalidWindow=!validNoPreflight(window,{gameId:game.id,
         contractKey:key,period:game.period,maxFirstSeconds:first})||
         !validFreshEspnHockeyNo(window?.first_evidence,game,Date.now(),{allowHistorical:true});
@@ -4352,9 +4352,6 @@ async function scanSoccerTotalNos(games,events,signalSink=null,phase='all'){
           phase==='final'&&!dueWindows.has(market.ticker))continue;
         const c={milestone,state,event,market,spec};
         candidates.push(c);found++;
-        report(c,soccerStoppageNoWindow(state)?
-          'Live 90+ stoppage: first independent score check pending; second after 30 real seconds':
-          'Independent first score check due now; paired check follows after 30 real seconds');
       }
     }
     if(!found&&signalSink)signalSink.set(state.id,[{
@@ -4386,7 +4383,12 @@ async function scanSoccerTotalNos(games,events,signalSink=null,phase='all'){
         allowZeroClock:soccerStoppageNoWindow(game)||Number.isFinite(elapsed)&&dueSeconds===0,
         minWaitSeconds:timing?.waitSeconds??30,stoppageOnly:timing?.stoppageOnly??false,
         validFirst:proof=>validFreshEspnSoccerNo(proof,game,Date.now(),{allowHistorical:true})});
-      if(phase==='final'&&!due||phase==='initial'&&due)continue;
+      if(phase==='final'&&!due){
+        report(c,'First independent score check saved; final entry clock or verification condition not met');
+        continue;
+      }
+      // If this ticket became due after the earlier final lane, complete its
+      // independent final check here instead of waiting for another scan.
       const invalidWindow=!validNoPreflight(window,{gameId:game.id,
         contractKey:key,period:game.period,maxFirstSeconds:first,
         allowZeroClock:soccerStoppageNoWindow(game)&&!timing?.stoppageOnly})||
@@ -5784,7 +5786,7 @@ const DASHBOARD_GAMES_SQL=`SELECT g.id,g.title,g.sport,
     CASE WHEN e.game_id IS NOT NULL THEN e.away ELSE g.away END AS away,
     g.possession_side,
     CASE WHEN e.game_id IS NOT NULL THEN 'live' ELSE g.status END AS status,
-    CASE WHEN e.game_id IS NOT NULL THEN e.time_left ELSE g.time_left END AS time_left,
+    COALESCE(NULLIF(e.time_left,''),g.time_left) AS time_left,
     GREATEST(g.scanned_at,COALESCE(e.checked_at,g.scanned_at)) AS scanned_at,
     CASE WHEN e.game_id IS NOT NULL THEN e.checked_at ELSE g.score_observed_at END AS score_observed_at,
     g.signals

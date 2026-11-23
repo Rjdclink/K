@@ -240,6 +240,14 @@ test('due NHL final verification cuts ahead of another contract without first pr
  assert.equal(h.verifications,3);
 });
 
+test('NHL initial pass finishes a newly eligible NO without waiting for another scan',async()=>{
+ const h=harness();
+ assert.equal(await h.scan('9:00',3,'initial'),0);
+ assert.equal(await h.scan('7:59',3,'initial'),1);
+ assert.equal(h.verifications,2);
+ assert.equal(h.orders,1);
+});
+
 test('NHL full and third-period NO do not waste an additional ESPN request on a net-unprofitable executable quote',async()=>{
  const h=harness({unprofitable:true});
  await h.scan('7:00');

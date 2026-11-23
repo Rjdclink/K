@@ -62,7 +62,7 @@ function harness(sport,{ageMs=61000,failSecond=false,legacyFirstClock=null,final
           first_clock:args[4],first_evidence:JSON.parse(args[5]),first_at:new Date(Date.now()-ageMs)};
         return {rowCount:1,rows:[]};
       }
-      if(sql.startsWith('SELECT 1 FROM trade_attempts'))return {rowCount:0,rows:[]};
+      if(sql.startsWith('SELECT 1 FROM trade_attempts'))return {rowCount:orders>0?1:0,rows:orders>0?[{id:'filled'}]:[]};
       if(sql.startsWith('SELECT market_ticker,fill_count'))return {rows:[]};
       return {rowCount:1,rows:[]};
     }},
@@ -231,6 +231,16 @@ test('NFL, CFB and college basketball final checks preempt all new first checks'
   assert.equal(h.orders,1);
   assert.equal(await h.scan(entryClock,'initial'),0);
   assert.equal(h.proofs,2,'no redundant final ESPN request in first lane');
+ }
+});
+
+test('NFL and CFB initial passes finish a newly due NO in the same scan',async()=>{
+ for(const sport of ['NFL','CFB']){
+  const h=harness(sport);
+  assert.equal(await h.scan('5:30','initial'),0);
+  assert.equal(await h.scan('4:59','initial'),1,sport+' verifies and enters immediately');
+  assert.equal(h.proofs,2);
+  assert.equal(h.orders,1);
  }
 });
 

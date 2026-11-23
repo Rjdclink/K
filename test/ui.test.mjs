@@ -49,6 +49,8 @@ test('table-tennis scanner cards remove old countdown wording while retaining th
   const label=vm.runInContext('scanTimeLabel',context);
   assert.equal(label({sport:'Table tennis',time_left:'No countdown clock'}),'Set unavailable');
   assert.equal(label({sport:'NBA',time_left:'Quarter 4 · 01:22 remaining'}),'Quarter 4 · 01:22 remaining');
+  assert.equal(label({sport:'Soccer',status:'inactive',time_left:'Live clock unavailable'}),'Awaiting live confirmation');
+  assert.equal(label({sport:'Soccer',status:'live',time_left:'42:00 match time remaining'}),'42:00 match time remaining');
 });
 
 test('ask counter excludes watch rows, missing depth, terminal prices, and already-filled signals',async()=>{
