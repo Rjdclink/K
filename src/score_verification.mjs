@@ -97,7 +97,13 @@ function sameTeam(expected,aliases,sport){
     Vegas:'Vegas Golden Knights',Washington:'Washington Capitals',Winnipeg:'Winnipeg Jets'};
   const soccer={'Atletico Mineiro':'Atletico MG','Al Ahli Saudi':'Al Ahli','GA Eagles':'Go Ahead Eagles'};
   const franchise=sport==='NHL'&&hockey[expected]?clean(hockey[expected]):soccer[expected]?clean(soccer[expected]):null;
-  const clubName=name=>clean(String(name||'').replace(/^(?:AC|FC|CF|SC|AFC)\s+/i,'').replace(/\s+(?:AC|FC|CF|SC|AFC)$/i,''));
+  // ESPN shortens Chilean club names such as "Deportes La Serena" to
+  // "La Serena". Remove only the generic, standalone soccer club prefix;
+  // both teams and the exact scheduled kickoff must still match separately.
+  const clubName=name=>clean(String(name||'')
+    .replace(sport==='Soccer'?/^Deportes\s+/i:/^(?!)$/,'')
+    .replace(/^(?:AC|FC|CF|SC|AFC)\s+/i,'')
+    .replace(/\s+(?:AC|FC|CF|SC|AFC)$/i,''));
   const stripped=clubName(expected);
   const shortCode=variants.length>1&&/^[A-Za-z]{2}$/.test(String(expected||''));
   return (key.length>=3||shortCode) && aliases.some(name=>variants.includes(clean(name))||franchise&&clean(name)===franchise||
