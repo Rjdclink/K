@@ -5016,6 +5016,7 @@ async function scanNearPriorityGames(options={}){
   const statusCounts={};
   for(const item of observations)statusCounts[item.status]=(statusCounts[item.status]||0)+1;
   console.info('Near-entry external score coverage:',JSON.stringify({
+    revision:'score-profit-alias-20261123',
     checked:observations.length,statuses:statusCounts,
     nfl:observations.filter(o=>o.sport_family.startsWith('football_')).length,
     hockey:observations.filter(o=>o.sport_family.startsWith('hockey_')).length,
@@ -5937,7 +5938,7 @@ async function settlementAlerts(since){
   return rows;
 }
 async function handleRequest(req){const url=new URL(req.url);
-  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),mentionsConfigured:Boolean(process.env.MENTION_OFFICIAL_SOURCES),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'official-score-fallback-20261123',verification:{primary:'ESPN',fallback:'NHL, BBC Sport, or NFL after ESPN absence and retry',espnRetries:1}});
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),mentionsConfigured:Boolean(process.env.MENTION_OFFICIAL_SOURCES),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'score-profit-alias-20261123',verification:{primary:'ESPN',fallback:'NHL, BBC Sport, or NFL after ESPN absence and retry',espnRetries:1}});
   if(req.method==='GET'&&url.pathname==='/manifest.webmanifest')return response(manifest,'application/manifest+json');
   if(req.method==='GET'&&url.pathname==='/sw.js')return new Response(worker,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','service-worker-allowed':'/','x-content-type-options':'nosniff'}});
   if(req.method==='GET'&&/^\/icon-(192|512)\.png$/.test(url.pathname))return response(Buffer.from(icons[Number(url.pathname.match(/\d+/)[0])],'base64'),'image/png');
