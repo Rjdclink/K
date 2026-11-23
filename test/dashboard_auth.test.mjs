@@ -38,6 +38,9 @@ test('dashboard includes alerts in its existing refresh while the alert endpoint
     if(sql.includes('ALTER TABLE game_snapshots ADD COLUMN'))return {rows:[]};
     if(sql.includes('SET clock_refresh_at='))return {rows:[]};
     if(sql.includes('CREATE TABLE IF NOT EXISTS combo_diagnostics'))return {rows:[]};
+    if(sql.includes('CREATE TABLE IF NOT EXISTS sports_external_observations'))return {rows:[]};
+    if(sql.includes("WHERE status='final'"))return {rows:[]};
+    if(sql.includes('LEFT JOIN sports_external_observations'))return {rows:[structuredClone(delayedGame)]};
     if(sql.includes('CREATE TABLE IF NOT EXISTS mention_'))return {rows:[]};
     if(sql.includes('FROM mention_scan_status'))return {rows:[]};
     if(sql.includes('FROM combo_diagnostics'))return {rows:[]};
@@ -82,7 +85,7 @@ test('dashboard includes alerts in its existing refresh while the alert endpoint
     assert.equal(body.games[0].stale,true);
     assert.equal(body.games[0].scoreStale,true,'missing score fields must never claim fresh score evidence');
     assert.equal(body.games[0].signals[0].execution,'Last market result: No ask liquidity');
-    assert.ok(seen.some(item=>item.sql.includes("GREATEST(score_observed_at,scanned_at)>now()-interval '15 minutes'")));
+    assert.ok(seen.some(item=>item.sql.includes("GREATEST(g.score_observed_at,g.scanned_at)>now()-interval '15 minutes'")));
     assert.equal(body.scan.scanned,0);
     assert.deepEqual(body.weather,{disabled:true,series:0,eligible:0});
     assert.equal(body.mentions.configured,false);
