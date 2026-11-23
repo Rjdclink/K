@@ -176,8 +176,7 @@ export function marketEntryProximity(game){
     else return Infinity;
   }else if(/hockey/.test(type)){
     if([1,2].includes(period))target=360;
-    else if(period===3)target=margin>=4?1200:margin>=3?900:margin>=2?360:
-      game.homeUnits+game.awayUnits===1&&margin===1?75:420;
+    else if(period===3)target=margin>=4?1200:margin>=3?900:margin>=2?360:420;
   }else if(/basketball/.test(type)){
     if(['NBA','WNBA'].includes(game.sport)){
       if([1,2,3].includes(period))target=150;

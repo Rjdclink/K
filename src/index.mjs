@@ -396,13 +396,10 @@ function approachingGoalLead(game,market){
  if(!leader||market.custom_strike?.[(hockey?'hockey':'soccer')+'_team']!==leader)return false;
  const seconds=hockey?game.remainingSeconds:soccerRegulationSeconds(game);
  const margin=Math.abs(game.home-game.away),total=game.home+game.away;
- const oneNil=total===1&&margin===1;
- const firstWindow=hockey?oneNil?75:margin===2?420:0:
+ const firstWindow=hockey?margin===2?420:0:
    total===5?margin>=3?630:0:margin>=3?990:margin===2?420:0;
  return (hockey?game.period===3:game.period===2&&!game.soccerExtraTime)&&
-   (soccer&&oneNil?Number.isFinite(game.soccerMinute)&&game.soccerMinute>=91&&
-     game.clockRunning!==false:
-     Number.isFinite(seconds)&&seconds>0&&seconds<=firstWindow);
+   Number.isFinite(seconds)&&seconds>0&&seconds<=firstWindow;
 }
 const leadCandidate=(game,market)=>leadSignal(game,market)||
   additionalLeadSignal(game,market)||earlyLeadSignal(game,market);

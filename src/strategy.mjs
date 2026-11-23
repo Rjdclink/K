@@ -277,13 +277,10 @@ export function goalCommandingLeadEntry(game){
   const margin=Math.abs(game.homeUnits-game.awayUnits);
   const total=game.homeUnits+game.awayUnits;
   if(total>(soccer?5:4))return false;
-  const oneNil=margin===1&&total===1;
   const seconds=hockey?game.remainingSeconds:soccerRegulationSeconds(game);
   if(soccer&&(game.period!==2||game.soccerExtraTime||game.clockRunning===false))return false;
-  if(soccer&&oneNil)return Number.isFinite(game.soccerMinute)&&game.soccerMinute>=92;
   if(!Number.isFinite(seconds)||seconds<=0)return false;
   if(hockey&&game.period!==3)return false;
-  if(hockey&&oneNil)return seconds<15;
   if(soccer)return total===5?margin>=3&&seconds<570:
     margin>=3?seconds<930:margin===2&&seconds<300;
   return margin===3?seconds<420:margin>=2&&seconds<300;
@@ -327,10 +324,9 @@ export function leadWatchReason(game){
   if(/hockey/.test(type)){
     const watchP3=game.period===3&&Number.isFinite(seconds)&&seconds>0&&
       game.home+game.away<5&&
-      (margin===1&&game.home+game.away===1&&seconds<=75||
-       margin===3&&seconds<=540||margin>=2&&seconds<=420);
+      (margin===3&&seconds<=540||margin>=2&&seconds<=420);
     if(watchP3)
-      return `Tracking ${margin}-goal lead with fewer than five combined goals; 1–0 requires strictly under 0:15, +3 strictly under 7:00, +2 or +4 strictly under 5:00 in P3; ${goalCommandingLeadEntry(game)?'score and clock qualify; checking seller':'waiting for clock threshold'}`;
+      return `Tracking ${margin}-goal lead with fewer than five combined goals; +3 requires strictly under 7:00 in P3, +2 or +4 requires strictly under 5:00 in P3; ${goalCommandingLeadEntry(game)?'score and clock qualify; checking seller':'waiting for clock threshold'}`;
   }
   if(/baseball/.test(type)&&
     game.period===8&&game.inningHalf===2&&game.outs>=1&&margin>=5)
@@ -340,11 +336,6 @@ export function leadWatchReason(game){
     if(game.period===rule[0]&&seconds<=rule[1]&&margin>=rule[2])
       return `Tracking ${margin}-point lead; waiting for final winner window`;
   }
-  if(/soccer/.test(type)&&game.period===2&&!game.soccerExtraTime&&
-    game.home+game.away===1&&margin===1&&Number.isFinite(game.soccerMinute)&&
-    game.soccerMinute>=91&&game.clockRunning!==false)
-    return `Tracking 1–0 in live stoppage time; first external check at 91:00, second immediately before entry at 92:00 or later; ${goalCommandingLeadEntry(game)?
-      'late winner rule reached; checking winner market and ask':'waiting for 92:00'}`;
   if(/soccer/.test(type)&&game.period===2&&!game.soccerExtraTime&&
     Number.isFinite(game.soccerMinute)&&game.home+game.away<=5&&
     (game.home+game.away===5?margin>=3&&game.soccerMinute>=79.5:
@@ -757,8 +748,7 @@ export function leadSignal(game, market) {
   const minimum=basketball?basketballEntryTier(game)?.[0]??null:
     football?game.sport==='CFB'?(seconds<=CFB_LEAD_WINDOW_SECONDS?CFB_LEAD_MINIMUM:
       seconds<=CFB_MIDDLE_WINDOW_SECONDS?CFB_MIDDLE_MINIMUM:CFB_EARLY_MINIMUM):seconds<=120?8:11:
-    hockey?goalCommandingLeadEntry(game)&&game.homeUnits+game.awayUnits===1?1:2:
-    baseball?5:soccer?goalCommandingLeadEntry(game)&&game.homeUnits+game.awayUnits===1?1:2:null;
+    hockey?2:baseball?5:soccer?2:null;
   if(minimum===null||margin<minimum)return null;
   const leader = h>a ? game.homeName : game.awayName;
   const trailer = h>a ? game.awayName : game.homeName;
@@ -840,8 +830,6 @@ export function confirmedSoccerWinnerClock(first,second){
 }
 export function confirmedDrawClock(){return true;}
 export function soccerWinnerWindowOpen(game,now=Date.now()){
-  if(/soccer/.test(game?.type||'')&&Math.abs(game.home-game.away)===1&&
-    game.home+game.away===1)return goalCommandingLeadEntry(game);
   if(!/soccer/.test(game.type)||Math.abs(game.home-game.away)<2)return true;
   if(!goalCommandingLeadEntry(game))return false;
   const regulation=Number.isFinite(game.soccerMinute)?(90-game.soccerMinute)*60:NaN;
