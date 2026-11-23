@@ -1267,11 +1267,11 @@ async function liveBatch(ms){
   const started=Date.now();
   const map=new Map(),groups=[];
   for(let i=0;i<ms.length;i+=20)groups.push(ms.slice(i,i+20));
-  const results=await mapBatches(groups,12,async group=>{const q=new URLSearchParams();group.forEach(m=>q.append('milestone_ids',m.id));q.set('include_player_stats','true');
+  const results=await mapBatches(groups,12,async group=>{const q=new URLSearchParams();group.forEach(m=>q.append('milestone_ids',m.id));
     let list=[];try{list=(await kalshi('/live_data/batch?'+q)).live_datas||[]}catch(e){
       if(!/^Kalshi (400|404|405) /.test(String(e.message)))throw e;
       console.warn('Live batch unsupported; using bounded individual requests:',e.message);
-      for(const m of group){try{let result;try{result=await kalshi('/live_data/milestone/'+encodeURIComponent(m.id)+'?include_player_stats=true')}catch(error){if(!/^Kalshi (400|404) /.test(String(error.message)))throw error;result=await kalshi('/live_data/milestone/'+encodeURIComponent(m.id))}if(result.live_data)list.push(result.live_data)}catch(error){if(/Kalshi 429 /.test(String(error.message)))throw error}}
+      for(const m of group){try{const result=await kalshi('/live_data/milestone/'+encodeURIComponent(m.id));if(result.live_data)list.push(result.live_data)}catch(error){if(/Kalshi 429 /.test(String(error.message)))throw error}}
     }
     return {list,observedAt:new Date().toISOString()};});
   results.forEach(({list,observedAt})=>list.forEach(d=>map.set(d.milestone_id,{...d,_observed_at:observedAt})));
