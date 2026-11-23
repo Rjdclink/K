@@ -516,13 +516,19 @@ export async function verifyIndependentOverDecision(game,milestone,options={}){
       game.verificationIssue='ESPN fixture absent; Sofascore unavailable';return null;
     }
     const named=contractBoundFixtureIdentity(game,milestone,options.market);
-    const matches=[...new Map(readings.filter(r=>sameFixture(named,milestone,r.homeAliases,
-      r.awayAliases,r.time)).map(r=>[r.eventId,r])).values()];
+    const candidates=readings.filter(r=>sameFixture(named,milestone,r.homeAliases,
+      r.awayAliases,r.time));
+    const matches=[...new Map(candidates.map(r=>[r.eventId,r])).values()];
+    if(candidates.some(r=>{
+      const other=matches.find(m=>m.eventId===r.eventId);
+      return other&&(other.home!==r.home||other.away!==r.away||
+        other.period!==r.period||other.live!==r.live);
+    }))return false;
     if(matches.length>1)return false;
     if(!matches.length){game.verificationIssue='No exact live fixture on Sofascore';return null}
     const match=matches[0];
-    if(!match.live||Number.isInteger(game.period)&&Number.isInteger(match.period)&&
-      match.period!==game.period)return false;
+    if(!match.live||!Number.isInteger(match.period)||
+      Number.isInteger(game.period)&&match.period!==game.period)return false;
     if(playerOverSpec(game,options.market))return null;
     // A soccer full-game total needs a documented goal timeline to establish
     // that its line was passed; Sofascore's score alone cannot supply one.

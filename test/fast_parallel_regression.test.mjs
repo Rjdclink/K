@@ -42,7 +42,7 @@ test('10-second urgent worker independently starts while retry and safety watche
 
 test('30-second near worker promotes all fresh games without serial external-entry catalog work',()=>{
  const src=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
- const worker=src.slice(src.indexOf('async function scanNearPriorityGames(){'),src.indexOf('async function scanFastPriorityGames('));
+ const worker=src.slice(src.indexOf('async function scanNearPriorityGames('),src.indexOf('async function scanFastPriorityGames('));
  assert.match(worker,/promoteScanGames\(games\)/);
  assert.doesNotMatch(worker,/marketMap\(|scanCollegeTotalNos\(|scanHockeyTotalNos\(|scanSoccerTotalNos\(/);
 });

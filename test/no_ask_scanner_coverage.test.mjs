@@ -25,7 +25,7 @@ test('legacy Q3 football NO, variable player YES, fast lead and fast over also s
   ['async function scanThirdQuarterNos(','async function nws(',/noAskTimeout\.retired\(highest,'no'\)/,/noAskTimeout\.observeMissing\(candidate,'no'\)/],
   ['async function scanVariablePlayerOvers(','async function scan(cachedMilestones',/noAskTimeout\.isRetired\(c,'yes'\)/,/noAskTimeout\.observeMissing\(c,'yes'\)/],
   ['async function watchLeadWindows(','async function watchReadyOverTickets(',/verifiedEntryQuote\(second,milestone,offered,scoreboardCache\)/,/noAskTimeout\.observeMissing\(\{market,game:first\},'yes'\)/],
-  ['async function watchReadyOverTickets(','async function nws(',/noAskTimeout\.isRetired\(\{market:\{ticker:ticket.ticker\}/,/noAskTimeout\.observeMissing\(\{market:current,game:state\},'yes'\)/]
+  ['async function watchReadyOverTickets(','async function nws(',/const current=\(await kalshi\('/,/noAskTimeout\.observeMissing\(\{market:current,game:state\},'yes'\)/]
  ];
  for(const [begin,end,retired,missing] of checks){
   const code=region(begin,end);
@@ -40,7 +40,10 @@ test('normal winner/over purchases are skipped but retained positions still have
  assert.match(scan,/retiredYes\.has\(noAskKey\(c\)\)\?NO_ASK_RETIRED/);
  assert.match(source,/async function verifiedEntryQuote\([\s\S]*?await executableQuote\(current\)/);
  assert.equal(NO_ASK_GRACE_MS,30_000);
- assert.match(NO_ASK_RETIRED,/live book recovery check pending/);
+ assert.match(NO_ASK_RETIRED,/candidate skipped/);
+ assert.doesNotMatch(NO_ASK_RETIRED,/pending/i);
+ assert.match(scan,/const bookCandidates=live\(\)\?yesCandidates\.filter/);
+ assert.match(scan,/retiredYes\.delete\(noAskKey\(c\)\)/);
  const sell=readFileSync(new URL('../src/sell.mjs',import.meta.url),'utf8');
  const positions=readFileSync(new URL('../src/positions.mjs',import.meta.url),'utf8');
  assert.doesNotMatch(sell,/noAskTimeout|no_ask_timeouts/);

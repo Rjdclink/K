@@ -159,6 +159,12 @@ export async function fetchIndependentMatchScore(game,milestone,{fetcher=fetch,e
   const candidates=readings.filter(reading=>sameFixture(identifiedGame,milestone,
     reading.homeAliases,reading.awayAliases,reading.time));
   const distinct=[...new Map(candidates.map(c=>[c.eventId,c])).values()];
+  // The same provider ID appearing on multiple date feeds must agree.
+  if(candidates.some(c=>{
+    const other=distinct.find(d=>d.eventId===c.eventId);
+    return other&&(other.home!==c.home||other.away!==c.away||
+      other.period!==c.period||other.live!==c.live);
+  }))return false;
   if(distinct.length>1)return false;
   if(distinct.length!==1)return null;
   const reading=distinct[0];

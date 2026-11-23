@@ -25,6 +25,13 @@ test('Sofascore parses exact live scores and period without inventing a clock',(
  assert.equal(Number.isNaN(reading.elapsedMinute),true);
  assert.equal(parseSofascoreEvents({events:[event({homeScore:{current:'0'}})]},'football').length,0);
 });
+test('Sofascore parses hockey overtime only when the score timeline agrees',()=>{
+ const [reading]=parseSofascoreEvents({events:[event({lastPeriod:'period4',
+  homeScore:{current:3,period1:1,period2:1,period3:0,period4:1},
+  awayScore:{current:2,period1:0,period2:1,period3:1,period4:0}})]},'ice-hockey');
+ assert.equal(reading.period,4);
+ assert.deepEqual(reading.periods.map(p=>p.home),[1,1,0,1]);
+});
 test('ESPN absence and retry permit only one exact Sofascore fixture',async()=>{
  let espn=0,sofa=0;
  const proof=await fetchIndependentMatchScore(game,milestone,{espnFeed:'soccer/all',
@@ -46,6 +53,7 @@ test('ambiguity, wrong team, old kickoff, finished match, stale HTTP and challen
  const base=parseSofascoreEvents({events:[event()]},'football')[0];
  assert.equal(await run([{...base,homeAliases:['Wrong team']}]),null);
  assert.equal(await run([base,{...base,eventId:'999999'}]),false);
+ assert.equal(await run([base,{...base,home:1}]),false);
  assert.equal(await run([{...base,time:new Date(Date.now()-8*3600000).toISOString()}]),null);
  assert.equal(await run([{...base,live:false}]),false);
  assert.equal(await loadSofascore(game,milestone,{fetcher:async()=>response([event()],'30')}),null);

@@ -95,8 +95,9 @@ test('independent source verifier can be invoked for observation without bypassi
 
 test('near-tier code runs independent probes and persists their results before the next 30s pass',()=>{
  const src=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
- const near=src.slice(src.indexOf('async function scanNearPriorityGames(){'),src.indexOf('async function scanFastPriorityGames('));
+ const near=src.slice(src.indexOf('async function scanNearPriorityGames('),src.indexOf('async function scanFastPriorityGames('));
  assert.match(near,/nearScanExternalObservations\(/);
+ assert.match(near,/espnFeed:feeds\.espn,foxFeed:feeds\.fox/);
  assert.match(near,/publishNearExternalObservations\(/);
  assert.match(near,/promotedFromExternalObservation\(/);
  assert.doesNotMatch(near,/scanCollegeTotalNos\(|scanHockeyTotalNos\(|scanSoccerTotalNos\(/);

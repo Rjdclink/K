@@ -1,10 +1,10 @@
 // Persist liquidity decisions across concurrent scanner instances. Missing YES
 // asks and missing NO asks are independent markets on the same Kalshi ticker.
 // A still-empty candidate has 30 real seconds from first observation, after
-// which the candidate is deferred. An eligible contract can retry its live
-// book once per ten seconds; only actual executable depth clears the timer.
+// which the candidate is deferred. A live-book check can recover it;
+// only actual executable depth clears the timer.
 export const NO_ASK_GRACE_MS=30_000;
-export const NO_ASK_RETIRED='No executable ask after 30 seconds; live book recovery check pending';
+export const NO_ASK_RETIRED='No executable ask after 30 seconds; candidate skipped';
 export function potentialSeller(market,side){
   if(!market||!['yes','no'].includes(side))return false;
   const price=Number(market[side+'_ask_dollars']);

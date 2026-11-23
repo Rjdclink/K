@@ -62,13 +62,20 @@ test('finished games leave active scanning rather than retaining obsolete fast p
 
 test('30-second worker promotes all relevant games without blocking behind external checks or trading',()=>{
  const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
- const a=source.indexOf('async function scanNearPriorityGames(){');
+ const a=source.indexOf('async function scanNearPriorityGames(');
  const b=source.indexOf('async function scanFastPriorityGames(',a);
  const near=source.slice(a,b);
  assert.match(near,/promoteScanGames\(games\)/);
  assert.match(near,/withApiPriority\('live',\(\)=>liveBatch\(ms\)\)/);
  assert.doesNotMatch(near,/marketMap\(|scanCollegeTotalNos\(|scanHockeyTotalNos\(|scanSoccerTotalNos\(|scanEarlyPeriodNos\(/);
  assert.doesNotMatch(near,/stageCashAcrossShards|reconcileCombos|fillComboQueue|dashboard/);
+ assert.match(near,/await scanFastPriorityGames\(scanMinuteEnd\(\)\)/);
+});
+test('discovery immediately hands promoted fixtures to near evaluation',()=>{
+ const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
+ const discovery=source.slice(source.indexOf('async function scan(cachedMilestones'),
+   source.indexOf('async function refreshOpenClocks('));
+ assert.match(discovery,/await promoteScanGames\(games\);[\s\S]*?await scanNearPriorityGames\(\{onlyIds:games\.map/);
 });
 test('fast worker atomically throttles a fixture to at most one claim per 10 seconds and skips overdue callbacks',()=>{
  const src=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');

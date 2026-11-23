@@ -23,7 +23,7 @@ import {allowsNewEntry,entryExclusionReason} from './entry_exclusions.mjs';
 import {publishVerifiedPositions,ensureVerifiedPositionTables} from './account_position_profit.mjs';
 import {accountHistoryListSQL,accountHistorySummarySQL} from './account_history_query.mjs';
 import { ensureExitLedger, recordExitFill } from './exit_ledger.mjs';
-import { gameState, overSignal, PLAYER_PROP_MAX_FRACTION, BASKETBALL_COUNT_PROP_MAX_FRACTION, BASKETBALL_WINNER_ENTRY_SECONDS, playerOverSpec, playerPropEarlyWindow, confirmedOver, fallbackScoringUnits, confirmedExternalLead, leadSignal, isTieOutcomeMarket, proBasketballLeadRules, basketballCloseoutEntry, basketballCloseoutMinimum, nbaSingleReadLead, kalshiSingleReadLead, confirmedSoccerWinnerClock, soccerWinnerWindowOpen, leadWatchReason, additionalLeadSignal, cricketLeadSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback, teamScorePosition } from './strategy.mjs';
+import { gameState, overSignal, PLAYER_PROP_MAX_FRACTION, BASKETBALL_COUNT_PROP_MAX_FRACTION, BASKETBALL_WINNER_ENTRY_SECONDS, playerOverSpec, playerPropEarlyWindow, confirmedOver, fallbackScoringUnits, confirmedExternalLead, leadSignal, isTieOutcomeMarket, proBasketballLeadRules, basketballCloseoutEntry, basketballCloseoutMinimum, nbaSingleReadLead, kalshiSingleReadLead, confirmedSoccerWinnerClock, soccerWinnerWindowOpen, soccerRegulationSeconds, leadWatchReason, additionalLeadSignal, cricketLeadSignal, earlyLeadSignal, tennisSignal, tableTennisSignal, orderSize, estimatedCostCents, profitableCount, minimumProfitCents, netSettlementProfitCents, comeback, teamScorePosition } from './strategy.mjs';
 import {authoritativeGameState,verifiedSourceReady} from './external_authority.mjs';
 import {fetchIndependentMatchScore} from './independent_match_score.mjs';
 import {uncushionedPlayerSpec,verifyNoncushionedPlayerStat,noncushionedPlayerState,noncushionedTwoProofs,FIRST_NONCUSHIONED_CHECK_MS,rankNoncushionedReplacements} from './noncushioned_player_over.mjs';
@@ -381,10 +381,26 @@ function ensureLeadExternalWindows(){
   first_at timestamptz NOT NULL,first_verification_id text NOT NULL,
   first_evidence jsonb NOT NULL)`).catch(error=>{leadExternalWindowsReady=null;throw error});
 }
+function approachingTwoGoalLead(game,market){
+ const family=String(game?.type||''),hockey=family.startsWith('hockey_'),
+   soccer=family.startsWith('soccer_');
+ if(!hockey&&!soccer||!game.verifiedLive||!game.scoreKnown||
+   !game.scoreConsistent||!game.periodConsistent||
+   !Number.isInteger(game.home)||!Number.isInteger(game.away)||
+   game.home+game.away>=5||Math.abs(game.home-game.away)!==2||
+   !/GAME(?:-|$)/.test(String(market?.event_ticker||''))||
+   !['active','open'].includes(market?.status))return false;
+ const leader=game.home>game.away?game.homeTeamId:game.awayTeamId;
+ if(!leader||market.custom_strike?.[(hockey?'hockey':'soccer')+'_team']!==leader)return false;
+ const seconds=hockey?game.remainingSeconds:soccerRegulationSeconds(game);
+ return (hockey?game.period===3:game.period===2&&!game.soccerExtraTime)&&
+   Number.isFinite(seconds)&&seconds>0&&seconds<=420;
+}
 const leadCandidate=(game,market)=>leadSignal(game,market)||
   additionalLeadSignal(game,market)||earlyLeadSignal(game,market);
 async function leadFirstCheck(game,milestone,market){
- if(!game?.id||!market?.ticker||!leadCandidate(game,market))return null;
+ if(!game?.id||!market?.ticker||
+   !leadCandidate(game,market)&&!approachingTwoGoalLead(game,market))return null;
  await ensureLeadExternalWindows();
  const key=overContractKey(game,market);
  const read=()=>pool.query('SELECT * FROM lead_external_windows WHERE market_ticker=$1',[market.ticker]);
@@ -392,7 +408,7 @@ async function leadFirstCheck(game,milestone,market){
  if(leadFirstProofValid(prior,game,market))return prior;
  const first={...game};
  if(await auditedOver(first,milestone,{market,allowUnavailable:true})!==true||
-   !leadCandidate(first,market)||!first.verificationId||
+   !leadCandidate(first,market)&&!approachingTwoGoalLead(first,market)||!first.verificationId||
    !verifiedSourceReady(first))return null;
  const proof=first.externalScore;
  await pool.query(`INSERT INTO lead_external_windows
@@ -501,8 +517,6 @@ async function pairedOverRead(first,milestone,market,decorate=state=>state){
 }
 async function confirmedIndependentOver(first,milestone,market,{decorate=state=>state}={}){
   const original=first;
-  if(await noAskTimeout.isRetired({market,game:first},'yes')&&
-    !await noAskTimeout.claimRecovery({market,game:first},'yes'))return null;
   // An actual executable YES offer is required before any external
   // scoreboard request, including the ESPN-first independent score lookup.
   // Do not accept an advertised ask without resting orderbook depth.
@@ -2573,6 +2587,11 @@ async function watchLeadWindows(until){
               const ruleMarket={...market,yes_ask_dollars:undefined};
               if(!leadSignal(first,ruleMarket)&&
                 !earlyLeadSignal(first,ruleMarket)&&!additionalLeadSignal(first,ruleMarket)){
+                if(approachingTwoGoalLead(first,ruleMarket)){
+                  decision.stage='approaching_two_goal_external';
+                  await leadFirstCheck({...first},milestone,market);
+                  continue;
+                }
                 const minimum=first.sport==='WNBA'?7:basketballCloseoutMinimum(first);
                 const leader=first.homeUnits>first.awayUnits?first.homeTeamId:first.awayTeamId;
                 if(minimum!==null&&minimum!==undefined&&first.period===(first.sport==='NCAAB'?2:4)&&
@@ -2688,10 +2707,7 @@ async function watchReadyOverTickets(until,{onlyTickers=null,once=false}={}){
         let state=null,market={ticker:ticket.ticker},verified=null;
         const checkedAt=Date.now();
         try{
-          if(await noAskTimeout.isRetired({market:{ticker:ticket.ticker},game:{id:milestone.id}},'yes')){
-            const marketUpdate=(await kalshi('/markets/'+encodeURIComponent(ticket.ticker))).market;
-            if(!await noAskTimeout.claimRecovery({market:marketUpdate,game:{id:milestone.id}},'yes'))continue;
-          }
+          // A previously empty book cannot suppress this urgent live check.
           const cached=rows.find(row=>row.milestone.id===milestone.id)?.live_score;
           const useCached=/soccer/.test(milestone.type||'')&&Date.now()-Date.parse(cached?._observed_at||'')<=30000;
           const raw=useCached?cached:await liveMilestone(milestone.id);
@@ -4941,18 +4957,23 @@ async function promoteScanGames(games){
       seen_at=clock_timestamp()`,[JSON.stringify(rows)]);
   return rows.length;
 }
-async function scanNearPriorityGames(){
+async function scanNearPriorityGames(options={}){
+  const {onlyIds=null,handoff=true}=options;
   await ensureScanTiers();
   // 30-second scans run independently of urgent entry and slow discovery.
   // First promote every Kalshi-ready fixture: ESPN must never delay this.
   const {rows}=await pool.query(`SELECT milestone FROM sports_scan_tiers
     WHERE tier<=30 AND seen_at>now()-interval '5 minutes'
-    ORDER BY tier ASC,seen_at DESC LIMIT 90`);
+      AND ($1::text[] IS NULL OR game_id=ANY($1::text[]))
+    ORDER BY tier ASC,seen_at DESC LIMIT 90`,[onlyIds]);
   const ms=rows.map(row=>row.milestone).filter(supportedScannerSport);
   if(!ms.length)return 0;
   const latest=await withApiPriority('live',()=>liveBatch(ms));
   const games=ms.map(milestone=>({milestone,state:gameState(milestone,latest.get(milestone.id))}));
   const promoted=await promoteScanGames(games);
+  // Newly eligible games enter the urgent worker in this invocation, rather
+  // than waiting for its next scheduled ten-second callback.
+  if(handoff&&live())await scanFastPriorityGames(scanMinuteEnd());
   // All enabled sports receive independent fixture, live score AND live clock
   // checks. This is observational: the 10-second worker independently
   // reloads Kalshi plus fresh contract-specific first/final proof before buy.
@@ -4961,7 +4982,7 @@ async function scanNearPriorityGames(){
       const feeds=externalSportFeeds(state);
       if(!feeds)return null;
       return fetchIndependentMatchScore(state,milestone,{
-        espnFeed:feeds[0],foxFeed:feeds[1],
+        espnFeed:feeds.espn,foxFeed:feeds.fox,
         requireKalshiLive:false,fetcher:sharedCandidateScoreboardFetch
       });
     }
@@ -4971,6 +4992,7 @@ async function scanNearPriorityGames(){
   // reports a delayed/scheduled status. Promotion never grants trade entry.
   await promoteScanGames(games.map((game,i)=>
     promotedFromExternalObservation(game,observations[i])));
+  if(handoff&&live())await scanFastPriorityGames(scanMinuteEnd());
   const statusCounts={};
   for(const item of observations)statusCounts[item.status]=(statusCounts[item.status]||0)+1;
   console.info('Near-entry external score coverage:',JSON.stringify({
@@ -5109,6 +5131,9 @@ async function scan(cachedMilestones,discoveryCount){
     }));
     // Promote candidates before slow market catalog or account operations.
     await promoteScanGames(games);
+    // Discovery hands its newly seen fixtures directly to near evaluation.
+    // The independent near/fast triggers continue on their own cadence.
+    if(live())await scanNearPriorityGames({onlyIds:games.map(g=>g.milestone.id)});
     // Publish fresh live scores before quote discovery or cash/combination
     // work. A slow exchange response must not empty the dashboard's live list.
     await ensureScoreTime();
@@ -5268,24 +5293,26 @@ async function scan(cachedMilestones,discoveryCount){
     const executableSummaryAsk=m=>hasAsk(m)&&Number.isFinite(Number(m.yes_ask_dollars))&&
       Number(m.yes_ask_dollars)>0&&Number(m.yes_ask_dollars)<1;
     const retiredYes=live()?await noAskTimeout.retired(yesCandidates,'yes'):new Set();
-    for(const c of yesCandidates)if(retiredYes.has(noAskKey(c))&&
-      await noAskTimeout.claimRecovery(c,'yes'))retiredYes.delete(noAskKey(c));
     const stillEligible=c=>!retiredYes.has(noAskKey(c));
     const observedEmpty=live()?yesCandidates.filter(c=>stillEligible(c)&&!executableSummaryAsk(c.market)):[];
     const emptyAge=observedEmpty.length?await noAskTimeout.missing(observedEmpty,'yes'):new Map();
     for(const [key,gap] of emptyAge)if(gap.retired)retiredYes.add(key);
-    const missing=observedEmpty.filter(stillEligible);
-    if(missing.length){
-      const quotes=await probeMissingAsks(missing.map(c=>c.market.ticker),tickers=>bestAsksForTickers(tickers,async tickers=>{
+    // Check the live book even for a retired or newly expired candidate.
+    // A stale summary ask or old timer cannot leave an eligible seller hidden.
+    const bookCandidates=live()?yesCandidates.filter(c=>retiredYes.has(noAskKey(c))||
+      !executableSummaryAsk(c.market)):[];
+    if(bookCandidates.length){
+      const quotes=await probeMissingAsks(bookCandidates.map(c=>c.market.ticker),tickers=>bestAsksForTickers(tickers,async tickers=>{
         const q=new URLSearchParams();tickers.forEach(ticker=>q.append('tickers',ticker));
         return (await kalshi('/markets/orderbooks?'+q)).orderbooks;
       },async ticker=>({ticker,orderbook_fp:(await kalshi('/markets/'+encodeURIComponent(ticker)+'/orderbook')).orderbook_fp}),
       (ticker,error)=>console.warn('Ask depth probe unavailable:',ticker,error.message)));
       const recovered=[];
-      for(const c of missing){const quote=quotes.get(c.market.ticker);
+      for(const c of bookCandidates){const quote=quotes.get(c.market.ticker);
         if(quote){
           c.market={...c.market,yes_ask_dollars:quote.price.toFixed(4),yes_ask_size_fp:quote.size.toFixed(2)};
           recovered.push(c);
+          retiredYes.delete(noAskKey(c));
         }
       }
       if(recovered.length)await noAskTimeout.available(recovered,'yes');

@@ -11,7 +11,8 @@ const phase=(event,sport)=>{
   const description=String(event?.status?.description||'').toLowerCase();
   if(sport==='football')return /period2|2nd half|second half/.test(last+' '+description)?2:
     /period1|1st half|first half/.test(last+' '+description)?1:NaN;
-  if(sport==='ice-hockey')return /period3|3rd period|third period/.test(last+' '+description)?3:
+  if(sport==='ice-hockey')return /period4|overtime|extra time/.test(last+' '+description)?4:
+    /period3|3rd period|third period/.test(last+' '+description)?3:
     /period2|2nd period|second period/.test(last+' '+description)?2:
     /period1|1st period|first period/.test(last+' '+description)?1:NaN;
   return /period4|4th quarter|fourth quarter/.test(last+' '+description)?4:NaN;
@@ -24,7 +25,7 @@ export function parseSofascoreEvents(data,sport){
     if(!whole(home)||!whole(away)||!Number.isSafeInteger(start)||start<=0||
       !Number.isSafeInteger(event?.id)||!event?.homeTeam?.name||!event?.awayTeam?.name)return [];
     const periods=[];
-    for(let i=1;i<=3;i++){
+    for(let i=1;i<=(sport==='ice-hockey'?4:3);i++){
       const h=event.homeScore?.['period'+i],a=event.awayScore?.['period'+i];
       if(!whole(h)||!whole(a))break;
       periods.push({number:i,home:h,away:a});
