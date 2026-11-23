@@ -19,6 +19,9 @@ const market=game=>({ticker:(game.type.startsWith('soccer_')?'KXMLSGAME-X-HOME':
  custom_strike:{}});
 const proof=game=>{
  const m=market(game);game.verificationId='independent-verified';
+ game.home??=0;game.away??=0;
+ game.externalScore={source:'ESPN',eventId:'matched-fixture',gameId:game.id,
+   home:game.home,away:game.away,live:true,checkedAt:Date.now()};
  rememberIndependentEntry(game,m,game.verificationId,Date.now());
  return {game,market:m};
 };
