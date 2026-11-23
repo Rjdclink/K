@@ -1,7 +1,7 @@
 import {supportedScannerSport} from './discovery.mjs';
 
 // Scoreboard observations are monitoring information, never contract proof.
-const SOURCES=new Set(['ESPN','FOX Sports','Flashscore']);
+const SOURCES=new Set(['ESPN','FOX Sports','Sofascore']);
 const whole=n=>Number.isInteger(n)&&n>=0;
 const pad=n=>String(Math.floor(n)).padStart(2,'0');
 const formatted=seconds=>pad(seconds/60)+':'+pad(seconds%60);
@@ -20,7 +20,13 @@ export function normalizeScannerExternalObservation(game,reading,now=Date.now())
   return {...base,reason:'Independent provider identity, score or freshness invalid'};
  if(reading.live!==true)return {...base,status:'not_live',source,event_id:id,
   reason:'Exact fixture is not currently reported live by the external provider'};
- const period=reading.period,seconds=reading.seconds,minute=reading.elapsedMinute;
+ const period=reading.period;
+ const kalshiClock=reading.source==='Sofascore'&&Number.isFinite(state?.observedAt)&&
+   now>=state.observedAt&&now-state.observedAt<=15000&&period===state.period;
+ const seconds=Number.isFinite(reading.seconds)?reading.seconds:
+   kalshiClock?state.remainingSeconds:NaN;
+ const minute=Number.isFinite(reading.elapsedMinute)?reading.elapsedMinute:
+   kalshiClock?state.soccerMinute:NaN;
  const soccer=String(milestone.type||'').startsWith('soccer_');
  const periodValid=Number.isInteger(period)&&period>=1&&period<=(soccer?4:6);
  const clockValid=soccer?Number.isFinite(minute)&&minute>=0&&minute<=180:

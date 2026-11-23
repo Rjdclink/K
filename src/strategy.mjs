@@ -275,17 +275,12 @@ export function goalCommandingLeadEntry(game){
     !game.scoreConsistent||!game.periodConsistent||
     !Number.isFinite(game.homeUnits)||!Number.isFinite(game.awayUnits))return false;
   const margin=Math.abs(game.homeUnits-game.awayUnits);
+  if(game.homeUnits+game.awayUnits>=5)return false;
   const seconds=hockey?game.remainingSeconds:soccerRegulationSeconds(game);
   if(soccer&&(game.period!==2||game.soccerExtraTime||game.clockRunning===false))return false;
   if(!Number.isFinite(seconds)||seconds<=0)return false;
-  if(hockey){
-    // 25 minutes of regulation remaining means P2 at 5:00, not P3 at 25:00.
-    if(game.period===2)return margin>=5&&seconds<=300;
-    return game.period===3&&seconds<=1200&&
-      (margin>=4||margin>=3&&seconds<900||margin>=2&&seconds<360);
-  }
-  return margin>=5&&seconds<=1500||margin>=4&&seconds<1200||
-    margin>=3&&seconds<900||margin>=2&&seconds<360;
+  if(hockey&&game.period!==3)return false;
+  return margin===3?seconds<420:margin>=2&&seconds<300;
 }
 export function endWindow(game){
   if(!game.verifiedLive||!game.scoreKnown||!game.periodConsistent)return false;
@@ -324,11 +319,11 @@ export function leadWatchReason(game){
     }
   }
   if(/hockey/.test(type)){
-    const watchP2=game.period===2&&margin>=5&&Number.isFinite(seconds)&&seconds>0&&seconds<=360;
     const watchP3=game.period===3&&Number.isFinite(seconds)&&seconds>0&&
-      (margin>=4&&seconds<=1200||margin>=3&&seconds<=960||margin>=2&&seconds<=420);
-    if(watchP2||watchP3)
-      return `Tracking ${margin}-goal lead; entry requires +5 with 5:00 or less left in P2, +4 from the start of P3, +3 strictly under 15:00 in P3, or +2 strictly under 6:00 in P3; ${goalCommandingLeadEntry(game)?'score and clock qualify; checking seller':'waiting for clock threshold'}`;
+      game.home+game.away<5&&
+      (margin===3&&seconds<=540||margin>=2&&seconds<=420);
+    if(watchP3)
+      return `Tracking ${margin}-goal lead with fewer than five combined goals; +3 requires strictly under 7:00 in P3, +2 or +4 requires strictly under 5:00 in P3; ${goalCommandingLeadEntry(game)?'score and clock qualify; checking seller':'waiting for clock threshold'}`;
   }
   if(/baseball/.test(type)&&
     game.period===8&&game.inningHalf===2&&game.outs>=1&&margin>=5)
@@ -340,9 +335,10 @@ export function leadWatchReason(game){
   }
   if(/soccer/.test(type)&&game.period===2&&!game.soccerExtraTime&&
     Number.isFinite(game.soccerMinute)&&
-    (margin>=5?game.soccerMinute>=64:margin>=4?game.soccerMinute>=69:margin>=3?game.soccerMinute>=74:game.soccerMinute>=79)&&
+    game.home+game.away<5&&
+    (margin===3?game.soccerMinute>=81:game.soccerMinute>=83)&&
     soccerRegulationSeconds(game)>0&&margin>=2)
-    return `Tracking ${margin}-goal lead; entry requires +5 at 25:00 remaining or less, +4 strictly under 20:00, +3 strictly under 15:00, or +2 strictly under 6:00 regulation remaining; ${goalCommandingLeadEntry(game)?
+    return `Tracking ${margin}-goal lead with fewer than five combined goals; +3 requires strictly under 7:00, +2 or +4 strictly under 5:00 regulation remaining; ${goalCommandingLeadEntry(game)?
       'late winner rule reached; checking winner market and ask':'waiting for score and clock threshold'}`;
   return null;
 }

@@ -2,6 +2,7 @@ import {randomUUID} from 'node:crypto';
 import {espnMatches} from './score_verification.mjs';
 import {espnScoreboardUrls,espnSoccerLeagueFeed} from './espn_scoreboards.mjs';
 import {scoreFeedAgeMs} from './score_feed_freshness.mjs';
+import {fetchIndependentMatchScore} from './independent_match_score.mjs';
 
 // Soccer NO still needs two distinct fresh ESPN HTTP requests 30+ seconds
 // apart. ESPN establishes independently matched teams, live score, period,
@@ -17,7 +18,7 @@ const clockMinute=value=>{
 };
 export function validFreshEspnSoccerNo(reading,game,now=Date.now(),{allowHistorical=false}={}){
  const checked=Number(reading?.checkedAt);
- return Boolean(reading?.source==='ESPN'&&reading.verificationPolicy===SOCCER_ESPN_POLICY&&
+ return Boolean(['ESPN','Sofascore'].includes(reading?.source)&&reading.verificationPolicy===SOCCER_ESPN_POLICY&&
   reading.gameId===game?.id&&String(reading.eventId||'').trim()&&
   typeof reading.requestId==='string'&&reading.requestId.length>=16&&
   reading.live===true&&reading.period===game?.period&&
@@ -25,22 +26,24 @@ export function validFreshEspnSoccerNo(reading,game,now=Date.now(),{allowHistori
   Number.isInteger(reading.away)&&reading.away>=0&&
   Number.isFinite(checked)&&checked>0&&now>=checked&&
   now-checked<=(allowHistorical?30*60000:15000)&&
-  Number.isFinite(reading.elapsedMinute)&&
-  reading.elapsedMinute>=0&&reading.elapsedMinute<=180);
+  (reading.source==='Sofascore'&&Number.isFinite(game.soccerMinute)&&
+    game.soccerMinute>=0&&game.soccerMinute<=180||
+    Number.isFinite(reading.elapsedMinute)&&reading.elapsedMinute>=0&&reading.elapsedMinute<=180));
 }
 export function pairedFreshEspnSoccerNo(first,second,game,now=Date.now()){
  return Boolean(validFreshEspnSoccerNo(first,game,now,{allowHistorical:true})&&
   validFreshEspnSoccerNo(second,game,now)&&
-  String(first.eventId)===String(second.eventId)&&
+  (first.source!==second.source||String(first.eventId)===String(second.eventId))&&
   first.requestId!==second.requestId&&first.checkedAt<=second.checkedAt&&
   second.home>=first.home&&second.away>=first.away&&
-  second.elapsedMinute>=first.elapsedMinute);
+  (!Number.isFinite(first.elapsedMinute)||!Number.isFinite(second.elapsedMinute)||
+    second.elapsedMinute>=first.elapsedMinute));
 }
 // Only use a verified ESPN read to make an ephemeral risk-decision game.
 // Never write ESPN scores to Kalshi, change the market, or fabricate a clock.
 export function independentlyVerifiedSoccerGame(game,reading){
  if(!validFreshEspnSoccerNo(reading,game))return null;
- const minute=reading.elapsedMinute;
+ const minute=Number.isFinite(reading.elapsedMinute)?reading.elapsedMinute:game.soccerMinute;
  const limit=reading.period===1?45:90;
  return {...game,home:reading.home,away:reading.away,
   homeUnits:reading.home,awayUnits:reading.away,
@@ -99,7 +102,17 @@ export async function verifyFreshEspnSoccerNo(game,milestone,{fetcher=fetch}={})
   game.verificationIssue=allRejected&&!retrieved?
    'ESPN soccer scoreboards could not be retrieved':
    'No exact matching fixture on the ESPN soccer scoreboard for this league and date';
-  return null;
+  const fallback=await fetchIndependentMatchScore(game,milestone,{fetcher,espnFeed:null});
+  if(fallback===false){game.verificationIssue='Sofascore fixture is ambiguous or not live';return false}
+  if(!fallback){game.verificationIssue='ESPN fixture absent; Sofascore unavailable or no exact live fixture';return null}
+  if(fallback.live!==true||!Number.isInteger(fallback.period)||fallback.period!==game.period||
+    !Number.isInteger(fallback.home)||!Number.isInteger(fallback.away)){
+    game.verificationIssue='Sofascore fixture period or score cannot be verified';return false;
+  }
+  const at=Date.now(),age=fallback.sourceAgeMs||0;
+  const proof={...fallback,verificationPolicy:SOCCER_ESPN_POLICY,requestId,
+    checkedAt:at-age};
+  return validFreshEspnSoccerNo(proof,game,at)?proof:false;
  }
  if(found.some(m=>!m.eventId||m.live!==true)){
   game.verificationIssue='ESPN identified the fixture but does not report it as live';

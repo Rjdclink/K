@@ -19,7 +19,7 @@ const sums=periods=>({
   home:periods.reduce((n,p)=>n+p.home,0),
   away:periods.reduce((n,p)=>n+p.away,0)
 });
-const validExternal=(external,game)=>external?.source==='ESPN'&&
+const validExternal=(external,game)=>['ESPN','Sofascore'].includes(external?.source)&&
   Boolean(externalNoScore(game,external));
 
 export function hockeyNoMarketSpec(game,market,{beforeWindow=false}={}){
@@ -28,7 +28,7 @@ export function hockeyNoMarketSpec(game,market,{beforeWindow=false}={}){
     game.feedId!==game.id||game.clockRunning===false||!Number.isFinite(game.observedAt)||
     game.observedAt>Date.now()||Date.now()-game.observedAt>10000||
     ![3,4].includes(game.period)||!Number.isFinite(game.remainingSeconds)||game.remainingSeconds<=0||
-    (beforeWindow?game.remainingSeconds>420:game.remainingSeconds>=360)||
+    (beforeWindow?game.remainingSeconds>420:game.remainingSeconds>=300)||
     !Number.isInteger(game.home)||!Number.isInteger(game.away)||game.home<0||game.away<0||
     !['active','open'].includes(market?.status)||
     market.result&&!['','not_determined'].includes(String(market.result)))return null;
@@ -57,6 +57,7 @@ export function hockeyTotalNo(game,market,{beforeWindow=false,external=null}={})
   if(external&&!validExternal(external,game))return null;
   const independent=external?externalNoScore(game,external):null;
   let total=independent?independent.home+independent.away:game.home+game.away;
+  if(total>=5)return null;
   if(spec.period==='third_period'){
     const providerParts=validPeriods(game.periodScores);
     const externalParts=external?externalNoPeriods(game,external,3):null;

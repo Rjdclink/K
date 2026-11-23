@@ -3,7 +3,7 @@ import {espnScoreboardUrls,espnSoccerLeagueFeed} from './espn_scoreboards.mjs';
 import { alternateCheck } from './alternate_scores.mjs';
 import { teamAbbreviationVariants } from './team_identity.mjs';
 import { relaxedTeamCompatibility } from './fixture_aliases.mjs';
-import {flashscoreCompetition,flashscoreFixture,loadFlashscore} from './flashscore.mjs';
+import {loadSofascore,sofascoreSport} from './sofascore.mjs';
 import {scoreFeedAgeMs} from './score_feed_freshness.mjs';
 // ESPN and FOX publish the scoreboards used by their sites. These endpoints
 // are not contractual data APIs; a changed schema or unavailable fixture must
@@ -494,32 +494,11 @@ async function verifyNbaOver(game,milestone,{fetcher=fetch,market,minimumOverVal
   }catch{return null}
 }
 // null means no exact independent fixture/stat was available. A definite
-// contradiction remains false and must never authorize a Kalshi-only fallback.
-// A Flashscore fallback exists only for a statically confirmed ESPN coverage
-// gap. Unavailability is null; contradiction is false and vetoes every fallback.
-export async function verifyFlashscoreOver(game,milestone,options={}){
-  if(!flashscoreCompetition(game,milestone))return null; // Flashscore supplies its own goals.
-  const {market,minimumOverValue,onOverValue}=options;
-  const readings=await loadFlashscore(game,milestone,options);
-  if(!Array.isArray(readings))return null;
-  const named=contractBoundFixtureIdentity(game,milestone,market);
-  const matches=readings.filter(m=>sameFixture(flashscoreFixture(named,milestone),milestone,m.homeAliases,m.awayAliases,m.time));
-  if(matches.length>1)return false;
-  if(matches.length!==1)return null;
-  const matched=matches[0];
-  if(!matched.live)return false;
-  if(Number.isInteger(game.period)&&Number.isInteger(matched.period)&&matched.period!==game.period)return false;
-  if(playerOverSpec(game,market))return null; // No verified Flashscore player box-score adapter.
-  if(periodValue(game,market)&&!periodValue({...game,periodScores:matched.periods},market))return null;
-  const series=String(market?.event_ticker||'').split('-')[0];
-  if(/soccer/.test(game.type)&&/TOTAL$/.test(series)&&
-    !/TEAMTOTAL$|[1-9](?:Q|P|H|INNING)TOTAL$/.test(series))return null; // Goals need a verified scoring timeline.
-  return scoreAgreement(game,[[matched]],market,{minimumOverValue,onOverValue});
-}
+// contradiction remains false and never authorizes a Kalshi-only fallback.
 export async function verifyIndependentOverDecision(game,milestone,options={}){
   delete game.verificationIssue;
   const unavailableReasons=[],rankedOptions={...options,unavailableReasons};
-  const knownGap=Boolean(flashscoreCompetition(game,milestone));
+  const knownGap=Boolean(sofascoreSport(game));
   const nbaTask=verifyNbaOver(game,milestone,options);
   const preferred=await verifyExistingOver(game,milestone,rankedOptions);
   // Repeat ESPN once, only for a competition confirmed to lack ESPN coverage.
@@ -532,9 +511,24 @@ export async function verifyIndependentOverDecision(game,milestone,options={}){
   if(preferred!==null)return preferred;
   if(retried!==null)return retried;
   if(knownGap){
-    const flash=await verifyFlashscoreOver(game,milestone,rankedOptions);
-    if(flash===null)game.verificationIssue='External verification unavailable: ESPN/Flashscore could not verify exact live fixture';
-    return flash;
+    const readings=await loadSofascore(game,milestone,rankedOptions);
+    if(!Array.isArray(readings)){
+      game.verificationIssue='ESPN fixture absent; Sofascore unavailable';return null;
+    }
+    const named=contractBoundFixtureIdentity(game,milestone,options.market);
+    const matches=[...new Map(readings.filter(r=>sameFixture(named,milestone,r.homeAliases,
+      r.awayAliases,r.time)).map(r=>[r.eventId,r])).values()];
+    if(matches.length>1)return false;
+    if(!matches.length){game.verificationIssue='No exact live fixture on Sofascore';return null}
+    const match=matches[0];
+    if(!match.live||Number.isInteger(game.period)&&Number.isInteger(match.period)&&
+      match.period!==game.period)return false;
+    if(playerOverSpec(game,options.market))return null;
+    // A soccer full-game total needs a documented goal timeline to establish
+    // that its line was passed; Sofascore's score alone cannot supply one.
+    if(/soccer/.test(game.type)&&/TOTAL$/.test(String(options.market?.event_ticker||'').split('-')[0]))return null;
+    if(periodValue(game,options.market)&&!periodValue({...game,periodScores:match.periods},options.market))return null;
+    return scoreAgreement(game,[[match]],options);
   }
   // Non-gap leagues keep their existing CBS/Yahoo/FOX fallback order.
   for(const source of ['CBS','Yahoo']){

@@ -43,7 +43,7 @@ import {nearScanExternalObservations,promotedFromExternalObservation} from './sc
 import {selectStaleReviews,classifyStaleLive,retainedAfterStaleReview} from './stale_review.mjs';
 import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOverDecision, verifyIndependentTableTennisLeadDecision, verifyIndependentTableTennisMatch, externalScoreFeeds } from './score_verification.mjs';
-import {flashscoreCompetition} from './flashscore.mjs';
+import {sofascoreSport} from './sofascore.mjs';
 import { verificationStatus, completedOverWait, verificationWindowStatus } from './verification_status.mjs';
 import { COMBO_ATTEMPT_MS, VERIFY_DWELL_MS, COMBO_RFQ_PLANS, singleSpendableCash, comboAllocation, comboLegAllocation, comboHeldFraction, comboAllowedCents, comboMinimumCents, comboMeetsMinimum, comboRfqTargetCents, remainingVerifiedComboCents, availableComboFills, comboPairDiagnostics, comboExclusionKey, exchangeComboExclusion, comboLegs, filledComboWindow, heldComboLeg, quoteForYes, collectionsForEvents, selectedComboMarkets, liveComboMarket, missingQuoteFill, comboFillPages } from './combos.mjs';
 import { selectedTeamName, selectedTeamSide } from './selected_team.mjs';
@@ -278,8 +278,7 @@ function upgradeTables(){return upgradesReady??=Promise.all([
 const externalSportFeeds=(game,milestone=null)=>{
  const {espn,fox}=externalScoreFeeds(game,milestone);
  if(espn||fox)return [espn,fox];
- return flashscoreCompetition(game,milestone||{details:{
-   league:game?.competition||game?.sport}})?[null,null]:null;
+ return sofascoreSport(game)?[null,null]:null;
 };
 // Candidate discovery may reuse the same public league scoreboard for up to
 // 2 seconds. Independent preflight/final proof always bypasses this cache.
@@ -292,8 +291,7 @@ async function sharedCandidateScoreboardFetch(url,opts={}){
   const task=(async()=>{
    const response=await fetch(url,{...opts,cache:'no-store'});
    if(!response.ok)throw Error('External scoreboard unavailable: '+response.status);
-   const flashscore=url.startsWith('https://global.flashscore.ninja/');
-   return {data:flashscore?await response.text():await response.json(),headers:response.headers};
+   return {data:await response.json(),headers:response.headers};
   })();
   entry={task,at:now};candidateScoreboards.set(url,entry);
   if(candidateScoreboards.size>180){
@@ -358,7 +356,7 @@ async function auditedOver(game,milestone,options={}){
       const r=await fetch(url,{...opts,cache:'no-store'}),raw=await r.text();let data;try{data=JSON.parse(raw)}catch{data=raw}
       return {ok:r.ok,status:r.status,headers:r.headers,data,raw,requested_at:at,received_at:new Date().toISOString()};
     })();
-    try{const r=await task;observations.push({source:url.includes('espn.com')?'ESPN':url.includes('flashscore.ninja')?'Flashscore':url.includes('sofascore.com')?'Sofascore':url.includes('cdn.nba.com')?'NBA':url.includes('cbssports.com')?'CBS':url.includes('yahoo.com')?'Yahoo':'FOX',url,requested_at:r.requested_at,received_at:r.received_at,status:r.status,data:url.includes('flashscore.ninja')?'Public Flashscore live feed, length '+String(r.raw).length:r.data});return {ok:r.ok,status:r.status,headers:r.headers,json:async()=>r.data,text:async()=>r.raw}}
+    try{const r=await task;observations.push({source:url.includes('espn.com')?'ESPN':url.includes('sofascore.com')?'Sofascore':url.includes('cdn.nba.com')?'NBA':url.includes('cbssports.com')?'CBS':url.includes('yahoo.com')?'Yahoo':'FOX',url,requested_at:r.requested_at,received_at:r.received_at,status:r.status,data:r.data});return {ok:r.ok,status:r.status,headers:r.headers,json:async()=>r.data}}
     catch(e){observations.push({url,requested_at:at,error:String(e.message)});throw e}
   };
   // Separate reads retain the exact source response used for this decision.
@@ -1338,7 +1336,7 @@ async function marketMap(tickers){
 async function reserve(signal,game,event,market,count,price,balance){
   // A hard purchase cutoff is also checked again at actual Kalshi dispatch.
   // No reserve row is created for an early soccer/hockey entry.
-  if(!finalFiveEntryEligible(game))return null;
+  if(!finalFiveEntryEligible(game,{strategy:signal.strategy,market}))return null;
   if(isTieOutcomeMarket(market))return null;
   const id=randomUUID();
   const {rowCount}=await pool.query(`INSERT INTO trade_attempts(id,market_ticker,event_ticker,game_id,sport,strategy,reason,fraction,count,limit_price,available_cents)
@@ -1498,7 +1496,7 @@ async function freshPlayerPropForEntry(game,milestone,market,decorate=state=>sta
   return checked&&overCushion(checked,market)!==null&&timedOverEntryValid(checked,market)?checked:null;
 }
 async function submit(signal,game,event,market,balance,bankroll,budgetCents=Infinity,availableCents=bankroll,cashCents=balance){
-  if(!finalFiveEntryEligible(game))return false;
+  if(!finalFiveEntryEligible(game,{strategy:signal.strategy,market}))return false;
   if(isTieOutcomeMarket(market))return false;
   if(internationalBasketball(game))return false;
   balance=Math.min(balance,singleSpendableCash(cashCents));
@@ -1542,7 +1540,7 @@ async function submit(signal,game,event,market,balance,bankroll,budgetCents=Infi
   }catch(e){const message=String(e.message),noLiquidity=/^Kalshi 409 .*fill or kill insufficient resting volume/i.test(message),terminal=/^Kalshi (400|401|403|404|422) /.test(message);await pool.query(`UPDATE trade_attempts SET status=$2,error=$3,updated_at=now() WHERE id=$1`,[id,noLiquidity||['LOCAL_OVER_PROOF_EXPIRED','LOCAL_EXTERNAL_VERIFICATION_REQUIRED'].includes(e.code)||e.code==='LOCAL_LEAD_SCORE_EXPIRED'?'unfilled':terminal?'rejected':'check_order',message.slice(0,250)]);if(/insufficient balance/i.test(message))await invalidateBalance();console.error('Order response:',market.ticker,e.message);return false}
 }
 async function recoverPending(signal,game,event,market,balance,bankroll,budgetCents=Infinity,availableCents=bankroll,cashCents=balance){
-  if(!finalFiveEntryEligible(game))return false;
+  if(!finalFiveEntryEligible(game,{strategy:signal.strategy,market}))return false;
   balance=Math.min(balance,singleSpendableCash(cashCents));
   if(signal.strategy==='lead'&&/Kalshi-only live score and executable seller checked/.test(signal.reason||'')&&
     (!kalshiSingleReadLead(game,market)||!hasAsk(market)))return false;
@@ -3564,7 +3562,7 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null,phase='all
   return filled;
 }
 async function scanHockeyTotalNos(games,events,signalSink=null,phase='all'){
-  const allocation=1,entry=360,start=420,reasonPattern='NHL hockey total NO %';
+  const allocation=1,entry=300,start=420,reasonPattern='NHL hockey total NO %';
   const noDiagnostics=new Map();
   const auditNoCandidate=(c,execution,quote=null)=>{
     const candidate=c;
@@ -3693,7 +3691,7 @@ async function scanHockeyTotalNos(games,events,signalSink=null,phase='all'){
         continue;
       }
       if(game.remainingSeconds>=entry){
-        report(c,'First '+window.first_evidence.source+' proof saved; awaiting less than 6:00');continue;
+        report(c,'First '+window.first_evidence.source+' proof saved; awaiting less than 5:00');continue;
       }
       const spacing=lateNoPreflightProgress(window);
       if(!spacing.ready){
@@ -4219,7 +4217,7 @@ async function scanEarlyPeriodNos(games,events,signalSink=null,sport='NHL',phase
 }
 
 async function scanSoccerTotalNos(games,events,signalSink=null,phase='all'){
-  const allocation=1,entry=480,start=660,reasonPattern='Soccer %total NO %';
+  const allocation=1,entry=300,start=660,reasonPattern='Soccer %total NO %';
   const noDiagnostics=new Map();
   const auditNoCandidate=(candidate,execution,quote=null)=>{
     if(!candidate?.market?.ticker||!candidate?.state||!execution)return;
@@ -4358,7 +4356,7 @@ async function scanSoccerTotalNos(games,events,signalSink=null,phase='all'){
         continue;
       }
       if(game.matchRemainingSeconds>=entry){
-        report(c,'First '+window.first_evidence.source+' check saved; awaiting strictly under 8:00');continue;
+        report(c,'First '+window.first_evidence.source+' check saved; awaiting strictly under 5:00');continue;
       }
       const spacing=lateNoPreflightProgress(window);
       if(!spacing.ready){
@@ -5892,7 +5890,7 @@ async function settlementAlerts(since){
   return rows;
 }
 async function handleRequest(req){const url=new URL(req.url);
-  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),mentionsConfigured:Boolean(process.env.MENTION_OFFICIAL_SOURCES),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'college-total-no-20261114',verification:{primary:'ESPN',fallback:'Flashscore for confirmed coverage gaps; FOX otherwise',espnRetries:1}});
+  if(req.method==='GET'&&url.pathname==='/health')return json({ok:true,live:live(),exitOnly:exitOnly(),credentials:configured(),mentionsConfigured:Boolean(process.env.MENTION_OFFICIAL_SOURCES),tradingSwitch:process.env.LIVE_TRADING==='true'?'on':'off',revision:'sofascore-five-minute-20261123',verification:{primary:'ESPN',fallback:'Sofascore after ESPN absence and retry',espnRetries:1}});
   if(req.method==='GET'&&url.pathname==='/manifest.webmanifest')return response(manifest,'application/manifest+json');
   if(req.method==='GET'&&url.pathname==='/sw.js')return new Response(worker,{headers:{'content-type':'text/javascript; charset=utf-8','cache-control':'no-store','service-worker-allowed':'/','x-content-type-options':'nosniff'}});
   if(req.method==='GET'&&/^\/icon-(192|512)\.png$/.test(url.pathname))return response(Buffer.from(icons[Number(url.pathname.match(/\d+/)[0])],'base64'),'image/png');

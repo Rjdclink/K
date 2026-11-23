@@ -21,7 +21,7 @@ const clockMinute=clock=>{
 // Independent fixture, score, and match time determine whether the exact
 // Kalshi contract has enough goal cushion within its regulation window.
 const currentExternal=(reading,game)=>Boolean(
-  ['ESPN','FOX Sports','Flashscore'].includes(reading?.source)&&reading.eventId&&
+  ['ESPN','FOX Sports','Sofascore'].includes(reading?.source)&&reading.eventId&&
   Boolean(externalNoScore(game,reading)));
 
 // Kalshi full-game totals include regulation stoppage, but not the separate
@@ -41,7 +41,7 @@ export function soccerNoMarketSpec(game,market,{beforeWindow=false}={}){
     Date.now()<game.observedAt||Date.now()-game.observedAt>10000||
     game.period!==2||game.soccerExtraTime||game.soccerOvertime||game.clockRunning===false||
     !Number.isFinite(game.soccerMinute)||!Number.isFinite(seconds)||
-    (!stoppage&&(seconds<=0||(beforeWindow?seconds>660:seconds>=480)))||
+    (!stoppage&&(seconds<=0||(beforeWindow?seconds>660:seconds>=300)))||
     !Number.isInteger(game.home)||game.home<0||!Number.isInteger(game.away)||game.away<0||
     !['active','open'].includes(market?.status)||
     market.result&&!['','not_determined'].includes(String(market.result)))return null;
@@ -70,6 +70,7 @@ export function soccerTotalNo(game,market,{beforeWindow=false,external=null}={})
   const score=external?externalNoScore(game,external):{home:game.home,away:game.away};
   if(!score)return null;
   const total=score.home+score.away;
+  if(total>=5)return null;
   // 0–3 scored: 2.5-goal cushion. 4+: 3.5-goal cushion.
   // Only confirmed live stoppage AFTER 90 minutes returns to 1.5.
   const required=soccerStoppageNoWindow(sourceGame)?1.5:total>=4?3.5:2.5;
@@ -97,6 +98,6 @@ export function independentSoccerTotalNoReading(scoreboard,game,milestone,market
 
 export async function verifyIndependentSoccerTotalNo(game,milestone,market,{fetcher=fetch}={}){
   if(!soccerNoMarketSpec(game,market,{beforeWindow:true}))return null;
-  // ESPN only. The scoreboard must be live and current; its score and clock control.
+  // ESPN first; if the exact fixture is absent, require a live matched Sofascore score.
   return verifyFreshEspnSoccerNo(game,milestone,{fetcher});
 }

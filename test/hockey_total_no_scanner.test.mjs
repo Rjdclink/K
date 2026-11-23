@@ -40,7 +40,7 @@ function harness({ageMs=61000,canVerify=true,hasSeller=true,unprofitable=false,e
   const a=src.indexOf('async function scanHockeyTotalNos('),b=src.indexOf('async function scan(cachedMilestones',a);
   assert.ok(a>0&&b>a,'hockey scanner must be an isolated function in the total-NO pipeline');
   const code=src.slice(a,b);
-  let n=0,verifications=0,orders=0,allocation=null,availablePool=null,livePeriod=3,liveClock='5:59';
+  let n=0,verifications=0,orders=0,allocation=null,availablePool=null,livePeriod=3,liveClock='4:59';
   const windows=new Map(),dashboard=new Map(),trace=[];
   const held={ticker:'KXNHLTOTAL-OLD',position_fp:-1,market_exposure_dollars:'4.00',fees_paid_dollars:'0.50'};
   const context=vm.createContext({finalFiveEntryEligible,eligibleNoFinal,launchImmediateNoFinalFixtures,immediateNoFinalProof,dueNoFinalWindows,noFinalCheckpoint,noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,scheduleNoLiquidityRecheck:()=>{},recordDecision:async()=>{},pairedExternalMatch,validFreshEspnHockeyNo,pairedFreshEspnHockeyNo,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
@@ -108,7 +108,7 @@ function harness({ageMs=61000,canVerify=true,hasSeller=true,unprofitable=false,e
   };
 }
 
-test('NHL NO checks both full-game and P3, with independent 7:00 preflight then one fresh proof per entry under 6:00',async()=>{
+test('NHL NO checks both full-game and P3, with independent 7:00 preflight then one fresh proof per entry under 5:00',async()=>{
   const h=harness();
   assert.equal(await h.scan('7:01'),0);
   assert.equal(h.verifications,0);
@@ -116,8 +116,8 @@ test('NHL NO checks both full-game and P3, with independent 7:00 preflight then 
   assert.equal(h.windows.size,2,'track separate windows for game and third period');
   assert.equal(h.orders,0);
   assert.equal(await h.scan('6:00'),0);
-  assert.equal(h.orders,0,'strictly under 360s required');
-  assert.equal(await h.scan('5:59'),2);
+  assert.equal(h.orders,0,'strictly under 300s required');
+  assert.equal(await h.scan('4:59'),2);
   assert.equal(h.orders,2,'both distinct markets can qualify');
   assert.equal(h.allocation,1);
   assert.ok(h.trace.lastIndexOf('external')<h.trace.lastIndexOf('reserve'),'external immediately precedes reservation');
@@ -130,28 +130,28 @@ test('NHL NO checks both full-game and P3, with independent 7:00 preflight then 
 test('NHL total NO waits 60 real seconds, even when its period clock moves faster',async()=>{
   const waiting=harness({ageMs:1000});
   await waiting.scan('7:00');
-  assert.equal(await waiting.scan('5:59'),0);
+  assert.equal(await waiting.scan('4:59'),0);
   assert.equal(waiting.orders,0);
   const eligible=harness({ageMs:61000});
   await eligible.scan('7:00');
-  assert.equal(await eligible.scan('5:59'),2);
+  assert.equal(await eligible.scan('4:59'),2);
   assert.equal(eligible.orders,2);
   assert.ok(eligible.trace.lastIndexOf('external')<eligible.trace.lastIndexOf('reserve'));
 });
 
-test('NHL NO permits a late first proof under 6:00, then a second check one real minute later on an unchanged stopped clock',async()=>{
+test('NHL NO permits a late first proof under 5:00, then a second check one real minute later on an unchanged stopped clock',async()=>{
   const h=harness({ageMs:61000});
-  assert.equal(await h.scan('5:59'),0,'first check may occur inside the entry window');
+  assert.equal(await h.scan('4:59'),0,'first check may occur inside the entry window');
   assert.equal(h.windows.size,2);
   assert.equal(h.verifications,2,'separate ESPN first requests for both markets');
-  assert.equal(await h.scan('5:59'),2,'unchanged clock cannot block a second check after 60 real seconds');
+  assert.equal(await h.scan('4:59'),2,'unchanged clock cannot block a second check after 60 real seconds');
   assert.equal(h.orders,2);
 });
 
 test('NHL total NO rejects a preflight timestamp from the future',async()=>{
   const h=harness({ageMs:-1000});
   await h.scan('7:00');
-  assert.equal(await h.scan('5:59'),0);
+  assert.equal(await h.scan('4:59'),0);
   assert.equal(h.orders,0);
 });
 
@@ -159,14 +159,14 @@ test('NHL total NO requires verifiable period linescores and declines missing in
   const h=harness({canVerify:false});
   await h.scan('7:00');
   assert.equal(h.windows.size,0);
-  assert.equal(await h.scan('5:59'),0);
+  assert.equal(await h.scan('4:59'),0);
   assert.equal(h.orders,0);
 });
 
 test('NHL NO never enters without an executable NO seller',async()=>{
   const h=harness({hasSeller:false});
   await h.scan('7:00');
-  assert.equal(await h.scan('5:59'),0);
+  assert.equal(await h.scan('4:59'),0);
   assert.equal(h.orders,0);
   assert.equal(h.verifications,2,'both mandatory first proofs remain; missing depth prevents either final ESPN request');
   assert.ok((h.dashboard.get(milestone.id)||[]).some(s=>/No executable ask/i.test(s.execution)));
@@ -176,14 +176,14 @@ test('pending NHL order cannot suppress the first independent check for another 
  const h=harness({globalPending:true});
  assert.equal(await h.scan('7:00'),0);
  assert.equal(h.windows.size,2);
- assert.equal(await h.scan('5:59'),0,'new order remains forbidden');
+ assert.equal(await h.scan('4:59'),0,'new order remains forbidden');
  assert.equal(h.orders,0);
 });
 
 test('NHL total NO caps full-game and P3 entries in one shared fee-inclusive 100% pool',async()=>{
   const h=harness({existingExposure:true});
   await h.scan('7:00');
-  await h.scan('5:59');
+  await h.scan('4:59');
   assert.equal(h.allocation,1);
   assert.equal(h.availablePool,9550,'$100 total cap minus existing $4 exposure and $0.50 fees leaves $95.50');
 });
@@ -239,7 +239,7 @@ test('NHL full and third-period NO do not waste an additional ESPN request on a 
  const h=harness({unprofitable:true});
  await h.scan('7:00');
  assert.equal(h.verifications,2);
- assert.equal(await h.scan('5:59'),0);
+ assert.equal(await h.scan('4:59'),0);
  assert.equal(h.verifications,2,'only original preflight checks performed');
  assert.equal(h.orders,0);
  assert.equal(h.trace.filter(x=>x==='orderbook').length,2);

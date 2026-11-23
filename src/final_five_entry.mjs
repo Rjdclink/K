@@ -1,6 +1,6 @@
-// Purchase-only rule. Hockey and soccer cannot place ANY new game position
-// until the actual game is inside its final five minutes, regardless of an
-// earlier period/half market or an otherwise qualifying commanding lead.
+// Purchase-only rule. Hockey, soccer and football enter late in the actual
+// game; a verified three-goal soccer/hockey winner gets the seven-minute
+// exception. Earlier period/half markets cannot use their segment clocks.
 // Do not apply to settlement, held-position monitoring, or reduce-only exits.
 export const FINAL_FIVE_SECONDS=300;
 
@@ -19,31 +19,39 @@ export function goalScoreBelowFive(game,now=Date.now()){
   // have been scored. The independent fixture and freshness must be known.
   if(!validGoals(game)||all.some(score=>score&&validGoals(score)&&
     scoreTotal(score)>=GOAL_ENTRY_CEILING))return false;
-  return Boolean(validGoals(proof)&&['ESPN','FOX Sports','Flashscore'].includes(proof.source)&&
+  return Boolean(validGoals(proof)&&['ESPN','FOX Sports','Sofascore'].includes(proof.source)&&
     String(proof.eventId||'').trim()&&proof.gameId===game.id&&
     Number.isFinite(proof.checkedAt)&&now>=proof.checkedAt&&
     now-proof.checkedAt<=15000&&scoreTotal(proof)<GOAL_ENTRY_CEILING);
 }
 
-export function finalFiveEntryEligible(game){
+export function finalFiveEntryEligible(game,{strategy,market}={}){
  const family=String(game?.type||game?.sport_family||'').toLowerCase();
- const soccer=family.startsWith('soccer_'),hockey=family.startsWith('hockey_');
- if(!soccer&&!hockey)return true;
+ const soccer=family.startsWith('soccer_'),hockey=family.startsWith('hockey_'),
+   football=family.startsWith('football_');
+ if(!soccer&&!hockey&&!football)return true;
  if(game?.verifiedLive!==true||game?.scoreKnown!==true||
    game?.periodConsistent!==true||game?.clockRunning===false)return false;
- if(hockey){
+ const winnerMarket=market&&/GAME(?:-|$)/.test(String(market.event_ticker||''));
+ const lead=Boolean(winnerMarket&&(strategy==='lead'||game?.leadVerification));
+ const margin=Math.abs(Number(game?.homeUnits??game?.home)-Number(game?.awayUnits??game?.away));
+ const threeGoalExtension=lead&&margin===3&&
+   Number.isInteger(game?.home)&&Number.isInteger(game?.away)&&
+   game.home+game.away<5;
+ const limit=threeGoalExtension?420:FINAL_FIVE_SECONDS;
+ if(hockey||football){
    // P1/P2 end in an intermission; they are not game-ending windows.
    // P4 is an actual overtime segment when the provider reports one.
-   return [3,4].includes(Number(game.period))&&
+   return (football?Number(game.period)===4:[3,4].includes(Number(game.period)))&&
      Number.isFinite(game.remainingSeconds)&&game.remainingSeconds>0&&
-     game.remainingSeconds<=FINAL_FIVE_SECONDS;
+     game.remainingSeconds<(football?FINAL_FIVE_SECONDS:limit);
  }
  if(Number(game.period)!==2||game.soccerExtraTime===true||
    game.soccerOvertime===true||!Number.isFinite(game.soccerMinute))return false;
  const minute=game.soccerMinute,remaining=Math.round((90-minute)*60);
  // The 90:00 marker itself does not prove that play is continuing.
  if(minute>90)return minute<=180&&game.matchRemainingSeconds===0;
- if(minute<85||minute>=90||remaining<=0||remaining>FINAL_FIVE_SECONDS)return false;
+ if(minute<=83||minute>=90||remaining<=0||remaining>=limit)return false;
  // Do not trust contradictory, invalid or fabricated source-clock fields.
  if(game.matchRemainingSeconds!=null&&(
    !Number.isFinite(game.matchRemainingSeconds)||
@@ -60,11 +68,11 @@ export function assertFinalFiveEntry(entries){
      throw Object.assign(Error('Unverifiable nested purchase leg'),
        {code:'LOCAL_FINAL_FIVE_WINDOW_REQUIRED'});
    visited.add(game);
-   if(!finalFiveEntryEligible(game)){
+   if(!finalFiveEntryEligible(game,{market})){
      const family=String(game?.type||game?.sport_family||'').toLowerCase();
      throw Object.assign(
-       Error('New '+(family.startsWith('soccer_')?'soccer':'hockey')+
-         ' position blocked: entry is allowed only within the final five minutes of the game'),
+       Error('New '+(family.startsWith('soccer_')?'soccer':family.startsWith('hockey_')?'hockey':'football')+
+         ' position blocked: entry is outside its final-game clock window'),
        {code:'LOCAL_FINAL_FIVE_WINDOW_REQUIRED'});
    }
    if(!goalScoreBelowFive(game))throw Object.assign(

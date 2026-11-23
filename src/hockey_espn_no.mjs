@@ -2,6 +2,7 @@ import {randomUUID} from 'node:crypto';
 import {espnMatches} from './score_verification.mjs';
 import {espnScoreboardUrls} from './espn_scoreboards.mjs';
 import {scoreFeedAgeMs} from './score_feed_freshness.mjs';
+import {fetchIndependentMatchScore} from './independent_match_score.mjs';
 
 // Same two-distinct-ESPN-request policy as soccer NO; NHL scoreboards report
 // a remaining period clock instead of an elapsed soccer regulation minute.
@@ -15,7 +16,7 @@ const clockSeconds=value=>{
 };
 export function validFreshEspnHockeyNo(reading,game,now=Date.now(),{allowHistorical=false}={}){
  const checked=Number(reading?.checkedAt);
- return Boolean(reading?.source==='ESPN'&&reading.verificationPolicy===HOCKEY_ESPN_POLICY&&
+ return Boolean(['ESPN','Sofascore'].includes(reading?.source)&&reading.verificationPolicy===HOCKEY_ESPN_POLICY&&
   game?.sport==='NHL'&&reading.gameId===game?.id&&String(reading.eventId||'').trim()&&
   typeof reading.requestId==='string'&&reading.requestId.length>=16&&
   reading.live===true&&reading.period===game?.period&&
@@ -23,16 +24,19 @@ export function validFreshEspnHockeyNo(reading,game,now=Date.now(),{allowHistori
   Number.isInteger(reading.away)&&reading.away>=0&&
   Number.isFinite(checked)&&checked>0&&now>=checked&&
   now-checked<=(allowHistorical?30*60000:15000)&&
-  Number.isFinite(reading.seconds)&&reading.seconds>=0&&reading.seconds<=1200);
+  (reading.source==='Sofascore'&&Number.isFinite(game.remainingSeconds)&&
+    game.remainingSeconds>=0&&game.remainingSeconds<=1200||
+    Number.isFinite(reading.seconds)&&reading.seconds>=0&&reading.seconds<=1200));
 }
 
 export function pairedFreshEspnHockeyNo(first,second,game,now=Date.now()){
  return Boolean(validFreshEspnHockeyNo(first,game,now,{allowHistorical:true})&&
   validFreshEspnHockeyNo(second,game,now)&&
-  String(first.eventId)===String(second.eventId)&&
+  (first.source!==second.source||String(first.eventId)===String(second.eventId))&&
   first.requestId!==second.requestId&&first.checkedAt<=second.checkedAt&&
   second.home>=first.home&&second.away>=first.away&&
-  second.seconds<=first.seconds);
+  (!Number.isFinite(first.seconds)||!Number.isFinite(second.seconds)||
+    second.seconds<=first.seconds));
 }
 
 // Use independently confirmed ESPN scoring and period time for NO risk
@@ -41,7 +45,8 @@ export function independentlyVerifiedHockeyGame(game,reading){
  if(!validFreshEspnHockeyNo(reading,game))return null;
  return {...game,home:reading.home,away:reading.away,
   homeUnits:reading.home,awayUnits:reading.away,
-  remainingSeconds:reading.seconds,scoreKnown:true,scoreConsistent:true,
+  remainingSeconds:Number.isFinite(reading.seconds)?reading.seconds:game.remainingSeconds,
+  scoreKnown:true,scoreConsistent:true,
   periodConsistent:true};
 }
 
@@ -87,7 +92,19 @@ export async function verifyFreshEspnHockeyNo(game,milestone,{fetcher=fetch}={})
     status?.type?.completed!==true});
   }
  }
- if(!found.length)return null;
+ if(!found.length){
+  const fallback=await fetchIndependentMatchScore(game,milestone,{fetcher,espnFeed:null});
+  if(fallback===false)return false;
+  if(!fallback)return null;
+  if(!Number.isInteger(fallback.period)||fallback.period!==game.period||
+    !Number.isInteger(fallback.home)||!Number.isInteger(fallback.away))return false;
+  const at=Date.now();
+  const proof={...fallback,verificationPolicy:HOCKEY_ESPN_POLICY,requestId,
+    checkedAt:at-(fallback.sourceAgeMs||0),
+    period3:fallback.periods?.[2]||null,
+    currentPeriod:fallback.periods?.[game.period-1]||null};
+  return validFreshEspnHockeyNo(proof,game,at)?proof:false;
+ }
  if(found.some(match=>!match.eventId||match.live!==true||match.period!==game.period||
   !Number.isInteger(match.home)||!Number.isInteger(match.away)||
   match.home<0||match.away<0||!Number.isFinite(match.seconds)||

@@ -143,13 +143,13 @@ test('a saved independent soccer preflight keeps checking live NO liquidity afte
  const h=harness({hasSeller:false,noAskPolicy:gate});
  assert.equal(await h.scan(660),0,'first ESPN score check remains scheduled');
  assert.equal(h.windows.size,1);
- assert.equal(await h.scan(479),0,'first missing NO ask begins its 30-second grace');
+ assert.equal(await h.scan(299),0,'first missing NO ask begins its 30-second grace');
  assert.equal(h.trace.filter(t=>t==='orderbook').length,1);
  elapsed=29_999;
- assert.equal(await h.scan(479),0,'another probe may occur within the 30-second grace');
+ assert.equal(await h.scan(299),0,'another probe may occur within the 30-second grace');
  assert.equal(h.trace.filter(t=>t==='orderbook').length,2);
  elapsed=30_000;
- assert.equal(await h.scan(479),0,'still no seller after thirty real seconds');
+ assert.equal(await h.scan(299),0,'still no seller after thirty real seconds');
  assert.equal(h.trace.filter(t=>t==='orderbook').length,3,
    'verified preflight must remain eligible for a live book recheck');
  assert.equal(h.verifications,1,'without executable depth, no final ESPN check or order occurs');
@@ -169,7 +169,7 @@ test('a valid live NO quote remains tradable after a previous empty-book timer e
  };
  const h=harness({noAskPolicy:gate});
  assert.equal(await h.scan(660),0,'first independent ESPN proof is never blocked by an old no-ask timer');
- assert.equal(await h.scan(479),1,'confirmed executable NO quote does not expire at the 30-second limit');
+ assert.equal(await h.scan(299),1,'confirmed executable NO quote does not expire at the 30-second limit');
  assert.equal(h.verifications,2);
  assert.equal(h.orders,1);
  assert.equal(claims,0,'a prior no-seller timer must never block the immediate live book query');
@@ -196,7 +196,7 @@ test('a qualifying soccer NO cushion is not mislabeled when external score cover
   assert.equal(verified.orders,0,'the first check never authorizes an immediate order');
 });
 
-test('soccer NO checks once near 11:00 and once just before entry strictly under 8:00',async()=>{
+test('soccer NO checks once near 11:00 and once just before entry strictly under 5:00',async()=>{
   const h=harness();
   assert.equal(await h.scan(661),0);
   assert.equal(h.verifications,0);
@@ -205,7 +205,7 @@ test('soccer NO checks once near 11:00 and once just before entry strictly under
   assert.equal(h.orders,0);
   assert.equal(await h.scan(480),0);
   assert.equal(h.verifications,1,'waiting at eight minutes must not repeat external proof');
-  assert.equal(await h.scan(479),1);
+  assert.equal(await h.scan(299),1);
   assert.equal(h.verifications,2);
   assert.equal(h.orders,1);
   assert.equal(h.lastFraction,1);
@@ -218,11 +218,11 @@ test('soccer NO checks once near 11:00 and once just before entry strictly under
 
 test('soccer NO recovers a missed 11:00 checkpoint and enters after 60 elapsed seconds even with unchanged clock',async()=>{
   const h=harness();
-  assert.equal(await h.scan(479),0,'late initial check is recorded but never an immediate order');
+  assert.equal(await h.scan(299),0,'late initial check is recorded but never an immediate order');
   assert.equal(h.orders,0);
   assert.equal(h.verifications,1);
   assert.equal(h.windows.size,1);
-  assert.equal(await h.scan(479),1,'same match clock is allowed after a full real minute');
+  assert.equal(await h.scan(299),1,'same match clock is allowed after a full real minute');
   assert.equal(h.verifications,2);
   assert.equal(h.orders,1);
 });
@@ -231,7 +231,7 @@ test('soccer NO blocks final order on a missing or contradictory external readin
   for(const opts of [{canVerify:false},{finalExternalFails:true},{afterRefreshScore:4},{missingClock:true}]){
     const h=harness(opts);
     await h.scan(660);
-    assert.equal(await h.scan(479),0,JSON.stringify(opts));
+    assert.equal(await h.scan(299),0,JSON.stringify(opts));
     assert.equal(h.orders,0,JSON.stringify(opts));
   }
 });
@@ -239,13 +239,13 @@ test('soccer NO blocks final order on a missing or contradictory external readin
 test('soccer NO requires executable NO liquidity and refuses a future-dated initial proof',async()=>{
   for(const opts of [{hasSeller:false},{initialAgeMs:-1000}]){
     const h=harness(opts);await h.scan(660);
-    assert.equal(await h.scan(479),0,JSON.stringify(opts));
+    assert.equal(await h.scan(299),0,JSON.stringify(opts));
     assert.equal(h.orders,0,JSON.stringify(opts));
     if(opts.hasSeller===false)assert.equal(h.verifications,1,'empty soccer NO book must not trigger a final ESPN call');
   }
-  const paused=harness({initialAgeMs:1000000});
+  const paused=harness({initialAgeMs:61000});
   await paused.scan(660);
-  assert.equal(await paused.scan(479),1,'a prolonged stoppage does not invalidate a matching fresh final check');
+  assert.equal(await paused.scan(299),1,'a valid saved proof permits a fresh final check inside five minutes');
 });
 
 test('pending soccer NO order does not prevent first independent preflight of another market',async()=>{
@@ -253,14 +253,14 @@ test('pending soccer NO order does not prevent first independent preflight of an
  assert.equal(await h.scan(660),0);
  assert.equal(h.windows.size,1,'first proof must still be recorded');
  assert.equal(h.verifications,1);
- assert.equal(await h.scan(479),0,'unresolved order must still block new execution');
+ assert.equal(await h.scan(299),0,'unresolved order must still block new execution');
  assert.equal(h.orders,0);
 });
 
 test('soccer NO cumulatively caps held exposure plus fees at 100 percent',async()=>{
   const h=harness({existingExposure:true});
   await h.scan(660);
-  await h.scan(479);
+  await h.scan(299);
   assert.equal(h.lastFraction,1);
   assert.equal(h.lastBudget,9550,'$100.00 cap less $4 exposure and 50-cent fees leaves $95.50');
   assert.ok(estimatedCostCents(h.lastQuantity,.5,2)<=9550,'new trade including fees fits the remaining $95.50');
@@ -306,7 +306,7 @@ test('soccer NO blocks entry after invalid final ESPN evidence',async()=>{
   const h=harness({finalProofOverride:bad});
   assert.equal(await h.scan(660),0);
   assert.equal(h.windows.size,1,'first ESPN evidence was valid');
-  assert.equal(await h.scan(479),0);
+  assert.equal(await h.scan(299),0);
   assert.equal(h.orders,0,'final ESPN evidence did not authorize the order');
  }
 });
@@ -314,7 +314,7 @@ test('the second ESPN response must have a new HTTP request identity or no socce
  const h=harness({finalProofOverride:{requestId:'independent-soccer-espn-request-1'}});
  assert.equal(await h.scan(660),0);
  assert.equal(h.windows.size,1);
- assert.equal(await h.scan(479),0,'replayed ESPN response cannot count as second check');
+ assert.equal(await h.scan(299),0,'replayed ESPN response cannot count as second check');
  assert.equal(h.orders,0);
  assert.equal(h.verifications,2);
 });
@@ -356,7 +356,7 @@ test('soccer NO does not request final ESPN verification for a quote with insuff
  const h=harness({unprofitable:true});
  await h.scan(660);
  assert.equal(h.verifications,1);
- assert.equal(await h.scan(479),0);
+ assert.equal(await h.scan(299),0);
  assert.equal(h.verifications,1,'final score verification must not occur without net profitability');
  assert.equal(h.orders,0);
  assert.ok(h.trace.includes('orderbook'));

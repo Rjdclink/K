@@ -28,8 +28,8 @@ const proof=game=>{
 
 test('five-minute purchase window is a game-end boundary, not five minutes before any half or period',()=>{
  assert.equal(FINAL_FIVE_SECONDS,300);
- for(const minute of [40,44,70,79,84,84.99])assert.equal(finalFiveEntryEligible(soccer(minute)),false,minute);
- for(const minute of [85,86.5,89.9])assert.equal(finalFiveEntryEligible(soccer(minute)),true,minute);
+ for(const minute of [40,44,70,79,84,84.99,85])assert.equal(finalFiveEntryEligible(soccer(minute)),false,minute);
+ for(const minute of [85.01,86.5,89.9])assert.equal(finalFiveEntryEligible(soccer(minute)),true,minute);
  assert.equal(finalFiveEntryEligible(soccer(90)),false,'do not guess 90:00 is live stoppage');
  assert.equal(finalFiveEntryEligible(soccer(92)),true,'verified live 90+ regulation stoppage is included');
  assert.equal(finalFiveEntryEligible(soccer(92,{soccerExtraTime:true})),false);
@@ -37,12 +37,15 @@ test('five-minute purchase window is a game-end boundary, not five minutes befor
  assert.equal(finalFiveEntryEligible(soccer(85,{verifiedLive:false})),false);
  assert.equal(finalFiveEntryEligible(soccer(NaN)),false);
  for(const [period,secs,pass] of [
-  [1,30,false],[2,120,false],[3,301,false],[3,300,true],[3,270,true],[3,1,true],
-  [3,0,false],[4,300,true],[4,100,true],[4,0,false],[5,120,false]
+  [1,30,false],[2,120,false],[3,301,false],[3,300,false],[3,270,true],[3,1,true],
+  [3,0,false],[4,300,false],[4,100,true],[4,0,false],[5,120,false]
  ])assert.equal(finalFiveEntryEligible(hockey(period,secs)),pass,period+':'+secs);
  assert.equal(finalFiveEntryEligible(hockey(3,280,{verifiedLive:false})),false);
  assert.equal(finalFiveEntryEligible(hockey(3,NaN)),false);
- assert.equal(finalFiveEntryEligible({id:'football-one',type:'football_game',sport:'NFL'}),true);
+ for(const sport of ['NFL','CFB'])for(const [period,seconds,pass] of [
+  [3,10,false],[4,301,false],[4,300,false],[4,299,true],[4,1,true],[4,0,false]
+ ])assert.equal(finalFiveEntryEligible({id:'football-one',type:'football_game',sport,
+   verifiedLive:true,scoreKnown:true,periodConsistent:true,period,remainingSeconds:seconds}),pass);
 });
 
 test('purchase authorization blocks early soccer and hockey YES, NO and combination legs even with fresh independent proofs',()=>{
@@ -82,7 +85,7 @@ test('a single composite combo proof cannot conceal any early soccer/hockey unde
 });
 
 test('fresh independently proven entries INSIDE the final five minutes remain allowed, including regulation stoppage',()=>{
- for(const game of [soccer(85),soccer(88),soccer(91),hockey(3,300),hockey(4,240)]){
+ for(const game of [soccer(85.1),soccer(88),soccer(91),hockey(3,299),hockey(4,240)]){
   const evidence=proof(game);
   assert.doesNotThrow(()=>assertExternalPurchase('/portfolio/events/orders','POST',
    {ticker:evidence.market.ticker,side:'bid'},[evidence]));
@@ -91,17 +94,21 @@ test('fresh independently proven entries INSIDE the final five minutes remain al
  }
 });
 
-test('reduce-only protective sells, held positions and football orders are unchanged',()=>{
+test('reduce-only protective sells remain allowed; football purchases require the final five minutes',()=>{
  assert.doesNotThrow(()=>assertExternalPurchase('/portfolio/events/orders','POST',
   {ticker:market(soccer(65)).ticker,side:'ask',reduce_only:true},null));
  // Closing an existing NO position buys YES but is explicitly reduce-only.
  // It must never be mistaken for opening a new early hockey/soccer entry.
  assert.doesNotThrow(()=>assertExternalPurchase('/portfolio/events/orders','POST',
    {ticker:market(hockey(1,800)).ticker,side:'bid',reduce_only:true},null));
- const football={id:'football',type:'football_game',sport:'NFL',verifiedLive:true};
+ const football={id:'football',type:'football_game',sport:'NFL',verifiedLive:true,
+   scoreKnown:true,periodConsistent:true,period:4,remainingSeconds:299};
  const e=proof(football);
  assert.doesNotThrow(()=>assertExternalPurchase('/portfolio/events/orders','POST',
   {ticker:e.market.ticker,side:'bid'},[e]));
+ football.remainingSeconds=301;
+ assert.throws(()=>assertExternalPurchase('/portfolio/events/orders','POST',
+   {ticker:e.market.ticker,side:'bid'},[e]),x=>x.code==='LOCAL_FINAL_FIVE_WINDOW_REQUIRED');
 });
 
 test('the five-minute protection runs at the shared exchange purchase dispatch, not just strategy selection',()=>{
@@ -111,9 +118,9 @@ test('the five-minute protection runs at the shared exchange purchase dispatch, 
  assert.match(index,/assertExternalPurchase\(path,method,opts\.body,opts\.entryVerifications\)/);
  assert.match(index,/async function submit/);
  assert.match(index,/async function recoverPending/);
- assert.match(index,/async function reserve\([^\n]+\{[\s\S]*?finalFiveEntryEligible\(game\)/);
- assert.match(index,/async function submit\([^\n]+\{[\s\S]*?finalFiveEntryEligible\(game\)/);
- assert.match(index,/async function recoverPending\([^\n]+\{[\s\S]*?finalFiveEntryEligible\(game\)/);
+ assert.match(index,/async function reserve\([^\n]+\{[\s\S]*?finalFiveEntryEligible\(game,\{strategy:signal\.strategy,market\}\)/);
+ assert.match(index,/async function submit\([^\n]+\{[\s\S]*?finalFiveEntryEligible\(game,\{strategy:signal\.strategy,market\}\)/);
+ assert.match(index,/async function recoverPending\([^\n]+\{[\s\S]*?finalFiveEntryEligible\(game,\{strategy:signal\.strategy,market\}\)/);
 });
 
 

@@ -116,15 +116,15 @@ test('strong Kalshi-only leads use 20% only after two stable reads and a score c
   const market={event_ticker:'KXGAME-TEST',status:'active',title:'Home wins',yes_sub_title:'Home',
     custom_strike:{soccer_team:'home',hockey_team:'home'},rules_primary:'Home wins after 90 minutes plus stoppage time.',yes_ask_dollars:'0.95'};
   const team={homeName:'Home',awayName:'Away',homeTeamId:'home',awayTeamId:'away',possessionSide:null,
-    period:2,home:4,away:1,homeUnits:4,awayUnits:1,unit:'goals',soccerMinute:87,
+    period:2,home:3,away:0,homeUnits:3,awayUnits:0,unit:'goals',soccerMinute:87,
     matchRemainingSeconds:180,remainingSeconds:180,clockRunning:true};
   check({...team,type:'soccer_match'},market,.20);
   check({...team,type:'soccer_match',matchRemainingSeconds:NaN},market,.20);
-  check({...team,type:'soccer_match',soccerMinute:83,matchRemainingSeconds:449,home:3,homeUnits:3},market,.15,false);
+  check({...team,type:'soccer_match',soccerMinute:83,matchRemainingSeconds:420},market,.15,false);
   check({...team,type:'soccer_match',soccerMinute:50,matchRemainingSeconds:2400,home:5,homeUnits:5},market,.15,false);
   check({...team,type:'soccer_match',home:2,homeUnits:2},market,.15,false);
-  check({...team,type:'hockey_match',sport:'NHL',period:3,home:6,homeUnits:6,away:1,awayUnits:1,remainingSeconds:80},market,.20);
-  check({...team,type:'hockey_match',sport:'NHL',period:3,home:5,homeUnits:5,away:1,awayUnits:1,remainingSeconds:80},market,.15);
+  check({...team,type:'hockey_match',sport:'NHL',period:3,home:3,homeUnits:3,remainingSeconds:80},market,.20);
+  check({...team,type:'hockey_match',sport:'NHL',period:3,home:5,homeUnits:5,remainingSeconds:80},market,.15,false);
 });
 test('NBA +16 under 4:30 uses single-read sizing',()=>{
   const market={status:'active',event_ticker:'KXGAME-TEST',title:'Home wins',yes_sub_title:'Home',

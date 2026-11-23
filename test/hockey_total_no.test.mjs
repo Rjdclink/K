@@ -71,18 +71,18 @@ test('NHL example: four combined goals need 3.5 full-game cushion, not a blanket
   assert.equal(hockeyTotalNo(atFour,market('third_period',2.5)),null,'four goals veto P3 NO');
   assert.equal(hockeyTotalNo(atFour,market('third_period',2.0)),null);
   const twoP3Goals=game('1:29',3,4,1);
-  assert.equal(hockeyTotalNo(twoP3Goals,market('third_period',4.5))?.total,2,
-    'five combined game goals do not veto a correctly cushioned P3 market');
+  assert.equal(hockeyTotalNo(twoP3Goals,market('third_period',4.5)),null,
+    'five combined game goals veto even a cushioned P3 market');
   assert.equal(hockeyTotalNo(twoP3Goals,market('third_period',3.5)),null);
   assert.equal(hockeyTotalNo(twoP3Goals,market('third_period',3.0)),null);
 });
 
-test('NHL NO enters strictly under 6:00 in P3; P4 permits full-game only',()=>{
+test('NHL NO enters strictly under 5:00 in P3; P4 permits full-game only',()=>{
   for(const p of ['full_game','third_period']){
     assert.ok(hockeyNoMarketSpec(game('7:00'),market(p,5.5),{beforeWindow:true}));
     assert.equal(hockeyNoMarketSpec(game('7:01'),market(p,5.5),{beforeWindow:true}),null);
     assert.equal(hockeyTotalNo(game('6:00'),market(p,5.5)),null);
-    assert.ok(hockeyTotalNo(game('5:59'),market(p,5.5)));
+    assert.ok(hockeyTotalNo(game('4:59'),market(p,5.5)));
     assert.ok(hockeyTotalNo(game('1:29'),market(p,5.5)));
     assert.equal(hockeyTotalNo(game('0:00'),market(p,5.5)),null);
     assert.equal(hockeyTotalNo(game('1:29',2),market(p,5.5)),null);
@@ -144,11 +144,13 @@ test('NHL four-plus goals permit NO only with the required segment cushion',()=>
   const full=market('full_game',8.5),third=market('third_period',5.5);
   assert.equal(hockeyTotalNo(atThree,full)?.total,3);
   assert.equal(hockeyTotalNo(atThree,third)?.total,0);
-  for(const state of [atFour,atFive]){
+  for(const state of [atFour]){
     assert.equal(hockeyTotalNo(state,full)?.total,state.home+state.away);
     assert.equal(hockeyTotalNo(state,third)?.total,state.home-2);
     assert.equal(hockeyTotalNo(state,full,{beforeWindow:true})?.total,state.home+state.away);
   }
+  assert.equal(hockeyTotalNo(atFive,full),null);
+  assert.equal(hockeyTotalNo(atFive,third),null);
   const reading={source:'ESPN',eventId:'nhl-match',home:3,away:1,
     periods:[{number:1,home:1,away:1},{number:2,home:1,away:0},{number:3,home:1,away:0}],
     period3:{home:1,away:0}};

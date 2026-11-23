@@ -23,7 +23,7 @@ function harness({filled=2,recovery=false,retry=false,age=0,balance=10000,leadPr
     confirmedSingleFill:async(id,ticker)=>events.push(['notify',id,ticker]),reviewMiss:async()=>({retry:true,reason:'verified recovery'})});
   const name=recovery?'recoverPending':'submit';
   vm.runInContext(functionSource(name,recovery?'reconcileUpgrade':'recoverPending'),context);
-  return {events,run:()=>context[name]({strategy:'lead',reason:'Alpha leads',fraction:.1},{id:'game',type:'football_game',verificationId:'verified',observedAt:Date.now()-age},
+  return {events,run:()=>context[name]({strategy:'lead',reason:'Alpha leads',fraction:.1},{id:'game',type:'football_game',verifiedLive:true,scoreKnown:true,periodConsistent:true,period:4,remainingSeconds:299,verificationId:'verified',observedAt:Date.now()-age},
     {event_ticker:'E'},{ticker:'NEW',yes_ask_dollars:'.95'},balance,10000)};
 }
 test('confirmed immediate fills notify after ledger persistence; zero fills never notify',async()=>{

@@ -4,7 +4,7 @@ import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
 import {gameState} from '../src/strategy.mjs';
 import {eligibleForMarkets} from '../src/discovery.mjs';
-import {loadFlashscore} from '../src/flashscore.mjs';
+import {loadSofascore} from '../src/sofascore.mjs';
 import {authoritativeGameState,verifiedSourceReady} from '../src/external_authority.mjs';
 import {variablePlayerOverSpec,independentVariableOverDecision,variableProofValid} from '../src/variable_player_over.mjs';
 import {espnMatches} from '../src/score_verification.mjs';
@@ -45,32 +45,32 @@ test('absent ESPN player or wrong exact contract cannot become a qualified indep
 });
 test('verification proofs stay eligible for 15 seconds and never 16',()=>{
  const game={id:'id',type:'hockey_tournament',sport:'KHL',verifiedLive:true,period:2};
- const proof={source:'Flashscore',eventId:'Ab1234Cd',gameId:game.id,home:1,away:2,period:2,live:true};
+ const proof={source:'Sofascore',eventId:'123456',gameId:game.id,home:1,away:2,period:2,live:true};
  const enriched=authoritativeGameState(game,proof,now);
  assert.equal(verifiedSourceReady(enriched,now+15000),true);
  assert.equal(verifiedSourceReady(enriched,now+16000),false);
 });
-test('Flashscore enforces 15-second CDN Age bound without increasing it to 30',async()=>{
+test('Sofascore enforces 15-second CDN Age bound without increasing it to 30',async()=>{
  const milestone={title:'Spartak Moscow vs HC Sochi',start_date:new Date(now).toISOString(),type:'hockey_tournament',details:{league:'KHL'}};
  const game={type:'hockey_tournament',sport:'KHL'};
- const feed='SA÷4¬~ZA÷RUSSIA: KHL¬ZL÷/hockey/russia/khl/¬~AA÷Ab1234Cd¬AD÷'+Math.floor(now/1000)+'¬AB÷2¬AE÷Spartak Moscow¬AF÷HC Sochi¬AG÷1¬AH÷2¬';
- const read=age=>loadFlashscore(game,milestone,{now,fetcher:async()=>({ok:true,headers:new Headers({age:String(age)}),text:async()=>feed})});
- assert.equal((await read(14))?.length,1);
+ const feed={events:[{id:123456,startTimestamp:Math.floor(now/1000),homeTeam:{name:'Spartak Moscow'},awayTeam:{name:'HC Sochi'},homeScore:{current:1},awayScore:{current:2},lastPeriod:'period2',status:{type:'inprogress'}}]};
+ const read=age=>loadSofascore(game,milestone,{fetcher:async()=>({ok:true,headers:new Headers({age:String(age)}),json:async()=>feed})});
+ assert.ok((await read(14))?.length>0);
  assert.equal(await read(16),null);
 });
-test('candidate source reader preserves Flashscore plain text and JSON ESPN scoreboards without changing UI',async()=>{
+test('candidate source reader preserves JSON Sofascore and ESPN scoreboards',async()=>{
  const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
  const a=source.indexOf('const sourceScoreReads=new Map();'),b=source.indexOf('async function externallyScoredGame(',a);
  assert.ok(a>=0&&b>a);
  let requests=0;
  const ctx=vm.createContext({Map,Date,Error,fetch:async(url)=>{
    requests++;
-   return {ok:true,status:200,headers:new Headers({age:'0'}),json:async()=>({events:[{id:'score'}]}),text:async()=>('SA÷4¬~ZA÷RUSSIA: KHL¬')};
+   return {ok:true,status:200,headers:new Headers({age:'0'}),json:async()=>({events:[{id:'score'}]})};
  }});
  vm.runInContext(source.slice(a,b),ctx);
- const flash=await ctx.sharedCandidateScoreboardFetch('https://global.flashscore.ninja/2/x/feed/f_4_0_-5_en_1');
- assert.equal((await flash.text()).slice(0,4),'SA÷4');
- assert.equal(flash.headers.get('age'),'0');
+ const sofa=await ctx.sharedCandidateScoreboardFetch('https://www.sofascore.com/api/v1/sport/football/scheduled-events/2026-11-23');
+ assert.equal((await sofa.json()).events[0].id,'score');
+ assert.equal(sofa.headers.get('age'),'0');
  const espn=await ctx.sharedCandidateScoreboardFetch('https://site.api.espn.com/scores');
  assert.equal((await espn.json()).events[0].id,'score');
  assert.equal(requests,2);

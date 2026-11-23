@@ -79,7 +79,7 @@ test('combinations recursively reject any high-scoring leg, preserving other spo
    {accepted_side:'no'},[{game:composite,market:combinedMarket}]),{code:'LOCAL_GOAL_SCORE_LIMIT'});
  assert.doesNotThrow(()=>assertExternalPurchase('/portfolio/events/orders','POST',
    {ticker:market.ticker,side:'ask',reduce_only:true},null));
- const other={...makeGame('football_game',15,12),sport:'NFL'};
+ const other={...makeGame('football_game',15,12),sport:'NFL',period:4,remainingSeconds:240};
  rememberIndependentEntry(other,market,other.verificationId,Date.now());
  assert.doesNotThrow(()=>order([{game:other,market}]));
 });

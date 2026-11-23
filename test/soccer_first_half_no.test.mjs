@@ -63,14 +63,15 @@ test('soccer 1H total NO requires 2.5 goals at 0–3 scored and 3.5 from four',(
  assert.equal(soccerFirstHalfNo(state("42'",1,2),market(3.5)),null);
 });
 
-test('first-half soccer NO never attempts any source other than ESPN',async()=>{
+test('first-half soccer NO checks Sofascore after ESPN is unavailable',async()=>{
  const urls=[],g=state("42'"),m=market();
  const proof=await verifyIndependentSoccerFirstHalfNo(g,milestone,m,{fetcher:async url=>{
   urls.push(url);return {ok:true,headers:{get:()=>null},json:async()=>({events:[]})};
  }});
  assert.equal(proof,null);
  assert.ok(urls.length>0);
- assert.ok(urls.every(url=>url.startsWith('https://site.api.espn.com/')));
+ assert.ok(urls.some(url=>url.startsWith('https://site.api.espn.com/')));
+ assert.ok(urls.some(url=>url.startsWith('https://www.sofascore.com/')));
 });
 test('only the exact Kalshi first-half total identity, strike and settlement count as an entry',()=>{
  const g=state("42'"),m=market(2.5);

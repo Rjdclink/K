@@ -34,20 +34,16 @@ test('known abbreviations preserve fixture vetoes while accepting contract-suffi
   assert.equal(await check({...captured.game},{events:[...captured.espn.events,...captured.espn.events]}),false);
 });
 
-test('FOX discovers the football week and verifies receiving yards when ESPN is unavailable',async()=>{
+test('Sofascore cannot invent a player statistic when ESPN is unavailable',async()=>{
   const urls=[],game=structuredClone(captured.game);
   assert.equal(foxPlayerStat(foxBox,playerOverSpec(game,market),'11262'),11);
   assert.equal(await verifyIndependentOverDecision(game,captured.milestone,{market,fetcher:async url=>{
     urls.push(url);
     if(url.includes('espn.com'))throw Error('ESPN unavailable');
-    assert.match(url,/foxsports\.com/);
-    const data=url.includes('/league/scores?')?{currentSelectionId:'2026-8-1'}:
-      url.includes('/league/scores-segment/2026-8-1?')?foxBoard:
-      url.includes('/event/11262/data?')?foxBox:null;
-    assert.ok(data,'only the current provider endpoints are requested');
-    return {ok:true,json:async()=>data};
-  }}),true);
-  assert.ok(urls.some(url=>url.includes('/league/scores-segment/2026-8-1?')));
+    assert.match(url,/sofascore\.com/);
+    return {ok:false,status:403};
+  }}),null);
+  assert.ok(urls.some(url=>url.includes('sofascore.com')));
   assert.equal(foxPlayerStat(foxBox,{...playerOverSpec(game,market),metric:'RUSHYDS'},'11262'),null,'receiving yards cannot verify rushing yards');
   assert.equal(foxPlayerStat(foxBox,playerOverSpec(game,market),'wrong-event'),null);
 });
@@ -101,10 +97,9 @@ test('NBA official, CBS and Yahoo matching reuse the same league-scoped abbrevia
   assert.equal(yahooReached,true,'recognized abbreviation variants reach the independent Yahoo source');
 });
 
-test('FOX fallback uses league calendar segments, football week segments and the separate soccer route',async()=>{
+test('unaffected basketball and baseball over routes retain their FOX calendar fallback',async()=>{
   for(const [sport,feed,type,period] of [['NBA','nba','basketball_game',2],['WNBA','wnba','basketball_game',2],
-    ['NFL','nfl','football_game',2],['CFB','cfb','football_game',2],['NHL','nhl','hockey_match',3],
-    ['MLB','mlb','baseball_game',2],['NCAAB','cbk','basketball_game',2],['Soccer','soccer','soccer_match',2]]){
+    ['MLB','mlb','baseball_game',2],['NCAAB','cbk','basketball_game',2]]){
     const game={...captured.game,sport,type,period,homeName:'Alpha',awayName:'Beta',soccerMinute:75};
     const board={sectionList:[{events:[{eventTime:captured.milestone.start_date,eventStatus:1,statusLine:feed==='soccer'?"75'":`${period}ND 2:31`,
       entityLink:{layout:{tokens:{homeUri:'a',awayUri:'b'}}},upperTeam:{uri:'b',imageAltText:'Beta',score:10},lowerTeam:{uri:'a',imageAltText:'Alpha',score:10}}]}]};
@@ -120,10 +115,10 @@ test('FOX fallback uses league calendar segments, football week segments and the
   }
 });
 
-test('missing providers name the failing source while FOX clock differences cannot veto team scores',async()=>{
+test('missing providers name Sofascore while FOX fixture parsing remains strict',async()=>{
   const game=structuredClone(captured.game);
   assert.equal(await verifyIndependentOverDecision(game,captured.milestone,{market,fetcher:async()=>({ok:false,status:404})}),null);
-  assert.match(game.verificationIssue,/ESPN: Scoreboard 404/);assert.match(game.verificationIssue,/FOX Sports: Scoreboard 404/);
+  assert.match(game.verificationIssue,/Sofascore unavailable/);
   const event=foxBoard.sectionList[0].events[0];
   assert.equal(foxMatches({sectionList:[{events:[{...event,statusLine:'2ND 12:00'}]}]},captured.game,captured.milestone)[0].clockOk,true);
   assert.equal(foxMatches({sectionList:[{events:[{...event,statusLine:'1ST 2:31'}]}]},captured.game,captured.milestone)[0].stale,true);

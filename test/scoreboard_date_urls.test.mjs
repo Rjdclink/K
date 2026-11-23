@@ -55,19 +55,16 @@ test('independent source score overrides Kalshi, but a different team still fail
  assert.equal(espnMatches({events:[unrelated]},soccer,soccerM).length,0);
 });
 
-test('date-based FOX fallback URLs are also valid after two unavailable ESPN attempts',async()=>{
- const calls=[],foxEvent={eventTime:start,eventStatus:1,statusLine:"88'",entityLink:{layout:{tokens:{id:'4019',homeUri:'home',awayUri:'away'}}},
-  upperTeam:{uri:'away',name:'Macará',score:1},lowerTeam:{uri:'home',name:'Ind. del Valle',score:0}};
- const fetcher=async url=>{
-  calls.push(url);
-  if(url.includes('espn.com'))return {ok:true,json:async()=>({events:[]})};
-  const valid=/\/c0d\d{8}\?/.test(url);
-  return {ok:valid,status:valid?200:400,json:async()=>({sectionList:[{events:url.includes('c0d20261120')?[foxEvent]:[]}]})};
- };
- const result=await fetchIndependentMatchScore(soccer,soccerM,{fetcher,espnFeed:'soccer/all',foxFeed:'soccer'});
- assert.equal(result?.source,'FOX Sports');assert.equal(result?.home,0);assert.equal(result?.away,1);
+test('Sofascore fallback requests the fixture date after ESPN absence',async()=>{
+ const calls=[],sofa={events:[{id:4019,startTimestamp:Math.floor(Date.parse(start)/1000),
+  homeTeam:{name:'Ind. del Valle'},awayTeam:{name:'Macará'},homeScore:{current:0},awayScore:{current:1},
+  lastPeriod:'period2',status:{type:'inprogress'}}]};
+ const fetcher=async url=>{calls.push(url);return {ok:true,json:async()=>
+   url.includes('espn.com')?{events:[]}:sofa};};
+ const result=await fetchIndependentMatchScore(soccer,soccerM,{fetcher,espnFeed:'soccer/all'});
+ assert.equal(result?.source,'Sofascore');assert.equal(result?.home,0);assert.equal(result?.away,1);
  assert.equal(calls.filter(url=>url.includes('espn.com')).length,6);
- assert.ok(calls.some(url=>url.includes('/c0d20261120?')));
+ assert.ok(calls.some(url=>url.includes('/scheduled-events/2026-11-20')));
 });
 
 test('ESPN Grambling Lady Tigers at Central Arkansas Sugar Bears matches Kalshi Grambling St. without relaxing the other team or score',async()=>{

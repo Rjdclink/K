@@ -8,7 +8,7 @@ import {NO_PREFLIGHT_POLICY,validNoPreflight,lateNoPreflightProgress} from '../s
 
 const milestone={id:'game',type:'soccer_match',title:'Away at Home',start_date:'2026-11-21T14:00:00Z',
  details:{league:'EPL',main_game_event_ticker:'KXEPLGAME-26NOV21AWAHOM'}};
-function game(h,a,time="83'",half='2nd',other={}){
+function game(h,a,time="86'",half='2nd',other={}){
  return gameState(milestone,{milestone_id:milestone.id,_observed_at:new Date().toISOString(),
   details:{status:'inprogress',home_score:h,away_score:a,half,
    period:half==='1st'?1:2,time,last_updated_ts:Date.now()/1000,
@@ -26,9 +26,9 @@ function market(line,half=false){
 test('before 90 full-game needs 2.5 cushion at 0–3 goals, 3.5 at four or more',()=>{
  for(const [h,a,yes,no] of [[0,0,2.5,1.5],[1,0,3.5,2.5],[1,1,4.5,3.5],
   [2,1,5.5,4.5],[2,2,7.5,6.5],[3,2,8.5,7.5],[4,2,9.5,8.5]]){
-  assert.equal(soccerTotalNo(game(h,a),market(yes))?.total,h+a);
+  assert.equal(soccerTotalNo(game(h,a),market(yes))?.total,h+a>=5?undefined:h+a);
   assert.equal(soccerTotalNo(game(h,a),market(no)),null);
-  assert.equal(soccerTotalNo(game(h,a),market(yes),{beforeWindow:true})?.total,h+a);
+  assert.equal(soccerTotalNo(game(h,a),market(yes),{beforeWindow:true})?.total,h+a>=5?undefined:h+a);
  }
 });
 test('first-half keeps 2.5/3.5 cushion and never uses full-time added-time exception',()=>{
@@ -39,12 +39,12 @@ test('first-half keeps 2.5/3.5 cushion and never uses full-time added-time excep
  }
  assert.equal(soccerFirstHalfNo(game(0,0,"45+2'",'1st'),market(1.5,true)),null);
 });
-test('live explicit 90+ stoppage allows a 1.5 cushion regardless of goal total',()=>{
+test('live explicit 90+ stoppage allows a 1.5 cushion below five combined goals',()=>{
  for(const [h,a,line] of [[0,0,1.5],[1,0,2.5],[1,2,4.5],[2,2,5.5],[3,2,6.5]]){
   const g=game(h,a,"90+2'");
   assert.equal(soccerStoppageNoWindow(g),true);
   assert.equal(soccerNoMarketSpec(g,market(line),{beforeWindow:true})?.line,line);
-  assert.equal(soccerTotalNo(g,market(line))?.total,h+a);
+  assert.equal(soccerTotalNo(g,market(line))?.total,h+a>=5?undefined:h+a);
   assert.equal(soccerTotalNo(g,market(line-1)),null);
  }
 });

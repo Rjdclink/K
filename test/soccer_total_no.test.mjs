@@ -6,7 +6,7 @@ import {soccerNoMarketSpec,soccerTotalNo,independentSoccerTotalNoReading,verifyI
 const milestone={id:'soccer-total-no',title:'Away at Home',type:'soccer_match',
   start_date:'2026-11-20T17:00:00Z',
   details:{league:'EPL',main_game_event_ticker:'KXEPLGAME-26NOV20AWAYHOME'}};
-const game=(seconds=479,home=2,away=1,minute=83)=>gameState(milestone,{
+const game=(seconds=240,home=2,away=1,minute=86)=>gameState(milestone,{
   milestone_id:milestone.id,_observed_at:new Date().toISOString(),
   details:{status:'inprogress',home_score:home,away_score:away,half:'2nd',
     time:minute+"'",match_remaining_seconds:seconds,
@@ -29,15 +29,15 @@ const scoreboard=(minute="83'",home=2,away=1)=>({events:[{
   }]
 }]});
 
-test('soccer NO entry is strictly below 8 minutes after the initial 11-minute check',()=>{
+test('soccer NO entry is strictly below 5 minutes after the initial 11-minute check',()=>{
   assert.ok(soccerNoMarketSpec(game(660,2,1,79),market(),{beforeWindow:true}));
   assert.equal(soccerNoMarketSpec(game(661,2,1,'78:59'),market(),{beforeWindow:true}),null);
-  assert.equal(soccerTotalNo(game(480,2,1,82),market()),null);
+  assert.equal(soccerTotalNo(game(300,2,1,85),market()),null);
   assert.equal(soccerTotalNo(game(660,2,1,79),market()),null);
-  assert.ok(soccerTotalNo(game(479,2,1,83),market()));
+  assert.ok(soccerTotalNo(game(299,2,1,86),market()));
   assert.equal(soccerTotalNo(game(0,2,1,90),market()),null);
   assert.ok(soccerTotalNo({...game(),matchRemainingSeconds:NaN},market()),'missing feed countdown must not block a verified regulation clock');
-  assert.equal(soccerTotalNo(game(479,2,1,'garbled'),market()),null);
+  assert.equal(soccerTotalNo(game(299,2,1,'garbled'),market()),null);
   assert.equal(soccerTotalNo({...game(),soccerExtraTime:true},market()),null);
   assert.equal(soccerTotalNo({...game(),period:1},market()),null);
   assert.equal(soccerTotalNo({...game(),sport:'Hockey'},market()),null);
@@ -48,18 +48,20 @@ test('soccer NO requires 2.5 goals above current total below four scored and 3.5
   assert.equal(soccerTotalNo(game(),market(5.5))?.total,3);
   assert.equal(soccerTotalNo(game(),market(4.0)),null);
   assert.equal(soccerTotalNo(game(),market(3.5)),null);
-  assert.equal(soccerTotalNo(game(479,3,1),market(5.5)),null,'four-goal games need 3.5 cushion, not 1.5');
-  assert.equal(soccerTotalNo(game(479,3,1),market(4.5)),null);
+  assert.equal(soccerTotalNo(game(299,3,1),market(5.5)),null,'four-goal games need 3.5 cushion, not 1.5');
+  assert.equal(soccerTotalNo(game(299,3,1),market(4.5)),null);
 });
 
-test('soccer total NO never attempts FOX or Sportradar when ESPN is unavailable',async()=>{
+test('soccer total NO checks Sofascore after ESPN is unavailable',async()=>{
  const urls=[],g=game(),m=market();
  const proof=await verifyIndependentSoccerTotalNo(g,milestone,m,{fetcher:async url=>{
   urls.push(url);return {ok:true,headers:{get:()=>null},json:async()=>({events:[]})};
  }});
  assert.equal(proof,null);
  assert.ok(urls.length>0);
- assert.ok(urls.every(url=>url.startsWith('https://site.api.espn.com/')));
+ assert.ok(urls.some(url=>url.startsWith('https://site.api.espn.com/')));
+ assert.ok(urls.some(url=>url.startsWith('https://www.sofascore.com/')));
+ assert.ok(urls.every(url=>/espn\.com|sofascore\.com/.test(url)));
 });
 test('only exchange-identified whole-game 90-minutes-plus-stoppage soccer totals qualify',()=>{
   const state=game();
@@ -98,16 +100,16 @@ test('independent ESPN proof verifies exact soccer fixture and goals without pro
 });
 test('soccer full-game NO admits 4+ goals only with a full 3.5-goal cushion',()=>{
   const large=market(8.5),proof={source:'ESPN',eventId:'matched-soccer',home:2,away:2};
-  assert.equal(soccerTotalNo(game(479,2,1),large)?.total,3);
-  assert.equal(soccerTotalNo(game(479,2,2),large)?.total,4,'four scored with 4.5 cushion qualifies');
-  assert.equal(soccerTotalNo(game(479,3,2),large)?.total,5,'five scored with 3.5 cushion qualifies');
-  assert.equal(soccerTotalNo(game(479,2,2),large,{beforeWindow:true})?.total,4,'preflight applies same cushion');
-  assert.equal(soccerTotalNo(game(479,2,1),large,{external:proof})?.total,4,'independent score chooses actual four-goal cushion');
-  assert.equal(soccerTotalNo(game(479,2,2),market(5.5),{external:{...proof,away:1}})?.total,3,'independent score remains authoritative');
+  assert.equal(soccerTotalNo(game(299,2,1),large)?.total,3);
+  assert.equal(soccerTotalNo(game(299,2,2),large)?.total,4,'four scored with 4.5 cushion qualifies');
+  assert.equal(soccerTotalNo(game(299,3,2),large),null,'five scored blocks entry');
+  assert.equal(soccerTotalNo(game(299,2,2),large,{beforeWindow:true})?.total,4,'preflight applies same cushion');
+  assert.equal(soccerTotalNo(game(299,2,1),large,{external:proof})?.total,4,'independent score chooses actual four-goal cushion');
+  assert.equal(soccerTotalNo(game(299,2,2),market(5.5),{external:{...proof,away:1}})?.total,3,'independent score remains authoritative');
 });
 
 test('full-game NO entry uses the independently verified ESPN clock, not a more favorable Kalshi clock',async()=>{
-  const g=game(479,2,1,83),m=market(5.5);
+  const g=game(299,2,1,86),m=market(5.5);
   const check=async(minute)=>verifyIndependentSoccerTotalNo(g,milestone,m,{
     fetcher:async()=>({ok:true,headers:{get:name=>name.toLowerCase()==='age'?'0':null},json:async()=>scoreboard(minute,2,1)})
   });
