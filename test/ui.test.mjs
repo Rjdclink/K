@@ -80,7 +80,7 @@ test('bankroll displays a recent verified balance with its age status',async()=>
 });
 
 test('game summary puts preflight and available-ask counts above other metrics',()=>{
-  const names=['Preflight candidates','Signals with an ask','Score rule matches','Catalog milestones discovered','Weather scan'];
+  const names=['Preflight candidates','Signals with an ask','Score rule matches','Catalog events (including older)','Weather scan'];
   const positions=names.map(name=>page.indexOf('<span>'+name));
   assert.ok(positions.every(position=>position>=0));
   assert.deepEqual([...positions].sort((a,b)=>a-b),positions);
@@ -402,7 +402,7 @@ test('dashboard refresh carries alerts, with fallback only when alerts stop arri
 
 test('a successful dashboard refresh consumes alerts without a separate request',async()=>{
   const requests=[],stored=new Map();
-  const element={children:[],classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){},replaceChildren(...items){this.children=items}};
+  const element={children:[],style:{},classList:{add(){},remove(){},toggle(){}},addEventListener(){},setAttribute(){},replaceChildren(...items){this.children=items}};
   const document={getElementById:()=>element,querySelectorAll:()=>[]};
   const script=page.match(/<script>([\s\S]*?)<\/script>/)?.[1];
   const context=vm.createContext({document,window:{addEventListener(){}},navigator:{},localStorage:{getItem:key=>stored.get(key)||null,setItem:(key,value)=>stored.set(key,value)},fetch:async url=>{
