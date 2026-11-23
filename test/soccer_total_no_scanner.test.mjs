@@ -332,7 +332,7 @@ test('soccer NO signals are published to the dashboard without removing other st
   vm.runInNewContext(src.slice(begin,end),{
     snapshotRows,snapshotCandidates,soccerNoSignals,hockeyNoSignals,basketballNoSignals,variableOverSignals:new Map(),
     crossingRows:[],filled:new Set(),account:{},balance:0,bankroll:0,signalExecution:()=>''});
-  assert.deepEqual(JSON.parse(row[14]).map(s=>s.ticker||s.execution).slice(0,3),[market.ticker,'NHL','Basketball state']);
+  assert.deepEqual(JSON.parse(row[14]).map(s=>s.ticker||s.execution),[market.ticker,'NHL']);
 });
 
 test('due soccer final ESPN check runs before ordinary first checks',async()=>{

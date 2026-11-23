@@ -39,12 +39,13 @@ const scenarios=[
  ['College women full game',make('college-w4','basketball_game','NCAAW',4,480),
   'KXNCAAWBTOTAL-TEST'],
 ];
-test('every early-period, total-NO and commanding window is prioritized well before preflight and still discovers exact event families',()=>{
+test('only hockey, soccer and football windows are prioritized; all basketball markets are excluded',()=>{
  for(const [name,g,ticker] of scenarios){
-  assert.equal(nearEntryPhase(g.state),true,name+' urgent before first proof');
-  assert.ok(entryEventTickers(g.milestone,g.state).includes(ticker),name+' catalog discovery');
+  const excluded=g.state.type==='basketball_game';
+  assert.equal(nearEntryPhase(g.state),!excluded,name+' scanner eligibility');
+  assert.equal(entryEventTickers(g.milestone,g.state).includes(ticker),!excluded,name+' catalog discovery');
   const result=prioritizeMarketGames([g],{lowBudget:0});
-  assert.equal(result.length,1,name+' checked even when rotating sweep disabled');
+  assert.equal(result.length,excluded?0:1,name+' priority');
  }
 });
 test('normal live games receive a market catalog sweep at least once in a minute when there are at most 48',()=>{
@@ -93,10 +94,10 @@ test('already eligible games are checked ahead of approaching threshold games',(
   make('nba-approach','basketball_game','NBA',3,285)
  ];
  assert.deepEqual(prioritizeMarketGames(rows,{lowBudget:0}).map(g=>g.milestone.id),
-  ['nba-ready','soccer-ready','nhl-approach','nba-approach']);
+  ['soccer-ready','nhl-approach']);
 });
 test('rotation reserves some capacity for other games instead of starving a distant eligible sport forever',()=>{
- const rows=Array.from({length:20},(_,i)=>make('nba-'+i,'basketball_game','NBA',1,450+i*10));
+ const rows=Array.from({length:20},(_,i)=>make('nhl-'+i,'hockey_match','NHL',1,900+i*10));
  const seen=new Set();
  for(let cycle=0;cycle<20;cycle++)
   for(const g of prioritizeMarketGames(rows,{lowBudget:5,cycle}))seen.add(g.milestone.id);

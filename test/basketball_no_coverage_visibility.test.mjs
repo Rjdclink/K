@@ -56,13 +56,13 @@ test('NBA 45, WNBA 40, and international 20-point full-game NO cushions with spo
   assert.equal(collegeBasketballTotalNo(unknown.state,{...market('NBA'),event_ticker:'KXCBATOTAL-TEST'}),null);
 });
 
-test('new international discovery permits only externally verifiable NO leagues, not other trades or esports',()=>{
+test('international basketball is retained for contract parsing but excluded from scanner discovery',()=>{
   for(const league of ['FIBA','NBL']){
     const {milestone,state}=fixture(league);
-    assert.equal(supportedScannerSport(milestone),true);
+    assert.equal(supportedScannerSport(milestone),false);
     assert.equal(eligibleForMarkets(state),false,'existing winner/OVER path must stay disabled for '+league);
     assert.ok(linkedEventTickers(milestone).includes(market(league).event_ticker),'expected derived full-game event needs valid mapping');
-    assert.equal(scanMilestones([milestone],new Set(),Date.parse('2026-11-20T00:00:00Z')).length,1);
+    assert.equal(scanMilestones([milestone],new Set(),Date.parse('2026-11-20T00:00:00Z')).length,0);
   }
   assert.equal(supportedScannerSport(fixture('China CBA').milestone),false);
   assert.equal(supportedScannerSport({...fixture('FIBA').milestone,type:'esports_basketball_game'}),false);
@@ -139,14 +139,15 @@ test('multiple qualifying NO lines receive independent tracked windows and dashb
     'dashboard must display the precise rejection reason for both contracts');
 });
 
-test('basketball remains in the live dashboard, but new NO-entry scanners are never scheduled',()=>{
+test('basketball scanner snapshots and NO signals are not generated, but filled trade reporting remains available',()=>{
   const src=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
-  assert.match(src,/basketballNoSignals/);
-  assert.match(src,/basketballNoSignals\.get\(id\)/);
-  assert.match(src,/noOnlyBasketballGames/);
+  assert.doesNotMatch(src,/basketballNoSignals/);
+  assert.doesNotMatch(src,/basketballNoSignals\.get\(id\)/);
+  assert.doesNotMatch(src,/noOnlyBasketballGames/);
   assert.doesNotMatch(src,/collegeBasketballEvents,'basketball',basketballNoSignals,'final'/);
   assert.doesNotMatch(src,/collegeBasketballEvents,'basketball',basketballNoSignals,'initial'/);
-  assert.match(src,/checkedIds\.add/);
+  assert.match(src,/const checkedIds=new Set\(marketGames\.map/);
+  assert.match(src,/WHERE a\.status='filled'/);
 });
 
 test('real Kalshi NBA, WNBA and Australian NBL contracts retain exact line and settlement identity',()=>{
@@ -185,11 +186,9 @@ test('dashboard serializes actual NO signals alongside existing strategies in pe
     leadFinalResults:new Map(),finalLeadKey:()=> 'none',executableSummaryAsk:()=>false,
     allowsNewEntry:()=>true,entryExclusionReason:()=>null,signalExecution:()=> 'Original strategy unchanged'});
   const signals=JSON.parse(row[14]);
-  assert.equal(signals.length,2);
-  assert.equal(signals[0].strategy,'no');
-  assert.equal(signals[0].execution,'No NO seller');
-  assert.equal(signals[1].strategy,'lead');
-  assert.equal(signals[1].execution,'Original strategy unchanged');
+  assert.equal(signals.length,1);
+  assert.equal(signals[0].strategy,'lead');
+  assert.equal(signals[0].execution,'Original strategy unchanged');
 });
 
 test('all basketball NO leagues share one 100% fee-inclusive pool without affecting football',async()=>{

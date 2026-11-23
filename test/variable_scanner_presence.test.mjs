@@ -8,7 +8,7 @@ const src=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
 test('variable-value player prop scanner remains available for historical proof tests but is not scheduled to buy',()=>{
  assert.match(src,/async function scanVariablePlayerOvers\(games,events,signalSink=null,\{maxMarkets=Infinity\}=\{\}\)/);
  assert.doesNotMatch(src,/submitted\+=await scanVariablePlayerOvers\(marketGames,events,variableOverSignals\)/);
- assert.match(src,/\.\.\.\(variableOverSignals\.get\(id\)\|\|\[\]\)/);
+ assert.doesNotMatch(src,/\.\.\.\(variableOverSignals\.get\(id\)\|\|\[\]\)/);
  assert.match(src,/variableProofValid\(first,proof,fresh,seller/);
  assert.match(src,/verifyIndependentVariableOver\(fresh,c\.milestone,seller\)/);
  assert.match(src,/time_in_force:'fill_or_kill'/);

@@ -36,8 +36,8 @@ for(const config of cases){
   assert.equal(collegeBasketballTotalNo(state('1:30'),market(87.5)),null);
   assert.ok(collegeBasketballTotalNo(state('2:00'),market(87.5),{beforeWindow:true}));
   assert.equal(collegeBasketballTotalNo(state('2:00'),market(87.5)),null);
-  assert.ok(entryEventTickers(milestone,state('2:30')).includes(config.event));
-  assert.equal(nearEntryPhase(state('2:30')),true);
+  assert.deepEqual(entryEventTickers(milestone,state('2:30')),[],'historical basketball contracts remain parseable but not scanned');
+  assert.equal(nearEntryPhase(state('2:30')),false);
   assert.equal(collegeBasketballTotalNo(state('0:00'),market(87.5)),null);
  });
 }

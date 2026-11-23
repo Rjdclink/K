@@ -31,7 +31,7 @@ test('all four domestic full-game NO leagues require exact new cushion, under 7:
   assert.equal(collegeBasketballTotalNo(fixture(league,'8:01'),good,{beforeWindow:true}),null,league+' not earlier');
   assert.equal(collegeBasketballTotalNo(fixture(league,'0:00'),good),null);
   const near=fixture(league,'8:00');
-  assert.equal(nearEntryPhase(near),true,league+' must receive timely fast market priority');
+  assert.equal(nearEntryPhase(near),false,league+' no longer receives scanner priority');
  }
 });
 test('college first-half and international full-game NO unchanged by four-league expansion',()=>{

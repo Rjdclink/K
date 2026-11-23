@@ -7,10 +7,9 @@ import {supportedScannerSport,isScannerExcludedSport,eligibleForMarkets,scanMile
 
 const excluded=[['cricket_match','Cricket'],['darts_match','Darts'],
   ['golf_tournament','Golf'],['table_tennis_match','Table tennis'],
-  ['baseball_game','MLB'],['tennis_match','ATP'],['rugby_match','Rugby'],
+  ['basketball_game','NBA'],['baseball_game','MLB'],['tennis_match','ATP'],['rugby_match','Rugby'],
   ['handball_match','Handball'],['lacrosse_match','Lacrosse'],['volleyball_match','Volleyball']];
-const eligible=[['soccer_match','Soccer'],['hockey_match','NHL'],
-  ['basketball_game','NBA'],['football_game','NFL']];
+const eligible=[['soccer_match','Soccer'],['hockey_match','NHL'],['football_game','NFL']];
 const idFor=type=>'KX'+type.toUpperCase().replace(/\W/g,'')+'GAME-EXAMPLE';
 const milestone=(type,sport,now=Date.now())=>({id:type,title:'Home vs Away',type,sport,
   start_date:new Date(now-3600000).toISOString(),
@@ -21,7 +20,7 @@ const state=(type,sport)=>({id:type,type,sport,verifiedLive:true,scoreKnown:true
   golf:{board:[{current_round_thru:18}]},cricket:{innings:2,ballsRemaining:8},
   tableTennis:{bestOf:5,setNumber:5},darts:{firstLegs:5,secondLegs:2}});
 
-test('all four sports have zero automatic discovery, score, market and priority eligibility',()=>{
+test('disabled sports, including basketball, have zero discovery, market, polling or priority eligibility',()=>{
   for(const [type,sport] of excluded){
     const m=milestone(type,sport),s=state(type,sport);
     assert.equal(isScannerExcludedSport(m),true,type+' excluded milestone');
@@ -76,8 +75,8 @@ test('live dashboard and clock refresh exclude removed sports while historical f
     src.indexOf('async function state(){'));
   const scan=src.slice(src.indexOf('async function scan(cachedMilestones'),
     src.indexOf('async function refreshOpenClocks(){'));
-  assert.match(dashboard,/sport_family ~\* '\^\(basketball\|hockey\|soccer\|football\)_'/);
-  assert.match(clocks,/sport_family ~\* '\^\(basketball\|hockey\|soccer\|football\)_'/);
+  assert.match(dashboard,/sport_family ~\* '\^\(hockey\|soccer\|football\)_'/);
+  assert.match(clocks,/sport_family ~\* '\^\(hockey\|soccer\|football\)_'/);
   assert.match(scan,/ms=scanMilestones\(refreshed\.milestones,/);
   assert.match(scan,/refreshStaleMilestones\(ms\)/);
   assert.match(src,/function checkCurrentHeldCombinations[\s\S]*?isScannerExcludedSport\(/);
@@ -88,11 +87,11 @@ test('live dashboard and clock refresh exclude removed sports while historical f
     ['async function watchReadyOverTickets(','async function scanOfficialMentions(','fast over watch']
   ]){
     const region=src.slice(src.indexOf(from),src.indexOf(to));
-    assert.match(region,/sport_family ~\* '\^\(basketball\|hockey\|soccer\|football\)_'/,label);
+    assert.match(region,/sport_family ~\* '\^\(hockey\|soccer\|football\)_'/,label);
   }
   const cron=src.slice(src.indexOf("if(req.method==='POST'&&(url.pathname==='/tick'||url.pathname==='/tick/discovery'))"),
     src.indexOf("if(req.method==='GET'&&url.pathname==='/login')"));
-  assert.match(cron,/g.sport_family ~\* '\^\(basketball\|hockey\|soccer\|football\)_'/,
+  assert.match(cron,/g.sport_family ~\* '\^\(hockey\|soccer\|football\)_'/,
     'cached cron live-game list must not reintroduce disabled sports');
   assert.match(dashboard,/WHERE a.status='filled'/,
     'historical confirmed fills must remain visible in the positions card');

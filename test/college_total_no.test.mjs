@@ -135,10 +135,10 @@ test('college first-half retains 12 and under 1:30; both college full-game use 4
     }
     assert.equal(collegeBasketballTotalNo(stateAt(halfPeriod,'0:29'),full),null);
     assert.equal(collegeBasketballTotalNo(stateAt(gamePeriod,'0:29'),half),null);
-    assert.equal(nearEntryPhase(stateAt(halfPeriod,'4:30')),true);
+    assert.equal(nearEntryPhase(stateAt(halfPeriod,'4:30')),false);
     const linked={...fixture,related_event_tickers:[`${prefix}GAME-TEST`]};
-    assert.ok(entryEventTickers(linked,stateAt(halfPeriod,'4:30')).includes(half.event_ticker));
-    assert.ok(entryEventTickers(linked,stateAt(gamePeriod,'4:30')).includes(full.event_ticker));
+    assert.deepEqual(entryEventTickers(linked,stateAt(halfPeriod,'4:30')),[]);
+    assert.deepEqual(entryEventTickers(linked,stateAt(gamePeriod,'4:30')),[]);
     const board={events:[{id:'401',date:fixture.start_date,competitions:[{status:{period:halfPeriod,displayClock:'0:29',type:{state:'in'}},
       competitors:[{id:'1',homeAway:'home',team:{displayName:'Home',abbreviation:'HOM'},score:'30'},
         {id:'2',homeAway:'away',team:{displayName:'Away',abbreviation:'AWY'},score:'20'}]}]}]};

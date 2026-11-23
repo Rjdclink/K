@@ -270,7 +270,7 @@ test('filled order timer is bright red, advances each second and reanchors to li
     game_status:'inactive',score_scanned_at:new Date(start).toISOString()},start);
   assert.match(chosen.innerHTML,/Last score · <strong class="chosen-score">Basaksehir 3<\/strong> · Samsunspor 1/);
 
-  assert.match(page,/Only basketball, hockey, soccer and football are scanned/);
+  assert.match(page,/Only hockey, soccer and football are scanned/);
   assert.match(page,/30 seconds of actual elapsed time/);
   assert.match(page,/Soccer full-game and first-half NO now use/);
   assert.match(page,/ESPN only/);

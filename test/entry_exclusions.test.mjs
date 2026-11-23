@@ -22,6 +22,10 @@ test('all basketball games prohibit new purchases, including college, pro, inter
  }
  assert.match(entryExclusionReason(null,market('KXNCAAMBGAME')),/basketball/i);
  assert.match(entryExclusionReason(null,market('KXWNBAGAME')),/basketball/i);
+ for(const sport of ['NBL','Australia NBL','FIBA','China CBA','EuroLeague'])
+  assert.match(entryExclusionReason({sport},market('KXSPORTSGAME')),/basketball/i,sport);
+ for(const series of ['KXNBLGAME','KXCBATOTAL','KXFIBAECUPGAME','KXEUROLEAGUEGAME'])
+  assert.match(entryExclusionReason(null,market(series)),/basketball/i,series);
 });
 test('all player-stat market families prohibit purchases, even without live player statistics',()=>{
  for(const metric of ['PTS','PRA','REB','AST','3PT','BLK','STL','PASSYDS','RUSHYDS','RECYDS','RRYDS','GOALS','SAVES','SOG','HITS','RBI','HR','PASSATT','RECPROT']){

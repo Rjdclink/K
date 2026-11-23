@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
 import {threatenedLead} from '../src/lead_profit_protection.mjs';
+import {allowsNewEntry} from '../src/entry_exclusions.mjs';
 
 const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
 const fast=source.slice(source.indexOf('async function watchCorrectedOvers('),
@@ -27,7 +28,7 @@ async function run({score=state(2,1),persisted=false,ageMinutes=1,gameStatus='li
       return {rows:persisted?[{market_ticker:ticker}]:[]};
     return {rows:[]};
   }};
-  const context=vm.createContext({Date,Number,Math,Map,Set,console,pool,
+  const context=vm.createContext({Date,Number,Math,Map,Set,console,pool,allowsNewEntry,
     ensureLeadProfitExitWatch:async()=>{},supportedScannerSport:()=>true,
     kalshi:async()=>({market}),
     liveBatch:async()=>new Map([['game-id',{}]]),gameState:()=>score,

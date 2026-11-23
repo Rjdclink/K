@@ -8,9 +8,9 @@ const game=(type,sport,period,seconds,other={})=>({id:'one',type,sport,period,re
 test('independent intervals: urgent every 10s, near every 30s, discovery every 120s',()=>{
  assert.deepEqual(SCAN_TIER_MS,{fast:10000,near:30000,discovery:120000});
 });
-test('all four sports promote to fast tier by clock proximity without trusting Kalshi goals',()=>{
+test('only football, hockey and soccer promote to fast tier without trusting Kalshi scores',()=>{
  for(const item of [
-  game('football_game','NFL',4,480),game('basketball_game','NBA',4,380),
+  game('football_game','NFL',4,480),
   game('hockey_match','NHL',3,600),
   {...game('soccer_match','Soccer',2,NaN),soccerMinute:83}
  ]){
@@ -19,11 +19,11 @@ test('all four sports promote to fast tier by clock proximity without trusting K
   assert.equal(scanTier({...item,home:NaN,away:NaN}),10,'missing Kalshi goals must not block promotion');
  }
 });
-test('ordinary live games enter 30s tier and known player crossings go straight to 10s',()=>{
+test('ordinary live games enter 30s tier and player crossings do not change priority',()=>{
  const football=game('football_game','NFL',1,680);
  assert.equal(scanTier(game('hockey_match','NHL',1,920)),30);
  assert.equal(scanTier(game('football_game','NFL',1,1200)),30);
- assert.equal(scanTier(football,{playerCrossed:true}),10);
+ assert.equal(scanTier(football,{playerCrossed:true}),30);
  assert.equal(scanTier(football,{held:true}),10);
  assert.equal(scanTier({...football,verifiedLive:false}),120);
  assert.equal(scanTier(game('basketball_game','Euroleague',1,550)),null,'international basketball excluded');
@@ -88,15 +88,17 @@ test('fast worker atomically throttles a fixture to at most one claim per 10 sec
  assert.match(worker,/Date\.now\(\)>=until/);
 });
 
-test('bounded near-entry checks reserve capacity for each of the four sport families',async()=>{
+test('bounded near-entry checks reserve capacity for only the three permitted sport families',async()=>{
  const {prioritizeNearCheckGames}=await import('../src/scan_tiers.mjs');
  const fixtures=[];
  for(const family of ['football','basketball','hockey','soccer'])
   for(let i=0;i<6;i++)fixtures.push({milestone:{id:family+'-'+i},state:{type:family+'_game',verifiedLive:true}});
  const selected=prioritizeNearCheckGames(fixtures,8,0);
  assert.equal(selected.length,8);
- assert.deepEqual([...new Set(selected.map(g=>g.state.type))].sort(),['basketball_game','football_game','hockey_game','soccer_game']);
+ assert.deepEqual([...new Set(selected.map(g=>g.state.type))].sort(),['football_game','hockey_game','soccer_game']);
+ assert.ok(selected.every(g=>g.state.type!=='basketball_game'));
  assert.ok(prioritizeNearCheckGames(fixtures,8,1).some(g=>g.milestone.id.endsWith('-2')));
+ assert.equal(scanTier(game('basketball_game','NBA',4,20)),null);
 });
 
 test('two-minute discovery trigger executes only one comprehensive scan per invocation',()=>{

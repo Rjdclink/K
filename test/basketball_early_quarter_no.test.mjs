@@ -100,10 +100,10 @@ test('ESPN quarter proof requires the exact game and scores, not provider clock 
  assert.equal(fetched?.eventId,'espn-NBA-q');
  assert.ok(seen.every(s=>s.includes('/basketball/nba/scoreboard')));
 });
-test('NBA and WNBA quarter-entry games remain in the fast market pass',()=>{
+test('NBA and WNBA quarter markets remain historically identifiable but never receive fast scanner priority',()=>{
  for(const sport of ['NBA','WNBA'])for(const quarter of [1,2,3]){
   const g=game(sport,quarter,'2:30');
-  assert.equal(nearEntryPhase(g),true);
+  assert.equal(nearEntryPhase(g),false);
   assert.ok(linkedEventTickers(fixture(sport)).includes(contract(sport,quarter).event_ticker));
  }
  assert.equal(nearEntryPhase(game('NBA',2,'9:00')),false);
