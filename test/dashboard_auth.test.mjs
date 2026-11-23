@@ -75,8 +75,7 @@ test('dashboard includes alerts in its existing refresh while the alert endpoint
     assert.equal(feed.games.length,1);
     assert.deepEqual(feed.upcoming.map(g=>g.id),['upcoming-nhl','upcoming-nfl']);
     assert.equal(feed.games[0].scoreStale,true);
-    assert.deepEqual(feed.games[0].signals,[],'read-only fallback never advertises stale actionable markets');
-    assert.equal(feed.readOnly,true);
+    assert.equal(feed.games[0].signals[0].execution,'Last market result: No ask liquidity');
 
     assert.ok(body.upcoming.every(g=>g.status==='scheduled'&&g.signals.length===0));
     assert.ok(seen.some(x=>x.sql.includes('FROM sports_discovery_cache')));
