@@ -30,7 +30,7 @@ test('dashboard includes alerts in its existing refresh while the alert endpoint
   const delayedGame={id:'live-1',title:'Live football',sport:'CFB',status:'live',
     scanned_at:new Date(Date.now()-3*60*1000).toISOString(),score_observed_at:new Date().toISOString(),
     signals:[{execution:'No ask liquidity'}]};
-  const seen=[];
+  const seen=[];let catalogUnavailable=false;
   process.env.DASHBOARD_PASSWORD=secret;
   process.env.KALSHI_API_KEY='';process.env.KALSHI_API_KEY_ID='';
   pg.Pool.prototype.query=async function(sql,params){
@@ -43,6 +43,17 @@ test('dashboard includes alerts in its existing refresh while the alert endpoint
     if(sql.includes('FROM combo_diagnostics'))return {rows:[]};
     if(sql.includes('FROM over_verification_windows WHERE game_id=ANY'))return {rows:[]};
     if(/FROM game_snapshots\s+WHERE/.test(sql))return {rows:[structuredClone(delayedGame)]};
+    if(sql.includes('FROM sports_discovery_cache')) {
+      if(catalogUnavailable)throw Error('schedule table unavailable');
+      return {rows:[{milestones:[
+        {id:'upcoming-nfl',title:'MIN Vikings at SF 49ers',type:'football_game',
+          start_date:new Date(Date.now()+12*60000).toISOString(),details:{status:'scheduled',league:'NFL'}},
+        {id:'upcoming-nhl',title:'Chicago at Vancouver',type:'hockey_match',
+          start_date:new Date(Date.now()+4*60000).toISOString(),details:{status:'scheduled',league:'NHL'}},
+        {id:'upcoming-nba',title:'A basketball game',type:'basketball_game',
+          start_date:new Date(Date.now()+6*60000).toISOString(),details:{status:'scheduled',league:'NBA'}}
+      ]}]};
+    }
     if(sql.includes('FROM scan_status WHERE'))return {rows:[{scanned:0,signals:0}]};
     if(sql.includes('FROM weather_scan_status WHERE'))return {rows:[{series:0,events:0,eligible:0,verified:0}]};
     if(sql.includes('FROM trade_attempts a LEFT JOIN'))return {rows:[]};
@@ -56,8 +67,20 @@ test('dashboard includes alerts in its existing refresh while the alert endpoint
     const body=await response.json();
     assert.deepEqual(body.alerts,[alert]);
     assert.equal(body.games.length,1);
+    assert.deepEqual(body.upcoming.map(g=>g.id),['upcoming-nhl','upcoming-nfl']);
+    assert.equal(body.discoveryError,null);
+    const gameOnly=await app.fetch(new Request(base+'/api/games',{headers}));
+    assert.equal(gameOnly.status,200);
+    const feed=await gameOnly.json();
+    assert.equal(feed.games.length,1);
+    assert.deepEqual(feed.upcoming.map(g=>g.id),['upcoming-nhl','upcoming-nfl']);
+    assert.equal(feed.games[0].scoreStale,true);
+    assert.equal(feed.games[0].signals[0].execution,'Last market result: No ask liquidity');
+
+    assert.ok(body.upcoming.every(g=>g.status==='scheduled'&&g.signals.length===0));
+    assert.ok(seen.some(x=>x.sql.includes('FROM sports_discovery_cache')));
     assert.equal(body.games[0].stale,true);
-    assert.equal(body.games[0].scoreStale,false);
+    assert.equal(body.games[0].scoreStale,true,'missing score fields must never claim fresh score evidence');
     assert.equal(body.games[0].signals[0].execution,'Last market result: No ask liquidity');
     assert.ok(seen.some(item=>item.sql.includes("GREATEST(score_observed_at,scanned_at)>now()-interval '15 minutes'")));
     assert.equal(body.scan.scanned,0);
@@ -70,6 +93,15 @@ test('dashboard includes alerts in its existing refresh while the alert endpoint
     const legacy=await app.fetch(new Request(base+'/api/alerts?since=7',{headers}));
     assert.equal(legacy.status,200);
     assert.deepEqual((await legacy.json()).alerts,[alert]);
+    catalogUnavailable=true;
+    const fallback=await app.fetch(new Request(base+'/api/state',{headers}));
+    assert.equal(fallback.status,200,'catalog failure must not break the entire dashboard');
+    const fallbackBody=await fallback.json();
+    assert.equal(fallbackBody.games.length,1);
+    assert.deepEqual(fallbackBody.upcoming,[]);
+    assert.match(fallbackBody.discoveryError,/Schedule catalog temporarily unavailable/);
+    catalogUnavailable=false;
+
     assert.equal((await app.fetch(new Request(base+'/api/state?since=-1',{headers}))).status,400);
   }finally{
     pg.Pool.prototype.query=originalQuery;
@@ -89,6 +121,7 @@ test('in-page login avoids repeated browser Basic Auth challenges',async()=>{
     assert.equal(anonymous.headers.get('location'),'/login');
     assert.equal(anonymous.headers.get('www-authenticate'),null);
     const api=await request('/api/state');
+    assert.equal((await request('/api/games')).status,401);
     assert.equal(api.status,401);
     assert.equal(api.headers.get('www-authenticate'),null);
     assert.equal((await request('/api/history')).status,401);

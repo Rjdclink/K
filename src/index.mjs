@@ -35,7 +35,8 @@ import { manifest, worker } from './pwa.mjs';
 import { vapidIdentity, validateSubscription, deliverPush } from './push.mjs';
 import { favorableSettlement } from './settlements.mjs';
 import { authorized, checkCredentials, sessionCookie, loginPage } from './dashboard_auth.mjs';
-import { refreshDiscovery, scanMilestones, supportedScannerSport, isScannerExcludedSport, eligibleForMarkets, internationalBasketball, prioritizeMarketGames, linkedEventTickers, playerPropEntryClosed, entryEventTickers, winnerEventTickers, readyOverTickets, prioritizeReadyOverTickets, gameTimeLabel, storedClockSeconds, mapBatches } from './discovery.mjs';
+import { refreshDiscovery, scanMilestones, supportedScannerSport, isScannerExcludedSport, eligibleForMarkets, internationalBasketball, prioritizeMarketGames, linkedEventTickers, playerPropEntryClosed, entryEventTickers, winnerEventTickers, readyOverTickets, prioritizeReadyOverTickets, gameTimeLabel, storedClockSeconds, mapBatches, mergeScannerMilestones } from './discovery.mjs';
+import {upcomingScannedGames} from './dashboard_upcoming.mjs';
 import {selectStaleReviews,classifyStaleLive,retainedAfterStaleReview} from './stale_review.mjs';
 import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOverDecision, verifyIndependentTableTennisLeadDecision, verifyIndependentTableTennisMatch } from './score_verification.mjs';
@@ -5532,6 +5533,39 @@ async function refreshOpenClocks(){
     }));
   }catch(e){console.warn('Dashboard clock refresh deferred:',e.message)}
 }
+// When account/position APIs delay the full dashboard, the sports panel still
+// has a fast, read-only DB-backed feed. Neither this path nor the catalog
+// projection performs an orderbook lookup or grants trading eligibility.
+const DASHBOARD_GAMES_SQL=`SELECT id,title,sport,home,away,possession_side,status,time_left,scanned_at,score_observed_at,signals FROM game_snapshots
+    WHERE status IN ('live','inprogress','started') AND GREATEST(score_observed_at,scanned_at)>now()-interval '15 minutes'
+      AND sport_family ~* '^(hockey|soccer|football)_'
+    ORDER BY jsonb_array_length(signals) DESC,title`;
+async function dashboardDiscovery(){
+  return pool.query("SELECT milestones FROM sports_discovery_cache WHERE id=1 AND discovered_at>now()-interval '15 minutes'")
+    .catch(error=>{console.warn('Dashboard game catalog unavailable:',error.message);
+      return {rows:[],error:'Schedule catalog temporarily unavailable'};});
+}
+function dashboardFreshness(game,now=Date.now()){
+  game.stale=now-Date.parse(game.scanned_at)>30000;
+  game.scoreStale=game.home==null||game.away==null||
+    now-Date.parse(game.score_observed_at||game.scanned_at)>60000;
+  if(game.stale)for(const signal of game.signals||[])
+    signal.execution=signal.strategy==='watch'&&signal.title==='Commanding lead watch'?
+      signal.execution+'; last catalog result is older':
+      signal.execution==='Eligible for final verification'?
+        'Market snapshot is over 30 seconds old; live price and verification status need refresh':
+        'Last market result: '+signal.execution;
+  return game;
+}
+async function dashboardGamesFeed(){
+  const [snap,stats,discovery]=await Promise.all([
+    pool.query(DASHBOARD_GAMES_SQL),pool.query('SELECT * FROM scan_status WHERE id=1'),dashboardDiscovery()
+  ]);
+  const upcoming=upcomingScannedGames(discovery.rows[0]?.milestones,{
+    excludeIds:new Set(snap.rows.map(game=>game.id))});
+  return {games:snap.rows.map(game=>dashboardFreshness(game)),
+    upcoming,discoveryError:discovery.error||null,scan:stats.rows[0]||null};
+}
 let recentDashboardPositions=null;
 const dashboardDeadline=ms=>new Promise(resolve=>setTimeout(()=>resolve(null),ms));
 async function state(){
@@ -5540,11 +5574,8 @@ async function state(){
   await pool.query(`CREATE TABLE IF NOT EXISTS combo_diagnostics (id bigserial PRIMARY KEY,
     checked_at timestamptz NOT NULL DEFAULT now(),leg_tickers jsonb NOT NULL,
     collection_ticker text,status text NOT NULL,detail text)`);
-  const [snap,stats,attempts,mentionStatus]=await Promise.all([
-  pool.query(`SELECT id,title,sport,home,away,possession_side,status,time_left,scanned_at,score_observed_at,signals FROM game_snapshots
-    WHERE status IN ('live','inprogress','started') AND GREATEST(score_observed_at,scanned_at)>now()-interval '15 minutes'
-      AND sport_family ~* '^(hockey|soccer|football)_'
-    ORDER BY jsonb_array_length(signals) DESC,title`),
+  const [snap,stats,attempts,mentionStatus,discovery]=await Promise.all([
+  pool.query(DASHBOARD_GAMES_SQL),
   pool.query('SELECT * FROM scan_status WHERE id=1'),
   pool.query(`SELECT a.market_ticker,a.game_id,a.sport,a.strategy,a.reason,a.combo_legs,a.fill_count,a.limit_price,g.status AS game_status,g.title AS game_title,g.signals AS game_signals,g.sport_family,g.possession_side,g.home AS home_score,g.away AS away_score,GREATEST(g.score_observed_at,g.scanned_at) AS score_scanned_at,g.clock_seconds,g.clock_label,g.clock_observed_at,g.time_left,
     verified.game->>'home' AS purchase_home,verified.game->>'away' AS purchase_away
@@ -5554,7 +5585,10 @@ async function state(){
       ORDER BY v.created_at DESC LIMIT 1) verified ON true
     WHERE a.status='filled' ORDER BY a.created_at DESC`),
   pool.query('SELECT checked_at,stats FROM mention_scan_status WHERE id=1'),
+  dashboardDiscovery(),
 ]);
+  const upcoming=upcomingScannedGames(discovery.rows[0]?.milestones,{
+    excludeIds:new Set(snap.rows.map(game=>game.id))});
   const comboGameIds=[...new Set(attempts.rows.flatMap(o=>Array.isArray(o.combo_legs)?o.combo_legs.map(l=>l.game_id).filter(Boolean):[]))];
   const comboScores=new Map(comboGameIds.length?(await pool.query(`SELECT id,home,away,status,
     COALESCE(score_observed_at,scanned_at) AS observed_at FROM game_snapshots WHERE id=ANY($1::text[])`,[comboGameIds])).rows.map(g=>[g.id,g]):[]);
@@ -5603,12 +5637,7 @@ async function state(){
   for(const game of snap.rows){
     // Early games can be intentionally deferred while the live score keeps
     // updating. A newer global scan is not evidence this game's market failed.
-    game.stale=Date.now()-new Date(game.scanned_at).getTime()>30000;
-    game.scoreStale=Date.now()-new Date(game.score_observed_at||game.scanned_at).getTime()>60000;
-    if(game.stale)for(const signal of game.signals||[])signal.execution=signal.strategy==='watch'&&
-      signal.title==='Commanding lead watch'?signal.execution+'; last catalog result is older':
-      signal.execution==='Eligible for final verification'?'Market snapshot is over 30 seconds old; live price and verification status need refresh':
-      'Last market result: '+signal.execution;
+    dashboardFreshness(game);
   }
   let balance=null,positions=null,accountError=null,positionsError=null,balanceStale=false,balanceAsOf=null;
   if(configured()){
@@ -5683,7 +5712,7 @@ async function state(){
   const comboIssue=comboIssues.find(issue=>!(issue.status==='insufficient_cash'&&Number(balance?.balance)>=100)&&issue.leg_tickers.length>=2&&
     issue.leg_tickers.every(ticker=>open.has(ticker)))||null;
   if(comboIssue)comboIssue.leg_names=comboIssue.leg_tickers.map(ticker=>orders.find(o=>o.market_ticker===ticker)?.game_title||ticker);
-  return {live:live(),exitOnly:exitOnly(),credentials:configured(),balance,balanceStale,balanceAsOf,accountError,positionsError,positionsStale:Boolean(positions&&positionsError),games:snap.rows,scan:stats.rows[0],weather:{disabled:true,series:0,eligible:0},mentions:{configured:Boolean(process.env.MENTION_OFFICIAL_SOURCES),...(mentionStatus.rows[0]||{})},comboIssue,orders};
+  return {live:live(),exitOnly:exitOnly(),credentials:configured(),balance,balanceStale,balanceAsOf,accountError,positionsError,positionsStale:Boolean(positions&&positionsError),games:snap.rows,upcoming,discoveryError:discovery.error||null,scan:stats.rows[0],weather:{disabled:true,series:0,eligible:0},mentions:{configured:Boolean(process.env.MENTION_OFFICIAL_SOURCES),...(mentionStatus.rows[0]||{})},comboIssue,orders};
 }
 async function settlementAlerts(since){
   const {rows}=await pool.query(`SELECT id,ticker,profit_cents,settled_time,created_at FROM settlement_alerts WHERE id>$1 AND created_at>now()-interval '2 days' ORDER BY id LIMIT 50`,[since]);
@@ -5722,14 +5751,20 @@ async function handleRequest(req){const url=new URL(req.url);
     let discovered=null,discoveryError=null,discoveryApplied=false;
     const discoveryJob=withApiPriority('background',()=>milestones())
       .then(found=>{discovered=found}).catch(error=>{discoveryError=error});
-    cached=knownLive.map(row=>row.milestone);
+    // Newly listed football, soccer and hockey games must not be eclipsed by
+    // the old live-watch set. Read the already refreshed catalog without waiting
+    // for another multi-page Kalshi discovery before scanning current games.
+    const {rows:previousCatalog}=await pool.query(
+      "SELECT milestones FROM sports_discovery_cache WHERE id=1 AND discovered_at>now()-interval '10 minutes'");
+    cached=mergeScannerMilestones(knownLive.map(row=>row.milestone),
+      previousCatalog[0]?.milestones);
     if(!cached.length){await discoveryJob;if(discovered){cached=discovered;discoveryCount=discovered.length;discoveryApplied=true}}
     try{
       // Discovery is scheduled every two minutes: never repeat its costly
       // comprehensive scan inside the same one-minute cron invocation.
       while(Date.now()<until&&cycles<1){
-        if(discovered&&!discoveryApplied&&(cycles>0||!cached.length)){
-          cached=discovered;discoveryCount=discovered.length;discoveryApplied=true;
+        if(discovered&&!discoveryApplied){
+          cached=mergeScannerMilestones(cached,discovered);discoveryCount=discovered.length;discoveryApplied=true;
         }
         if(discoveryError&&!cached.length)throw discoveryError;
         const begun=Date.now();last=await scan(cached,discoveryCount);cycles++;
@@ -5810,6 +5845,7 @@ async function handleRequest(req){const url=new URL(req.url);
       if(code===404||code===410){await pool.query('DELETE FROM push_subscriptions WHERE endpoint=$1',[subscription.endpoint]);return json({error:'Push subscription expired; tap the bell to subscribe again'},410)}
       return code===201||code===202?json({ok:true}):json({error:`Push provider rejected delivery (${code})`},502);
     }
+    if(req.method==='GET'&&url.pathname==='/api/games')return json(await dashboardGamesFeed());
     if(req.method==='GET'&&url.pathname==='/api/state'){
       const since=Number(url.searchParams.get('since'))||0;
       if(!Number.isFinite(since)||since<0)return json({error:'Invalid cursor'},400);

@@ -22,6 +22,15 @@ export function supportedScannerSport(item){
   return true;
 }
 
+// The discovery worker must keep the tracked live set AND admit new fixtures
+// from its persisted catalog. A nonempty live set is not a substitute for
+// current discovery; otherwise new games can starve until every old one ends.
+export function mergeScannerMilestones(knownLive=[],catalog=[]){
+  const ordered=[...(Array.isArray(knownLive)?knownLive:[]),
+    ...(Array.isArray(catalog)?catalog:[])].filter(m=>m?.id&&supportedScannerSport(m));
+  return [...new Map(ordered.map(m=>[m.id,m])).values()];
+}
+
 export async function mapBatches(items,limit,task){
   const results=new Array(items.length);let next=0;
   await Promise.all(Array.from({length:Math.min(items.length,Math.max(1,Math.floor(limit)))},async()=>{
@@ -35,7 +44,9 @@ export const internationalBasketball=game=>/basketball/.test(String(game?.type||
 export function eligibleForMarkets(game){return game?.verifiedLive && supportedScannerSport(game) && !internationalBasketball(game)}
 
 export async function discoverCurrentMilestones(get,now=Date.now(),lookbackMs=7*86400000){
-  const cutoff=now+3600000,min=new Date(now-lookbackMs).toISOString();
+  // The display catalog includes games approaching within a day, including
+  // next-day football. This is discovery only, never an entry or score poll.
+  const cutoff=now+24*3600000,min=new Date(now-lookbackMs).toISOString();
   const finished=m=>{
     const status=String(m.details?.status||'').trim().toLowerCase();
     return /^(?:final|finished|completed|closed|ended|event closed|match complete)(?:\b|$)/.test(status)&&
@@ -80,8 +91,11 @@ export async function refreshDiscovery(get,previous,now=Date.now()){
 export function scanMilestones(milestones,recentLiveIds=new Set(),now=Date.now()){
   return milestones.filter(m=>{
     const started=Date.parse(m.start_date||'');
+    // The catalog reaches 24h for display, but the active score/market scan
+    // keeps its original one-hour pregame boundary and 8h old-game cutoff.
     return supportedScannerSport(m)&&(recentLiveIds.has(m.id)||
-      !Number.isFinite(started)||started>=now-8*3600000);
+      (!Number.isFinite(started)||
+       started>=now-8*3600000&&started<=now+3600000));
   });
 }
 
