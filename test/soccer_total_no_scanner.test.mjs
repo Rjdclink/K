@@ -1,3 +1,4 @@
+import {finalFiveEntryEligible} from '../src/final_five_entry.mjs';
 import {noFinalCheckpoint,pairedExternalMatch} from './support/no_final_checkpoint_mock.mjs';
 import {noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey} from './support/no_ask_mock.mjs';
 
@@ -39,7 +40,7 @@ function harness({canVerify=true,hasSeller=true,unprofitable=false,initialAgeMs=
   const windows=new Map(),dashboard=new Map(),trace=[],diagnostics=[];
   let verified=0,orders=0,lastBudget=null,lastFraction=null,lastQuantity=null,scanSeconds=540;
   const held={ticker:'KXEPLTOTAL-OLDER',position_fp:-1,market_exposure_dollars:'4.00',fees_paid_dollars:'0.50'};
-  const context=vm.createContext({eligibleNoFinal,launchImmediateNoFinalFixtures,immediateNoFinalProof,dueNoFinalWindows,noFinalCheckpoint,noAskTimeout:noAskPolicy,waitingOnAsk,NO_ASK_RETIRED,noAskKey,scheduleNoLiquidityRecheck:()=>{},recordDecision:async decision=>{diagnostics.push(decision)},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
+  const context=vm.createContext({finalFiveEntryEligible,eligibleNoFinal,launchImmediateNoFinalFixtures,immediateNoFinalProof,dueNoFinalWindows,noFinalCheckpoint,noAskTimeout:noAskPolicy,waitingOnAsk,NO_ASK_RETIRED,noAskKey,scheduleNoLiquidityRecheck:()=>{},recordDecision:async decision=>{diagnostics.push(decision)},pairedExternalMatch,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
     Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),
     linkedEventTickers:()=>[market.event_ticker],
@@ -78,7 +79,9 @@ function harness({canVerify=true,hasSeller=true,unprofitable=false,initialAgeMs=
     liveMilestone:async()=>({
       milestone_id:milestone.id,_observed_at:new Date().toISOString(),
       details:{status:'inprogress',home_score:afterRefreshScore===3?2:3,away_score:1,half:'2nd',
-        time:missingClock?'garbled':scanSeconds<0?"90+3'":"82:01'",
+        time:missingClock?'garbled':scanSeconds<0?"90+3'":
+          Math.floor((5400-scanSeconds)/60)+':'+
+            String((5400-scanSeconds)%60).padStart(2,'0')+"'", 
         home_team_name:'Home',away_team_name:'Away',last_updated_ts:Date.now()/1000}}),
     gameState,
     kalshi:async(path,opts)=>{
@@ -341,7 +344,8 @@ test('due soccer final ESPN check runs before ordinary first checks',async()=>{
  assert.equal(h.verifications,0);
  assert.equal(await h.scan(660,'initial'),0);
  assert.equal(h.verifications,1);
- assert.equal(await h.scan(479,'final'),1);
+ assert.equal(await h.scan(479,'final'),0,'7:59 is outside the new five-minute entry boundary');
+ assert.equal(await h.scan(299,'final'),1);
  assert.equal(h.verifications,2);
  assert.equal(h.orders,1);
  assert.equal(await h.scan(479,'initial'),0);

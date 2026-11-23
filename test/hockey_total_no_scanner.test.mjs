@@ -1,3 +1,4 @@
+import {finalFiveEntryEligible} from '../src/final_five_entry.mjs';
 import {noFinalCheckpoint,pairedExternalMatch} from './support/no_final_checkpoint_mock.mjs';
 import {noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey} from './support/no_ask_mock.mjs';
 
@@ -42,7 +43,7 @@ function harness({ageMs=61000,canVerify=true,hasSeller=true,unprofitable=false,e
   let n=0,verifications=0,orders=0,allocation=null,availablePool=null,livePeriod=3,liveClock='5:59';
   const windows=new Map(),dashboard=new Map(),trace=[];
   const held={ticker:'KXNHLTOTAL-OLD',position_fp:-1,market_exposure_dollars:'4.00',fees_paid_dollars:'0.50'};
-  const context=vm.createContext({eligibleNoFinal,launchImmediateNoFinalFixtures,immediateNoFinalProof,dueNoFinalWindows,noFinalCheckpoint,noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,scheduleNoLiquidityRecheck:()=>{},recordDecision:async()=>{},pairedExternalMatch,validFreshEspnHockeyNo,pairedFreshEspnHockeyNo,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
+  const context=vm.createContext({finalFiveEntryEligible,eligibleNoFinal,launchImmediateNoFinalFixtures,immediateNoFinalProof,dueNoFinalWindows,noFinalCheckpoint,noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,scheduleNoLiquidityRecheck:()=>{},recordDecision:async()=>{},pairedExternalMatch,validFreshEspnHockeyNo,pairedFreshEspnHockeyNo,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
     Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),
     linkedEventTickers:()=>markets.map(x=>x.event_ticker),
@@ -99,7 +100,7 @@ function harness({ageMs=61000,canVerify=true,hasSeller=true,unprofitable=false,e
   });
   vm.runInContext(code,context);
   return {
-    async scan(clock,period=3,phase='all'){livePeriod=period;liveClock=period===4?'4:59':'5:59';
+    async scan(clock,period=3,phase='all'){livePeriod=period;liveClock=clock;
       return context.scanHockeyTotalNos([{milestone,state:state(clock,2,1,period)}],events,dashboard,phase);},
     get windows(){return windows;},get trace(){return trace;},
     get dashboard(){return dashboard;},get verifications(){return verifications;},
@@ -225,7 +226,8 @@ test('due NHL final verification cuts ahead of another contract without first pr
  assert.equal(await h.scan('7:00',3,'initial'),0);
  assert.equal(h.windows.size,2);
  h.windows.delete(markets[1].ticker);
- assert.equal(await h.scan('5:59',3,'final'),1,'already-verified ticket is processed first');
+ assert.equal(await h.scan('5:59',3,'final'),0,'6-minute NHL entry is too early under new game-end rule');
+ assert.equal(await h.scan('4:59',3,'final'),1,'already-verified ticket is processed in the final five minutes');
  assert.equal(h.orders,1);
  assert.equal(h.verifications,3,'two initial proofs and only one due final');
  assert.equal(await h.scan('5:59',3,'initial'),0,'missing first may start only afterward');

@@ -281,11 +281,13 @@ test('early NHL, first-half soccer and NBA due finals preempt first-check work',
   assert.equal(h.verified,0);
   assert.equal(await h.scan(first,'initial'),0);
   assert.equal(h.verified,1);
-  assert.equal(await h.scan(entry,'final'),1,sport+' final uses its independent evidence');
-  assert.equal(h.verified,2);
-  assert.equal(h.orders,1);
+  const permitted=sport==='Basketball';
+  assert.equal(await h.scan(entry,'final'),permitted?1:0,
+    sport+' no final trading before five minutes of GAME end');
+  assert.equal(h.verified,permitted?2:1);
+  assert.equal(h.orders,permitted?1:0);
   assert.equal(await h.scan(entry,'initial'),0);
-  assert.equal(h.verified,2);
+  assert.equal(h.verified,permitted?2:1);
  }
 });
 

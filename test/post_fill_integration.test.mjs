@@ -1,3 +1,4 @@
+import {finalFiveEntryEligible} from '../src/final_five_entry.mjs';
 import test from 'node:test';
 import {isScannerExcludedSport} from '../src/discovery.mjs';
 import {isTieOutcomeMarket} from '../src/strategy.mjs';
@@ -11,7 +12,7 @@ const functionSource=(name,next)=>source.slice(source.indexOf('async function '+
 const order={id:'fill-id',market_ticker:'NEW',strategy:'lead',count:10,limit_price:.95,created_at:new Date(Date.now()-60000),updated_at:new Date(Date.now()-30000),retries:0};
 function harness({filled=2,recovery=false,retry=false,age=0,balance=10000,leadProofReady=true}={}){
   const events=[];
-  const context=vm.createContext({console,Date,URLSearchParams,JSON,Math,Number,singleSpendableCash,isTieOutcomeMarket,internationalBasketball:()=>false,
+  const context=vm.createContext({finalFiveEntryEligible,console,Date,URLSearchParams,JSON,Math,Number,singleSpendableCash,isTieOutcomeMarket,internationalBasketball:()=>false,
     leadFinalProofValid:()=>leadProofReady,pool:{query:async(sql,values)=>{
       if(sql.startsWith('SELECT * FROM trade_attempts'))return {rows:[order]};
       if(sql.startsWith('UPDATE trade_attempts'))events.push(['ledger',values]);
