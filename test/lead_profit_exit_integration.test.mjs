@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
 import {threatenedLead} from '../src/lead_profit_protection.mjs';
-import {eligibleProfitExit} from '../src/profit_exits.mjs';
+import {eligibleProfitExit,firstProfitableLeadQuote} from '../src/profit_exits.mjs';
 import {teamScorePosition} from '../src/strategy.mjs';
 import {sellQuote} from '../src/sell.mjs';
 
@@ -44,7 +44,7 @@ async function harness({score=scores(2,1),authoritative=score,position=held,pric
     throw Error('Unexpected Kalshi request '+path);
   };
   const context=vm.createContext({console,Date,Number,Math,Map,Set,JSON,
-    pool,kalshi,eligibleProfitExit,threatenedLead,teamScorePosition,sellQuote,
+    pool,kalshi,eligibleProfitExit,firstProfitableLeadQuote,threatenedLead,teamScorePosition,sellQuote,
     isScannerExcludedSport:()=>false,
     ensureExitFills:async()=>{},ensureLeadProfitExitWatch:async()=>{},
     exitAtRiskNos:async()=>0,reconcilePendingExit:async()=>true,
@@ -101,4 +101,16 @@ test('no automatic sale when fees are unknown or unusually high',async()=>{
 test('pre-existing comeback exits cannot sell lead positions below net break-even',async()=>{
   const result=await harness({score:scores(0,1),authoritative:null,reversed:true,price:'.85'});
   assert.equal(result.posts.length,0);
+});
+
+test('a held football winner eight points ahead has first-profit priority without any target percentage',async()=>{
+ const football=scores(21,13);
+ football.type='football_game';
+ const result=await harness({score:football,authoritative:football,price:'.96'});
+ assert.equal(result.posts.length,1);
+ assert.equal(result.posts[0].time_in_force,'fill_or_kill');
+});
+test('a threatened team lead never sells an unprofitable fractional slice',async()=>{
+ const result=await harness({score:scores(2,1),price:'.85',depth:'.01'});
+ assert.equal(result.posts.length,0);
 });

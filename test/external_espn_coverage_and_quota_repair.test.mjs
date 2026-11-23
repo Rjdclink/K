@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
-import {verifyIndependentOverDecision,espnMatches} from '../src/score_verification.mjs';
+import {verifyIndependentOverDecision,espnMatches,externalScoreFeeds} from '../src/score_verification.mjs';
 import {sportradarJson} from '../src/sportradar.mjs';
 import {verifyFreshEspnSoccerNo} from '../src/soccer_espn_no.mjs';
 
@@ -34,13 +34,9 @@ test('NCAA men college hockey routes to the actual ESPN league instead of quota-
  assert.equal(result,true,'exact independent ESPN home/away, kickoff and live score must qualify');
  assert.ok(urls.length>=1,'at least one new live ESPN request is required');
  const main=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
- const start=main.indexOf('const externalSportFeeds=game=>{');
- const end=main.indexOf('// Candidate discovery',start);
- assert.ok(start>=0&&end>start);
- const context=vm.createContext({});
- vm.runInContext(main.slice(start,end),context);
- assert.equal(vm.runInContext("externalSportFeeds({sport:'College Hockey'})[0]",context),
-   'hockey/mens-college-hockey','live authoritative game source must match independently audited scorer');
+ assert.match(main,/externalScoreFeeds\(game,milestone\)/);
+ assert.equal(externalScoreFeeds(college,collegeMilestone).espn,
+   'hockey/mens-college-hockey','the shared verified feed map must retain college hockey');
 });
 
 test('college hockey ESPN strictly rejects a different fixture, reversed teams, missing names and score contradictions',async()=>{

@@ -22,13 +22,21 @@ test('a formerly commanding hockey or soccer leader triggers protection at one g
   }
 });
 
-test('one-point lead is also protection-triggering for football and basketball, not a three-point lead',()=>{
-  for(const type of ['football_game','basketball_game']){
-    assert.equal(threatenedLead(game(101,100,{type}),market),true);
-    assert.equal(threatenedLead(game(103,100,{type}),market),false);
-  }
+test('a single possible score ties the commanding lead across football, basketball, goals and other team sports',()=>{
+ for(const [type,margin] of [
+  ['football_game',8],['basketball_game',4],['soccer_match',1],
+  ['hockey_match',1],['baseball_game',4],['rugby_match',7],
+  ['cricket_match',6],['lacrosse_match',1],['handball_match',1],
+  ['volleyball_match',1],['table_tennis_match',1]
+ ]){
+  assert.equal(threatenedLead(game(50,50-margin,{type}),market),true,type+' at tieable margin');
+  assert.equal(threatenedLead(game(50,49-margin,{type}),market),false,type+' beyond single-score margin');
+ }
+ assert.equal(threatenedLead(game(21,13,{type:'football_game'}),market),true,
+  'a touchdown plus two-point conversion can tie an 8-point football lead');
+ assert.equal(threatenedLead(game(30,26,{type:'basketball_game'}),market),true,
+  'a rare four-point basketball scoring play can tie the margin');
 });
-
 test('unknown team, stale or inconsistent scoreboard, wrong fixture and non-team sports fail closed',()=>{
   assert.equal(threatenedLead(game(3,2),{...market,custom_strike:{hockey_team:'third-id'}}),false);
   assert.equal(threatenedLead(game(3,2,{verifiedLive:false}),market),false);

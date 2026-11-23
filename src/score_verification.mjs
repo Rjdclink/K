@@ -48,6 +48,10 @@ function feeds(game,milestone){
   const [espn,fox]=supported[league]||(/basketball/.test(game.type)&&international[league]?[`basketball/${international[league]}`,null]:[]);
   return {espn,fox};
 }
+// Share the established league-specific external source list with the
+// held-winner protective exit path. This returns addresses only, not proof.
+export const externalScoreFeeds=(game,milestone)=>feeds(game,milestone);
+
 // Resolve missing display names only when an exact selected team in the
 // live Kalshi winner contract maps to a distinct Kalshi home/away team ID,
 // and that selected name occurs exactly once in the named fixture title.
