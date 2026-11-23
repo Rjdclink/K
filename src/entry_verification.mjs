@@ -7,12 +7,19 @@ export function sportsContractKey(game,market){
     rules:market.rules_primary,secondary:market.rules_secondary,strike:market.floor_strike,
     cap:market.cap_strike,strikeType:market.strike_type,close:market.close_time,custom:market.custom_strike||{},collection:market.mve_collection_ticker,legs:market.mve_selected_legs}));
 }
-export function rememberIndependentEntry(game,market,verificationId,requestedAt,overValue){
+export function rememberIndependentEntry(game,market,verificationId,requestedAt,overValue,score){
   // A newly stored proof cannot make an older independently sourced score new.
   const sourceAt=Number(game.externalScore?.checkedAt);
   const proofAt=Number.isFinite(sourceAt)&&sourceAt>0?Math.min(sourceAt,requestedAt):requestedAt;
+  // NHL and soccer NO strategies can carry a separately validated, exact
+  // external fixture score even when their game state still shows Kalshi's score.
+  const scored=score&&['ESPN','FOX Sports','Flashscore'].includes(score.source)&&
+    String(score.eventId||'').trim()&&Number.isInteger(score.home)&&score.home>=0&&
+    Number.isInteger(score.away)&&score.away>=0;
   game.independentEntry={contractKey:sportsContractKey(game,market),verificationId,
-    requestedAt:proofAt,overValue};
+    requestedAt:proofAt,overValue,
+    ...(scored?{score:{source:score.source,eventId:String(score.eventId),
+      gameId:game.id,home:score.home,away:score.away,checkedAt:proofAt}}:{})};
 }
 export function independentEntryValid(game,market,now=Date.now()){
   const proof=game?.independentEntry;
