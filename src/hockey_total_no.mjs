@@ -1,6 +1,7 @@
 import {externalNoScore,externalNoPeriods} from './external_no_authority.mjs';
 import {verifyFreshEspnHockeyNo,independentlyVerifiedHockeyGame} from './hockey_espn_no.mjs';
 import {espnMatches} from './score_verification.mjs';
+import {goalNoWindow} from './goal_no_windows.mjs';
 
 // Kalshi lists game-wide NHL goals separately from goals scored in period 3.
 // Never substitute the cumulative score for a third-period total.
@@ -28,7 +29,7 @@ export function hockeyNoMarketSpec(game,market,{beforeWindow=false}={}){
     game.feedId!==game.id||game.clockRunning===false||!Number.isFinite(game.observedAt)||
     game.observedAt>Date.now()||Date.now()-game.observedAt>10000||
     ![3,4].includes(game.period)||!Number.isFinite(game.remainingSeconds)||game.remainingSeconds<=0||
-    (beforeWindow?game.remainingSeconds>420:game.remainingSeconds>=300)||
+    game.remainingSeconds>960||
     !Number.isInteger(game.home)||!Number.isInteger(game.away)||game.home<0||game.away<0||
     !['active','open'].includes(market?.status)||
     market.result&&!['','not_determined'].includes(String(market.result)))return null;
@@ -46,16 +47,19 @@ export function hockeyNoMarketSpec(game,market,{beforeWindow=false}={}){
     line!==Number(goals[1])||!/NHL\s+game\b/i.test(rules)||
     thirdInRules!==(period==='third_period')||
     (period==='full_game'&&/\b(?:first|second|1st|2nd|3rd|third)\s+period\b|team total|regulation only/i.test(rules)))return null;
+  const window=goalNoWindow(game,market,game.home+game.away,{period});
+  if(game.remainingSeconds>(beforeWindow?window?.firstSeconds??420:Infinity)||
+    !beforeWindow&&game.remainingSeconds>=(window?.entrySeconds??300))return null;
   return {strategy:'no',period,line,series};
 }
 
 export function hockeyTotalNo(game,market,{beforeWindow=false,external=null}={}){
   const verified=external?independentlyVerifiedHockeyGame(game,external):null;
-  const sourceGame=verified||game;
+  const independent=external?externalNoScore(game,external):null;
+  if(external&&(!validExternal(external,game)||!independent))return null;
+  const sourceGame=verified||(independent?{...game,home:independent.home,away:independent.away}:game);
   const spec=hockeyNoMarketSpec(sourceGame,market,{beforeWindow});
   if(!spec)return null;
-  if(external&&!validExternal(external,game))return null;
-  const independent=external?externalNoScore(game,external):null;
   let total=independent?independent.home+independent.away:game.home+game.away;
   if(total>=5)return null;
   if(spec.period==='third_period'){
@@ -74,9 +78,13 @@ export function hockeyTotalNo(game,market,{beforeWindow=false,external=null}={})
     if(external?.period3&&(
       external.period3.home!==parts[2].home||external.period3.away!==parts[2].away))return null;
   }
-  // Match soccer NO: 2.5 at 0-3 goals; 3.5 at 4+.
-  // The 1.5-goal exception applies ONLY to live full-game overtime (P4).
-  const minimumCushion=spec.period==='full_game'&&game.period===4?1.5:
+  // Full-game 2.5 cushions use eight minutes through four total goals.
+  // Full-game 1.5 cushions use the final minute, including live overtime.
+  const window=goalNoWindow(sourceGame,market,independent?independent.home+independent.away:game.home+game.away,
+    {period:spec.period});
+  const minimumCushion=(window?.entrySeconds===900||spec.line===2.5&&total===2)?0.5:
+    window?.entrySeconds===480?2.5:
+    window?.entrySeconds===60?1.5:spec.period==='full_game'&&game.period===4?1.5:
     total>=4?3.5:2.5;
   if(spec.line-total<minimumCushion)return null;
   return {...spec,total,reason:

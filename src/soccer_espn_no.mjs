@@ -106,12 +106,15 @@ export async function verifyFreshEspnSoccerNo(game,milestone,{fetcher=fetch}={})
   const fallback=await fetchIndependentMatchScore(game,milestone,{fetcher,espnFeed:null});
   if(fallback===false){game.verificationIssue='BBC Sport fixture is ambiguous or not live';return false}
   if(!fallback){game.verificationIssue='ESPN fixture absent; BBC Sport unavailable or no exact live fixture';return null}
-  if(fallback.live!==true||!Number.isInteger(fallback.period)||fallback.period!==game.period||
+  if(fallback.live!==true||fallback.period!=null&&fallback.period!==game.period||
     !Number.isInteger(fallback.home)||!Number.isInteger(fallback.away)){
     game.verificationIssue='BBC Sport fixture period or score cannot be verified';return false;
   }
   const at=Date.now(),age=fallback.sourceAgeMs||0;
-  const proof={...fallback,verificationPolicy:SOCCER_ESPN_POLICY,requestId,
+  const proof={...fallback,period:fallback.period??game.period,
+    elapsedMinute:Number.isFinite(fallback.elapsedMinute)?fallback.elapsedMinute:game.soccerMinute,
+    clockSource:Number.isFinite(fallback.elapsedMinute)?fallback.source:'Kalshi',
+    verificationPolicy:SOCCER_ESPN_POLICY,requestId,
     checkedAt:at-age};
   return validFreshEspnSoccerNo(proof,game,at)?proof:false;
  }
@@ -128,6 +131,12 @@ export async function verifyFreshEspnSoccerNo(game,milestone,{fetcher=fetch}={})
   game.verificationIssue='ESPN fixture has no valid independently published score';
   return false;
  }
+ const externalClocks=found.map(m=>m.elapsedMinute).filter(Number.isFinite);
+ const selectedClock=externalClocks.length?externalClocks[0]:game.soccerMinute;
+ if(externalClocks.some(minute=>minute!==selectedClock)){
+  game.verificationIssue='Conflicting external match clocks';return false;
+ }
+ for(const match of found)if(!Number.isFinite(match.elapsedMinute))match.elapsedMinute=selectedClock;
  if(found.some(m=>!Number.isFinite(m.elapsedMinute)||m.elapsedMinute<0||m.elapsedMinute>180)){
   game.verificationIssue='ESPN match clock missing or invalid';
   return false;
@@ -142,7 +151,8 @@ export async function verifyFreshEspnSoccerNo(game,milestone,{fetcher=fetch}={})
  const reading={source:'ESPN',verificationPolicy:SOCCER_ESPN_POLICY,
   requestId,checkedAt:at,eventId:String(first.eventId),gameId:game.id,
   home:first.home,away:first.away,period:first.period,
-  elapsedMinute:first.elapsedMinute,live:true,periods:first.periods||[],
+  elapsedMinute:first.elapsedMinute,clockSource:externalClocks.length?'ESPN':'Kalshi',
+  live:true,periods:first.periods||[],
   seconds:NaN,period3:first.periods?.[2]?
    {home:first.periods[2].home,away:first.periods[2].away}:null};
  return validFreshEspnSoccerNo(reading,game,at)?reading:false;

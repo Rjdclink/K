@@ -3,6 +3,7 @@
 // Earlier period/half markets cannot use their segment clocks.
 // Do not apply to settlement, held-position monitoring, or reduce-only exits.
 export const FINAL_FIVE_SECONDS=300;
+import {goalNoWindow} from './goal_no_windows.mjs';
 
 // Purchase-only goal ceiling. Soccer commanding winners permit exactly five;
 // all other soccer/hockey purchases stay below five. Both score feeds can veto.
@@ -36,32 +37,45 @@ export function finalFiveEntryEligible(game,{strategy,market}={}){
  const winnerMarket=market&&/GAME(?:-|$)/.test(String(market.event_ticker||''));
  const lead=Boolean(winnerMarket&&(strategy==='lead'||game?.leadVerification));
  const margin=Math.abs(Number(game?.homeUnits??game?.home)-Number(game?.awayUnits??game?.away));
- const total=Number(game?.home)+Number(game?.away);
+ const proof=strategy==='no'?game?.independentEntry?.score:null;
+ const proofFresh=Boolean(proof&&proof.gameId===game.id&&proof.period===game.period&&
+   Number.isFinite(proof.checkedAt)&&Date.now()-proof.checkedAt>=0&&
+   Date.now()-proof.checkedAt<=15000&&validGoals(proof));
+ const total=proofFresh?scoreTotal(proof):Number(game?.home)+Number(game?.away);
+ const noWindow=strategy==='no'?goalNoWindow(game,market,total):null;
+ const useExternalClock=Boolean(noWindow&&proofFresh&&proof.clockSource!=='Kalshi');
+ const gameClock=useExternalClock&&soccer&&Number.isFinite(proof.elapsedMinute)?
+   {...game,soccerMinute:proof.elapsedMinute,
+    matchRemainingSeconds:Math.max(0,Math.round((90-proof.elapsedMinute)*60))}:
+   useExternalClock&&hockey&&Number.isFinite(proof.seconds)?
+   {...game,remainingSeconds:proof.seconds}:game;
  const goalExtension=lead&&Number.isInteger(game?.home)&&Number.isInteger(game?.away)&&
    margin>=3&&total<5;
  const soccerFiveLead=lead&&soccer&&margin>=3&&total===5;
- const limit=soccerFiveLead?570:goalExtension?(soccer?930:margin===3?420:FINAL_FIVE_SECONDS):FINAL_FIVE_SECONDS;
+ const limit=noWindow&&!noWindow.stoppageOnly?noWindow.entrySeconds:soccerFiveLead?570:
+   goalExtension?(soccer?930:margin===3?420:FINAL_FIVE_SECONDS):FINAL_FIVE_SECONDS;
  if(hockey||football){
    // P1/P2 end in an intermission; they are not game-ending windows.
    // P4 is an actual overtime segment when the provider reports one.
    return (football?Number(game.period)===4:[3,4].includes(Number(game.period)))&&
-     Number.isFinite(game.remainingSeconds)&&game.remainingSeconds>0&&
-     game.remainingSeconds<(football?FINAL_FIVE_SECONDS:limit);
+     Number.isFinite(gameClock.remainingSeconds)&&gameClock.remainingSeconds>0&&
+     gameClock.remainingSeconds<(football?FINAL_FIVE_SECONDS:limit);
  }
  if(Number(game.period)!==2||game.soccerExtraTime===true||
-   game.soccerOvertime===true||!Number.isFinite(game.soccerMinute))return false;
- const minute=game.soccerMinute,remaining=Math.round((90-minute)*60);
+   game.soccerOvertime===true||!Number.isFinite(gameClock.soccerMinute))return false;
+ const minute=gameClock.soccerMinute,remaining=Math.round((90-minute)*60);
+ if(noWindow?.stoppageOnly)return minute>90&&minute<=180&&gameClock.matchRemainingSeconds===0;
  // The 90:00 marker itself does not prove that play is continuing.
- if(minute>90)return minute<=180&&game.matchRemainingSeconds===0;
+ if(minute>90)return minute<=180&&gameClock.matchRemainingSeconds===0;
  if(minute>=90||remaining<=0||remaining>=limit)return false;
  // Do not trust contradictory, invalid or fabricated source-clock fields.
- if(game.matchRemainingSeconds!=null&&(
-   !Number.isFinite(game.matchRemainingSeconds)||
-   Math.abs(game.matchRemainingSeconds-remaining)>90))return false;
+ if(gameClock.matchRemainingSeconds!=null&&(
+   !Number.isFinite(gameClock.matchRemainingSeconds)||
+   Math.abs(gameClock.matchRemainingSeconds-remaining)>90))return false;
  return true;
 }
 
-export function assertFinalFiveEntry(entries){
+export function assertFinalFiveEntry(entries,{side=null}={}){
  const visited=new Set();
  function check(entry,depth=0){
    const game=entry?.game||entry?.state||entry;
@@ -70,7 +84,7 @@ export function assertFinalFiveEntry(entries){
      throw Object.assign(Error('Unverifiable nested purchase leg'),
        {code:'LOCAL_FINAL_FIVE_WINDOW_REQUIRED'});
    visited.add(game);
-   if(!finalFiveEntryEligible(game,{market})){
+   if(!finalFiveEntryEligible(game,{strategy:side==='ask'?'no':undefined,market})){
      const family=String(game?.type||game?.sport_family||'').toLowerCase();
      throw Object.assign(
        Error('New '+(family.startsWith('soccer_')?'soccer':family.startsWith('hockey_')?'hockey':'football')+

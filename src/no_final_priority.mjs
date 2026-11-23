@@ -6,14 +6,16 @@ import {validNoPreflight,lateNoPreflightProgress} from './late_no_preflight.mjs'
 // independently verified soccer regulation stoppage.
 export function eligibleNoFinal(window,game,{
  contractKey,firstSeconds,entrySeconds,remainingSeconds,allowZeroClock=false,
+ minWaitSeconds=30,stoppageOnly=false,
  validFirst=()=>true,now=Date.now()
 }={}){
  const remaining=Number(remainingSeconds);
  if(!Number.isFinite(remaining)||!(remaining>0||allowZeroClock&&remaining===0)||
-  !Number.isFinite(entrySeconds)||remaining>=entrySeconds)return false;
+  !Number.isFinite(entrySeconds)||
+  (stoppageOnly?remaining!==0:remaining>=entrySeconds))return false;
  return Boolean(validNoPreflight(window,{gameId:game?.id,contractKey,
   period:game?.period,maxFirstSeconds:firstSeconds,now,allowZeroClock})&&
-  lateNoPreflightProgress(window,now).ready&&validFirst(window.first_evidence,game,now));
+  lateNoPreflightProgress(window,now,minWaitSeconds).ready&&validFirst(window.first_evidence,game,now));
 }
 
 // All four sport families start their due finals together. The caller groups

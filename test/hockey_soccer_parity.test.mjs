@@ -30,13 +30,13 @@ function market(segment,line){
 }
 const p=(number,home,away)=>({number,home,away});
 
-test('NHL full-game copies soccer NO: 2.5 cushion through three goals, 3.5 with four+',()=>{
+test('NHL full-game copies soccer NO: 2.5 cushion through four goals',()=>{
  const three=game(3,[p(1,1,1),p(2,1,0),p(3,0,0)]);
  assert.equal(hockeyTotalNo(three,market('full',5.5))?.total,3);
  assert.equal(hockeyTotalNo(three,market('full',4.5)),null);
  const four=game(3,[p(1,1,1),p(2,1,1),p(3,0,0)]);
  assert.equal(hockeyTotalNo(four,market('full',7.5))?.total,4);
- assert.equal(hockeyTotalNo(four,market('full',6.5)),null);
+ assert.equal(hockeyTotalNo(four,market('full',6.5))?.total,4);
  const five=game(3,[p(1,2,1),p(2,1,1),p(3,0,0)]);
  assert.equal(hockeyTotalNo(five,market('full',8.5)),null);
  assert.equal(hockeyTotalNo(five,market('full',7.5)),null);
@@ -63,9 +63,9 @@ test('NHL first and second periods receive soccer first-half 2.5/3.5 cushions',(
  }
 });
 
-test('NHL 1.5 cushion is restricted to live full-game overtime, never P3 or shootout',()=>{
+test('NHL 1.5 cushion activates below one minute, including live overtime, never P3 or shootout',()=>{
  const parts=[p(1,1,1),p(2,1,1),p(3,0,0)];
- const third=game(3,parts,'1:29'),overtime=game(4,parts,'1:29');
+ const third=game(3,parts,'1:29'),overtime=game(4,parts,'0:59');
  assert.equal(hockeyTotalNo(third,market('full',5.5)),null);
  assert.equal(hockeyTotalNo(overtime,market('full',5.5))?.total,4);
  assert.equal(hockeyTotalNo(overtime,market('full',4.5)),null);

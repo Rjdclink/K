@@ -41,9 +41,9 @@ export function parseBbcScores(html){
         if(!event.id||!event.startDateTime||!event.home?.fullName||
           !event.away?.fullName||!/^\d+$/.test(String(homeRaw||''))||
           !/^\d+$/.test(String(awayRaw||''))||!whole(home)||!whole(away)||
-          status!=='MidEvent'||!Number.isFinite(elapsedMinute)||elapsedMinute<0||
-          elapsedMinute>180)return [];
-        const period=Number(minute[1])<=45?1:2;
+          status!=='MidEvent'||Number.isFinite(elapsedMinute)&&
+          (elapsedMinute<0||elapsedMinute>180))return [];
+        const period=minute?(Number(minute[1])<=45?1:2):null;
         return [{source:'BBC Sport',eventId:String(event.id),time:event.startDateTime,
           homeAliases:[event.home.fullName,event.home.shortName].filter(Boolean),
           awayAliases:[event.away.fullName,event.away.shortName].filter(Boolean),
@@ -67,8 +67,9 @@ export function parseNhlLanding(landing,expected){
   if(String(landing?.id)!==expected.eventId||landing.gameState!=='LIVE'||
     landing.homeTeam?.score!==expected.home||landing.awayTeam?.score!==expected.away||
     landing.periodDescriptor?.number!==expected.period||
-    !whole(landing.clock?.secondsRemaining)||landing.clock.secondsRemaining>1200||
-    (whole(expected.seconds)&&landing.clock.secondsRemaining>expected.seconds)||
+    (landing.clock?.secondsRemaining!=null&&
+      (!whole(landing.clock.secondsRemaining)||landing.clock.secondsRemaining>1200||
+       whole(expected.seconds)&&landing.clock.secondsRemaining>expected.seconds))||
     landing.clock?.inIntermission===true)return null;
   const scoring=landing.summary?.scoring;
   if(!Array.isArray(scoring))return null;
@@ -84,7 +85,7 @@ export function parseNhlLanding(landing,expected){
   }
   if(periods.reduce((n,p)=>n+p.home,0)!==expected.home||
     periods.reduce((n,p)=>n+p.away,0)!==expected.away)return null;
-  return {...expected,seconds:landing.clock.secondsRemaining,periods};
+  return {...expected,seconds:landing.clock?.secondsRemaining??NaN,periods};
 }
 
 // The NFL's public scores page embeds structured game cards in its own HTML.

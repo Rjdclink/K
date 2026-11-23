@@ -273,12 +273,12 @@ test('filled order timer is bright red, advances each second and reanchors to li
   assert.match(chosen.innerHTML,/Last score · <strong class="chosen-score">Basaksehir 3<\/strong> · Samsunspor 1/);
 
   assert.match(page,/Only hockey, soccer and football are scanned/);
-  assert.match(page,/30 seconds of actual elapsed time/);
-  assert.match(page,/Soccer full-game and first-half NO use/);
+  assert.match(page,/60 real seconds between independent checks/);
+  assert.match(page,/Full-game NHL and soccer total NO/);
   assert.match(page,/ESPN first, then BBC Sport/);
-  assert.match(page,/stale or contradictory evidence blocks the trade/);
-  assert.match(page,/soccer first-half and full-game NO require a 2\.5-goal cushion/);
-  assert.match(page,/only live full-game regulation stoppage after 90:00 permits a 1\.5-goal cushion/);
+  assert.match(page,/Stale or contradictory evidence blocks the trade/);
+  assert.match(page,/full 2\.5-goal cushion through four combined goals enter strictly under 8:00/);
+  assert.match(page,/1\.5-goal cushion through four goals enters strictly under 1:00 in hockey or in confirmed live soccer regulation stoppage/);
   assert.match(page,/100% fee-inclusive bankroll maximum/);
   assert.match(page,/three goals ahead strictly under 15:30/);
   assert.match(page,/strictly under 9:30/);

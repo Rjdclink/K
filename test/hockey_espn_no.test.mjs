@@ -36,6 +36,9 @@ test('NHL NO requires ESPN proof with independently sourced score, period and pe
  assert.ok(validFreshEspnHockeyNo(reading,state));
  assert.equal((await verifyFreshEspnHockeyNo(state,milestone,{fetcher:mock(board(3,'4:30'))}))?.seconds,270);
  assert.equal((await verifyFreshEspnHockeyNo(state,milestone,{fetcher:mock(board(3,'1:29',3,1))}))?.home,3);
+ const fallback=await verifyFreshEspnHockeyNo(state,milestone,{fetcher:mock(board(3,'garbled'))});
+ assert.equal(fallback?.seconds,state.remainingSeconds);
+ assert.equal(fallback?.clockSource,'Kalshi');
  assert.equal(await verifyFreshEspnHockeyNo(state,milestone,{fetcher:mock(board(4,'1:29'))}),false);
  assert.equal(await verifyFreshEspnHockeyNo(state,milestone,{fetcher:mock(board(),'16')}),false);
  assert.equal(validFreshEspnHockeyNo({...reading,source:'FOX Sports'},state),false);

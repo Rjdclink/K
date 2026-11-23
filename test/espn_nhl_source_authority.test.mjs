@@ -23,9 +23,11 @@ test('NHL scoreboard score and clock are independent of Kalshi displayed values'
  assert.deepEqual([r?.home,r?.away,r?.seconds],[3,1,270]);
  assert.equal(validFreshEspnHockeyNo(r,g),true);
 });
-test('the actual NHL external clock must exist and two proofs cannot run backward',async()=>{
+test('the NHL external clock is preferred, with fresh Kalshi clock fallback; two proofs cannot run backward',async()=>{
  const g=game(),a=await get(g,board('4:30',3,1)),b=await get(g,board('5:30',3,1));
  assert.equal(pairedFreshEspnHockeyNo(a,b,g),false,'clock increases without a period change');
- assert.equal(await get(g,board('n/a',3,1)),false);
+ const fallback=await get(g,board('n/a',3,1));
+ assert.equal(fallback?.seconds,g.remainingSeconds);
+ assert.equal(fallback?.clockSource,'Kalshi');
  assert.equal(await get(g,board('4:30',3,1).events.map(()=>({}))),null);
 });

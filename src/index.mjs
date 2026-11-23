@@ -66,6 +66,7 @@ import {thirdQuarterYardageNo,collegeFootballTotalNo,collegeBasketballTotalNo,hi
 import {verifyIndependentCollegeTotalNo} from './college_total_no.mjs';
 import {tagNoPreflight,validNoPreflight,lateNoPreflightProgress} from './late_no_preflight.mjs';
 import {eligibleNoFinal,dueNoFinalWindows,runImmediateNoFinalPass} from './no_final_priority.mjs';
+import {goalNoWindow} from './goal_no_windows.mjs';
 import {leadFirstProofValid,leadFirstProofReady,leadFinalProofValid} from './lead_verification_timer.mjs';
 import {pairedExternalMatch,configureIndependentFixtureCache} from './independent_match_score.mjs';
 import {validFreshEspnSoccerNo,pairedFreshEspnSoccerNo} from './soccer_espn_no.mjs';
@@ -3605,7 +3606,7 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null,phase='all
   return filled;
 }
 async function scanHockeyTotalNos(games,events,signalSink=null,phase='all'){
-  const allocation=1,entry=300,start=420,reasonPattern='NHL hockey total NO %';
+  const allocation=1,start=960,reasonPattern='NHL hockey total NO %';
   const noDiagnostics=new Map();
   const auditNoCandidate=(c,execution,quote=null)=>{
     const candidate=c;
@@ -3627,7 +3628,7 @@ async function scanHockeyTotalNos(games,events,signalSink=null,phase='all'){
     const list=signalSink.get(c.state.id)||[];
     const item={strategy:'no',ticker:c.market.ticker,
       title:c.market.title||c.market.yes_sub_title||c.market.ticker,
-      reason:signal?.reason||'Rule: NHL NO requires 2.5/3.5 goals; 1.5 only in live full-game OT',
+      reason:signal?.reason||'Rule: NHL full-game NO uses contract-specific 15m, 8m or 1m windows',
       execution,...(c.finalCheck?{final_verification_attempted:true,
         final_verification_passed:c.finalCheck.ok===true,
         final_verification_checked_at:new Date(c.finalCheck.at||c.finalCheck.attemptedAt).toISOString()}:{}),
@@ -3639,9 +3640,9 @@ async function scanHockeyTotalNos(games,events,signalSink=null,phase='all'){
   let watching=games.filter(({state})=>state.sport==='NHL'&&
     ['hockey_match','hockey_game'].includes(state.type)&&[3,4].includes(state.period)&&
     Number.isFinite(state.remainingSeconds)&&state.remainingSeconds>0&&state.remainingSeconds<=start);
-  // Keep initial ESPN preflights early, but never queue a final proof or
-  // new NHL purchase before five minutes from the END of the game.
-  if(phase==='final')watching=watching.filter(g=>finalFiveEntryEligible(g.state));
+  // Initial checks can begin at sixteen minutes; only matching full-game
+  // contracts enter the expanded windows after their separate final proof.
+  if(phase==='final')watching=watching.filter(g=>g.state.remainingSeconds<900);
   if(!live()||!watching.length)return 0;
   let dueWindows=null;
   if(phase==='final'){
@@ -3680,8 +3681,9 @@ async function scanHockeyTotalNos(games,events,signalSink=null,phase='all'){
           phase==='final'&&!dueWindows.has(market.ticker))continue;
         const c={milestone,state,event,market,spec};
         candidates.push(c);found++;
-        report(c,state.remainingSeconds>=entry?'Independent NHL score and period-clock preflight pending':
-          'First independent ESPN check may begin late; final check follows after 30 real seconds');
+        const timing=goalNoWindow(state,market,state.home+state.away,{period:spec.period});
+        report(c,state.remainingSeconds>=(timing?.entrySeconds??300)?'Independent NHL score and period-clock preflight pending':
+          'First independent score check due; final check follows after '+(timing?.waitSeconds??30)+' real seconds');
       }
     }
     if(!found&&signalSink)signalSink.set(state.id,[{
@@ -3701,15 +3703,25 @@ async function scanHockeyTotalNos(games,events,signalSink=null,phase='all'){
   for(const c of candidates){
     try{
       const game=c.state,key=overContractKey(game,c.market);
+      const timing=goalNoWindow(game,c.market,game.home+game.away,{period:c.spec.period});
+      const entry=timing?.entrySeconds??300,first=timing?.firstSeconds??420;
       const window=phase==='final'?dueWindows.get(c.market.ticker):
         (await pool.query('SELECT * FROM hockey_total_no_windows_v2 WHERE market_ticker=$1',
           [c.market.ticker])).rows[0];
+      const firstProof=window?.first_evidence;
+      const elapsed=firstProof?.clockSource!=='Kalshi'&&Number.isFinite(firstProof?.seconds)&&
+        Number.isFinite(firstProof?.checkedAt)?Math.max(0,(Date.now()-firstProof.checkedAt)/1000):NaN;
+      // The projection only schedules a new check. A fresh external reading
+      // decides the actual entry clock and score.
+      const dueSeconds=Number.isFinite(elapsed)?
+        Math.min(game.remainingSeconds,Math.max(0,firstProof.seconds-elapsed)):game.remainingSeconds;
       const due=eligibleNoFinal(window,game,{contractKey:key,
-        firstSeconds:start,entrySeconds:entry,remainingSeconds:game.remainingSeconds,
+        firstSeconds:first,entrySeconds:entry,remainingSeconds:dueSeconds,
+        minWaitSeconds:timing?.waitSeconds??30,
         validFirst:proof=>validFreshEspnHockeyNo(proof,game,Date.now(),{allowHistorical:true})});
       if(phase==='final'&&!due||phase==='initial'&&due)continue;
       const invalidWindow=!validNoPreflight(window,{gameId:game.id,
-        contractKey:key,period:game.period,maxFirstSeconds:start})||
+        contractKey:key,period:game.period,maxFirstSeconds:first})||
         !validFreshEspnHockeyNo(window?.first_evidence,game,Date.now(),{allowHistorical:true});
       if(invalidWindow){
         // Each contract receives a fresh, independently identified ESPN
@@ -3730,13 +3742,13 @@ async function scanHockeyTotalNos(games,events,signalSink=null,phase='all'){
           'contract_key=EXCLUDED.contract_key,period=EXCLUDED.period,'+
           'first_clock=EXCLUDED.first_clock,first_evidence=EXCLUDED.first_evidence,first_at=EXCLUDED.first_at',
           [c.market.ticker,game.id,key,game.period,game.remainingSeconds,JSON.stringify(marked)]);
-        report(c,'First '+marked.source+' score check recorded; awaiting 30 seconds of elapsed time',signal);
+        report(c,'First '+marked.source+' score check recorded; awaiting '+(timing?.waitSeconds??30)+' seconds of elapsed time',signal);
         continue;
       }
-      if(game.remainingSeconds>=entry){
-        report(c,'First '+window.first_evidence.source+' proof saved; awaiting less than 5:00');continue;
+      if(dueSeconds>=entry){
+        report(c,'First '+window.first_evidence.source+' proof saved; awaiting less than '+Math.floor(entry/60)+':'+String(entry%60).padStart(2,'0'));continue;
       }
-      const spacing=lateNoPreflightProgress(window);
+      const spacing=lateNoPreflightProgress(window,Date.now(),timing?.waitSeconds??30);
       if(!spacing.ready){
         report(c,spacing.waitSeconds===null?'Entry blocked: invalid first-verification timestamp':
           'Awaiting '+Math.ceil(spacing.waitSeconds)+' seconds of elapsed time before final independent check');
@@ -3746,11 +3758,12 @@ async function scanHockeyTotalNos(games,events,signalSink=null,phase='all'){
       if(!raw){report(c,'Entry blocked: fresh Kalshi score unavailable');continue;}
       raw._observed_at=new Date().toISOString();
       const fresh=gameState(c.milestone,raw);
-      if(!lateNoPreflightProgress(window).ready){
-        report(c,'Entry blocked: 30-second elapsed-time separation not yet met');continue;
+      if(!lateNoPreflightProgress(window,Date.now(),timing?.waitSeconds??30).ready){
+        report(c,'Entry blocked: external-check elapsed-time separation not yet met');continue;
       }
       const current=(await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market;
-      if(!sameSportsContract(current,c.market)||!hockeyNoMarketSpec(fresh,current)){
+      if(!sameSportsContract(current,c.market)||
+        !hockeyNoMarketSpec(fresh,current,{beforeWindow:true})){
         report(c,'Entry blocked: contract identity, NHL period or clock no longer matches');continue;
       }
       if(pending.rowCount){report(c,'Unresolved NHL NO order; new entry deferred');continue;}
@@ -4262,7 +4275,7 @@ async function scanEarlyPeriodNos(games,events,signalSink=null,sport='NHL',phase
 }
 
 async function scanSoccerTotalNos(games,events,signalSink=null,phase='all'){
-  const allocation=1,entry=300,start=660,reasonPattern='Soccer %total NO %';
+  const allocation=1,start=960,reasonPattern='Soccer %total NO %';
   const noDiagnostics=new Map();
   const auditNoCandidate=(candidate,execution,quote=null)=>{
     if(!candidate?.market?.ticker||!candidate?.state||!execution)return;
@@ -4283,7 +4296,7 @@ async function scanSoccerTotalNos(games,events,signalSink=null,phase='all'){
     const list=signalSink.get(candidate.state.id)||[];
     const item={strategy:'no',ticker:candidate.market.ticker,
       title:candidate.market.title||candidate.market.yes_sub_title||candidate.market.ticker,
-      reason:signal?.reason||'Rule: soccer full-game NO requires 2.5 goals cushion (3.5 after four; 1.5 only in live 90+ stoppage)',
+      reason:signal?.reason||'Rule: soccer full-game NO uses contract-specific 15m, 8m or live stoppage windows',
       execution,...(candidate.finalCheck?{final_verification_attempted:true,
         final_verification_passed:candidate.finalCheck.ok===true,
         final_verification_checked_at:new Date(candidate.finalCheck.at||candidate.finalCheck.attemptedAt).toISOString()}:{}),
@@ -4297,10 +4310,9 @@ async function scanSoccerTotalNos(games,events,signalSink=null,phase='all'){
     Number.isFinite(state.matchRemainingSeconds)&&
     (state.matchRemainingSeconds>0&&state.matchRemainingSeconds<=start||
      soccerStoppageNoWindow(state)));
-  // Full-match ESPN first checks remain scheduled before five minutes,
-  // preserving the mandatory 30-second real-time separation. A final check
-  // cannot preempt a due entry in another game until this match is at 85'+.
-  if(phase==='final')watching=watching.filter(g=>finalFiveEntryEligible(g.state));
+  // Exact full-game lines may need the first check at sixteen minutes.
+  if(phase==='final')watching=watching.filter(g=>g.state.matchRemainingSeconds<900||
+    soccerStoppageNoWindow(g.state));
   if(!live()||!watching.length)return 0;
   let dueWindows=null;
   if(phase==='final'){
@@ -4334,7 +4346,8 @@ async function scanSoccerTotalNos(games,events,signalSink=null,phase='all'){
       const event=events.get(ticker);
       if(event?.category!=='Sports')continue;
       for(const market of event.markets||[]){
-        const spec=soccerNoMarketSpec(state,market,{beforeWindow:true});
+        const spec=soccerNoMarketSpec(state,market,{beforeWindow:true})||
+          soccerNoMarketSpec(state,market);
         if(!spec||market.event_ticker!==ticker||
           phase==='final'&&!dueWindows.has(market.ticker))continue;
         const c={milestone,state,event,market,spec};
@@ -4357,17 +4370,26 @@ async function scanSoccerTotalNos(games,events,signalSink=null,phase='all'){
   for(const c of candidates){
     try{
       const game=c.state,key=overContractKey(game,c.market);
+      const timing=goalNoWindow(game,c.market,game.home+game.away);
+      const entry=timing?.entrySeconds??300,first=timing?.firstSeconds??660;
       const window=phase==='final'?dueWindows.get(c.market.ticker):
         (await pool.query('SELECT * FROM soccer_total_no_windows WHERE market_ticker=$1',
           [c.market.ticker])).rows[0];
+      const firstProof=window?.first_evidence;
+      const elapsed=firstProof?.clockSource!=='Kalshi'&&Number.isFinite(firstProof?.elapsedMinute)&&
+        Number.isFinite(firstProof?.checkedAt)?Math.max(0,(Date.now()-firstProof.checkedAt)/1000):NaN;
+      const dueSeconds=Number.isFinite(elapsed)?
+        Math.min(game.matchRemainingSeconds,
+          Math.max(0,(90-firstProof.elapsedMinute)*60-elapsed)):game.matchRemainingSeconds;
       const due=eligibleNoFinal(window,game,{contractKey:key,
-        firstSeconds:start,entrySeconds:entry,remainingSeconds:game.matchRemainingSeconds,
-        allowZeroClock:soccerStoppageNoWindow(game),
+        firstSeconds:first,entrySeconds:entry,remainingSeconds:dueSeconds,
+        allowZeroClock:soccerStoppageNoWindow(game)||Number.isFinite(elapsed)&&dueSeconds===0,
+        minWaitSeconds:timing?.waitSeconds??30,stoppageOnly:timing?.stoppageOnly??false,
         validFirst:proof=>validFreshEspnSoccerNo(proof,game,Date.now(),{allowHistorical:true})});
       if(phase==='final'&&!due||phase==='initial'&&due)continue;
       const invalidWindow=!validNoPreflight(window,{gameId:game.id,
-        contractKey:key,period:game.period,maxFirstSeconds:start,
-        allowZeroClock:soccerStoppageNoWindow(game)})||
+        contractKey:key,period:game.period,maxFirstSeconds:first,
+        allowZeroClock:soccerStoppageNoWindow(game)&&!timing?.stoppageOnly})||
         !validFreshEspnSoccerNo(window?.first_evidence,game,Date.now(),{allowHistorical:true});
       if(invalidWindow){
         // Check the Kalshi cushion before requesting independent evidence.
@@ -4397,13 +4419,16 @@ async function scanSoccerTotalNos(games,events,signalSink=null,phase='all'){
           'first_clock=EXCLUDED.first_clock,first_evidence=EXCLUDED.first_evidence,'+
           'first_at=EXCLUDED.first_at',
           [c.market.ticker,game.id,key,game.period,game.matchRemainingSeconds,JSON.stringify(marked)]);
-        report(c,'First '+marked.source+' score check recorded; awaiting 30 seconds of elapsed time',signal);
+        report(c,'First '+marked.source+' score check recorded; awaiting '+(timing?.waitSeconds??30)+' seconds of elapsed time',signal);
         continue;
       }
-      if(game.matchRemainingSeconds>=entry){
-        report(c,'First '+window.first_evidence.source+' check saved; awaiting strictly under 5:00');continue;
+      if(!timing?.stoppageOnly&&dueSeconds>=entry){
+        report(c,'First '+window.first_evidence.source+' check saved; awaiting strictly under '+Math.floor(entry/60)+':'+String(entry%60).padStart(2,'0'));continue;
       }
-      const spacing=lateNoPreflightProgress(window);
+      if(timing?.stoppageOnly&&dueSeconds!==0){
+        report(c,'First '+window.first_evidence.source+' check saved; awaiting live stoppage time');continue;
+      }
+      const spacing=lateNoPreflightProgress(window,Date.now(),timing?.waitSeconds??30);
       if(!spacing.ready){
         report(c,spacing.waitSeconds===null?'Entry blocked: invalid first-verification timestamp':
           'Awaiting '+Math.ceil(spacing.waitSeconds)+' seconds of elapsed time before final independent check');
@@ -4413,11 +4438,13 @@ async function scanSoccerTotalNos(games,events,signalSink=null,phase='all'){
       if(!raw){report(c,'Entry blocked: fresh Kalshi soccer score unavailable');continue;}
       raw._observed_at=new Date().toISOString();
       const fresh=gameState(c.milestone,raw);
-      if(!lateNoPreflightProgress(window).ready){
-        report(c,'Entry blocked: 30-second elapsed-time separation not yet met');continue;
+      if(!lateNoPreflightProgress(window,Date.now(),timing?.waitSeconds??30).ready){
+        report(c,'Entry blocked: external-check elapsed-time separation not yet met');continue;
       }
       const current=(await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market;
-      if(!sameSportsContract(current,c.market)||!soccerNoMarketSpec(fresh,current)){
+      if(!sameSportsContract(current,c.market)||
+        !soccerNoMarketSpec(fresh,current,{beforeWindow:true})&&
+        !soccerNoMarketSpec(fresh,current)){
         report(c,'Entry blocked: soccer total contract or final match clock changed');continue;
       }
       if(pending.rowCount){report(c,'Unresolved soccer NO order; new entry deferred');continue;}

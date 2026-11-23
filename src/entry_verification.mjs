@@ -19,7 +19,11 @@ export function rememberIndependentEntry(game,market,verificationId,requestedAt,
   game.independentEntry={contractKey:sportsContractKey(game,market),verificationId,
     requestedAt:proofAt,overValue,
     ...(scored?{score:{source:score.source,eventId:String(score.eventId),
-      gameId:game.id,home:score.home,away:score.away,checkedAt:proofAt}}:{})};
+      gameId:game.id,home:score.home,away:score.away,checkedAt:proofAt,
+      period:score.period,
+      clockSource:score.clockSource||score.source,
+      ...(Number.isFinite(score.elapsedMinute)?{elapsedMinute:score.elapsedMinute}:{}),
+      ...(Number.isFinite(score.seconds)?{seconds:score.seconds}:{})}}:{})};
 }
 export function independentEntryValid(game,market,now=Date.now()){
   const proof=game?.independentEntry;
@@ -43,5 +47,5 @@ export function assertExternalPurchase(path,method,body,entries,now=Date.now()){
     single&&(entries.length!==1||body.ticker!==entries[0].market.ticker))
     throw Object.assign(Error('Fresh independent external verification is mandatory before a purchase'),{code:'LOCAL_EXTERNAL_VERIFICATION_REQUIRED'});
   for(const {game,market} of entries)assertNewEntryAllowed(game,market);
-  assertFinalFiveEntry(entries);
+  assertFinalFiveEntry(entries,{side:single?body.side:null});
 }

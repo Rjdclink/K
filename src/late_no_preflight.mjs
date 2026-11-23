@@ -20,11 +20,11 @@ export function validNoPreflight(window,{gameId,contractKey,period,maxFirstSecon
     typeof proof.eventId==='string'&&proof.eventId.length>0;
 }
 
-export function lateNoPreflightProgress(window,now=Date.now()){
+export function lateNoPreflightProgress(window,now=Date.now(),minimumSeconds=NO_PREFLIGHT_MIN_SECONDS){
   const firstAt=new Date(window?.first_at).getTime(),elapsed=now-firstAt;
   if(!Number.isFinite(firstAt)||!Number.isFinite(elapsed)||elapsed<0){
     return {ready:false,waitSeconds:null,elapsedMs:null};
   }
-  const waitSeconds=Math.max(0,(NO_PREFLIGHT_MIN_SECONDS*1000-elapsed)/1000);
+  const waitSeconds=Math.max(0,(minimumSeconds*1000-elapsed)/1000);
   return {ready:waitSeconds===0,waitSeconds,elapsedMs:elapsed};
 }

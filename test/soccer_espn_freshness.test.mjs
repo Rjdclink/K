@@ -43,9 +43,14 @@ test('finished match or mismatched period cannot verify NO even with matching sc
 test('stale HTTP CDN score responses must be rejected',async()=>{
  assert.equal(await verify(game(),scoreboard(),40),false);
 });
-test('missing and malformed ESPN clocks fail closed instead of using request time',async()=>{
- assert.equal(await verify(game(),scoreboard('garbled')),false);
- assert.equal(await verify(game(),scoreboard('')),false);
+test('missing ESPN clock uses the fresh Kalshi minute while ESPN verifies score and fixture',async()=>{
+ for(const clock of ['garbled','']){
+  const g=game(),proof=await verify(g,scoreboard(clock));
+  assert.equal(proof?.elapsedMinute,g.soccerMinute);
+  assert.equal(proof?.clockSource,'Kalshi');
+  assert.equal(validFreshEspnSoccerNo(proof,g),true);
+ }
+ assert.equal(await verify({...game(),observedAt:Date.now()-11000},scoreboard('')),null);
 });
 test('90-plus stoppage score can verify from ESPN apostrophe plus syntax',async()=>{
  const g=game(94),p=await verify(g,scoreboard("90'+4'"));

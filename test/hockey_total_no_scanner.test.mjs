@@ -14,6 +14,7 @@ import {validFreshEspnHockeyNo,pairedFreshEspnHockeyNo,HOCKEY_ESPN_POLICY} from 
 import {bestNoAsk,noDepthAtAsk} from '../src/no_strategy.mjs';
 import {sameSportsContract,overContractKey} from '../src/over_verification.mjs';
 import {rememberIndependentEntry} from '../src/entry_verification.mjs';
+import {goalNoWindow} from '../src/goal_no_windows.mjs';
 
 const milestone={id:'nhl-scanner',title:'Away at Home',type:'hockey_match',start_date:'2026-11-19T23:00:00Z',
   details:{league:'NHL',home_team_id:'home-id',away_team_id:'away-id',main_game_event_ticker:'KXNHLGAME-TEST'}};
@@ -41,9 +42,9 @@ function harness({ageMs=61000,canVerify=true,hasSeller=true,unprofitable=false,e
   assert.ok(a>0&&b>a,'hockey scanner must be an isolated function in the total-NO pipeline');
   const code=src.slice(a,b);
   let n=0,verifications=0,orders=0,allocation=null,availablePool=null,livePeriod=3,liveClock='4:59';
-  const windows=new Map(),dashboard=new Map(),trace=[];
+  const windows=new Map(),dashboard=new Map(),trace=[],filledTickers=new Set();
   const held={ticker:'KXNHLTOTAL-OLD',position_fp:-1,market_exposure_dollars:'4.00',fees_paid_dollars:'0.50'};
-  const context=vm.createContext({finalFiveEntryEligible,eligibleNoFinal,launchImmediateNoFinalFixtures,immediateNoFinalProof,dueNoFinalWindows,noFinalCheckpoint,noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,scheduleNoLiquidityRecheck:()=>{},recordDecision:async()=>{},pairedExternalMatch,validFreshEspnHockeyNo,pairedFreshEspnHockeyNo,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,
+  const context=vm.createContext({finalFiveEntryEligible,eligibleNoFinal,launchImmediateNoFinalFixtures,immediateNoFinalProof,dueNoFinalWindows,noFinalCheckpoint,noAskTimeout,waitingOnAsk,NO_ASK_RETIRED,noAskKey,scheduleNoLiquidityRecheck:()=>{},recordDecision:async()=>{},pairedExternalMatch,validFreshEspnHockeyNo,pairedFreshEspnHockeyNo,tagNoPreflight,validNoPreflight,lateNoPreflightProgress,goalNoWindow,
     Date,JSON,Number,Math,Promise,console,live:()=>true,
     liveBatch:async()=>new Map(),
     linkedEventTickers:()=>markets.map(x=>x.event_ticker),
@@ -65,7 +66,10 @@ function harness({ageMs=61000,canVerify=true,hasSeller=true,unprofitable=false,e
           first_clock:args[4],first_evidence:JSON.parse(args[5]),first_at:new Date(Date.now()-ageMs)});
         return {rows:[],rowCount:1};
       }
-      if(sql.startsWith('SELECT 1 FROM trade_attempts'))return {rows:globalPending&&sql.includes("WHERE strategy='no'")?[{id:'pending'}]:[],rowCount:globalPending&&sql.includes("WHERE strategy='no'")?1:0};
+      if(sql.startsWith('SELECT 1 FROM trade_attempts')){
+        const blocked=globalPending&&sql.includes("WHERE strategy='no'")||filledTickers.has(args[0]);
+        return {rows:blocked?[{id:'pending'}]:[],rowCount:blocked?1:0};
+      }
       if(sql.startsWith('SELECT market_ticker,fill_count'))return {rows:existingExposure?[{market_ticker:held.ticker}]:[]};
       return {rows:[],rowCount:1};
     }},
@@ -78,7 +82,7 @@ function harness({ageMs=61000,canVerify=true,hasSeller=true,unprofitable=false,e
       if(path.endsWith('/orderbook')){trace.push('orderbook');return {orderbook_fp:{yes_dollars:hasSeller?[['0.95','100']]:[]}};}
       if(path.startsWith('/markets/'))return {market:markets.find(x=>path.includes(x.ticker))};
       if(path==='/portfolio/events/orders'){
-        orders++;trace.push('order');
+        orders++;filledTickers.add(opts.body.ticker);trace.push('order');
         assert.equal(opts.body.side,'ask');opts.beforeDispatch();
         return {fill_count_fp:'1',order_id:'filled'};
       }
@@ -108,21 +112,23 @@ function harness({ageMs=61000,canVerify=true,hasSeller=true,unprofitable=false,e
   };
 }
 
-test('NHL NO checks both full-game and P3, with independent 7:00 preflight then one fresh proof per entry under 5:00',async()=>{
+test('NHL full-game starts at 9:00 and enters under 8:00; P3 keeps 7:00 and 5:00',async()=>{
   const h=harness();
-  assert.equal(await h.scan('7:01'),0);
+  assert.equal(await h.scan('9:01'),0);
   assert.equal(h.verifications,0);
+  assert.equal(await h.scan('9:00'),0);
+  assert.equal(h.windows.size,1);
+  assert.equal(await h.scan('8:00'),0);
+  assert.equal(h.orders,0,'strictly under 480s required for the full-game line');
+  assert.equal(await h.scan('7:59'),1);
   assert.equal(await h.scan('7:00'),0);
   assert.equal(h.windows.size,2,'track separate windows for game and third period');
-  assert.equal(h.orders,0);
-  assert.equal(await h.scan('6:00'),0);
-  assert.equal(h.orders,0,'strictly under 300s required');
-  assert.equal(await h.scan('4:59'),2);
+  assert.equal(await h.scan('4:59'),1);
   assert.equal(h.orders,2,'both distinct markets can qualify');
   assert.equal(h.allocation,1);
   assert.ok(h.trace.lastIndexOf('external')<h.trace.lastIndexOf('reserve'),'external immediately precedes reservation');
-  assert.ok(h.trace.indexOf('external',h.trace.indexOf('external')+1)<h.trace.indexOf('orderbook'),'first eligible final check precedes first NO book probe');
-  assert.ok(h.trace.lastIndexOf('orderbook')<h.trace.lastIndexOf('external'),'last contract verifies ESPN only after its executable NO seller is established');
+  assert.ok(h.trace.indexOf('orderbook')<h.trace.lastIndexOf('external'),'the final proof follows executable depth');
+  assert.ok(h.trace.includes('orderbook')&&h.trace.includes('external'),'each entry checks both live liquidity and external evidence');
   assert.deepEqual(new Set((h.dashboard.get(milestone.id)||[]).filter(x=>x.strategy==='no').map(x=>x.ticker)),
     new Set(markets.map(x=>x.ticker)));
 });
@@ -221,18 +227,17 @@ test('NHL overtime scanner verifies and trades full-game NO only, not a third-pe
 
 test('due NHL final verification cuts ahead of another contract without first proof',async()=>{
  const h=harness();
- assert.equal(await h.scan('7:00',3,'final'),0);
+ assert.equal(await h.scan('9:00',3,'final'),0);
  assert.equal(h.verifications,0,'final lane does not invent an initial ESPN proof');
- assert.equal(await h.scan('7:00',3,'initial'),0);
- assert.equal(h.windows.size,2);
- h.windows.delete(markets[1].ticker);
- assert.equal(await h.scan('5:59',3,'final'),0,'6-minute NHL entry is too early under new game-end rule');
- assert.equal(await h.scan('4:59',3,'final'),1,'already-verified ticket is processed in the final five minutes');
+ assert.equal(await h.scan('9:00',3,'initial'),0);
+ assert.equal(h.windows.size,1);
+ assert.equal(await h.scan('8:00',3,'final'),0,'the full-game line requires strictly less than eight minutes');
+ assert.equal(await h.scan('7:59',3,'final'),1,'already-verified full-game line gets the due final check');
  assert.equal(h.orders,1);
- assert.equal(h.verifications,3,'two initial proofs and only one due final');
- assert.equal(await h.scan('5:59',3,'initial'),0,'missing first may start only afterward');
+ assert.equal(h.verifications,2,'one initial proof and one due final');
+ assert.equal(await h.scan('7:00',3,'initial'),0,'missing third-period first proof starts afterward');
  assert.equal(h.orders,1,'initial lane never repeats a completed final');
- assert.equal(h.verifications,4);
+ assert.equal(h.verifications,3);
 });
 
 test('NHL full and third-period NO do not waste an additional ESPN request on a net-unprofitable executable quote',async()=>{

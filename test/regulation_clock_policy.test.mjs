@@ -30,7 +30,7 @@ test('Dewa–Persita exact total is eligible for initial 9-minute check without 
   assert.ok(soccerNoMarketSpec(mk("81'"),market,{beforeWindow:true}));
   assert.equal(soccerTotalNo(mk("81'"),market),null);
   assert.equal(soccerTotalNo(mk("82'"),market),null);
-  assert.equal(soccerTotalNo(mk("82:01'"),market),null);
+  assert.equal(soccerTotalNo(mk("82:01'"),market)?.total,1);
   assert.equal(soccerTotalNo(mk("85:01'"),market)?.total,1);
   assert.equal(soccerTotalNo(mk("89:59'"),market)?.total,1);
   assert.equal(soccerTotalNo(mk("90+5'"),market)?.total,1,'explicit live 90+ stoppage permits verified NO while the market remains open');

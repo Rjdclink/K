@@ -23,9 +23,9 @@ function market(line,half=false){
  rules_primary:half?'If the total goals scored by Away and Home is more than '+line+' goals in the 1st Half of the Away vs Home professional EPL soccer game originally scheduled for Nov 21, 2026, then the market resolves to Yes.':
  'If over '+line+' goals are scored in the Away vs Home professional EPL soccer game originally scheduled for Nov 21, 2026 after 90 minutes plus stoppage time (does not include extra time or penalties), then the market resolves to Yes.'};
 }
-test('before 90 full-game needs 2.5 cushion at 0–3 goals, 3.5 at four or more',()=>{
+test('before 90 full-game accepts a 2.5 cushion through four goals',()=>{
  for(const [h,a,yes,no] of [[0,0,2.5,1.5],[1,0,3.5,2.5],[1,1,4.5,3.5],
-  [2,1,5.5,4.5],[2,2,7.5,6.5],[3,2,8.5,7.5],[4,2,9.5,8.5]]){
+  [2,1,5.5,4.5],[2,2,6.5,5.5],[3,2,8.5,7.5],[4,2,9.5,8.5]]){
   assert.equal(soccerTotalNo(game(h,a),market(yes))?.total,h+a>=5?undefined:h+a);
   assert.equal(soccerTotalNo(game(h,a),market(no)),null);
   assert.equal(soccerTotalNo(game(h,a),market(yes),{beforeWindow:true})?.total,h+a>=5?undefined:h+a);
@@ -39,13 +39,14 @@ test('first-half keeps 2.5/3.5 cushion and never uses full-time added-time excep
  }
  assert.equal(soccerFirstHalfNo(game(0,0,"45+2'",'1st'),market(1.5,true)),null);
 });
-test('live explicit 90+ stoppage allows a 1.5 cushion below five combined goals',()=>{
+test('1.5 cushion first verifies by 89 minutes and enters only in live 90+ stoppage below five goals',()=>{
  for(const [h,a,line] of [[0,0,1.5],[1,0,2.5],[1,2,4.5],[2,2,5.5],[3,2,6.5]]){
   const g=game(h,a,"90+2'");
   assert.equal(soccerStoppageNoWindow(g),true);
-  assert.equal(soccerNoMarketSpec(g,market(line),{beforeWindow:true})?.line,line);
+  assert.equal(soccerTotalNo(game(h,a,"89'"),market(line),{beforeWindow:true})?.total,
+    h+a<5?h+a:undefined);
   assert.equal(soccerTotalNo(g,market(line))?.total,h+a>=5?undefined:h+a);
-  assert.equal(soccerTotalNo(g,market(line-1)),null);
+  assert.equal(soccerTotalNo(g,market(line-1))?.total,h+a===3?3:undefined);
  }
 });
 test('no entry at 90:00 without added time or in final/extra/paused/stale markets',()=>{
@@ -81,7 +82,7 @@ test('confirmed 90+ regulation stoppage is urgent for frequent market discovery'
 });
 test('independently verified scores choose the required pre-90 or 90+ cushion',()=>{
  const proof={source:'ESPN',eventId:'match-id',gameId:milestone.id,home:2,away:2,live:true};
- assert.equal(soccerTotalNo(game(1,2),market(6.5),{external:proof}),null);
+ assert.equal(soccerTotalNo(game(1,2),market(6.5),{external:proof})?.total,4);
  assert.equal(soccerTotalNo(game(1,2),market(7.5),{external:proof})?.total,4);
  assert.equal(soccerTotalNo(game(1,2,"90+2'"),market(5.5),{external:proof})?.total,4);
  assert.equal(soccerTotalNo(game(1,2,"90+2'"),market(4.5),{external:proof}),null);

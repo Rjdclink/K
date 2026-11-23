@@ -21,23 +21,24 @@ const market=(third=false,line=4.5)=>({
   rules_primary:'If the teams collectively score more than '+line+' goals in the '+
     (third?'3rd Period of the ':'')+'Away vs Home NHL game originally scheduled for Nov 20, 2026, then the market resolves to Yes.'
 });
-test('NHL NO preflight starts exactly at 7:00 remaining and entry is strictly below 5:00',()=>{
+test('NHL full-game 2.5 cushion starts at 9:00 and enters under 8:00; P3 keeps 7:00 and 5:00',()=>{
   for(const third of [false,true]){
-    assert.equal(hockeyNoMarketSpec(state('7:01'),market(third),{beforeWindow:true}),null);
-    assert.ok(hockeyNoMarketSpec(state('7:00'),market(third),{beforeWindow:true}));
-    assert.equal(hockeyTotalNo(state('6:00'),market(third)),null);
-    assert.equal(hockeyTotalNo(state('5:00'),market(third,third?2.5:5.5)),null);
-    assert.ok(hockeyTotalNo(state('4:59'),market(third,third?2.5:5.5)));
+    const quote=market(third,third?4.5:5.5);
+    assert.equal(hockeyNoMarketSpec(state(third?'7:01':'9:01'),quote,{beforeWindow:true}),null);
+    assert.ok(hockeyNoMarketSpec(state(third?'7:00':'9:00'),quote,{beforeWindow:true}));
+    assert.equal(hockeyTotalNo(state(third?'6:00':'8:00'),quote),null);
+    assert.equal(hockeyTotalNo(state(third?'5:00':'8:00'),market(third,third?2.5:5.5)),null);
+    assert.ok(hockeyTotalNo(state(third?'4:59':'7:59'),market(third,third?2.5:5.5)));
     assert.equal(hockeyTotalNo(state('0:00'),market(third)),null);
   }
 });
-test('NHL full-game NO requires 2.5 at three scored, 3.5 at four scored',()=>{
+test('NHL full-game NO accepts a 2.5 cushion through four scored',()=>{
   assert.equal(hockeyTotalNo(state('4:29'),market(false,5.5))?.total,3);
   assert.equal(hockeyTotalNo(state('4:29'),market(false,4.5)),null);
   assert.equal(hockeyTotalNo(state('4:29'),market(false,4.0)),null);
-  assert.equal(hockeyTotalNo(state('4:29'),market(false,3.5)),null);
+  assert.equal(hockeyTotalNo(state('4:29'),market(false,3.5))?.total,3);
   assert.equal(hockeyTotalNo(state('4:29',3,1),market(false,7.5))?.total,4,'four scored need 3.5 cushion');
-  assert.equal(hockeyTotalNo(state('4:29',3,1),market(false,6.5)),null,'four scored with only 2.5 cushion fail');
+  assert.equal(hockeyTotalNo(state('4:29',3,1),market(false,6.5))?.total,4,'four scored with 2.5 cushion qualifies');
   assert.equal(hockeyTotalNo(state('4:29',3,1),market(false,5.5)),null);
   assert.equal(hockeyTotalNo(state('4:29',3,1),market(false,4.5)),null);
 });

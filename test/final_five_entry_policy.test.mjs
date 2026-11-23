@@ -124,7 +124,7 @@ test('the five-minute protection runs at the shared exchange purchase dispatch, 
 });
 
 
-test('due-final NO candidates that cannot enter before game-end five minutes never start final market verification',()=>{
+test('due-final NO candidates stay within each sport and contract window',()=>{
  const src=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
  const hockey=src.slice(src.indexOf('async function scanHockeyTotalNos('),
    src.indexOf('async function scanEarlyPeriodNos('));
@@ -132,7 +132,7 @@ test('due-final NO candidates that cannot enter before game-end five minutes nev
    src.indexOf('async function scanNoncushionedPlayerOvers('));
  const early=src.slice(src.indexOf('async function scanEarlyPeriodNos('),
    src.indexOf('async function scanSoccerTotalNos('));
- assert.match(hockey,/if\(phase==='final'\)watching=watching\.filter\(g=>finalFiveEntryEligible\(g\.state\)\)/);
- assert.match(soccer,/if\(phase==='final'\)watching=watching\.filter\(g=>finalFiveEntryEligible\(g\.state\)\)/);
+ assert.match(hockey,/if\(phase==='final'\)watching=watching\.filter\(g=>g\.state\.remainingSeconds<900\)/);
+ assert.match(soccer,/if\(phase==='final'\)watching=watching\.filter\(g=>g\.state\.matchRemainingSeconds<900\|\|/);
  assert.match(early,/if\(phase==='final'&&\(hockey\|\|sport==='Soccer'\)\)return 0;/);
 });

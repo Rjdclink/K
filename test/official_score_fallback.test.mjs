@@ -38,8 +38,8 @@ test('BBC live fixture supplies score, minute and exact identity after ESPN retr
   ['BBC Sport','s-123',0,1,87]);
  assert.equal(pairedExternalMatch({source:'ESPN',eventId:'old',gameId:game.id,home:0,away:1},proof,game),true);
 });
-test('BBC rejects missing clocks, nonlive status, wrong scores and stale pages',async()=>{
- assert.equal(parseBbcScores(bbc([bbcEvent({periodLabel:{value:''}})])).length,0);
+test('BBC can verify a live score without a clock; nonlive, wrong fixtures and stale pages fail',async()=>{
+ assert.equal(parseBbcScores(bbc([bbcEvent({periodLabel:{value:''}})]))[0]?.period,null);
  assert.equal(parseBbcScores(bbc([bbcEvent({periodLabel:{value:"90+3'"}})]))[0]?.elapsedMinute,93);
  assert.equal(parseBbcScores(bbc([bbcEvent({status:'PostEvent'})])).length,0);
  assert.equal(parseBbcScores(bbc([bbcEvent({home:{fullName:'Alpha'}})])).length,0);
@@ -47,6 +47,15 @@ test('BBC rejects missing clocks, nonlive status, wrong scores and stale pages',
  const proof=await fetchIndependentMatchScore(game,milestone,{espnFeed:null,
   fetcher:async url=>response(url,{events:[bbcEvent({home:{fullName:'Other',score:'0'}})]})});
  assert.equal(proof,null);
+});
+test('BBC clockless live fixture uses fresh Kalshi time after exact score matching',async()=>{
+ const proof=await verifyFreshEspnSoccerNo(game,milestone,{fetcher:async url=>
+  response(url,{events:[bbcEvent({periodLabel:{value:''}})]})});
+ assert.deepEqual([proof?.source,proof?.home,proof?.away,proof?.period,
+  proof?.elapsedMinute,proof?.clockSource],['BBC Sport',0,1,2,87,'Kalshi']);
+ const stale=await verifyFreshEspnSoccerNo({...game,observedAt:Date.now()-11000},milestone,
+  {fetcher:async url=>response(url,{events:[bbcEvent({periodLabel:{value:''}})]})});
+ assert.equal(stale,null);
 });
 test('two distinct BBC proofs work when ESPN does not list the soccer fixture',async()=>{
  const fetcher=async url=>response(url),first=await verifyFreshEspnSoccerNo(game,milestone,{fetcher});
@@ -67,6 +76,17 @@ test('NHL live score requires a matching gamecenter scoring timeline and clock',
  assert.equal(first?.source,'NHL');
  assert.deepEqual(first?.periods.map(p=>p.home),[1,1,0]);
  assert.equal(pairedFreshEspnHockeyNo(first,second,hockey),true);
+});
+test('NHL clockless gamecenter uses the fresh Kalshi period clock with external scoring timeline',async()=>{
+ const hockey={...game,type:'hockey_match',sport:'NHL',period:3,home:2,away:1,
+  remainingSeconds:240};
+ const clockless={...nhlLanding,clock:{inIntermission:false}};
+ const fetcher=async url=>({ok:true,headers:new Headers({age:'0'}),
+  json:async()=>url.includes('/landing')?clockless:{games:[nhlGame]}});
+ const proof=await verifyFreshEspnHockeyNo(hockey,milestone,{fetcher});
+ assert.equal(proof?.source,'NHL');
+ assert.equal(proof?.seconds,240);
+ assert.equal(proof?.clockSource,'Kalshi');
 });
 test('NFL page only accepts a live, scored quarter with an independent clock',()=>{
  const card={gameId:'uuid-123',gameTime:start,gameSummary:{phase:'LIVE',quarter:'Q4',clock:'02:13',

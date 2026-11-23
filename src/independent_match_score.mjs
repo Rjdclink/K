@@ -175,12 +175,19 @@ export async function fetchIndependentMatchScore(game,milestone,{fetcher=fetch,e
   const reading=distinct[0];
   if(!String(reading.eventId||'').trim())return null;
   if(reading.live!==true)return false;
+  const clockless=reading.source==='BBC Sport'?!Number.isFinite(reading.elapsedMinute):
+    reading.source==='NHL'&&!Number.isFinite(reading.seconds);
+  if(clockless&&(!Number.isFinite(game.observedAt)||Date.now()-game.observedAt>10000||
+    game.observedAt>Date.now()||!Number.isInteger(game.period)||
+    (reading.source==='BBC Sport'?!Number.isFinite(game.soccerMinute):
+      !Number.isFinite(game.remainingSeconds))))return null;
+  const period=reading.period??(reading.source==='BBC Sport'&&clockless?game.period:null);
   if(!Number.isInteger(reading.home)||!Number.isInteger(reading.away)||
-    !Number.isInteger(reading.period)||
-    (reading.source==='BBC Sport'?!Number.isFinite(reading.elapsedMinute):
-      !Number.isFinite(reading.seconds)))return null;
+    !Number.isInteger(period)||
+    (reading.source==='BBC Sport'?!Number.isFinite(reading.elapsedMinute)&&!clockless:
+      !Number.isFinite(reading.seconds)&&!clockless))return null;
   return {source:reading.source,eventId:reading.eventId,gameId:game.id,
-    home:reading.home,away:reading.away,period:reading.period,
+    home:reading.home,away:reading.away,period,
     periods:reading.periods,seconds:reading.seconds,elapsedMinute:reading.elapsedMinute,
     sourceAgeMs:reading.sourceAgeMs,live:true};
 

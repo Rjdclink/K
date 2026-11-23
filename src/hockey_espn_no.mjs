@@ -97,12 +97,18 @@ export async function verifyFreshEspnHockeyNo(game,milestone,{fetcher=fetch}={})
   if(!Number.isInteger(fallback.period)||fallback.period!==game.period||
     !Number.isInteger(fallback.home)||!Number.isInteger(fallback.away))return false;
   const at=Date.now();
-  const proof={...fallback,verificationPolicy:HOCKEY_ESPN_POLICY,requestId,
+  const proof={...fallback,seconds:Number.isFinite(fallback.seconds)?fallback.seconds:game.remainingSeconds,
+    clockSource:Number.isFinite(fallback.seconds)?fallback.source:'Kalshi',
+    verificationPolicy:HOCKEY_ESPN_POLICY,requestId,
     checkedAt:at-(fallback.sourceAgeMs||0),
     period3:fallback.periods?.[2]||null,
     currentPeriod:fallback.periods?.[game.period-1]||null};
   return validFreshEspnHockeyNo(proof,game,at)?proof:false;
  }
+ const externalClocks=found.map(match=>match.seconds).filter(Number.isFinite);
+ const selectedClock=externalClocks.length?externalClocks[0]:game.remainingSeconds;
+ if(externalClocks.some(seconds=>seconds!==selectedClock))return false;
+ for(const match of found)if(!Number.isFinite(match.seconds))match.seconds=selectedClock;
  if(found.some(match=>!match.eventId||match.live!==true||match.period!==game.period||
   !Number.isInteger(match.home)||!Number.isInteger(match.away)||
   match.home<0||match.away<0||!Number.isFinite(match.seconds)||
@@ -114,6 +120,7 @@ export async function verifyFreshEspnHockeyNo(game,milestone,{fetcher=fetch}={})
  const reading={source:'ESPN',verificationPolicy:HOCKEY_ESPN_POLICY,
   requestId,checkedAt:at,eventId:String(match.eventId),gameId:game.id,
   home:match.home,away:match.away,period:match.period,seconds:match.seconds,
+  clockSource:externalClocks.length?'ESPN':'Kalshi',
   live:true,periods:match.periods||[],
   period3:match.periods?.[2]?
    {home:match.periods[2].home,away:match.periods[2].away}:null,

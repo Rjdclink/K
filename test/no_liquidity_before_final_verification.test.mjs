@@ -49,7 +49,7 @@ test('a final proof still has a ten-second dispatch freshness rule and keeps fir
  for(const [label,a,b] of sections){
   const scan=source.slice(source.indexOf(a),source.indexOf(b,source.indexOf(a)+1));
   assert.ok(scan.includes('noFinalCheckpoint('),label);
-  assert.match(scan,/lateNoPreflightProgress\(window\)/,label);
+  assert.match(scan,/lateNoPreflightProgress\(window(?:,Date\.now\(\),[^)]*)?\)/,label);
   assert.match(scan,/finalCheck\??\.newCheck&&Date\.now\(\)-finalCheck\.at<8000/,label);
   assert.match(scan,/Date\.now\(\)-externalCheckedAt>10000/,label);
  }
