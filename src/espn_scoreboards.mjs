@@ -20,7 +20,15 @@ const soccerLeagueSlugs={
  'english championship':'eng.2','efl championship':'eng.2',
  '2. bundesliga':'ger.2','german 2. bundesliga':'ger.2',
  'russian premier league':'rus.1',
- 'mls':'usa.1','major league soccer':'usa.1'
+ 'mls':'usa.1','major league soccer':'usa.1',
+ // Exact Kalshi league labels whose current games exist on ESPN's small
+ // league boards. A missing fixture may still fall back to ESPN's all board;
+ // team identity, kickoff, score, period, and CDN freshness remain mandatory.
+ 'chile liga de primera':'chi.1',
+ 'argentine nacional b':'arg.2',
+ 'argentina primera division':'arg.1',
+ 'liga mx':'mex.1',
+ 'bolivia premier division':'bol.1'
 };
 export function espnSoccerLeagueFeed(milestone){
  const league=String(milestone?.details?.league||'').trim().toLowerCase();
