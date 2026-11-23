@@ -5533,6 +5533,9 @@ async function refreshOpenClocks(){
     }));
   }catch(e){console.warn('Dashboard clock refresh deferred:',e.message)}
 }
+// When account/position APIs delay the full dashboard, the sports panel still
+// has a fast, read-only DB-backed feed. Neither this path nor the catalog
+// projection performs an orderbook lookup or grants trading eligibility.
 const DASHBOARD_GAMES_SQL=`SELECT id,title,sport,home,away,possession_side,status,time_left,scanned_at,score_observed_at,signals FROM game_snapshots
     WHERE status IN ('live','inprogress','started') AND GREATEST(score_observed_at,scanned_at)>now()-interval '15 minutes'
       AND sport_family ~* '^(hockey|soccer|football)_'
@@ -5546,6 +5549,12 @@ function dashboardFreshness(game,now=Date.now()){
   game.stale=now-Date.parse(game.scanned_at)>30000;
   game.scoreStale=game.home==null||game.away==null||
     now-Date.parse(game.score_observed_at||game.scanned_at)>60000;
+  if(game.stale)for(const signal of game.signals||[])
+    signal.execution=signal.strategy==='watch'&&signal.title==='Commanding lead watch'?
+      signal.execution+'; last catalog result is older':
+      signal.execution==='Eligible for final verification'?
+        'Market snapshot is over 30 seconds old; live price and verification status need refresh':
+        'Last market result: '+signal.execution;
   return game;
 }
 async function dashboardGamesFeed(){
@@ -5554,8 +5563,8 @@ async function dashboardGamesFeed(){
   ]);
   const upcoming=upcomingScannedGames(discovery.rows[0]?.milestones,{
     excludeIds:new Set(snap.rows.map(game=>game.id))});
-  return {games:snap.rows.map(game=>({...dashboardFreshness(game),signals:[]})),
-    upcoming,discoveryError:discovery.error||null,scan:stats.rows[0]||null,readOnly:true};
+  return {games:snap.rows.map(game=>dashboardFreshness(game)),
+    upcoming,discoveryError:discovery.error||null,scan:stats.rows[0]||null};
 }
 let recentDashboardPositions=null;
 const dashboardDeadline=ms=>new Promise(resolve=>setTimeout(()=>resolve(null),ms));
@@ -5629,10 +5638,6 @@ async function state(){
     // Early games can be intentionally deferred while the live score keeps
     // updating. A newer global scan is not evidence this game's market failed.
     dashboardFreshness(game);
-    if(game.stale)for(const signal of game.signals||[])signal.execution=signal.strategy==='watch'&&
-      signal.title==='Commanding lead watch'?signal.execution+'; last catalog result is older':
-      signal.execution==='Eligible for final verification'?'Market snapshot is over 30 seconds old; live price and verification status need refresh':
-      'Last market result: '+signal.execution;
   }
   let balance=null,positions=null,accountError=null,positionsError=null,balanceStale=false,balanceAsOf=null;
   if(configured()){

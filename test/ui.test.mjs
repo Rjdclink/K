@@ -80,7 +80,7 @@ test('bankroll displays a recent verified balance with its age status',async()=>
 });
 
 test('game summary puts preflight and available-ask counts above other metrics',()=>{
-  const names=['Preflight candidates','Signals with an ask','Score rule matches','Catalog events (including older)','Weather scan'];
+  const names=['Live games','Upcoming games','Preflight candidates','Signals with an ask','Score rule matches','Catalog events (24h ahead; includes older)','Weather scan'];
   const positions=names.map(name=>page.indexOf('<span>'+name));
   assert.ok(positions.every(position=>position>=0));
   assert.deepEqual([...positions].sort((a,b)=>a-b),positions);
