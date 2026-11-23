@@ -383,26 +383,29 @@ function ensureLeadExternalWindows(){
   first_at timestamptz NOT NULL,first_verification_id text NOT NULL,
   first_evidence jsonb NOT NULL)`).catch(error=>{leadExternalWindowsReady=null;throw error});
 }
-function approachingTwoGoalLead(game,market){
+function approachingGoalLead(game,market){
  const family=String(game?.type||''),hockey=family.startsWith('hockey_'),
    soccer=family.startsWith('soccer_');
  if(!hockey&&!soccer||!game.verifiedLive||!game.scoreKnown||
    !game.scoreConsistent||!game.periodConsistent||
    !Number.isInteger(game.home)||!Number.isInteger(game.away)||
-   game.home+game.away>=5||Math.abs(game.home-game.away)!==2||
+   game.home+game.away>(soccer?5:4)||
    !/GAME(?:-|$)/.test(String(market?.event_ticker||''))||
    !['active','open'].includes(market?.status))return false;
  const leader=game.home>game.away?game.homeTeamId:game.awayTeamId;
  if(!leader||market.custom_strike?.[(hockey?'hockey':'soccer')+'_team']!==leader)return false;
  const seconds=hockey?game.remainingSeconds:soccerRegulationSeconds(game);
+ const margin=Math.abs(game.home-game.away),total=game.home+game.away;
+ const firstWindow=hockey?margin===2?420:0:
+   total===5?margin>=3?630:0:margin>=3?990:margin===2?420:0;
  return (hockey?game.period===3:game.period===2&&!game.soccerExtraTime)&&
-   Number.isFinite(seconds)&&seconds>0&&seconds<=420;
+   Number.isFinite(seconds)&&seconds>0&&seconds<=firstWindow;
 }
 const leadCandidate=(game,market)=>leadSignal(game,market)||
   additionalLeadSignal(game,market)||earlyLeadSignal(game,market);
 async function leadFirstCheck(game,milestone,market){
  if(!game?.id||!market?.ticker||
-   !leadCandidate(game,market)&&!approachingTwoGoalLead(game,market))return null;
+   !leadCandidate(game,market)&&!approachingGoalLead(game,market))return null;
  await ensureLeadExternalWindows();
  const key=overContractKey(game,market);
  const read=()=>pool.query('SELECT * FROM lead_external_windows WHERE market_ticker=$1',[market.ticker]);
@@ -410,7 +413,7 @@ async function leadFirstCheck(game,milestone,market){
  if(leadFirstProofValid(prior,game,market))return prior;
  const first={...game};
  if(await auditedOver(first,milestone,{market,allowUnavailable:true})!==true||
-   !leadCandidate(first,market)&&!approachingTwoGoalLead(first,market)||!first.verificationId||
+   !leadCandidate(first,market)&&!approachingGoalLead(first,market)||!first.verificationId||
    !verifiedSourceReady(first))return null;
  const proof=first.externalScore;
  await pool.query(`INSERT INTO lead_external_windows
@@ -421,8 +424,11 @@ async function leadFirstCheck(game,milestone,market){
    first_at=EXCLUDED.first_at,first_verification_id=EXCLUDED.first_verification_id,
    first_evidence=EXCLUDED.first_evidence
   WHERE lead_external_windows.game_id IS DISTINCT FROM EXCLUDED.game_id
-    OR lead_external_windows.contract_key IS DISTINCT FROM EXCLUDED.contract_key`,
-  [market.ticker,game.id,key,first.verificationId,JSON.stringify(proof)]);
+    OR lead_external_windows.contract_key IS DISTINCT FROM EXCLUDED.contract_key
+    OR ($6 AND (lead_external_windows.first_evidence->>'home' IS DISTINCT FROM $7
+      OR lead_external_windows.first_evidence->>'away' IS DISTINCT FROM $8))`,
+  [market.ticker,game.id,key,first.verificationId,JSON.stringify(proof),
+    /^soccer_/.test(game.type),String(proof.home),String(proof.away)]);
  return (await read()).rows[0]||null;
 }
 async function verifyCommandingLead(game,milestone,market,cache,event){
@@ -2579,7 +2585,7 @@ async function watchLeadWindows(until){
         // never Kalshi-only leads, then decide candidate eligibility.
         const near=rawWatch.filter(g=>g.state.period>=1&&
           (Number.isFinite(g.state.remainingSeconds)&&g.state.remainingSeconds<=900||
-           /soccer/.test(g.state.type)&&Number.isFinite(g.state.soccerMinute)&&g.state.soccerMinute>=75));
+           /soccer/.test(g.state.type)&&Number.isFinite(g.state.soccerMinute)&&g.state.soccerMinute>=73.5));
         const external=await mapBatches(near,6,async g=>{
           try{
             const result=await externallyScoredGame(g.state,g.milestone);
@@ -2606,8 +2612,8 @@ async function watchLeadWindows(until){
               const ruleMarket={...market,yes_ask_dollars:undefined};
               if(!leadSignal(first,ruleMarket)&&
                 !earlyLeadSignal(first,ruleMarket)&&!additionalLeadSignal(first,ruleMarket)){
-                if(approachingTwoGoalLead(first,ruleMarket)){
-                  decision.stage='approaching_two_goal_external';
+                if(approachingGoalLead(first,ruleMarket)){
+                  decision.stage='approaching_goal_external';
                   await leadFirstCheck({...first},milestone,market);
                   continue;
                 }
@@ -4038,11 +4044,13 @@ async function scanEarlyPeriodNos(games,events,signalSink=null,sport='NHL',phase
           firstProofs.set(proofKey,proof);
         }
         const marked=tagNoPreflight(proof);
-        const signal=marked&&(!(sport==='Soccer'||hockey)||
-          (hockey?validFreshEspnHockeyNo(marked,game):validFreshEspnSoccerNo(marked,game)))&&
+        const sourceValid=Boolean(marked&&(!(sport==='Soccer'||hockey)||
+          (hockey?validFreshEspnHockeyNo(marked,game):validFreshEspnSoccerNo(marked,game))));
+        const signal=sourceValid&&
           policy.signal(game,c.market,{beforeWindow:true,external:marked});
         if(!signal){
-          report(c,proof===false?(sport==='Soccer'&&game.verificationIssue||
+          report(c,sourceValid?'Independent score verified; segment contract lacks required cushion or clock':
+            proof===false?(sport==='Soccer'&&game.verificationIssue||
               'Independent fixture identity or period score is contradictory'):
             proof==null?(sport==='Soccer'?(game.verificationIssue||
                 'No current live ESPN fixture, score and minute verified'):
@@ -4332,9 +4340,7 @@ async function scanSoccerTotalNos(games,events,signalSink=null,phase='all'){
         candidates.push(c);found++;
         report(c,soccerStoppageNoWindow(state)?
           'Live 90+ stoppage: first independent score check pending; second after 30 real seconds':
-          state.matchRemainingSeconds>=entry?
-            'Initial independent soccer score and clock verification pending':
-            'First independent score check begins after 11:00; second follows after 30 real seconds');
+          'Independent first score check due now; paired check follows after 30 real seconds');
       }
     }
     if(!found&&signalSink)signalSink.set(state.id,[{
@@ -4371,10 +4377,12 @@ async function scanSoccerTotalNos(games,events,signalSink=null,phase='all'){
         // Independently fetch ESPN for every soccer total-NO first check.
         const proof=await verifyIndependentSoccerTotalNo(game,c.milestone,c.market);
         const marked=tagNoPreflight(proof);
-        const signal=marked&&validFreshEspnSoccerNo(marked,game)&&
+        const sourceValid=Boolean(marked&&validFreshEspnSoccerNo(marked,game));
+        const signal=sourceValid&&
           soccerTotalNo(game,c.market,{beforeWindow:true,external:marked});
         if(!signal){
-          report(c,proof===false?(game.verificationIssue||
+          report(c,sourceValid?'Independent score verified; contract lacks required goal cushion or entry clock':
+            proof===false?(game.verificationIssue||
               'Independent matched fixture or source score is contradictory'):
             proof==null?(game.verificationIssue||
               'No current live ESPN fixture, score and minute verified'):
@@ -5061,31 +5069,42 @@ async function scanFastPriorityGames(until){
   // bankroll, profit, duplicate-order, contract and FOK gates are unchanged.
   // Due final proofs outrank first checks. Each sport runs concurrently;
   // multiple variants sharing that sport's bankroll run serially.
+  const hockeyNoSignals=new Map(),soccerNoSignals=new Map();
   let submitted=await withApiPriority('preflight_final',()=>runImmediateNoFinalPass([
     {sport:'football',run:()=>scanCollegeTotalNos(games,events,'football',null,'final')},
     {sport:'NHL',run:async()=>{
-      const full=await scanHockeyTotalNos(games,events,null,'final');
-      return full+await scanEarlyPeriodNos(games,events,null,'NHL','final');
+      const full=await scanHockeyTotalNos(games,events,hockeyNoSignals,'final');
+      return full+await scanEarlyPeriodNos(games,events,hockeyNoSignals,'NHL','final');
     }},
     {sport:'soccer',run:async()=>{
-      const full=await scanSoccerTotalNos(games,events,null,'final');
-      return full+await scanEarlyPeriodNos(games,events,null,'Soccer','final');
+      const full=await scanSoccerTotalNos(games,events,soccerNoSignals,'final');
+      return full+await scanEarlyPeriodNos(games,events,soccerNoSignals,'Soccer','final');
     }}
   ],{onError:(sport,error)=>console.warn('Urgent final verification deferred:',sport,
     String(error?.message||error).slice(0,180))}));
-  if(Date.now()>=until)return submitted;
-  submitted+=await withApiPriority('preflight',()=>runImmediateNoFinalPass([
+  if(Date.now()<until)submitted+=await withApiPriority('preflight',()=>runImmediateNoFinalPass([
     {sport:'football',run:()=>scanCollegeTotalNos(games,events,'football',null,'initial')},
     {sport:'NHL',run:async()=>{
-      const full=await scanHockeyTotalNos(games,events,null,'initial');
-      return full+await scanEarlyPeriodNos(games,events,null,'NHL','initial');
+      const full=await scanHockeyTotalNos(games,events,hockeyNoSignals,'initial');
+      return full+await scanEarlyPeriodNos(games,events,hockeyNoSignals,'NHL','initial');
     }},
     {sport:'soccer',run:async()=>{
-      const full=await scanSoccerTotalNos(games,events,null,'initial');
-      return full+await scanEarlyPeriodNos(games,events,null,'Soccer','initial');
+      const full=await scanSoccerTotalNos(games,events,soccerNoSignals,'initial');
+      return full+await scanEarlyPeriodNos(games,events,soccerNoSignals,'Soccer','initial');
     }}
   ],{onError:(sport,error)=>console.warn('Urgent first verification deferred:',sport,
     String(error?.message||error).slice(0,180))}));
+  // A current ten-second check replaces the old result for its exact market.
+  for(const [id,signals] of [...hockeyNoSignals,...soccerNoSignals]){
+    const tickers=[...new Set(signals.map(signal=>signal.ticker).filter(Boolean))];
+    if(!tickers.length)continue;
+    await pool.query(`UPDATE game_snapshots g SET signals=(
+      SELECT COALESCE(jsonb_agg(s),'[]'::jsonb) FROM
+        jsonb_array_elements(COALESCE(g.signals,'[]'::jsonb)) s
+      WHERE NOT (COALESCE(s->>'ticker','')=ANY($2::text[]))
+    ) || $3::jsonb,scanned_at=clock_timestamp() WHERE g.id=$1`,
+      [id,tickers,JSON.stringify(signals)]);
+  }
   return submitted;
 }
 const scanMinuteEnd=()=>Math.min(Date.now()+55000,
@@ -5383,7 +5402,8 @@ async function scan(cachedMilestones,discoveryCount){
     // still-live market to enter a new window on a later scan, including when
     // ask liquidity appears after an earlier unfilled window.
     const aged=await pool.query(`DELETE FROM candidate_windows WHERE first_seen<now()-interval '10 minutes' RETURNING market_ticker,strategy`);
-    opportunities.push(...allCandidates.filter(stillEligible));signals=opportunities.length;
+    opportunities.push(...allCandidates.filter(stillEligible));
+    signals=allCandidates.length; // score/contract matches, even when the current book has no seller
     const checkedIds=new Set(marketGames.map(game=>game.milestone.id));
     const snapshots=[...snapshotRows.values()];
     for(let i=0;i<snapshots.length;i+=100){

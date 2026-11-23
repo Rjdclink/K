@@ -23,7 +23,7 @@ export function scanTier(game,{held=false,watched=false,now=Date.now()}={}){
   [1,2].includes(period)&&clock<=420?10:30;
  if(type.startsWith('soccer_'))return period===1&&Number.isFinite(game.soccerMinute)&&
   game.soccerMinute>=38||period>=2&&Number.isFinite(game.soccerMinute)&&
-  game.soccerMinute>=75?10:30;
+  game.soccerMinute>=73.5?10:30;
  return 30;
 }
 // One urgent candidate queue serves game-level football, hockey and soccer only.

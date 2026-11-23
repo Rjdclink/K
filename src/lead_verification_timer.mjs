@@ -24,6 +24,9 @@ export function leadExternalWaitMs(game,firstEvidence=null){
 export function leadFirstProofValid(window,game,market,now=Date.now()){
  const at=new Date(window?.first_at||'').getTime(),e=window?.first_evidence;
  return Boolean(window&&game&&market&&
+  (!/^soccer_/.test(String(game.type||''))||
+    Number.isInteger(game.externalScore?.home)&&Number.isInteger(game.externalScore?.away)&&
+    e?.home===game.externalScore.home&&e?.away===game.externalScore.away)&&
   window.game_id===game.id&&window.contract_key===sportsContractKey(game,market)&&
   window.first_verification_id&&['ESPN','FOX Sports','BBC Sport','NHL','NFL'].includes(e?.source)&&
   e?.eventId&&e?.gameId===game.id&&

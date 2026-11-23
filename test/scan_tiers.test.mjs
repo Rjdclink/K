@@ -18,6 +18,9 @@ test('only football, hockey and soccer promote to fast tier without trusting Kal
   assert.equal(scanTier({...item,home:999,away:999}),10,'Kalshi goals must not change scanner tier');
   assert.equal(scanTier({...item,home:NaN,away:NaN}),10,'missing Kalshi goals must not block promotion');
  }
+ assert.equal(scanTier({...game('soccer_match','Soccer',2,NaN),soccerMinute:73.49}),30);
+ assert.equal(scanTier({...game('soccer_match','Soccer',2,NaN),soccerMinute:73.5}),10,
+  '3–0 first proof at 16:30 receives ten-second priority');
 });
 test('ordinary live games enter 30s tier and player crossings do not change priority',()=>{
  const football=game('football_game','NFL',1,680);

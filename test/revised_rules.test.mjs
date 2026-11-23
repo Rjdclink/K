@@ -127,18 +127,18 @@ test('preview, initial order, and retry no longer enforce an obsolete 15% comman
  assert.equal((source.match(/estimatedCostCents\([^\n]+<minimumThreeGoalSpend\(/g)||[]).length,0);
 });
 
-test('soccer commanding lead uses a three-goal seven-minute and two-goal five-minute window',()=>{
+test('soccer commanding lead uses 15:30 below five goals, 9:30 at five, and five minutes for +2',()=>{
  const soccer=(margin,time)=>team('soccer_match','Soccer',margin,2,0,
    {half:'2nd',time:`${time}'`,clock:''});
  const {market}=soccer(3,83);
  for(const [margin,time,allowed] of [
-   [5,85,false],[4,85,false],[4,'85:01',true],
-   [3,83,false],[3,'83:01',true],[3,86,true],
+   [5,'80:30',false],[5,'80:31',true],[4,'74:30',false],[4,'74:31',true],
+   [3,'74:30',false],[3,'74:31',true],[3,83,true],[3,86,true],
    [2,85,false],[2,'85:01',true],[2,87,true],[1,89,false],
    [4,90,false],[4,93,false]]){
   assert.equal(Boolean(leadSignal(soccer(margin,time).state,market)),allowed,`+${margin} at ${time}`);
  }
- assert.match(leadWatchReason(soccer(3,'83:01').state),/late winner rule reached/);
+ assert.match(leadWatchReason(soccer(3,'74:31').state),/late winner rule reached/);
  assert.match(leadWatchReason(soccer(2,83).state),/waiting for score and clock threshold/);
  assert.equal(leadWatchReason(soccer(3,93).state),null);
 });

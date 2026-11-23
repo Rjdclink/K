@@ -30,6 +30,12 @@ const market={ticker:'KXEPLTOTAL-26NOV20AWAYHOME-6',
   rules_primary:'If over 5.5 goals are scored in the Away vs Home professional EPL soccer game originally scheduled for Nov 20, 2026 after 90 minutes plus stoppage time (does not include extra time or penalties), then the market resolves to Yes.'};
 const events=new Map([[market.event_ticker,{event_ticker:market.event_ticker,category:'Sports',markets:[market]}]]);
 
+test('a valid external score with too little NO cushion is labelled as a cushion failure',async()=>{
+ const h=harness({firstProofOverride:{home:4,away:0}});
+ assert.equal(await h.scan(540,'initial'),0);
+ assert.match(h.dashboard.get(milestone.id)?.[0]?.execution||'',/score verified; contract lacks required goal cushion/i);
+});
+
 function harness({canVerify=true,hasSeller=true,unprofitable=false,initialAgeMs=61000,existingExposure=false,
   afterRefreshScore=3,missingClock=false,finalExternalFails=false,duplicate=false,globalPending=false,
   firstProofOverride=null,finalProofOverride=null,noAskPolicy=noAskTimeout}={}){

@@ -14,24 +14,35 @@ const game=(sport,seconds,home,away=0)=>({id:'sample',sport,
  ...(sport==='Soccer'?{soccerMinute:90-seconds/60,matchRemainingSeconds:seconds}:
    {remainingSeconds:seconds})});
 
-test('three-goal soccer and hockey leads qualify strictly under seven minutes, only below five goals',()=>{
+test('soccer 3–0 begins at 16:30 and enters strictly below 15:30; hockey retains seven minutes',()=>{
  for(const sport of ['Soccer','NHL']){
-  for(const seconds of [421,420])assert.equal(goalCommandingLeadEntry(game(sport,seconds,3)),false);
-  for(const seconds of [419,300,299]){
+  const limit=sport==='Soccer'?930:420;
+  for(const seconds of [limit+1,limit])assert.equal(goalCommandingLeadEntry(game(sport,seconds,3)),false);
+  for(const seconds of [limit-1,419,299]){
    const g=game(sport,seconds,3);
    assert.equal(goalCommandingLeadEntry(g),true);
    assert.equal(finalFiveEntryEligible(g,{strategy:'lead',market:winner}),true);
    assert.equal(finalFiveEntryEligible(g,{strategy:'no',market:no}),seconds<300);
   }
-  assert.equal(goalCommandingLeadEntry(game(sport,419,4,1)),false);
  }
+ for(const seconds of [570,569]){
+  assert.equal(goalCommandingLeadEntry(game('Soccer',seconds,4,1)),seconds<570);
+  assert.equal(finalFiveEntryEligible(game('Soccer',seconds,4,1),{strategy:'lead',market:winner}),seconds<570);
+  assert.equal(goalCommandingLeadEntry(game('Soccer',seconds,3,2)),false);
+ }
+ assert.equal(goalCommandingLeadEntry(game('NHL',419,4,1)),false);
+ assert.equal(goalCommandingLeadEntry(game('Soccer',569,5,1)),false);
 });
-test('two-goal lead and NO require strictly under five minutes; four-goal lead also stays there',()=>{
- for(const sport of ['Soccer','NHL'])for(const margin of [2,4]){
-  assert.equal(goalCommandingLeadEntry(game(sport,300,margin)),false);
-  assert.equal(finalFiveEntryEligible(game(sport,300,margin),{strategy:'lead',market:winner}),false);
-  assert.equal(goalCommandingLeadEntry(game(sport,299,margin)),true);
-  assert.equal(finalFiveEntryEligible(game(sport,299,margin),{strategy:'lead',market:winner}),true);
+test('two-goal lead and NO still require strictly under five minutes; hockey four-goal lead stays there',()=>{
+ for(const sport of ['Soccer','NHL']){
+  assert.equal(goalCommandingLeadEntry(game(sport,300,2)),false);
+  assert.equal(finalFiveEntryEligible(game(sport,300,2),{strategy:'lead',market:winner}),false);
+  assert.equal(goalCommandingLeadEntry(game(sport,299,2)),true);
+  assert.equal(finalFiveEntryEligible(game(sport,299,2),{strategy:'lead',market:winner}),true);
+ }
+ for(const seconds of [300,299]){
+  assert.equal(goalCommandingLeadEntry(game('NHL',seconds,4)),seconds<300);
+  assert.equal(goalCommandingLeadEntry(game('Soccer',seconds,4)),true);
  }
 });
 test('a total-NO order never inherits the seven-minute winner exception',()=>{
@@ -48,8 +59,8 @@ test('the exact winner contract and verified allocation follow the new lead wind
   const signal=leadSignal(g,market);
   assert.equal(signal?.strategy,'lead');
   assert.equal(finalLeadFraction(g,g,signal,true,market),.15);
-  assert.equal(leadSignal(game(sport,420,3),market),null);
-  assert.equal(leadSignal(game(sport,299,4,1),market),null);
+  assert.equal(leadSignal(game(sport,sport==='Soccer'?930:420,3),market),null);
+  assert.equal(Boolean(leadSignal(game(sport,299,4,1),market)),sport==='Soccer');
   assert.equal(leadSignal(game(sport,299,2),market)?.strategy,'lead');
  }
  assert.equal(goalCommandingLeadEntry({...game('NHL',200,3),period:2}),false);

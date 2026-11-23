@@ -16,6 +16,8 @@ test('each external verification stage counts down without refreshing a stale ma
   const signal={ticker:'OVER',title:'Player over',ask:'.96',ask_size:'8',execution:'Waiting for first external check (20s; minimum 20s)',
     verification_wait:{dueAt:now+20000,updatedAt:now}};
   const card=vm.runInContext('item',context)({title:'Game',sport:'NBA',home:3,away:2,signals:[signal]});
+  const soccerCard=vm.runInContext('item',context)({title:'Monza vs Fiorentina',sport:'Soccer',home:3,away:0,signals:[]});
+  assert.match(soccerCard.children[1].textContent,/3–0/,'vs scores follow the named team order');
   const detail=card.children.at(-1);elements.push(detail);
   assert.match(detail.textContent,/First external check in 20s/);
   assert.ok(intervals.has(1000));
@@ -277,7 +279,9 @@ test('filled order timer is bright red, advances each second and reanchors to li
   assert.match(page,/stale or contradictory evidence blocks the trade/);
   assert.match(page,/soccer first-half and full-game NO require a 2\.5-goal cushion/);
   assert.match(page,/only live full-game regulation stoppage after 90:00 permits a 1\.5-goal cushion/);
-  assert.match(page,/100% maximum including fees/);
+  assert.match(page,/100% fee-inclusive bankroll maximum/);
+  assert.match(page,/three goals ahead strictly under 15:30/);
+  assert.match(page,/strictly under 9:30/);
   assert.doesNotMatch(page,/Tennis requires the selected player serving on match point in the final deciding set/);
   const tennis=order({...base,sport:'Tennis',sport_family:'tennis_tournament_singles',game_title:'Berrettini vs de Minaur',strategy:'lead',selected_name:'Alex de Minaur'});
   assert.equal(tennis.children[0].children[0].className,'chosen-name');

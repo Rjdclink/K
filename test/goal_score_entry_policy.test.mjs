@@ -35,6 +35,23 @@ test('goal-score restriction uses combined game goals: four permitted, five and 
   }
  }
 });
+test('only a paired soccer winner proof permits a five-goal score, never a 3–2 lead or six goals',()=>{
+ const winner={...market,ticker:'KXSOCCERGAME-TEST-HOME',event_ticker:'KXSOCCERGAME-TEST'};
+ for(const [home,away,allowed] of [[4,1,true],[1,4,true],[5,0,true],[3,2,false],[5,1,false]]){
+  const entry=evidence('soccer_match',home,away);
+  entry.market=winner;
+  rememberIndependentEntry(entry.game,winner,entry.game.verificationId,Date.now());
+  entry.game.leadVerification={firstId:'first',finalId:entry.game.verificationId};
+  assert.equal(goalScoreBelowFive(entry.game,Date.now(),{soccerLead:true}),home+away<=5);
+  if(allowed)assert.doesNotThrow(()=>order([entry]),`${home}-${away}`);
+  else assert.throws(()=>order([entry]),{code:'LOCAL_GOAL_SCORE_LIMIT'});
+ }
+ const unpaired=evidence('soccer_match',4,1);unpaired.market=winner;
+ rememberIndependentEntry(unpaired.game,winner,unpaired.game.verificationId,Date.now());
+ assert.throws(()=>order([unpaired]),{code:'LOCAL_GOAL_SCORE_LIMIT'});
+ const hockey=evidence('hockey_match',4,1);hockey.game.leadVerification={firstId:'first',finalId:hockey.game.verificationId};
+ assert.throws(()=>order([hockey]),{code:'LOCAL_GOAL_SCORE_LIMIT'});
+});
 test('either independently verified score or Kalshi game score may veto; both must be below five',()=>{
  for(const type of ['hockey_match','hockey_tournament','soccer_match','soccer_tournament_multi_leg']){
   const staleKalshi=evidence(type,2,2,{home:3,away:2});

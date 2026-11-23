@@ -139,7 +139,7 @@ export function nearEntryPhase(game){
     Number.isFinite(game.soccerMinute)&&game.soccerMinute>=38&&game.soccerMinute<45||
     period===2&&!game.soccerExtraTime&&Number.isFinite(game.soccerMinute)&&
     (game.soccerMinute<90&&
-      (game.soccerMinute>=75||game.soccerMinute>=45&&
+      (game.soccerMinute>=73.5||game.soccerMinute>=45&&
        Number.isFinite(game.homeUnits)&&Number.isFinite(game.awayUnits)&&
        Math.abs(game.homeUnits-game.awayUnits)>=3)||
      game.soccerMinute>90&&game.verifiedLive===true&&game.clockRunning===true);
@@ -170,7 +170,9 @@ export function marketEntryProximity(game){
     if(period===2&&game.soccerMinute>90&&game.verifiedLive&&game.clockRunning===true)
       return -20000;
     if(period===1){remaining=(45-game.soccerMinute)*60;target=360;}
-    else if(period===2){remaining=(90-game.soccerMinute)*60;target=margin>=5?1500:margin>=4?1200:margin>=3?900:660;}
+    else if(period===2){remaining=(90-game.soccerMinute)*60;
+      const total=Number(game.homeUnits)+Number(game.awayUnits);
+      target=total===5&&margin>=3?630:total<5&&margin>=3?990:margin===2?420:660;}
     else return Infinity;
   }else if(/hockey/.test(type)){
     if([1,2].includes(period))target=360;

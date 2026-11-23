@@ -7,6 +7,7 @@ import {leadFirstProofValid,leadFirstProofReady,leadFinalProofValid,LEAD_EXTERNA
 import {sportsContractKey} from '../src/entry_verification.mjs';
 import {verifiedSourceReady} from '../src/external_authority.mjs';
 import {pairedExternalMatch} from '../src/independent_match_score.mjs';
+import {soccerRegulationSeconds} from '../src/strategy.mjs';
 
 const now=1_000_000;
 const market={ticker:'KXNHLGAME-TEST-HOME',event_ticker:'KXNHLGAME-TEST',rules_primary:'Home wins'};
@@ -28,6 +29,30 @@ test('the lead window requires sixty real seconds and exactly the same contract'
  assert.equal(leadFirstProofReady({...proof(),first_verification_id:''},game,market,now),false);
  assert.equal(leadFirstProofReady({...proof(),first_evidence:{}},game,market,now),false);
  assert.equal(leadFirstProofReady({...proof(),first_at:new Date(now+1)},game,market,now),false);
+});
+test('soccer first checks begin at 16:30 for 3–0 and 10:30 for 4–1',()=>{
+ const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
+ const section=source.slice(source.indexOf('function approachingGoalLead('),source.indexOf('const leadCandidate=',source.indexOf('function approachingGoalLead(')));
+ const context=vm.createContext({Number,Math,String,soccerRegulationSeconds});
+ vm.runInContext(section,context);
+ const m={event_ticker:'KXSOCCERGAME-TEST',status:'active',custom_strike:{soccer_team:'home-id'}};
+ const at=(seconds,home,away)=>({type:'soccer_match',id:'g',verifiedLive:true,scoreKnown:true,
+   scoreConsistent:true,periodConsistent:true,period:2,home,away,homeTeamId:'home-id',awayTeamId:'away-id',
+   soccerMinute:90-seconds/60,matchRemainingSeconds:seconds});
+ for(const [seconds,home,away,allowed] of [
+  [991,3,0,false],[990,3,0,true],[931,3,0,true],
+  [631,4,1,false],[630,4,1,true],[571,4,1,true],
+  [630,3,2,false],[630,5,1,false]])
+  assert.equal(context.approachingGoalLead(at(seconds,home,away),m),allowed,`${home}-${away} ${seconds}`);
+});
+test('a changed soccer score requires a fresh first proof before the final read',()=>{
+ const first={...proof(60000),first_evidence:{source:'ESPN',eventId:'espn-g',gameId:'g',home:3,away:0}};
+ const firstGame={...game,type:'soccer_match',externalScore:{source:'ESPN',home:3,away:0}};
+ assert.equal(leadFirstProofReady(first,firstGame,market,now),true);
+ assert.equal(leadFirstProofReady(first,{...firstGame,externalScore:{source:'ESPN',home:4,away:1}},market,now),false);
+ const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
+ assert.match(source,/lead_external_windows\.first_evidence->>'home' IS DISTINCT FROM \$7/);
+ assert.match(source,/lead_external_windows\.first_evidence->>'away' IS DISTINCT FROM \$8/);
 });
 test('final lead proof requires distinct IDs, matching contract, and expires after ten seconds',()=>{
  const g={...game,independentEntry:{contractKey:key,verificationId:'second',requestedAt:now-1000},

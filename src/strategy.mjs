@@ -275,11 +275,14 @@ export function goalCommandingLeadEntry(game){
     !game.scoreConsistent||!game.periodConsistent||
     !Number.isFinite(game.homeUnits)||!Number.isFinite(game.awayUnits))return false;
   const margin=Math.abs(game.homeUnits-game.awayUnits);
-  if(game.homeUnits+game.awayUnits>=5)return false;
+  const total=game.homeUnits+game.awayUnits;
+  if(total>(soccer?5:4))return false;
   const seconds=hockey?game.remainingSeconds:soccerRegulationSeconds(game);
   if(soccer&&(game.period!==2||game.soccerExtraTime||game.clockRunning===false))return false;
   if(!Number.isFinite(seconds)||seconds<=0)return false;
   if(hockey&&game.period!==3)return false;
+  if(soccer)return total===5?margin>=3&&seconds<570:
+    margin>=3?seconds<930:margin===2&&seconds<300;
   return margin===3?seconds<420:margin>=2&&seconds<300;
 }
 export function endWindow(game){
@@ -334,11 +337,11 @@ export function leadWatchReason(game){
       return `Tracking ${margin}-point lead; waiting for final winner window`;
   }
   if(/soccer/.test(type)&&game.period===2&&!game.soccerExtraTime&&
-    Number.isFinite(game.soccerMinute)&&
-    game.home+game.away<5&&
-    (margin===3?game.soccerMinute>=81:game.soccerMinute>=83)&&
-    soccerRegulationSeconds(game)>0&&margin>=2)
-    return `Tracking ${margin}-goal lead with fewer than five combined goals; +3 requires strictly under 7:00, +2 or +4 strictly under 5:00 regulation remaining; ${goalCommandingLeadEntry(game)?
+    Number.isFinite(game.soccerMinute)&&game.home+game.away<=5&&
+    (game.home+game.away===5?margin>=3&&game.soccerMinute>=79.5:
+      margin>=3&&game.soccerMinute>=73.5||margin===2&&game.soccerMinute>=83)&&
+    soccerRegulationSeconds(game)>0)
+    return `Tracking ${margin}-goal lead with at most five combined goals; 3+ under 15:30 below five total, 3+ under 9:30 at five total, or +2 under 5:00 regulation remaining; ${goalCommandingLeadEntry(game)?
       'late winner rule reached; checking winner market and ask':'waiting for score and clock threshold'}`;
   return null;
 }
