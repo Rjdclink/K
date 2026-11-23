@@ -10,6 +10,11 @@ const market=(series='KXNHLTOTAL',custom_strike={})=>({
 });
 const game=(type='hockey_match',sport='NHL')=>({id:'g',type,sport,verificationId:'proof'});
 function verified(g,m){
+ if(/^hockey_|^soccer_/.test(g.type||'')){
+  g.home??=0;g.away??=0;
+  g.externalScore={source:'ESPN',eventId:'matched-fixture',gameId:g.id,
+    home:g.home,away:g.away,live:true,checkedAt:Date.now()};
+ }
  rememberIndependentEntry(g,m,g.verificationId,Date.now());
  return [{game:g,market:m}];
 }
@@ -91,6 +96,9 @@ test('the final Kalshi combo RFQ acceptance rejects excluded component contracts
  const component=market('KXNHLGOALS',{hockey_player:'player-1'});
  const componentGame={...game('hockey_match','NHL'),verifiedLive:true,scoreKnown:true,
    periodConsistent:true,period:3,remainingSeconds:260,clockRunning:true};
+ componentGame.home=0;componentGame.away=0;
+ componentGame.externalScore={source:'ESPN',eventId:'matched-fixture',gameId:componentGame.id,
+   home:0,away:0,live:true,checkedAt:Date.now()};
  const group=market('KXMVESPORTS');
  group.mve_selected_legs=[{event_ticker:component.event_ticker,market_ticker:component.ticker,side:'yes'}];
  const comboGame={id:'combo',verificationId:'combo-verification',entryComponents:[{game:componentGame,market:component}]};
