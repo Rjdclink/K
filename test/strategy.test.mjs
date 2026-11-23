@@ -470,18 +470,18 @@ test('entry submissions use full fills and ordinary profit targets remain policy
   assert.match(source,/if\(a\.signal\.strategy!==b\.signal\.strategy\)return a\.signal\.strategy==='over'\?-1:1/);
   assert.match(source,/return profit\(b\)-profit\(a\)/);
 });
-test('zero score never creates an over; overs need only positive net profit',()=>{
+test('zero score never creates an over; every purchase needs one percent net after fees',()=>{
   const market={status:'active',title:'Total goals over 0',rules_primary:'Combined total goals scored in the game',strike_type:'greater',floor_strike:-0.5};
   const soccer={...milestone,type:'soccer_tournament_multi_leg'};
   assert.equal(overSignal(gameState(soccer,{details:{status:'live',home_score:0,away_score:0}}),market),null);
   for(const cash of [9900,9999,10000,20000]){
     assert.equal(minimumProfitCents('lead',cash),1);
-    assert.equal(minimumProfitCents('over',cash),50);
+    assert.equal(minimumProfitCents('over',cash,'',NaN,0,{costCents:10000}),100);
   }
   assert.equal(profitableCount(10,.99,2,'over',9900),0);
   assert.equal(profitableCount(10,.99,2,'over',20000),0);
   assert.equal(profitableCount(1,.99,2,'over',9900),0);
-  assert.equal(profitableCount(100,.99,2,'over',9900),100);
+  assert.equal(profitableCount(100,.99,2,'over',9900),0);
   assert.equal(profitableCount(100,.90,2,'over',9900),100);
   assert.ok(netSettlementProfitCents(100,.99,2)>0);
   assert.equal(profitableCount(1,1,2,'lead',100),0);
@@ -489,20 +489,20 @@ test('zero score never creates an over; overs need only positive net profit',()=
   assert.equal(profitableCount(1,.90,2,'lead',20000,'football_game'),1);
   assert.equal(profitableCount(1,.99,2,'lead',20000,'basketball_game',20),0);
 });
-test('filled order tiers preserve higher existing minimums and exact boundaries',()=>{
-  for(const [orders,expected] of [[0,1],[9,1],[10,15],[14,15],[15,35],[19,35],[20,50],[21,50]]){
-    assert.equal(minimumProfitCents('over',5000,'',NaN,orders),50);
-    assert.equal(minimumProfitCents('lead',5000,'',NaN,orders),1);
+test('filled order count does not change the one-percent minimum',()=>{
+  for(const orders of [0,9,10,14,15,19,20,21]){
+    assert.equal(minimumProfitCents('over',5000,'',NaN,orders,{costCents:5000}),50);
+    assert.equal(minimumProfitCents('lead',5000,'',NaN,orders,{costCents:5000}),50);
   }
-  assert.equal(minimumProfitCents('weather',5000,'',NaN,10),50);
-  assert.equal(minimumProfitCents('weather',5000,'',NaN,15),50);
-  assert.equal(minimumProfitCents('weather',5000,'',NaN,20),50);
-  assert.equal(minimumProfitCents('combo',20000,'',NaN,20),50);
+  assert.equal(minimumProfitCents('weather',5000,'',NaN,10,{costCents:5000}),50);
+  assert.equal(minimumProfitCents('weather',5000,'',NaN,15,{costCents:5000}),50);
+  assert.equal(minimumProfitCents('weather',5000,'',NaN,20,{costCents:5000}),50);
+  assert.equal(minimumProfitCents('combo',20000,'',NaN,20,{costCents:20000}),200);
   assert.equal(netSettlementProfitCents(1,.75,2),22);
   assert.equal(netSettlementProfitCents(2,.75,2),44);
   assert.equal(netSettlementProfitCents(3,.75,2),67);
 });
-test('leads need only positive net profit at all game clock times',()=>{
+test('leads require one percent net profit at all game clock times',()=>{
   for(const type of ['basketball_game','college_basketball_game']){
     for(const seconds of [300,181,180,61,60,30,1,0])assert.equal(minimumProfitCents('lead',20000,type,seconds),1);
     assert.equal(profitableCount(12,.90,2,'lead',20000,type,299),12);
@@ -510,10 +510,10 @@ test('leads need only positive net profit at all game clock times',()=>{
     assert.equal(profitableCount(6,.90,2,'lead',20000,type,60),6);
     assert.equal(profitableCount(3,.90,2,'lead',20000,type,31),3);
     assert.equal(profitableCount(3,.90,2,'lead',20000,type,30),3);
-    assert.equal(profitableCount(3,.99,2,'lead',20000,type,20),3);
+    assert.equal(profitableCount(3,.99,2,'lead',20000,type,20),0);
   }
   assert.equal(minimumProfitCents('lead',20000,'football_game',30),1);
-  assert.equal(minimumProfitCents('over',20000,'basketball_game',30),50);
+  assert.equal(minimumProfitCents('over',20000,'basketball_game',30),1);
 });
 test('basketball positive exit cannot bypass tie and trailing clock windows',()=>{
   const m={...milestone,type:'basketball_game',details:{league:'NBA',home_team_id:'NY',away_team_id:'BOS'}};

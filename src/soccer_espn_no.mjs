@@ -48,8 +48,11 @@ export function independentlyVerifiedSoccerGame(game,reading){
   soccerMinute:minute,matchRemainingSeconds:Math.max(0,Math.round((limit-minute)*60)),
   scoreKnown:true,scoreConsistent:true,periodConsistent:true};
 }
-const daysFor=start=>[start,start-86400000,start+86400000]
- .map(ms=>new Date(ms).toISOString().slice(0,10).replaceAll('-',''));
+const daysFor=start=>{
+ const hour=new Date(start).getUTCHours();
+ return [start,...(hour<6?[start-86400000]:[]),...(hour>=21?[start+86400000]:[])]
+  .map(ms=>new Date(ms).toISOString().slice(0,10).replaceAll('-',''));
+};
 
 // ESPN may disagree with Kalshi. Reject stale ESPN CDN payloads, missing
 // clocks, nonlive or ambiguous ESPN matches, and inconsistent provider results.

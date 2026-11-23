@@ -7,6 +7,7 @@ const soccerLeagueSlugs={
  'serie a':'ita.1','italian serie a':'ita.1',
  'serie b':'ita.2','italian serie b':'ita.2',
  'ligue 1':'fra.1','french ligue 1':'fra.1',
+ 'ligue 2':'fra.2','french ligue 2':'fra.2',
  'eredivisie':'ned.1','dutch eredivisie':'ned.1',
  'la liga':'esp.1','laliga':'esp.1','spanish la liga':'esp.1',
  'spanish liga f':'esp.w.1',

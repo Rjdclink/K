@@ -1201,6 +1201,9 @@ async function withEntryProfitFloor({ticker,count,price,fees,strategy,fraction,b
           await client.query('COMMIT');return null;
         }
         if(manual){
+          if(netSettlementProfitCents(count,price,fees)<minimumProfitCents(strategy,latestBankroll,'',NaN,0,{costCents:debit})){
+            await client.query('COMMIT');return null;
+          }
           const held=positions.market_positions.find(p=>p.ticker===ticker&&Number(p.position_fp??p.position)>0);
           const exposure=Number(held?.market_exposure_dollars),paidFees=Number(held?.fees_paid_dollars);
           if(!held||held.market_exposure_dollars==null||held.fees_paid_dollars==null||
@@ -1238,7 +1241,7 @@ async function withEntryProfitFloor({ticker,count,price,fees,strategy,fraction,b
         if(debit>Math.floor(latestBankroll*appliedFraction)){
           await client.query('COMMIT');return null;
         }
-        const required=minimumProfitCents(strategy,latestBankroll,'',NaN,filledOrderGateCount(positions,rows,ticker),{game,market});
+        const required=minimumProfitCents(strategy,latestBankroll,'',NaN,filledOrderGateCount(positions,rows,ticker),{game,market,costCents:debit});
         if(netSettlementProfitCents(count,price,fees)<required){await client.query('COMMIT');return null}
         const result=await send();
         await client.query('COMMIT');
@@ -3021,7 +3024,8 @@ async function executeVerifiedMention(item){
   const raw=orderSize(spendable,ask.price,ask.size,.15,.40,bankroll,budget,fee);
   const count=current.fractional_trading_enabled===false?Math.floor(raw):raw;
   if(count<minimumCount(current)||estimatedCostCents(count,ask.price,fee)>budget||
-    netSettlementProfitCents(count,ask.price,fee)<minimumProfitCents('mention',bankroll))return;
+    netSettlementProfitCents(count,ask.price,fee)<minimumProfitCents('mention',bankroll,'',NaN,0,
+      {costCents:estimatedCostCents(count,ask.price,fee)}))return;
   await auditTable();
   const verificationId=randomUUID(),game={id:'mention:'+event.event_ticker,sport:'Mentions',type:'mentions',verificationId};
   await pool.query(`INSERT INTO verification_records(id,market_ticker,passed,evidence) VALUES($1,$2,true,$3)`,

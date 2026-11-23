@@ -944,24 +944,10 @@ export function tennisSignal(game,market){
   const leaderGames=first?t.firstGames:t.secondGames,opponentGames=first?t.secondGames:t.firstGames;
   return {strategy:'lead',reason:`Tennis match-clinching set ${leaderGames}–${opponentGames}; leader serves, points ${leaderPoints}–${opponentPoints}${t.advantage===leaderId?' advantage':''}; deciding-set match point, one point from match win`,fraction:.15};
 }
-export function minimumProfitCents(strategy,availableCents,sportType='',remainingSeconds=NaN,filledOrders=0,{game,market}={}){
-  // Commanding leads require a positive net return, with no additional fixed floor.
-  if(strategy==='lead')return 1;
-  // Non-cushioned strategies share one fee-inclusive 50-cent net-profit floor.
-  if(!(strategy==='over'&&hasIndependentCushionedOverProof(game)))return 50;
-  const tier=filledOrders>=20?50:filledOrders>=15?35:filledOrders>=10?15:0;
-  const existing=strategy==='weather'?30:
-    strategy==='over'||strategy==='lead'?1:
-    Number(availableCents)>=20000?200:Number(availableCents)>=10000?50:25;
-  // Periods in hockey and halves in men's college basketball are not quarters.
-  const esports=game?.sport==='eBasketball'&&game?.type==='esports_match';
-  const quarters=esports||/football|lacrosse/.test(String(game?.type||''))||basketballLeadProfile(game)?.period===4;
-  const quarter=esports?Number(String(game.phase||'').match(/^Quarter ([1-4])$/)?.[1]):game?.period;
-  // An unknown quarter cannot justify a lower early-entry floor.
-  const player=Boolean(playerOverSpec(game,market));
-  const overFloor=strategy==='over'&&quarters?
-    !Number.isInteger(quarter)||quarter<1||quarter===1?(player?9:15):quarter===2?(player?6:10):0:0;
-  return Math.max(existing,tier,overFloor);
+export function minimumProfitCents(strategy,availableCents,sportType='',remainingSeconds=NaN,filledOrders=0,{costCents=0}={}){
+  // Every entry must return at least 1% of its fee-inclusive wager after fees.
+  // Round the required profit up to a whole cent; fractional cents never qualify.
+  return Number.isFinite(costCents)&&costCents>=0?Math.max(1,Math.ceil(costCents/100-1e-10)):Infinity;
 }
 export function netSettlementProfitCents(count,price,feeMultiplier=2){
   if(!Number.isFinite(count)||count<=0||!Number.isFinite(price)||price<=0||price>=1)return 0;
@@ -970,7 +956,7 @@ export function netSettlementProfitCents(count,price,feeMultiplier=2){
 export function profitableCount(count,price,feeMultiplier,strategy,availableCents,sportType='',remainingSeconds=NaN,entry={}){
   const profit=netSettlementProfitCents(count,price,feeMultiplier);
   const cost=estimatedCostCents(count,price,feeMultiplier);
-  return cost>0&&profit>=minimumProfitCents(strategy,availableCents,sportType,remainingSeconds,0,entry)?count:0;
+  return cost>0&&profit>=minimumProfitCents(strategy,availableCents,sportType,remainingSeconds,0,{...entry,costCents:cost})?count:0;
 }
 export function comeback(game,market,strategy){
   if(!game?.verifiedLive||!game.scoreKnown)return false;

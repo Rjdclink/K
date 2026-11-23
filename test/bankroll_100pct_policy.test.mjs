@@ -61,13 +61,13 @@ test('sport and verification rules are preserved, with only bankroll pools chang
   'remainingMentionCents(total,latestExposure.heldCents,latestExposure.pendingCents)'])
   assert.ok(code.includes(fragment),fragment);
  assert.equal(minimumProfitCents('lead',10000),1);
- assert.equal(minimumProfitCents('no',10000),50);
+ assert.equal(minimumProfitCents('no',10000,'',NaN,0,{costCents:10000}),100);
  assert.equal(hasIndependentCushionedOverProof({overVerification:{route:'cushion'}}),false);
 });
 
 test('dashboard exposes the new actual ceiling and retains profit requirements',()=>{
  const ui=readFileSync(new URL('../src/ui.mjs',import.meta.url),'utf8');
- for(const phrase of ['maximum 100% of bankroll','100% bankroll maximum','100% maximum bankroll allocation per trade','$0.50 net'])
+ for(const phrase of ['maximum 100% of bankroll','100% bankroll maximum','100% maximum bankroll allocation per trade','at least 1% net profit after fees'])
   assert.ok(ui.includes(phrase),phrase);
  assert.ok(!ui.includes('15% maximum bankroll'));
 });

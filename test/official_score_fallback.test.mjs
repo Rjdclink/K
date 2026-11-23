@@ -31,7 +31,8 @@ const response=(url,{stale=false,events=[bbcEvent()]}={})=>({ok:true,
 test('BBC live fixture supplies score, minute and exact identity after ESPN retry',async()=>{
  const calls=[],proof=await fetchIndependentMatchScore(game,milestone,{espnFeed:'soccer/all',
   fetcher:async url=>{calls.push(url);return response(url)}});
- assert.equal(calls.filter(url=>url.includes('espn.com')).length,6);
+ const hour=new Date(start).getUTCHours();
+ assert.equal(calls.filter(url=>url.includes('espn.com')).length,2*(hour<6||hour>=21?2:1));
  assert.ok(calls.findIndex(url=>url.includes('bbc.com'))>calls.findLastIndex(url=>url.includes('espn.com')));
  assert.deepEqual([proof?.source,proof?.eventId,proof?.home,proof?.away,proof?.elapsedMinute],
   ['BBC Sport','s-123',0,1,87]);

@@ -1,8 +1,11 @@
 import {scoreFeedAgeMs} from './score_feed_freshness.mjs';
 
 const whole=n=>Number.isInteger(n)&&n>=0;
-const dates=start=>[start,start-86400000,start+86400000]
-  .map(ms=>new Date(ms).toISOString().slice(0,10));
+const dates=start=>{
+  const hour=new Date(start).getUTCHours();
+  return [start,...(hour<6?[start-86400000]:[]),...(hour>=21?[start+86400000]:[])]
+    .map(ms=>new Date(ms).toISOString().slice(0,10));
+};
 const clockSeconds=value=>{
   const m=String(value||'').match(/^(\d{1,2}):([0-5]\d)$/);
   return m?Number(m[1])*60+Number(m[2]):NaN;

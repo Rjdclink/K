@@ -28,9 +28,25 @@ test('ESPN dates use eight digits and verify the actual Ecuador LigaPro fixture 
  assert.equal(result?.source,'ESPN','ESPN event is present and must verify without any fallback');
  assert.equal(result?.eventId,'401921320');
  assert.equal(result?.home,0);assert.equal(result?.away,1);
- assert.equal(calls.length,3);
+ assert.equal(calls.length,1,'ordinary kickoffs need only their UTC date');
  assert.ok(calls.every(url=>/[?&]dates=\d{8}(?:&|$)/.test(url)),calls.join('\n'));
  assert.ok(calls.some(url=>url.includes('dates=20261120')));
+});
+
+test('near-midnight kickoffs also inspect the adjacent scoreboard date',async()=>{
+ for(const [start,other] of [
+  ['2026-11-20T02:00:00Z','20261119'],
+  ['2026-11-20T22:00:00Z','20261121']
+ ]){
+  const calls=[];
+  await fetchIndependentMatchScore(soccer,{...soccerM,start_date:start},{
+   espnFeed:'soccer/all',fixtureCache:null,
+   fetcher:async url=>{calls.push(url);return {ok:true,json:async()=>({events:[]})}},
+   officialLoad:async()=>null
+  });
+  assert.ok(calls.some(url=>url.includes('dates=20261120')));
+  assert.ok(calls.some(url=>url.includes('dates='+other)));
+ }
 });
 
 test('ESPN women’s college scoreboard uses a valid division-50 date and matches Alcorn St. at Tulane',async()=>{
@@ -65,7 +81,7 @@ test('BBC Sport fallback requests the fixture date after ESPN absence',async()=>
   json:async()=>({events:[]}),text:async()=>url.endsWith('/2026-11-20')?html:''};};
  const result=await fetchIndependentMatchScore(soccer,soccerM,{fetcher,espnFeed:'soccer/all'});
  assert.equal(result?.source,'BBC Sport');assert.equal(result?.home,0);assert.equal(result?.away,1);
- assert.equal(calls.filter(url=>url.includes('espn.com')).length,6);
+ assert.equal(calls.filter(url=>url.includes('espn.com')).length,2);
  assert.ok(calls.some(url=>url.includes('/scores-fixtures/2026-11-20')));
 });
 

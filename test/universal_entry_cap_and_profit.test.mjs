@@ -4,11 +4,10 @@ import {minimumProfitCents,netSettlementProfitCents,orderSize} from '../src/stra
 import {automaticEntryFraction} from '../src/automatic_entry_policy.mjs';
 import {comboAllocation,comboLegAllocation,comboMinimumCents} from '../src/combos.mjs';
 
-test('all ordinary entries require 50 cents net, commanding leads require only positive post-fee profit',()=>{
+test('all entry strategies share the one-percent post-fee return requirement',()=>{
  for(const bankroll of [2500,10000,30000,1000000])for(const filledOrders of [0,10,20,35]){
-  for(const strategy of ['no','over','weather','combo'])
-   assert.equal(minimumProfitCents(strategy,bankroll,'',NaN,filledOrders),50,strategy);
-  assert.equal(minimumProfitCents('lead',bankroll,'',NaN,filledOrders),1);
+  for(const strategy of ['no','over','weather','combo','lead'])
+   assert.equal(minimumProfitCents(strategy,bankroll,'',NaN,filledOrders,{costCents:10000}),100,strategy);
  }
  assert.equal(netSettlementProfitCents(10,0.80,2)>0,true);
 });

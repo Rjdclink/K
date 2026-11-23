@@ -38,7 +38,7 @@ test('college NO verification discovers FCS fixtures and refuses conflicting evi
   let calls=0;
   const conflict=structuredClone(board);conflict.events[0].competitions[0].competitors[0].score='9';
   assert.equal(await verifyIndependentCollegeTotalNo(game,m,full,{fetcher:async()=>({ok:true,json:async()=>++calls===1?conflict:board})}),false);
-  assert.equal(calls,3,'the first date-scoped ESPN batch is fully fetched; never retry ESPN or contact FOX on a matching score conflict');
+  assert.equal(calls,2,'the relevant date-scoped ESPN batch is fully fetched; never retry ESPN or contact FOX on a matching score conflict');
 });
 
 test('CFB NO exclusively uses a fourth-quarter full-game market',()=>{

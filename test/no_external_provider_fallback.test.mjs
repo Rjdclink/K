@@ -27,7 +27,8 @@ test('two unavailable ESPN attempts precede BBC Sport exact fixture verification
  assert.equal(result?.eventId,'s-123456');
  assert.equal(result?.home,3);
  assert.equal(result?.away,3);
- assert.equal(calls.filter(url=>/espn/.test(url)).length,6);
+ const hour=new Date(start).getUTCHours();
+ assert.equal(calls.filter(url=>/espn/.test(url)).length,2*(hour<6||hour>=21?2:1));
  assert.ok(calls.findIndex(url=>/bbc.com/.test(url))>calls.findLastIndex(url=>/espn/.test(url)));
  const proof=tagNoPreflight(result);
  assert.equal(proof?.preflight_policy,NO_PREFLIGHT_POLICY);
@@ -45,7 +46,8 @@ test('first matching ESPN fixture stops the retry and prevents FOX use',async()=
  const result=await fetchIndependentMatchScore(g,m,{fetcher,espnFeed:'soccer/all',foxFeed:'soccer'});
  assert.equal(result?.source,'ESPN');
  assert.equal(result?.home,3);
- assert.equal(calls.filter(url=>/espn/.test(url)).length,3);
+ const hour=new Date(start).getUTCHours();
+ assert.equal(calls.filter(url=>/espn/.test(url)).length,hour<6||hour>=21?2:1);
  assert.ok(calls.every(url=>/espn/.test(url)));
 });
 test('wrong teams and ambiguous fixtures fail closed; source scores need not equal Kalshi',async()=>{

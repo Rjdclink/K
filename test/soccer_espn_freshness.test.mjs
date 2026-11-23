@@ -84,9 +84,10 @@ test('two ESPN checks always make separate cache-busted HTTP requests and cannot
  const second=await verifyFreshEspnSoccerNo(g,milestone,{fetcher});
  assert.equal(first?.source,'ESPN');
  assert.equal(second?.source,'ESPN');
- assert.equal(urls.length,6);
+ const hour=new Date(start).getUTCHours(),perCheck=hour<6||hour>=21?2:1;
+ assert.equal(urls.length,2*perCheck);
  assert.ok(urls.every(x=>x.opts.cache==='no-store'&&x.opts.headers['cache-control']==='no-cache'));
- assert.ok(urls.slice(0,3).every((x,i)=>x.url!==urls[i+3].url),'each check needs its own cache-busting URL');
+ assert.ok(urls.slice(0,perCheck).every((x,i)=>x.url!==urls[i+perCheck].url),'each check needs its own cache-busting URL');
  assert.notEqual(first.requestId,second.requestId);
  assert.equal(pairedFreshEspnSoccerNo(first,first,g),false);
  assert.equal(pairedFreshEspnSoccerNo(first,second,g),true);

@@ -74,6 +74,6 @@ test('independent Chilean verification uses the exact small ESPN league board in
     }
   });
   assert.ok(result,'small ESPN league feed must independently validate exact Chile fixture');
-  assert.equal(urls.length,3);
+  assert.equal(urls.length,2,'late UTC kickoff checks both neighboring score dates');
   assert.ok(urls.every(url=>url.includes('/soccer/chi.1/')));
 });

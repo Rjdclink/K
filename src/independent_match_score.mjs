@@ -21,8 +21,11 @@ export const scorePairMatches=(reading,game)=>Boolean(
   Number.isInteger(reading.away)&&reading.away>=0&&
   (!reading.gameId||reading.gameId===game?.id));
 
-const daysFor=start=>[start,start-86400000,start+86400000]
-  .map(ms=>new Date(ms).toISOString().slice(0,10).replaceAll('-',''));
+const daysFor=start=>{
+  const hour=new Date(start).getUTCHours();
+  return [start,...(hour<6?[start-86400000]:[]),...(hour>=21?[start+86400000]:[])]
+    .map(ms=>new Date(ms).toISOString().slice(0,10).replaceAll('-',''));
+};
 const periodClockSeconds=value=>{
   const match=String(value||'').trim().match(/^(\d{1,2}):([0-5]\d)$/);
   return match?Number(match[1])*60+Number(match[2]):NaN;

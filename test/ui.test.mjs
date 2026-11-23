@@ -272,8 +272,8 @@ test('filled order timer is bright red, advances each second and reanchors to li
 
   assert.match(page,/Only hockey, soccer and football are scanned/);
   assert.match(page,/30 seconds of actual elapsed time/);
-  assert.match(page,/Soccer full-game and first-half NO now use/);
-  assert.match(page,/ESPN only/);
+  assert.match(page,/Soccer full-game and first-half NO use/);
+  assert.match(page,/ESPN first, then BBC Sport/);
   assert.match(page,/Cached or contradictory ESPN evidence blocks the trade/);
   assert.match(page,/soccer first-half and full-game NO require a 2\.5-goal cushion/);
   assert.match(page,/only live full-game regulation stoppage after 90:00 permits a 1\.5-goal cushion/);
