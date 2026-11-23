@@ -40,7 +40,8 @@ export function finalFiveEntryEligible(game,{strategy,market}={}){
  const goalExtension=lead&&Number.isInteger(game?.home)&&Number.isInteger(game?.away)&&
    margin>=3&&total<5;
  const soccerFiveLead=lead&&soccer&&margin>=3&&total===5;
- const limit=soccerFiveLead?570:goalExtension?(soccer?930:margin===3?420:FINAL_FIVE_SECONDS):FINAL_FIVE_SECONDS;
+ const oneNilLead=lead&&margin===1&&total===1;
+ const limit=oneNilLead&&hockey?15:soccerFiveLead?570:goalExtension?(soccer?930:margin===3?420:FINAL_FIVE_SECONDS):FINAL_FIVE_SECONDS;
  if(hockey||football){
    // P1/P2 end in an intermission; they are not game-ending windows.
    // P4 is an actual overtime segment when the provider reports one.
@@ -51,6 +52,7 @@ export function finalFiveEntryEligible(game,{strategy,market}={}){
  if(Number(game.period)!==2||game.soccerExtraTime===true||
    game.soccerOvertime===true||!Number.isFinite(game.soccerMinute))return false;
  const minute=game.soccerMinute,remaining=Math.round((90-minute)*60);
+ if(oneNilLead)return minute>=92&&minute<=180&&game.matchRemainingSeconds===0;
  // The 90:00 marker itself does not prove that play is continuing.
  if(minute>90)return minute<=180&&game.matchRemainingSeconds===0;
  if(minute>=90||remaining<=0||remaining>=limit)return false;

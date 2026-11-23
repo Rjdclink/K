@@ -70,7 +70,7 @@ test('first independently corroborated one-goal threat latches and sells immedia
   assert.equal(result.active.has(ticker),true,'the threatened market must stay on watch');
   assert.equal(result.posts.length,1,'the first profitable bid should trigger a sell');
   assert.equal(result.posts[0].side,'ask');
-  assert.equal(result.posts[0].time_in_force,'fill_or_kill','partial fills must not undermine the no-loss estimate');
+  assert.equal(result.posts[0].time_in_force,'immediate_or_cancel','Kalshi rejects reduce_only with fill_or_kill');
   assert.equal(result.posts[0].reduce_only,true);
 });
 
@@ -108,7 +108,7 @@ test('a held football winner eight points ahead has first-profit priority withou
  football.type='football_game';
  const result=await harness({score:football,authoritative:football,price:'.96'});
  assert.equal(result.posts.length,1);
- assert.equal(result.posts[0].time_in_force,'fill_or_kill');
+ assert.equal(result.posts[0].time_in_force,'immediate_or_cancel');
 });
 test('a threatened team lead never sells an unprofitable fractional slice',async()=>{
  const result=await harness({score:scores(2,1),price:'.85',depth:'.01'});

@@ -396,10 +396,13 @@ function approachingGoalLead(game,market){
  if(!leader||market.custom_strike?.[(hockey?'hockey':'soccer')+'_team']!==leader)return false;
  const seconds=hockey?game.remainingSeconds:soccerRegulationSeconds(game);
  const margin=Math.abs(game.home-game.away),total=game.home+game.away;
- const firstWindow=hockey?margin===2?420:0:
+ const oneNil=total===1&&margin===1;
+ const firstWindow=hockey?oneNil?75:margin===2?420:0:
    total===5?margin>=3?630:0:margin>=3?990:margin===2?420:0;
  return (hockey?game.period===3:game.period===2&&!game.soccerExtraTime)&&
-   Number.isFinite(seconds)&&seconds>0&&seconds<=firstWindow;
+   (soccer&&oneNil?Number.isFinite(game.soccerMinute)&&game.soccerMinute>=91&&
+     game.clockRunning!==false:
+     Number.isFinite(seconds)&&seconds>0&&seconds<=firstWindow);
 }
 const leadCandidate=(game,market)=>leadSignal(game,market)||
   additionalLeadSignal(game,market)||earlyLeadSignal(game,market);
@@ -2254,12 +2257,12 @@ async function exitAtRiskNos(games,events,positions){
         RETURNING id`,[id,position.ticker,game.id,quote.count,quote.yesPrice]);
       if(!claimed.rowCount)continue;
       try{
-        // Buy YES at the ask implied by resting NO bids; FOK prevents a worse
-        // execution price, reduce_only prevents opening the opposite position.
+        // Buy YES at the ask implied by resting NO bids. The limit prevents
+        // a worse price; IOC is required for a reduce-only order on Kalshi.
         const result=await kalshi('/portfolio/events/orders',{method:'POST',auth:true,body:{
           ticker:position.ticker,client_order_id:id,side:'bid',
           count:quote.count.toFixed(2),price:quote.yesPrice.toFixed(4),
-          time_in_force:'fill_or_kill',self_trade_prevention_type:'taker_at_cross',
+          time_in_force:'immediate_or_cancel',self_trade_prevention_type:'taker_at_cross',
           post_only:false,reduce_only:true}});
         const n=Number(result.fill_count_fp??result.fill_count??result.order?.fill_count_fp??0);
         if(n>0)await recordExitFill((...args)=>pool.query(...args),position.ticker,
@@ -2415,7 +2418,8 @@ async function exitComebacks(games,events,positions){
         // Exchange-reported acquisition basis and paid fees are mandatory.
         // Reserve at least twice the market taker multiplier, not only the
         // generic 2x fee, and require a positive net profit for EXACTLY the
-        // executable count. FOK below prevents a loss from partial fills.
+        // executable count. Kalshi only accepts reduce_only with IOC; the
+        // limit price protects each fill from a worse execution price.
         if(!leadFees||!eligibleProfitExit('lead',position,{price:bid,count},[],
           Math.max(2,2*leadFees.multiplier)))continue;
       }
@@ -2428,7 +2432,7 @@ async function exitComebacks(games,events,positions){
         [id,position.ticker,gameId,count,bid]);
       if(!claim.rowCount)continue;
       try{
-        const result=await kalshi('/portfolio/events/orders',{method:'POST',auth:true,body:{ticker:position.ticker,client_order_id:id,side:'ask',count:count.toFixed(2),price:bid.toFixed(4),time_in_force:leadExit?'fill_or_kill':'immediate_or_cancel',self_trade_prevention_type:'taker_at_cross',post_only:false,reduce_only:true}});
+        const result=await kalshi('/portfolio/events/orders',{method:'POST',auth:true,body:{ticker:position.ticker,client_order_id:id,side:'ask',count:count.toFixed(2),price:bid.toFixed(4),time_in_force:'immediate_or_cancel',self_trade_prevention_type:'taker_at_cross',post_only:false,reduce_only:true}});
         const filledCount=Number(result.fill_count_fp??result.fill_count??0);
         await recordExitFill((...args)=>pool.query(...args),position.ticker,result.order_id||result.order?.order_id,filledCount);
         await pool.query(`UPDATE exit_attempts SET status=$2,order_id=$3,filled_count=$4,updated_at=now() WHERE id=$1`,[id,filledCount>0?'filled':'unfilled',result.order_id||result.order?.order_id||null,filledCount]);

@@ -69,7 +69,7 @@ test('held NBA commanding lead four points from a tie exits at first net profit 
  assert.equal(writes.length,1);
  assert.equal(posts.length,1);
  assert.equal(posts[0].reduce_only,true);
- assert.equal(posts[0].time_in_force,'fill_or_kill');
+ assert.equal(posts[0].time_in_force,'immediate_or_cancel');
  assert.equal(posts[0].side,'ask');
 });
 test('legacy held team winner waits when independently sourced score is absent or contradicts the tieable margin',async()=>{

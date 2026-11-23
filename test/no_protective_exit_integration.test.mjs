@@ -47,7 +47,7 @@ test('NO Over 2.5 at 1–1 immediately closes via strictly reduce-only YES bid w
  assert.equal(h.orders.length,1);
  assert.equal(h.orders[0].side,'bid');
  assert.equal(h.orders[0].reduce_only,true);
- assert.equal(h.orders[0].time_in_force,'fill_or_kill');
+ assert.equal(h.orders[0].time_in_force,'immediate_or_cancel');
  assert.equal(h.orders[0].price,'0.3000');
  assert.equal(h.orders[0].count,'10.00');
  assert.equal(h.events[0][0],'exit-ledger');
