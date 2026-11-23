@@ -37,6 +37,7 @@ import { favorableSettlement } from './settlements.mjs';
 import { authorized, checkCredentials, sessionCookie, loginPage } from './dashboard_auth.mjs';
 import { refreshDiscovery, scanMilestones, supportedScannerSport, isScannerExcludedSport, eligibleForMarkets, internationalBasketball, prioritizeMarketGames, linkedEventTickers, playerPropEntryClosed, entryEventTickers, winnerEventTickers, readyOverTickets, prioritizeReadyOverTickets, gameTimeLabel, storedClockSeconds, mapBatches, mergeScannerMilestones } from './discovery.mjs';
 import {upcomingScannedGames} from './dashboard_upcoming.mjs';
+import {publishPendingSportsPreview} from './scanner_pending_preview.mjs';
 import {selectStaleReviews,classifyStaleLive,retainedAfterStaleReview} from './stale_review.mjs';
 import { tieRefundPreference } from './settlement_preference.mjs';
 import { verifyIndependentOverDecision, verifyIndependentTableTennisLeadDecision, verifyIndependentTableTennisMatch } from './score_verification.mjs';
@@ -4963,6 +4964,17 @@ async function scan(cachedMilestones,discoveryCount){
       g.state.verifiedLive||Date.parse(g.milestone.start_date||'')>Date.now()-3600000);
     const active=games.filter(g=>g.state.verifiedLive && g.state.scoreKnown);
     scanned=active.length;
+    // Preserve the latest score-poll observation even if a game is still
+    // scheduled upstream. Only an actual live feed can publish a score or
+    // enable candidate verification and trade entry.
+    const pendingCount=await publishPendingSportsPreview(games,
+      (...args)=>pool.query(...args),scanStarted).catch(error=>{
+        console.warn('Pending game observation deferred:',error.message);
+        return 0;
+      });
+    console.info('Sports scanner coverage:',JSON.stringify({
+      catalog:ms.length,monitored:games.length,verifiedLive:active.length,pending:pendingCount
+    }));
     // Promote candidates before slow market catalog or account operations.
     await promoteScanGames(games);
     // Publish fresh live scores before quote discovery or cash/combination

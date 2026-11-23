@@ -17,7 +17,9 @@ export function isScannerExcludedSport(item){
 export function supportedScannerSport(item){
   if(isScannerExcludedSport(item))return false;
   const type=String(item?.type||'').toLowerCase();
-  if(!/^(?:football|hockey|soccer)_/.test(type))return false;
+  // A sport prefix can also identify player-stat milestones: admit only
+  // actual team-game, match or tournament score feeds to the active scanner.
+  if(!/^(?:football_(?:game|match)|hockey_(?:game|match|tournament)|soccer_(?:game|match|tournament_multi_leg))$/.test(type))return false;
   if(/esports/i.test(`${type} ${item?.sport||''} ${item?.details?.league||''}`))return false;
   return true;
 }
@@ -75,7 +77,10 @@ export async function discoverCurrentMilestones(get,now=Date.now(),lookbackMs=7*
 export async function refreshDiscovery(get,previous,now=Date.now()){
   const fullAt=Date.parse(previous?.full_discovered_at||'');
   const full=!Array.isArray(previous?.milestones)||!Number.isFinite(fullAt)||now-fullAt>=15*60000;
-  const found=await discoverCurrentMilestones(get,now,full?7*86400000:8*3600000);
+  // Full reloads need yesterday's late games and tomorrow's schedule, not
+  // seven days of disabled sports. Older actually-live held fixtures are
+  // retained separately by the verified live-watch queue.
+  const found=await discoverCurrentMilestones(get,now,full?24*3600000:8*3600000);
   // Refresh retained events while excluding disabled sports even when the
   // existing cached catalog still contains them.
   const retained=full?[]:previous.milestones.filter(m=>supportedScannerSport(m)&&Date.parse(m.start_date||'')<now-8*3600000);
