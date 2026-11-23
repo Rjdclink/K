@@ -69,7 +69,7 @@ test('incremental discovery preserves old tournaments and periodically reconcile
   queries.length=0;
   const full=await discovery.refreshDiscovery(get,previous,now+15*60000);
   assert.deepEqual(full.milestones.map(m=>m.id),['new']);
-  assert.ok(queries.every(q=>q.get('minimum_start_date')==='2026-10-27T00:15:00.000Z'));
+  assert.ok(queries.every(q=>q.get('minimum_start_date')==='2026-11-02T00:15:00.000Z'));
   assert.equal(full.full_discovered_at,'2026-11-03T00:15:00.000Z');
 });
 
