@@ -1,4 +1,4 @@
-import {supportedScannerSport,internationalBasketball} from './discovery.mjs';
+import {supportedScannerSport,internationalBasketball,eligibleForMarkets} from './discovery.mjs';
 
 // A queue clock is scheduling metadata, not a source of scores or trade permission.
 // Only independently verified evidence authorizes a purchase.
@@ -26,6 +26,13 @@ export function scanTier(game,{held=false,watched=false,now=Date.now()}={}){
   game.soccerMinute>=75?10:30;
  return 30;
 }
+// One urgent candidate queue serves game-level football, hockey and soccer only.
+// Kalshi live-data presence is a screening input, never independent trading proof.
+export function fastEntryCandidates(games,allowsEntry=()=>true){
+ return games.filter(g=>supportedScannerSport(g.milestone)&&
+  eligibleForMarkets(g.state)&&allowsEntry(g.state));
+}
+
 // Spread initial checks across the three enabled sports; no single crowded league
 // may consume all of the thirty-second worker's bounded catalog capacity.
 export function prioritizeNearCheckGames(games,limit=8,cycle=Math.floor(Date.now()/30000)){

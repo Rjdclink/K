@@ -71,7 +71,9 @@ test('exits and position-reducing orders remain untouched regardless of sport',(
 });
 test('scanner routes retain all four display sports but block new basketball and player entry scanning',()=>{
  const code=requireIndex();
- assert.ok(code.includes('const ready=prioritizeNearCheckGames(candidates.filter(g=>allowsNewEntry(g.state,null)),8);'));
+ assert.ok(code.includes("const latest=await withApiPriority('live',()=>liveBatch(ms));"));
+ assert.ok(code.includes('fastEntryCandidates(ms.map(milestone=>({'));
+ assert.ok(code.includes('runImmediateNoFinalPass(['));
  assert.ok(code.includes('allCandidates.push(...candidates.filter(c=>!filled.has(signalKey(c))&&allowsNewEntry(c.state,c.market)))'));
  assert.ok(code.includes('o.new_entry_allowed=allowsNewEntry('));
  assert.ok(code.includes('execution:!allowsNewEntry(c.state,c.market)'));

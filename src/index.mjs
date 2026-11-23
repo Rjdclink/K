@@ -1,4 +1,4 @@
-import {scanTier,prioritizeNearCheckGames,runScanTierWindow} from './scan_tiers.mjs';
+import {scanTier,fastEntryCandidates,prioritizeNearCheckGames,runScanTierWindow} from './scan_tiers.mjs';
 import {parallelBasketballVerification,assertBasketballVerification} from './basketball_verification.mjs';
 import {verifyExternalOverExposure,assertOverExposure} from './over_exposure.mjs';
 import {rememberIndependentEntry,independentEntryValid,assertExternalPurchase} from './entry_verification.mjs';
@@ -4859,82 +4859,105 @@ async function promoteScanGames(games){
 }
 async function scanNearPriorityGames(){
   await ensureScanTiers();
+  // This worker is independent of both 2-minute discovery and 10-second
+  // candidate trading. It promotes first; it does not hold up promotion
+  // while fetching market catalogs or waiting for external proof.
   const {rows}=await pool.query(`SELECT milestone FROM sports_scan_tiers
     WHERE tier<=30 AND seen_at>now()-interval '5 minutes'
     ORDER BY tier ASC,seen_at DESC LIMIT 90`);
   const ms=rows.map(row=>row.milestone).filter(supportedScannerSport);
   if(!ms.length)return 0;
-  const latest=await withApiPriority('preflight',()=>liveBatch(ms));
+  const latest=await withApiPriority('live',()=>liveBatch(ms));
   const games=ms.map(milestone=>({milestone,state:gameState(milestone,latest.get(milestone.id))}));
   const promoted=await promoteScanGames(games);
-  const candidates=games.filter(g=>g.state.verifiedLive&&eligibleForMarkets(g.state)&&scanTier(g.state)===10);
-  const ready=prioritizeNearCheckGames(candidates.filter(g=>allowsNewEntry(g.state,null)),8);
-  if(!ready.length)return promoted;
-  const events=await withApiPriority('preflight',()=>marketMap(
-    ready.flatMap(g=>entryEventTickers(g.milestone,g.state))));
-  // A costly market catalog cannot cause the game observation to expire.
-  const fresh=await withApiPriority('preflight',()=>liveBatch(ready.map(g=>g.milestone)));
-  for(const g of ready){const reading=fresh.get(g.milestone.id);if(reading)g.state=gameState(g.milestone,reading)}
-  // Initial confirmation begins now, not after the two-minute discovery pass.
-  // Existing score-source and trade execution rules are unchanged.
-  await Promise.allSettled([
-    scanCollegeTotalNos(ready,events,'football',null,'initial'),
-    scanCollegeTotalNos(ready,events,'football',null,'final'),
-    scanHockeyTotalNos(ready,events,null,'initial'),
-    scanEarlyPeriodNos(ready,events,null,'NHL','initial'),
-    scanSoccerTotalNos(ready,events,null,'initial'),
-    scanEarlyPeriodNos(ready,events,null,'Soccer','initial'),
-    scanHockeyTotalNos(ready,events,null,'final'),
-    scanEarlyPeriodNos(ready,events,null,'NHL','final'),
-    scanSoccerTotalNos(ready,events,null,'final'),
-    scanEarlyPeriodNos(ready,events,null,'Soccer','final'),
-
-  ].map(p=>p.catch(e=>{console.warn('Near-entry first check deferred:',e.message);return null})));
+  console.info('Near-entry promotion:',JSON.stringify({
+    checked:games.length,urgent:games.filter(g=>scanTier({
+      ...g.state,start_date:g.milestone.start_date})===10).length
+  }));
   return promoted;
 }
 async function scanFastPriorityGames(until){
   if(!live()||Date.now()>=until)return 0;
   await ensureScanTiers();
-  // Round-robin fairness prevents one fixture from monopolizing repeated scans.
+  // Claim eligible rows atomically in the shared DB. Newly promoted entries
+  // with no fast_checked_at go ahead of previously checked fixtures; the
+  // check is due again after ten real seconds, regardless of other workers.
   const {rows}=await pool.query(`WITH chosen AS (
     SELECT game_id FROM sports_scan_tiers WHERE tier=10
       AND seen_at>now()-interval '5 minutes'
       AND (fast_checked_at IS NULL OR fast_checked_at<clock_timestamp()-interval '10 seconds')
-    ORDER BY fast_checked_at NULLS FIRST,seen_at DESC LIMIT 2
+    ORDER BY fast_checked_at NULLS FIRST,seen_at DESC LIMIT 12
     FOR UPDATE SKIP LOCKED)
     UPDATE sports_scan_tiers t SET fast_checked_at=clock_timestamp()
       FROM chosen WHERE t.game_id=chosen.game_id RETURNING t.milestone`);
   const ms=rows.map(row=>row.milestone).filter(supportedScannerSport);
   if(!ms.length||Date.now()>=until)return 0;
   const first=await withApiPriority('preflight_final',()=>liveBatch(ms));
-  let games=ms.map(milestone=>({milestone,state:gameState(milestone,first.get(milestone.id))}))
-    .filter(g=>g.state.verifiedLive&&playerPropEarlyWindow(g.state));
+  let games=fastEntryCandidates(ms.map(milestone=>({
+    milestone,state:gameState(milestone,first.get(milestone.id))
+  })),state=>allowsNewEntry(state,null));
   if(!games.length||Date.now()>=until)return 0;
-  const events=await withApiPriority('preflight',()=>marketMap(
+  const events=await withApiPriority('preflight_final',()=>marketMap(
     games.flatMap(g=>entryEventTickers(g.milestone,g.state))));
-  // The slow market catalog cannot make the first external player check stale.
+  // Market catalog requests can take seconds: never use an earlier live
+  // observation to authorize an independent preflight or an order.
   const fresh=await withApiPriority('preflight_final',()=>liveBatch(games.map(g=>g.milestone)));
-  games=games.map(g=>({...g,state:gameState(g.milestone,fresh.get(g.milestone.id))}))
-    .filter(g=>g.state.verifiedLive&&playerPropEarlyWindow(g.state));
-  if(Date.now()>=until)return 0;
-  // Exact contract, ESPN box score, independent second proof, later play,
-  // liquidity, cash and final order authorization remain completely unchanged.
-  return scanVariablePlayerOvers(games,events,null,{maxMarkets:6});
+  games=fastEntryCandidates(games.map(g=>({
+    ...g,state:gameState(g.milestone,fresh.get(g.milestone.id))
+  })),state=>allowsNewEntry(state,null));
+  if(!games.length||Date.now()>=until)return 0;
+  console.info('Urgent game candidate scan:',JSON.stringify({
+    checked:ms.length,eligibleGames:games.length
+  }));
+  // Existing independent, 30-second-separated ESPN checks, live book,
+  // bankroll, profit, duplicate-order, contract and FOK gates are unchanged.
+  // Due final proofs outrank first checks. Each sport runs concurrently;
+  // multiple variants sharing that sport's bankroll run serially.
+  let submitted=await withApiPriority('preflight_final',()=>runImmediateNoFinalPass([
+    {sport:'football',run:()=>scanCollegeTotalNos(games,events,'football',null,'final')},
+    {sport:'NHL',run:async()=>{
+      const full=await scanHockeyTotalNos(games,events,null,'final');
+      return full+await scanEarlyPeriodNos(games,events,null,'NHL','final');
+    }},
+    {sport:'soccer',run:async()=>{
+      const full=await scanSoccerTotalNos(games,events,null,'final');
+      return full+await scanEarlyPeriodNos(games,events,null,'Soccer','final');
+    }}
+  ],{onError:(sport,error)=>console.warn('Urgent final verification deferred:',sport,
+    String(error?.message||error).slice(0,180))}));
+  if(Date.now()>=until)return submitted;
+  submitted+=await withApiPriority('preflight',()=>runImmediateNoFinalPass([
+    {sport:'football',run:()=>scanCollegeTotalNos(games,events,'football',null,'initial')},
+    {sport:'NHL',run:async()=>{
+      const full=await scanHockeyTotalNos(games,events,null,'initial');
+      return full+await scanEarlyPeriodNos(games,events,null,'NHL','initial');
+    }},
+    {sport:'soccer',run:async()=>{
+      const full=await scanSoccerTotalNos(games,events,null,'initial');
+      return full+await scanEarlyPeriodNos(games,events,null,'Soccer','initial');
+    }}
+  ],{onError:(sport,error)=>console.warn('Urgent first verification deferred:',sport,
+    String(error?.message||error).slice(0,180))}));
+  return submitted;
 }
 const scanMinuteEnd=()=>Math.min(Date.now()+55000,
   (Math.floor(Date.now()/60000)+1)*60000-1500);
 async function runFastSportsTick(){
   const until=scanMinuteEnd();
+  // Run the fast game-contract worker in parallel with protective exits,
+  // already-due independent checks and confirmed over/lead watchers. Never
+  // wait for discovery or near-entry work before starting urgent evaluation.
+  const candidateCycles=runScanTierWindow('fast',async()=>{
+    try{await withApiPriority('preflight_final',()=>scanFastPriorityGames(until))}
+    catch(e){console.warn('Urgent game contract scan deferred:',e.message)}
+  },{until});
   const watchers=[
     withApiPriority('preflight_final',()=>watchEntryRechecks(until)),
     withApiPriority('risk_exit',()=>watchCorrectedOvers(until)),
     withApiPriority('preflight',()=>watchReadyOverTickets(until)),
     withApiPriority('preflight',()=>watchLeadWindows(until))
   ].map(p=>p.catch(e=>console.warn('Urgent independent scan deferred:',e.message)));
-  // The former fast worker only generated player-prop purchases.
-  // Keep the independent exit/verification watchers above unchanged.
-  const cycles=0;
-  await Promise.all(watchers);
+  const [cycles]=await Promise.all([candidateCycles,...watchers]);
   return {tier:'fast',cycles};
 }
 async function runNearSportsTick(){
