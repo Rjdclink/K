@@ -83,7 +83,7 @@ export function hockeyTotalNo(game,market,{beforeWindow=false,external=null}={})
   const window=goalNoWindow(sourceGame,market,independent?independent.home+independent.away:game.home+game.away,
     {period:spec.period});
   const minimumCushion=window?.entrySeconds===900?0.5:
-    window?.entrySeconds===480?2.5:
+    window?.entrySeconds===480?spec.line===2.5&&total===1?1.5:2.5:
     window?.entrySeconds===60?1.5:spec.period==='full_game'&&game.period===4?1.5:
     total>=4?3.5:2.5;
   if(spec.line-total<minimumCushion)return null;

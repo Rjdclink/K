@@ -23,11 +23,11 @@ function market(line,half=false){
  rules_primary:half?'If the total goals scored by Away and Home is more than '+line+' goals in the 1st Half of the Away vs Home professional EPL soccer game originally scheduled for Nov 21, 2026, then the market resolves to Yes.':
  'If over '+line+' goals are scored in the Away vs Home professional EPL soccer game originally scheduled for Nov 21, 2026 after 90 minutes plus stoppage time (does not include extra time or penalties), then the market resolves to Yes.'};
 }
-test('before 90 full-game accepts a 2.5 cushion through four goals',()=>{
+test('before 90 full-game accepts 2.5 cushions and the exact 2.5 line with one scored',()=>{
  for(const [h,a,yes,no] of [[0,0,2.5,1.5],[1,0,3.5,2.5],[1,1,4.5,3.5],
   [2,1,5.5,4.5],[2,2,6.5,5.5],[3,2,8.5,7.5],[4,2,9.5,8.5]]){
   assert.equal(soccerTotalNo(game(h,a),market(yes))?.total,h+a>=5?undefined:h+a);
-  assert.equal(soccerTotalNo(game(h,a),market(no)),null);
+  assert.equal(soccerTotalNo(game(h,a),market(no))?.total,h+a===1?1:undefined);
   assert.equal(soccerTotalNo(game(h,a),market(yes),{beforeWindow:true})?.total,h+a>=5?undefined:h+a);
  }
 });

@@ -47,6 +47,9 @@ test('soccer NO 2.5 cushion enters strictly below 8 minutes after an initial 9-m
 test('a full-game NO 2.5 line with two scored is excluded even in the eight-minute window',()=>{
  assert.equal(soccerTotalNo(game(420,2,0,83),market(2.5)),null);
  assert.equal(soccerTotalNo(game(120,2,0,88),market(2.5)),null);
+ assert.equal(soccerTotalNo(game(480,1,0,82),market(2.5)),null);
+ assert.ok(soccerTotalNo(game(420,1,0,83),market(2.5)),
+  'one more goal can be scored while NO 2.5 still wins');
  assert.ok(soccerTotalNo(game(420,2,0,83),market(4.5)),
   'the same game still qualifies for a genuine 2.5-goal cushion');
 });

@@ -11,6 +11,8 @@ export function goalNoWindow(game,market,total,{period='full_game'}={}){
  const line=Number(market?.floor_strike),gap=line-total;
  if(!Number.isFinite(line)||!Number.isFinite(gap)||gap<=0)return null;
  if(line===3.5&&total===3)return {firstSeconds:960,entrySeconds:900,waitSeconds:60};
+ // An exact 2.5 NO line may absorb one more goal only at zero or one scored.
+ if(line===2.5&&total===1)return {firstSeconds:540,entrySeconds:480,waitSeconds:60};
  if(gap>=2.5)
   return {firstSeconds:540,entrySeconds:480,waitSeconds:60};
  if(gap>=1.5&&gap<2.5){
