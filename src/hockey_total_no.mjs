@@ -82,7 +82,7 @@ export function hockeyTotalNo(game,market,{beforeWindow=false,external=null}={})
   // Full-game 1.5 cushions use the final minute, including live overtime.
   const window=goalNoWindow(sourceGame,market,independent?independent.home+independent.away:game.home+game.away,
     {period:spec.period});
-  const minimumCushion=(window?.entrySeconds===900||spec.line===2.5&&total===2)?0.5:
+  const minimumCushion=window?.entrySeconds===900?0.5:
     window?.entrySeconds===480?2.5:
     window?.entrySeconds===60?1.5:spec.period==='full_game'&&game.period===4?1.5:
     total>=4?3.5:2.5;

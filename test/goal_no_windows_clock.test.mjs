@@ -22,8 +22,11 @@ function attach(game,market,clock,clockSource='ESPN'){
 test('only exact full-game goal-total NO lines receive the expanded windows',()=>{
  assert.equal(goalNoWindow(soccer(76),soccerMarket,3)?.entrySeconds,900);
  assert.equal(goalNoWindow(hockey(850),hockeyMarket,3)?.entrySeconds,900);
- assert.deepEqual(goalNoWindow(soccer(82),{...soccerMarket,floor_strike:2.5},2),
+ assert.equal(goalNoWindow(soccer(82),{...soccerMarket,floor_strike:2.5},2),null,
+  'one additional goal loses NO 2.5, so no expanded window');
+ assert.deepEqual(goalNoWindow(soccer(82),{...soccerMarket,floor_strike:4.5},2),
   {firstSeconds:540,entrySeconds:480,waitSeconds:60});
+ assert.equal(goalNoWindow(hockey(420),{...hockeyMarket,floor_strike:2.5},2),null);
  assert.deepEqual(goalNoWindow(hockey(59),{...hockeyMarket,floor_strike:5.5},4),
   {firstSeconds:120,entrySeconds:60,waitSeconds:60});
  assert.equal(goalNoWindow(soccer(92),{...soccerMarket,floor_strike:5.5},4)?.stoppageOnly,true);

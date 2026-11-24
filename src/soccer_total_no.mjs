@@ -81,7 +81,7 @@ export function soccerTotalNo(game,market,{beforeWindow=false,external=null}={})
   // A full 2.5-goal cushion uses eight minutes through four goals.
   // The 1.5-goal window enters only in confirmed live stoppage AFTER 90.
   const window=goalNoWindow(sourceGame,market,total);
-  const required=(window?.entrySeconds===900||spec.line===2.5&&total===2)?0.5:
+  const required=window?.entrySeconds===900?0.5:
     window?.entrySeconds===480?2.5:
     window?.stoppageOnly?1.5:soccerStoppageNoWindow(sourceGame)?1.5:total>=4?3.5:2.5;
   if(spec.line-total<required)return null;
