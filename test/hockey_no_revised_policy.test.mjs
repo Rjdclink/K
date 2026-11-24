@@ -36,7 +36,7 @@ test('NHL full-game NO accepts a 2.5 cushion through four scored',()=>{
   assert.equal(hockeyTotalNo(state('4:29'),market(false,5.5))?.total,3);
   assert.equal(hockeyTotalNo(state('4:29'),market(false,4.5)),null);
   assert.equal(hockeyTotalNo(state('4:29'),market(false,4.0)),null);
-  assert.equal(hockeyTotalNo(state('4:29'),market(false,3.5))?.total,3);
+  assert.equal(hockeyTotalNo(state('4:29'),market(false,3.5)),null);
   assert.equal(hockeyTotalNo(state('4:29',3,1),market(false,7.5))?.total,4,'four scored need 3.5 cushion');
   assert.equal(hockeyTotalNo(state('4:29',3,1),market(false,6.5))?.total,4,'four scored with 2.5 cushion qualifies');
   assert.equal(hockeyTotalNo(state('4:29',3,1),market(false,5.5)),null);
@@ -45,8 +45,8 @@ test('NHL full-game NO accepts a 2.5 cushion through four scored',()=>{
 test('NHL full-game NO 2.5 line cannot enter with two goals already scored',()=>{
  assert.equal(hockeyTotalNo(state('7:00',2,0),market(false,2.5)),null);
  assert.equal(hockeyTotalNo(state('4:00',2,0),market(false,2.5)),null);
- assert.equal(hockeyTotalNo(state('8:00',1,0),market(false,2.5)),null);
- assert.ok(hockeyTotalNo(state('7:00',1,0),market(false,2.5)));
+ assert.equal(hockeyTotalNo(state('5:00',1,0),market(false,2.5)),null);
+ assert.ok(hockeyTotalNo(state('4:59',1,0),market(false,2.5)));
  assert.ok(hockeyTotalNo(state('7:00',2,0),market(false,4.5)));
 });
 test('NHL third-period market still counts only P3 goals, not game total',()=>{

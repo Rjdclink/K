@@ -89,8 +89,13 @@ test('fresh independently proven entries INSIDE the final five minutes remain al
   const evidence=proof(game);
   assert.doesNotThrow(()=>assertExternalPurchase('/portfolio/events/orders','POST',
    {ticker:evidence.market.ticker,side:'bid'},[evidence]));
+  assert.throws(()=>assertExternalPurchase('/portfolio/events/orders','POST',
+   {ticker:evidence.market.ticker,side:'ask',reduce_only:false},[evidence]),{code:'LOCAL_EXTERNAL_VERIFICATION_REQUIRED'});
+  rememberIndependentEntry(game,evidence.market,game.verificationId,Date.now(),undefined,undefined,'no');
   assert.doesNotThrow(()=>assertExternalPurchase('/portfolio/events/orders','POST',
    {ticker:evidence.market.ticker,side:'ask',reduce_only:false},[evidence]));
+  assert.throws(()=>assertExternalPurchase('/portfolio/events/orders','POST',
+   {ticker:evidence.market.ticker,side:'bid'},[evidence]),{code:'LOCAL_EXTERNAL_VERIFICATION_REQUIRED'});
  }
 });
 
@@ -132,7 +137,7 @@ test('due-final NO candidates stay within each sport and contract window',()=>{
    src.indexOf('async function scanNoncushionedPlayerOvers('));
  const early=src.slice(src.indexOf('async function scanEarlyPeriodNos('),
    src.indexOf('async function scanSoccerTotalNos('));
- assert.match(hockey,/if\(phase==='final'\)watching=watching\.filter\(g=>g\.state\.remainingSeconds<900\)/);
- assert.match(soccer,/if\(phase==='final'\)watching=watching\.filter\(g=>g\.state\.matchRemainingSeconds<900\|\|/);
+ assert.match(hockey,/if\(phase==='final'\)watching=watching\.filter\(g=>g\.state\.remainingSeconds<=480\)/);
+ assert.match(soccer,/if\(phase==='final'\)watching=watching\.filter\(g=>g\.state\.matchRemainingSeconds<=480\|\|/);
  assert.match(early,/if\(phase==='final'&&\(hockey\|\|sport==='Soccer'\)\)return 0;/);
 });

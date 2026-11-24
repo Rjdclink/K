@@ -54,10 +54,10 @@ test('a full-game NO 2.5 line with two scored is excluded even in the eight-minu
   'the same game still qualifies for a genuine 2.5-goal cushion');
 });
 
-test('soccer NO allows the exact 3.5 no-cushion line at three goals, while four goals still require a later 1.5 window',()=>{
+test('soccer NO blocks the exact 3.5 no-cushion line at three goals, while four goals still require a later 1.5 window',()=>{
   assert.equal(soccerTotalNo(game(),market(5.5))?.total,3);
   assert.equal(soccerTotalNo(game(),market(4.0)),null);
-  assert.equal(soccerTotalNo(game(),market(3.5))?.total,3);
+  assert.equal(soccerTotalNo(game(),market(3.5)),null);
   assert.equal(soccerTotalNo(game(299,3,1),market(5.5)),null,'four-goal games need 3.5 cushion, not 1.5');
   assert.equal(soccerTotalNo(game(299,3,1),market(4.5)),null);
 });
@@ -112,7 +112,7 @@ test('soccer full-game NO admits 4+ goals only with a full 3.5-goal cushion',()=
   const large=market(8.5),proof={source:'ESPN',eventId:'matched-soccer',home:2,away:2};
   assert.equal(soccerTotalNo(game(299,2,1),large)?.total,3);
   assert.equal(soccerTotalNo(game(299,2,2),large)?.total,4,'four scored with 4.5 cushion qualifies');
-  assert.equal(soccerTotalNo(game(299,3,2),large),null,'five scored blocks entry');
+  assert.equal(soccerTotalNo(game(299,3,2),large)?.total,5,'five scored can enter late');
   assert.equal(soccerTotalNo(game(299,2,2),large,{beforeWindow:true})?.total,4,'preflight applies same cushion');
   assert.equal(soccerTotalNo(game(299,2,1),large,{external:proof})?.total,4,'independent score chooses actual four-goal cushion');
   assert.equal(soccerTotalNo(game(299,2,2),market(5.5),{external:{...proof,away:1}})?.total,3,'independent score remains authoritative');

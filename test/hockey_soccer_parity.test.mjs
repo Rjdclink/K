@@ -38,8 +38,8 @@ test('NHL full-game copies soccer NO: 2.5 cushion through four goals',()=>{
  assert.equal(hockeyTotalNo(four,market('full',7.5))?.total,4);
  assert.equal(hockeyTotalNo(four,market('full',6.5))?.total,4);
  const five=game(3,[p(1,2,1),p(2,1,1),p(3,0,0)]);
- assert.equal(hockeyTotalNo(five,market('full',8.5)),null);
- assert.equal(hockeyTotalNo(five,market('full',7.5)),null);
+ assert.equal(hockeyTotalNo(five,market('full',8.5))?.total,5);
+ assert.equal(hockeyTotalNo(five,market('full',7.5))?.total,5);
 });
 
 test('NHL third-period uses the selected period goals, never a blanket four-goal veto',()=>{

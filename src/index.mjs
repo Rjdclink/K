@@ -3054,7 +3054,7 @@ async function executeVerifiedMention(item){
   if(!id)return;
   await pool.query('INSERT INTO mention_commitments(order_id,cost_cents) VALUES($1,$2)',
     [id,estimatedCostCents(count,ask.price,fee)]);
-  rememberIndependentEntry(game,current,verificationId,Date.now());
+  rememberIndependentEntry(game,current,verificationId,Date.now(),undefined,undefined,side);
   try{
     const result=await withEntryProfitFloor({ticker:current.ticker,count,price:ask.price,fees:fee,
       strategy:signal.strategy,fraction:.15,bankroll,game,market:current},async()=>{
@@ -3286,7 +3286,7 @@ async function scanThirdQuarterNos(games,events){
       await pool.query('INSERT INTO verification_records(id,market_ticker,passed,evidence) VALUES($1,$2,true,$3)',
         [verificationId,refreshed.ticker,JSON.stringify({mode:'independent_yardage_zero_no',game,milestone:c.milestone,
           firstAt:window.first_at,secondAt:new Date(verifiedAt),player,ask:price,depth:ask.size})]);
-      game.verificationId=verificationId;rememberIndependentEntry(game,refreshed,verificationId,verifiedAt);
+      game.verificationId=verificationId;rememberIndependentEntry(game,refreshed,verificationId,verifiedAt,undefined,undefined,'no');
       const signal={strategy:'no',fraction:.15,reason:`NO ${player.name} ${player.metric} ${player.line+.5}+; verified zero in period ${game.period}`};
       const id=await reserve(signal,game,c.event,refreshed,quantity,price,account.balance);
       if(!id)continue;
@@ -3579,7 +3579,7 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null,phase='all
           firstAt:window?.first_at??null,firstClock:window?.first_clock??null,
           firstExternal:window?.first_evidence??null,
           secondAt:new Date(verifiedAt),external:proof,ask:ask.price})]);
-      fresh.verificationId=verificationId;rememberIndependentEntry(fresh,current,verificationId,verifiedAt);
+      fresh.verificationId=verificationId;rememberIndependentEntry(fresh,current,verificationId,verifiedAt,undefined,proof,'no');
       const signal={strategy:'no',fraction:allocation,reason:qualifies(fresh,current,{external:proof}).reason};
       const id=await reserve(signal,fresh,c.event,current,quantity,ask.price,account.balance);
       if(!id){report(c,'Entry blocked: existing or in-flight order',ask);continue;}
@@ -3612,7 +3612,7 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null,phase='all
   return filled;
 }
 async function scanHockeyTotalNos(games,events,signalSink=null,phase='all'){
-  const allocation=1,start=960,reasonPattern='NHL hockey total NO %';
+  const allocation=1,start=540,reasonPattern='NHL hockey total NO %';
   const noDiagnostics=new Map();
   const auditNoCandidate=(c,execution,quote=null)=>{
     const candidate=c;
@@ -3634,7 +3634,7 @@ async function scanHockeyTotalNos(games,events,signalSink=null,phase='all'){
     const list=signalSink.get(c.state.id)||[];
     const item={strategy:'no',ticker:c.market.ticker,
       title:c.market.title||c.market.yes_sub_title||c.market.ticker,
-      reason:signal?.reason||'Rule: NHL full-game NO uses contract-specific 15m, 8m or 1m windows',
+      reason:signal?.reason||'Rule: NHL full-game NO uses contract-specific 8m, 5m or 1m windows with a late five-goal cap',
       execution,...(c.finalCheck?{final_verification_attempted:true,
         final_verification_passed:c.finalCheck.ok===true,
         final_verification_checked_at:new Date(c.finalCheck.at||c.finalCheck.attemptedAt).toISOString()}:{}),
@@ -3646,9 +3646,7 @@ async function scanHockeyTotalNos(games,events,signalSink=null,phase='all'){
   let watching=games.filter(({state})=>state.sport==='NHL'&&
     ['hockey_match','hockey_game'].includes(state.type)&&[3,4].includes(state.period)&&
     Number.isFinite(state.remainingSeconds)&&state.remainingSeconds>0&&state.remainingSeconds<=start);
-  // Initial checks can begin at sixteen minutes; only matching full-game
-  // contracts enter the expanded windows after their separate final proof.
-  if(phase==='final')watching=watching.filter(g=>g.state.remainingSeconds<900);
+  if(phase==='final')watching=watching.filter(g=>g.state.remainingSeconds<=480);
   if(!live()||!watching.length)return 0;
   let dueWindows=null;
   if(phase==='final'){
@@ -3682,14 +3680,12 @@ async function scanHockeyTotalNos(games,events,signalSink=null,phase='all'){
       const event=events.get(ticker);
       if(event?.category!=='Sports')continue;
       for(const market of event.markets||[]){
-        const spec=hockeyNoMarketSpec(state,market,{beforeWindow:true});
+        const spec=hockeyNoMarketSpec(state,market,{beforeWindow:true,externalPending:String(market.event_ticker).split('-')[0]==='KXNHLTOTAL'});
         if(!spec||market.event_ticker!==ticker||
           phase==='final'&&!dueWindows.has(market.ticker))continue;
         const c={milestone,state,event,market,spec};
         candidates.push(c);found++;
-        const timing=goalNoWindow(state,market,state.home+state.away,{period:spec.period});
-        report(c,state.remainingSeconds>=(timing?.entrySeconds??300)?'Independent NHL score and period-clock preflight pending':
-          'First independent score check due; final check follows after '+(timing?.waitSeconds??30)+' real seconds');
+        report(c,'Independent NHL score and period-clock preflight pending');
       }
     }
     if(!found&&signalSink)signalSink.set(state.id,[{
@@ -3709,12 +3705,12 @@ async function scanHockeyTotalNos(games,events,signalSink=null,phase='all'){
   for(const c of candidates){
     try{
       const game=c.state,key=overContractKey(game,c.market);
-      const timing=goalNoWindow(game,c.market,game.home+game.away,{period:c.spec.period});
-      const entry=timing?.entrySeconds??300,first=timing?.firstSeconds??420;
       const window=phase==='final'?dueWindows.get(c.market.ticker):
         (await pool.query('SELECT * FROM hockey_total_no_windows_v2 WHERE market_ticker=$1',
           [c.market.ticker])).rows[0];
       const firstProof=window?.first_evidence;
+      const timing=goalNoWindow(game,c.market,firstProof?.home+firstProof?.away,{period:c.spec.period});
+      const entry=timing?.entrySeconds??300,first=timing?.firstSeconds??420;
       const elapsed=firstProof?.clockSource!=='Kalshi'&&Number.isFinite(firstProof?.seconds)&&
         Number.isFinite(firstProof?.checkedAt)?Math.max(0,(Date.now()-firstProof.checkedAt)/1000):NaN;
       // The projection only schedules a new check. A fresh external reading
@@ -3747,8 +3743,8 @@ async function scanHockeyTotalNos(games,events,signalSink=null,phase='all'){
           'ON CONFLICT(market_ticker) DO UPDATE SET game_id=EXCLUDED.game_id,'+
           'contract_key=EXCLUDED.contract_key,period=EXCLUDED.period,'+
           'first_clock=EXCLUDED.first_clock,first_evidence=EXCLUDED.first_evidence,first_at=EXCLUDED.first_at',
-          [c.market.ticker,game.id,key,game.period,game.remainingSeconds,JSON.stringify(marked)]);
-        report(c,'First '+marked.source+' score check recorded; awaiting '+(timing?.waitSeconds??30)+' seconds of elapsed time',signal);
+          [c.market.ticker,game.id,key,game.period,marked.seconds,JSON.stringify(marked)]);
+        report(c,'First '+marked.source+' score check recorded; awaiting '+(c.spec.period==='full_game'?60:30)+' seconds of elapsed time',signal);
         continue;
       }
       if(dueSeconds>=entry){
@@ -3769,7 +3765,7 @@ async function scanHockeyTotalNos(games,events,signalSink=null,phase='all'){
       }
       const current=(await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market;
       if(!sameSportsContract(current,c.market)||
-        !hockeyNoMarketSpec(fresh,current,{beforeWindow:true})){
+        !hockeyNoMarketSpec(fresh,current,{beforeWindow:true,externalPending:c.spec.period==='full_game'})){
         report(c,'Entry blocked: contract identity, NHL period or clock no longer matches');continue;
       }
       if(pending.rowCount){report(c,'Unresolved NHL NO order; new entry deferred');continue;}
@@ -3862,7 +3858,7 @@ async function scanHockeyTotalNos(games,events,signalSink=null,phase='all'){
           finalAt:new Date(externalCheckedAt),finalExternal:proof,period:signal.period,ask:ask.price
         })]);
       fresh.verificationId=verificationId;
-      rememberIndependentEntry(fresh,current,verificationId,externalCheckedAt,undefined,proof);
+      rememberIndependentEntry(fresh,current,verificationId,externalCheckedAt,undefined,proof,'no');
       const id=await reserve({strategy:'no',fraction:allocation,reason:signal.reason},
         fresh,c.event,current,quantity,ask.price,account.balance);
       if(!id){report(c,'Entry blocked: duplicate or pending order',signal,ask);continue;}
@@ -4226,7 +4222,7 @@ async function scanEarlyPeriodNos(games,events,signalSink=null,sport='NHL',phase
         })]);
       fresh.verificationId=verificationId;
       rememberIndependentEntry(fresh,current,verificationId,externalCheckedAt,undefined,
-        (hockey||sport==='Soccer')?proof:undefined);
+        (hockey||sport==='Soccer')?proof:undefined,'no');
       const id=await reserve({strategy:'no',fraction:allocation,reason:signal.reason},
         fresh,c.event,current,quantity,ask.price,account.balance);
       if(!id){report(c,'Entry blocked: duplicate or pending order',signal,ask);continue;}
@@ -4281,7 +4277,7 @@ async function scanEarlyPeriodNos(games,events,signalSink=null,sport='NHL',phase
 }
 
 async function scanSoccerTotalNos(games,events,signalSink=null,phase='all'){
-  const allocation=1,start=960,reasonPattern='Soccer %total NO %';
+  const allocation=1,start=540,reasonPattern='Soccer %total NO %';
   const noDiagnostics=new Map();
   const auditNoCandidate=(candidate,execution,quote=null)=>{
     if(!candidate?.market?.ticker||!candidate?.state||!execution)return;
@@ -4302,7 +4298,7 @@ async function scanSoccerTotalNos(games,events,signalSink=null,phase='all'){
     const list=signalSink.get(candidate.state.id)||[];
     const item={strategy:'no',ticker:candidate.market.ticker,
       title:candidate.market.title||candidate.market.yes_sub_title||candidate.market.ticker,
-      reason:signal?.reason||'Rule: soccer full-game NO uses contract-specific 15m, 8m or live stoppage windows',
+      reason:signal?.reason||'Rule: soccer full-game NO uses contract-specific 8m or live stoppage windows with a late five-goal cap',
       execution,...(candidate.finalCheck?{final_verification_attempted:true,
         final_verification_passed:candidate.finalCheck.ok===true,
         final_verification_checked_at:new Date(candidate.finalCheck.at||candidate.finalCheck.attemptedAt).toISOString()}:{}),
@@ -4316,8 +4312,7 @@ async function scanSoccerTotalNos(games,events,signalSink=null,phase='all'){
     Number.isFinite(state.matchRemainingSeconds)&&
     (state.matchRemainingSeconds>0&&state.matchRemainingSeconds<=start||
      soccerStoppageNoWindow(state)));
-  // Exact full-game lines may need the first check at sixteen minutes.
-  if(phase==='final')watching=watching.filter(g=>g.state.matchRemainingSeconds<900||
+  if(phase==='final')watching=watching.filter(g=>g.state.matchRemainingSeconds<=480||
     soccerStoppageNoWindow(g.state));
   if(!live()||!watching.length)return 0;
   let dueWindows=null;
@@ -4352,8 +4347,7 @@ async function scanSoccerTotalNos(games,events,signalSink=null,phase='all'){
       const event=events.get(ticker);
       if(event?.category!=='Sports')continue;
       for(const market of event.markets||[]){
-        const spec=soccerNoMarketSpec(state,market,{beforeWindow:true})||
-          soccerNoMarketSpec(state,market);
+        const spec=soccerNoMarketSpec(state,market,{beforeWindow:true,externalPending:true});
         if(!spec||market.event_ticker!==ticker||
           phase==='final'&&!dueWindows.has(market.ticker))continue;
         const c={milestone,state,event,market,spec};
@@ -4373,12 +4367,12 @@ async function scanSoccerTotalNos(games,events,signalSink=null,phase='all'){
   for(const c of candidates){
     try{
       const game=c.state,key=overContractKey(game,c.market);
-      const timing=goalNoWindow(game,c.market,game.home+game.away);
-      const entry=timing?.entrySeconds??300,first=timing?.firstSeconds??660;
       const window=phase==='final'?dueWindows.get(c.market.ticker):
         (await pool.query('SELECT * FROM soccer_total_no_windows WHERE market_ticker=$1',
           [c.market.ticker])).rows[0];
       const firstProof=window?.first_evidence;
+      const timing=goalNoWindow(game,c.market,firstProof?.home+firstProof?.away);
+      const entry=timing?.entrySeconds??300,first=timing?.firstSeconds??660;
       const elapsed=firstProof?.clockSource!=='Kalshi'&&Number.isFinite(firstProof?.elapsedMinute)&&
         Number.isFinite(firstProof?.checkedAt)?Math.max(0,(Date.now()-firstProof.checkedAt)/1000):NaN;
       const dueSeconds=Number.isFinite(elapsed)?
@@ -4430,8 +4424,8 @@ async function scanSoccerTotalNos(games,events,signalSink=null,phase='all'){
           'contract_key=EXCLUDED.contract_key,period=EXCLUDED.period,'+
           'first_clock=EXCLUDED.first_clock,first_evidence=EXCLUDED.first_evidence,'+
           'first_at=EXCLUDED.first_at',
-          [c.market.ticker,game.id,key,game.period,game.matchRemainingSeconds,JSON.stringify(marked)]);
-        report(c,'First '+marked.source+' score check recorded; awaiting '+(timing?.waitSeconds??30)+' seconds of elapsed time',signal);
+          [c.market.ticker,game.id,key,game.period,Math.max(0,Math.round((90-marked.elapsedMinute)*60)),JSON.stringify(marked)]);
+        report(c,'First '+marked.source+' score check recorded; awaiting 60 seconds of elapsed time',signal);
         continue;
       }
       if(!timing?.stoppageOnly&&dueSeconds>=entry){
@@ -4455,8 +4449,7 @@ async function scanSoccerTotalNos(games,events,signalSink=null,phase='all'){
       }
       const current=(await kalshi('/markets/'+encodeURIComponent(c.market.ticker))).market;
       if(!sameSportsContract(current,c.market)||
-        !soccerNoMarketSpec(fresh,current,{beforeWindow:true})&&
-        !soccerNoMarketSpec(fresh,current)){
+        !soccerNoMarketSpec(fresh,current,{beforeWindow:true,externalPending:true})){
         report(c,'Entry blocked: soccer total contract or final match clock changed');continue;
       }
       if(pending.rowCount){report(c,'Unresolved soccer NO order; new entry deferred');continue;}
@@ -4553,7 +4546,7 @@ async function scanSoccerTotalNos(games,events,signalSink=null,phase='all'){
           finalAt:new Date(externalCheckedAt),finalExternal:proof,period:signal.period,ask:ask.price
         })]);
       fresh.verificationId=verificationId;
-      rememberIndependentEntry(fresh,current,verificationId,externalCheckedAt,undefined,proof);
+      rememberIndependentEntry(fresh,current,verificationId,externalCheckedAt,undefined,proof,'no');
       const id=await reserve({strategy:'no',fraction:allocation,reason:signal.reason},
         fresh,c.event,current,quantity,ask.price,account.balance);
       if(!id){report(c,'Entry blocked: duplicate or pending order',signal,ask);continue;}

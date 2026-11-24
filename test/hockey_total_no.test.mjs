@@ -150,7 +150,7 @@ test('NHL four-plus goals permit NO only with the required segment cushion',()=>
     assert.equal(hockeyTotalNo(state,third)?.total,state.home-2);
     assert.equal(hockeyTotalNo(state,full,{beforeWindow:true})?.total,state.home+state.away);
   }
-  assert.equal(hockeyTotalNo(atFive,full),null);
+  assert.equal(hockeyTotalNo(atFive,full)?.total,5);
   assert.equal(hockeyTotalNo(atFive,third),null);
   const reading={source:'ESPN',eventId:'nhl-match',home:3,away:1,
     periods:[{number:1,home:1,away:1},{number:2,home:1,away:0},{number:3,home:1,away:0}],

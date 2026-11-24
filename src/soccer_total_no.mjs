@@ -3,7 +3,7 @@ import {verifyFreshEspnSoccerNo,independentlyVerifiedSoccerGame} from './soccer_
 import {soccerRegulationSeconds} from './strategy.mjs';
 import {espnMatches} from './score_verification.mjs';
 import {espnScoreboardUrls} from './espn_scoreboards.mjs';
-import {goalNoWindow} from './goal_no_windows.mjs';
+import {goalNoWindow,fullGameNoScoreAllowed} from './goal_no_windows.mjs';
 
 // Whole-game soccer totals settle after regulation plus stoppage time;
 // extra time, shootouts, halves, team totals and player totals are different contracts.
@@ -34,16 +34,16 @@ export function soccerStoppageNoWindow(game){
    Number.isFinite(game.soccerMinute)&&game.soccerMinute>90&&
    game.matchRemainingSeconds===0);
 }
-export function soccerNoMarketSpec(game,market,{beforeWindow=false}={}){
+export function soccerNoMarketSpec(game,market,{beforeWindow=false,externalPending=false}={}){
   const seconds=soccerRegulationSeconds(game),stoppage=soccerStoppageNoWindow(game);
   if(game?.sport!=='Soccer'||!/^soccer_/.test(String(game.type||''))||
-    !game.verifiedLive||!game.scoreKnown||!game.scoreConsistent||!game.periodConsistent||
+    !game.verifiedLive||!externalPending&&(!game.scoreKnown||!game.scoreConsistent)||!game.periodConsistent||
     game.feedId!==game.id||!Number.isFinite(game.observedAt)||
     Date.now()<game.observedAt||Date.now()-game.observedAt>10000||
     game.period!==2||game.soccerExtraTime||game.soccerOvertime||game.clockRunning===false||
     !Number.isFinite(game.soccerMinute)||!Number.isFinite(seconds)||
     (!stoppage&&(seconds<=0||seconds>960))||
-    !Number.isInteger(game.home)||game.home<0||!Number.isInteger(game.away)||game.away<0||
+    !externalPending&&(!Number.isInteger(game.home)||game.home<0||!Number.isInteger(game.away)||game.away<0)||
     !['active','open'].includes(market?.status)||
     market.result&&!['','not_determined'].includes(String(market.result)))return null;
   const [series,...suffix]=String(market.event_ticker||'').split('-');
@@ -61,6 +61,7 @@ export function soccerNoMarketSpec(game,market,{beforeWindow=false}={}){
     !/after 90 minutes plus stoppage time \(does not include extra time or penalties\), then the market resolves to Yes\./i.test(rules)||
     /\b(?:first half|second half|1st half|2nd half|team total|player total)\b/i.test(rules))return null;
   const window=goalNoWindow(game,market,game.home+game.away);
+  if(externalPending)return {strategy:'no',period:'full_game',line,series};
   if(beforeWindow){
     if(window?.stoppageOnly?stoppage||seconds>window.firstSeconds:
       !stoppage&&seconds>(window?.firstSeconds??660))return null;
@@ -77,14 +78,12 @@ export function soccerTotalNo(game,market,{beforeWindow=false,external=null}={})
   const spec=soccerNoMarketSpec(sourceGame,market,{beforeWindow});
   if(!spec)return null;
   const total=score.home+score.away;
-  if(total>=5)return null;
+  if(total>5||!beforeWindow&&!fullGameNoScoreAllowed(sourceGame,total))return null;
   // A full 2.5-goal cushion uses eight minutes through four goals.
   // The 1.5-goal window enters only in confirmed live stoppage AFTER 90.
   const window=goalNoWindow(sourceGame,market,total);
-  const required=window?.entrySeconds===900?0.5:
-    window?.entrySeconds===480?spec.line===2.5&&total===1?1.5:2.5:
-    window?.stoppageOnly?1.5:soccerStoppageNoWindow(sourceGame)?1.5:total>=4?3.5:2.5;
-  if(spec.line-total<required)return null;
+  if(!window)return null;
+  // goalNoWindow has already validated the exact line, score and cushion.
   return {...spec,total,reason:
     'Soccer full-game total NO over '+spec.line+'; '+total+
     ' goals scored, '+(soccerStoppageNoWindow(sourceGame)?
@@ -108,8 +107,7 @@ export function independentSoccerTotalNoReading(scoreboard,game,milestone,market
 }
 
 export async function verifyIndependentSoccerTotalNo(game,milestone,market,{fetcher=fetch}={}){
-  if(!soccerNoMarketSpec(game,market,{beforeWindow:true})&&
-    !soccerNoMarketSpec(game,market))return null;
+  if(!soccerNoMarketSpec(game,market,{beforeWindow:true,externalPending:true}))return null;
   // ESPN first; if the exact fixture is absent, require a live matched BBC Sport score.
-  return verifyFreshEspnSoccerNo(game,milestone,{fetcher});
+  return verifyFreshEspnSoccerNo(game,milestone,{fetcher,externalPending:true});
 }

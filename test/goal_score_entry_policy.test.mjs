@@ -103,6 +103,6 @@ test('combinations recursively reject any high-scoring leg, preserving other spo
 test('all independent hockey and soccer NO routes preserve matched full-game scores in purchase evidence',async()=>{
  const source=await import('node:fs').then(m=>m.readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8'));
  for(const mode of ['independent_nhl_total_no','independent_soccer_full_game_total_no'])
-  assert.match(source,new RegExp('mode:\\x27'+mode+'\\x27[\\s\\S]{0,600}?rememberIndependentEntry\\(fresh,current,verificationId,externalCheckedAt,undefined,proof\\)'));
- assert.match(source,/rememberIndependentEntry\(fresh,current,verificationId,externalCheckedAt,undefined,\s*\(hockey\|\|sport==='Soccer'\)\?proof:undefined\)/);
+  assert.match(source,new RegExp('mode:\\x27'+mode+'\\x27[\\s\\S]{0,600}?rememberIndependentEntry\\(fresh,current,verificationId,externalCheckedAt,undefined,proof,\\x27no\\x27\\)'));
+ assert.match(source,/rememberIndependentEntry\(fresh,current,verificationId,externalCheckedAt,undefined,\s*\(hockey\|\|sport==='Soccer'\)\?proof:undefined,'no'\)/);
 });

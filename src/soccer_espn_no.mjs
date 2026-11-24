@@ -58,14 +58,14 @@ const daysFor=start=>{
 // clocks, nonlive or ambiguous ESPN matches, and inconsistent provider results.
 // A covered league board is preferred; the general board is a fallback only
 // when that league board truly lacks an exact two-team fixture.
-export async function verifyFreshEspnSoccerNo(game,milestone,{fetcher=fetch}={}){
+export async function verifyFreshEspnSoccerNo(game,milestone,{fetcher=fetch,externalPending=false}={}){
  if(game)delete game.verificationIssue;
  const start=Date.parse(milestone?.start_date||'');
  if(game?.sport!=='Soccer'||!/^soccer_/.test(String(game.type||''))||
-  !game.verifiedLive||!game.scoreKnown||!game.scoreConsistent||
+  !game.verifiedLive||!externalPending&&(!game.scoreKnown||!game.scoreConsistent)||
   !game.periodConsistent||![1,2].includes(game.period)||!Number.isFinite(start)||
   !Number.isFinite(game.observedAt)||Date.now()-game.observedAt>10000||
-  game.observedAt>Date.now()||!Number.isInteger(game.home)||!Number.isInteger(game.away))return null;
+  game.observedAt>Date.now()||!externalPending&&(!Number.isInteger(game.home)||!Number.isInteger(game.away)))return null;
  const requestId=randomUUID();
  const dates=daysFor(start),allowFallback=Boolean(espnSoccerLeagueFeed(milestone));
  let retrieved=false,allRejected=true,found=[];

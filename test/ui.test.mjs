@@ -281,8 +281,8 @@ test('filled order timer is bright red, advances each second and reanchors to li
   assert.match(page,/Stale or contradictory evidence blocks the trade/);
   assert.match(page,/Full-game NO contracts with at least a 2\.5-goal cushion enter strictly under 8:00/);
   assert.match(page,/Over 2\.5 NO line is excluded once two goals have been scored/);
-  assert.match(page,/Over 2\.5 NO at one goal has a one-goal cushion and enters under 8:00/);
-  assert.match(page,/1\.5-goal cushion through four goals enters strictly under 1:00 in hockey or in confirmed live soccer regulation stoppage/);
+  assert.match(page,/Over 2\.5 NO at one goal enters under 5:00 remaining in NHL or under 8:00 remaining in soccer/);
+  assert.match(page,/Other 1\.5-goal cushions enter strictly under 1:00 in hockey or in confirmed live soccer regulation stoppage/);
   assert.match(page,/100% fee-inclusive bankroll maximum/);
   assert.match(page,/three goals ahead strictly under 15:30/);
   assert.match(page,/strictly under 9:30/);
