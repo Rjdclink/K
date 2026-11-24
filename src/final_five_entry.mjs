@@ -3,7 +3,7 @@
 // Earlier period/half markets cannot use their segment clocks.
 // Do not apply to settlement, held-position monitoring, or reduce-only exits.
 export const FINAL_FIVE_SECONDS=300;
-import {goalNoWindow} from './goal_no_windows.mjs';
+import {goalNoWindow,isFullGameGoalTotal,fullGameNoScoreAllowed} from './goal_no_windows.mjs';
 
 // Purchase-only goal ceiling. Soccer commanding winners permit exactly five;
 // all other soccer/hockey purchases stay below five. Both score feeds can veto.
@@ -32,7 +32,8 @@ export function finalFiveEntryEligible(game,{strategy,market}={}){
  const soccer=family.startsWith('soccer_'),hockey=family.startsWith('hockey_'),
    football=family.startsWith('football_');
  if(!soccer&&!hockey&&!football)return true;
- if(game?.verifiedLive!==true||game?.scoreKnown!==true||
+ const fullGameNo=strategy==='no'&&isFullGameGoalTotal(game,market);
+ if(game?.verifiedLive!==true||!fullGameNo&&game?.scoreKnown!==true||
    game?.periodConsistent!==true||game?.clockRunning===false)return false;
  const winnerMarket=market&&/GAME(?:-|$)/.test(String(market.event_ticker||''));
  const lead=Boolean(winnerMarket&&(strategy==='lead'||game?.leadVerification));
@@ -43,12 +44,14 @@ export function finalFiveEntryEligible(game,{strategy,market}={}){
    Date.now()-proof.checkedAt<=15000&&validGoals(proof));
  const total=proofFresh?scoreTotal(proof):Number(game?.home)+Number(game?.away);
  const noWindow=strategy==='no'?goalNoWindow(game,market,total):null;
+ if(fullGameNo&&(!proofFresh||!noWindow||!['ESPN','BBC Sport','NHL'].includes(proof.source)||!proof.eventId))return false;
  const useExternalClock=Boolean(noWindow&&proofFresh&&proof.clockSource!=='Kalshi');
  const gameClock=useExternalClock&&soccer&&Number.isFinite(proof.elapsedMinute)?
    {...game,soccerMinute:proof.elapsedMinute,
     matchRemainingSeconds:Math.max(0,Math.round((90-proof.elapsedMinute)*60))}:
    useExternalClock&&hockey&&Number.isFinite(proof.seconds)?
    {...game,remainingSeconds:proof.seconds}:game;
+ if(fullGameNo&&!fullGameNoScoreAllowed(gameClock,total))return false;
  const goalExtension=lead&&Number.isInteger(game?.home)&&Number.isInteger(game?.away)&&
    margin>=3&&total<5;
  const soccerFiveLead=lead&&soccer&&margin>=3&&total===5;
@@ -94,7 +97,9 @@ export function assertFinalFiveEntry(entries,{side=null}={}){
    const soccerLead=String(game.type||game.sport_family||'').startsWith('soccer_')&&
      /GAME(?:-|$)/.test(String(market?.event_ticker||''))&&Boolean(game.leadVerification)&&
      Math.abs(Number(game.home)-Number(game.away))>=3;
-   if(!goalScoreBelowFive(game,Date.now(),{soccerLead}))throw Object.assign(
+   const fullGameNo=side==='ask'&&isFullGameGoalTotal(game,market);
+   // Full-game NO already checked the fresh external score and goal ceiling above.
+   if(!fullGameNo&&!goalScoreBelowFive(game,Date.now(),{soccerLead}))throw Object.assign(
      Error('New soccer/hockey position blocked: combined game score exceeds its entry limit'),
      {code:'LOCAL_GOAL_SCORE_LIMIT'});
    const components=game.entryComponents;

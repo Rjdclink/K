@@ -53,14 +53,14 @@ const daysFor=start=>[start,start-86400000,start+86400000]
 
 // Only ESPN determines the score and remaining clock for risk decisions.
 // Two fresh independent HTTP requests still establish the exact NHL fixture.
-export async function verifyFreshEspnHockeyNo(game,milestone,{fetcher=fetch}={}){
+export async function verifyFreshEspnHockeyNo(game,milestone,{fetcher=fetch,externalPending=false}={}){
  const start=Date.parse(milestone?.start_date||'');
  if(game?.sport!=='NHL'||!['hockey_match','hockey_game'].includes(game.type)||
-  !game.verifiedLive||!game.scoreKnown||!game.scoreConsistent||
+  !game.verifiedLive||!externalPending&&(!game.scoreKnown||!game.scoreConsistent)||
   !game.periodConsistent||![1,2,3,4].includes(game.period)||
   !Number.isFinite(start)||!Number.isFinite(game.remainingSeconds)||
   !Number.isFinite(game.observedAt)||Date.now()-game.observedAt>10000||
-  game.observedAt>Date.now()||!Number.isInteger(game.home)||!Number.isInteger(game.away))
+  game.observedAt>Date.now()||!externalPending&&(!Number.isInteger(game.home)||!Number.isInteger(game.away)))
   return null;
  const requestId=randomUUID();
  const urls=espnScoreboardUrls('hockey/nhl',game,milestone,daysFor(start))

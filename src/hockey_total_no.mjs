@@ -1,7 +1,7 @@
 import {externalNoScore,externalNoPeriods} from './external_no_authority.mjs';
 import {verifyFreshEspnHockeyNo,independentlyVerifiedHockeyGame} from './hockey_espn_no.mjs';
 import {espnMatches} from './score_verification.mjs';
-import {goalNoWindow} from './goal_no_windows.mjs';
+import {goalNoWindow,fullGameNoScoreAllowed} from './goal_no_windows.mjs';
 
 // Kalshi lists game-wide NHL goals separately from goals scored in period 3.
 // Never substitute the cumulative score for a third-period total.
@@ -23,14 +23,14 @@ const sums=periods=>({
 const validExternal=(external,game)=>['ESPN','NHL'].includes(external?.source)&&
   Boolean(externalNoScore(game,external));
 
-export function hockeyNoMarketSpec(game,market,{beforeWindow=false}={}){
+export function hockeyNoMarketSpec(game,market,{beforeWindow=false,externalPending=false}={}){
   if(game?.sport!=='NHL'||!['hockey_match','hockey_game'].includes(game.type)||
-    !game.verifiedLive||!game.scoreKnown||!game.scoreConsistent||!game.periodConsistent||
+    !game.verifiedLive||!externalPending&&(!game.scoreKnown||!game.scoreConsistent)||!game.periodConsistent||
     game.feedId!==game.id||game.clockRunning===false||!Number.isFinite(game.observedAt)||
     game.observedAt>Date.now()||Date.now()-game.observedAt>10000||
     ![3,4].includes(game.period)||!Number.isFinite(game.remainingSeconds)||game.remainingSeconds<=0||
     game.remainingSeconds>960||
-    !Number.isInteger(game.home)||!Number.isInteger(game.away)||game.home<0||game.away<0||
+    !externalPending&&(!Number.isInteger(game.home)||game.home<0||!Number.isInteger(game.away)||game.away<0)||
     !['active','open'].includes(market?.status)||
     market.result&&!['','not_determined'].includes(String(market.result)))return null;
   const series=String(market.event_ticker||'').split('-')[0];
@@ -48,8 +48,8 @@ export function hockeyNoMarketSpec(game,market,{beforeWindow=false}={}){
     thirdInRules!==(period==='third_period')||
     (period==='full_game'&&/\b(?:first|second|1st|2nd|3rd|third)\s+period\b|team total|regulation only/i.test(rules)))return null;
   const window=goalNoWindow(game,market,game.home+game.away,{period});
-  if(game.remainingSeconds>(beforeWindow?window?.firstSeconds??420:Infinity)||
-    !beforeWindow&&game.remainingSeconds>=(window?.entrySeconds??300))return null;
+  if(!(externalPending&&period==='full_game')&&(game.remainingSeconds>(beforeWindow?window?.firstSeconds??420:Infinity)||
+    !beforeWindow&&game.remainingSeconds>=(window?.entrySeconds??300)))return null;
   return {strategy:'no',period,line,series};
 }
 
@@ -61,7 +61,7 @@ export function hockeyTotalNo(game,market,{beforeWindow=false,external=null}={})
   const spec=hockeyNoMarketSpec(sourceGame,market,{beforeWindow});
   if(!spec)return null;
   let total=independent?independent.home+independent.away:game.home+game.away;
-  if(total>=5)return null;
+  if(spec.period==='full_game'?(total>5||!beforeWindow&&!fullGameNoScoreAllowed(sourceGame,total)):total>=5)return null;
   if(spec.period==='third_period'){
     const providerParts=validPeriods(game.periodScores);
     const externalParts=external?externalNoPeriods(game,external,3):null;
@@ -82,10 +82,8 @@ export function hockeyTotalNo(game,market,{beforeWindow=false,external=null}={})
   // Full-game 1.5 cushions use the final minute, including live overtime.
   const window=goalNoWindow(sourceGame,market,independent?independent.home+independent.away:game.home+game.away,
     {period:spec.period});
-  const minimumCushion=window?.entrySeconds===900?0.5:
-    window?.entrySeconds===480?spec.line===2.5&&total===1?1.5:2.5:
-    window?.entrySeconds===60?1.5:spec.period==='full_game'&&game.period===4?1.5:
-    total>=4?3.5:2.5;
+  if(spec.period==='full_game'&&!window)return null;
+  const minimumCushion=window?1.5:total>=4?3.5:2.5;
   if(spec.line-total<minimumCushion)return null;
   return {...spec,total,reason:
     'NHL hockey total NO '+(spec.period==='third_period'?'third period':'full game')+
@@ -114,7 +112,8 @@ export function independentHockeyTotalNoReading(scoreboard,game,milestone,market
 }
 
 export async function verifyIndependentHockeyTotalNo(game,milestone,market,{fetcher=fetch}={}){
-  if(!hockeyNoMarketSpec(game,market,{beforeWindow:true}))return null;
+  const fullGame=String(market?.event_ticker||'').split('-')[0]==='KXNHLTOTAL';
+  if(!hockeyNoMarketSpec(game,market,{beforeWindow:true,externalPending:fullGame}))return null;
   // ESPN alone verifies the live fixture, scoring and period time.
-  return verifyFreshEspnHockeyNo(game,milestone,{fetcher});
+  return verifyFreshEspnHockeyNo(game,milestone,{fetcher,externalPending:fullGame});
 }

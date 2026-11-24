@@ -22,7 +22,7 @@ test('soccer 3–0 begins at 16:30 and enters strictly below 15:30; hockey retai
    const g=game(sport,seconds,3);
    assert.equal(goalCommandingLeadEntry(g),true);
    assert.equal(finalFiveEntryEligible(g,{strategy:'lead',market:winner}),true);
-   assert.equal(finalFiveEntryEligible(g,{strategy:'no',market:no}),seconds<300);
+   assert.equal(finalFiveEntryEligible(g,{strategy:'no',market:no}),sport==='NHL'&&seconds<300);
   }
  }
  for(const seconds of [570,569]){

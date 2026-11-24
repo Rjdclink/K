@@ -7,17 +7,17 @@ export function sportsContractKey(game,market){
     rules:market.rules_primary,secondary:market.rules_secondary,strike:market.floor_strike,
     cap:market.cap_strike,strikeType:market.strike_type,close:market.close_time,custom:market.custom_strike||{},collection:market.mve_collection_ticker,legs:market.mve_selected_legs}));
 }
-export function rememberIndependentEntry(game,market,verificationId,requestedAt,overValue,score){
+export function rememberIndependentEntry(game,market,verificationId,requestedAt,overValue,score,side='yes'){
   // A newly stored proof cannot make an older independently sourced score new.
-  const sourceAt=Number(game.externalScore?.checkedAt);
+  const sourceAt=Number(score?.checkedAt??game.externalScore?.checkedAt);
   const proofAt=Number.isFinite(sourceAt)&&sourceAt>0?Math.min(sourceAt,requestedAt):requestedAt;
   // NHL and soccer NO strategies can carry a separately validated, exact
   // external fixture score even when their game state still shows Kalshi's score.
-  const scored=score&&['ESPN','FOX Sports','BBC Sport','NHL','NFL'].includes(score.source)&&
+  const scored=score&&(!score.gameId||score.gameId===game.id)&&['ESPN','FOX Sports','BBC Sport','NHL','NFL'].includes(score.source)&&
     String(score.eventId||'').trim()&&Number.isInteger(score.home)&&score.home>=0&&
     Number.isInteger(score.away)&&score.away>=0;
   game.independentEntry={contractKey:sportsContractKey(game,market),verificationId,
-    requestedAt:proofAt,overValue,
+    requestedAt:proofAt,overValue,side,
     ...(scored?{score:{source:score.source,eventId:String(score.eventId),
       gameId:game.id,home:score.home,away:score.away,checkedAt:proofAt,
       period:score.period,
@@ -37,8 +37,7 @@ export function assertExternalPurchase(path,method,body,entries,now=Date.now()){
   // bid that reduces an existing short NO contract; they open no position.
   // All non-reduce-only buy/NO-ask paths still require independent proof and
   // the final-five game clock when the sport is soccer or hockey.
-  const opening=order=>order?.reduce_only!==true&&
-    (order?.side==='bid'||order?.side==='ask'||order?.action==='buy');
+  const opening=order=>order?.reduce_only!==true;
   const single=method==='POST'&&/^\/portfolio\/(?:events\/)?orders(?:\/batched)?$/.test(route)&&
     (opening(body)||body?.orders?.some(opening));
   const rfq=['PUT','POST'].includes(method)&&/^\/communications\/.*\/(?:accept|confirm)$/.test(route);
@@ -48,4 +47,14 @@ export function assertExternalPurchase(path,method,body,entries,now=Date.now()){
     throw Object.assign(Error('Fresh independent external verification is mandatory before a purchase'),{code:'LOCAL_EXTERNAL_VERIFICATION_REQUIRED'});
   for(const {game,market} of entries)assertNewEntryAllowed(game,market);
   assertFinalFiveEntry(entries,{side:single?body.side:null});
+  const expected=entries[0].game.independentEntry.side;
+  // On the event orderbook an ask buys NO. On RFQs the taker accepts
+  // the maker's complementary bid to acquire the verified outcome.
+  const outcome=single?(body.side==='bid'?'yes':body.side==='ask'?'no':
+    body.action==='buy'?body.side:null):
+    body.accepted_side==='no'?'yes':body.accepted_side==='yes'?'no':null;
+  if(!['yes','no'].includes(expected)||outcome!==expected||body.orders||
+    entries.some(entry=>entry.game.independentEntry.side!==expected))
+    throw Object.assign(Error('Order side does not match the independently verified outcome'),
+      {code:'LOCAL_EXTERNAL_VERIFICATION_REQUIRED'});
 }

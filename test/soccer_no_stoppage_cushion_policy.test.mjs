@@ -26,9 +26,9 @@ function market(line,half=false){
 test('before 90 full-game accepts 2.5 cushions and the exact 2.5 line with one scored',()=>{
  for(const [h,a,yes,no] of [[0,0,2.5,1.5],[1,0,3.5,2.5],[1,1,4.5,3.5],
   [2,1,5.5,4.5],[2,2,6.5,5.5],[3,2,8.5,7.5],[4,2,9.5,8.5]]){
-  assert.equal(soccerTotalNo(game(h,a),market(yes))?.total,h+a>=5?undefined:h+a);
-  assert.equal(soccerTotalNo(game(h,a),market(no))?.total,h+a===1?1:undefined);
-  assert.equal(soccerTotalNo(game(h,a),market(yes),{beforeWindow:true})?.total,h+a>=5?undefined:h+a);
+  assert.equal(soccerTotalNo(game(h,a),market(yes))?.total,h+a>5?undefined:h+a);
+  assert.equal(soccerTotalNo(game(h,a),market(no))?.total,[1,5].includes(h+a)?h+a:undefined);
+  assert.equal(soccerTotalNo(game(h,a),market(yes),{beforeWindow:true})?.total,h+a>5?undefined:h+a);
  }
 });
 test('first-half keeps 2.5/3.5 cushion and never uses full-time added-time exception',()=>{
@@ -39,14 +39,14 @@ test('first-half keeps 2.5/3.5 cushion and never uses full-time added-time excep
  }
  assert.equal(soccerFirstHalfNo(game(0,0,"45+2'",'1st'),market(1.5,true)),null);
 });
-test('1.5 cushion first verifies by 89 minutes and enters only in live 90+ stoppage below five goals',()=>{
+test('1.5 cushion first verifies by 89 minutes and enters only in live 90+ stoppage with up to five goals',()=>{
  for(const [h,a,line] of [[0,0,1.5],[1,0,2.5],[1,2,4.5],[2,2,5.5],[3,2,6.5]]){
   const g=game(h,a,"90+2'");
   assert.equal(soccerStoppageNoWindow(g),true);
   assert.equal(soccerTotalNo(game(h,a,"89'"),market(line),{beforeWindow:true})?.total,
-    h+a<5?h+a:undefined);
-  assert.equal(soccerTotalNo(g,market(line))?.total,h+a>=5?undefined:h+a);
-  assert.equal(soccerTotalNo(g,market(line-1))?.total,h+a===3?3:undefined);
+    h+a<=5?h+a:undefined);
+  assert.equal(soccerTotalNo(g,market(line))?.total,h+a>5?undefined:h+a);
+  assert.equal(soccerTotalNo(g,market(line-1))?.total,undefined);
  }
 });
 test('no entry at 90:00 without added time or in final/extra/paused/stale markets',()=>{
