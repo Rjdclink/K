@@ -66,6 +66,7 @@ import {thirdQuarterYardageNo,collegeFootballTotalNo,collegeBasketballTotalNo,hi
 import {verifyIndependentCollegeTotalNo} from './college_total_no.mjs';
 import {tagNoPreflight,validNoPreflight,lateNoPreflightProgress} from './late_no_preflight.mjs';
 import {eligibleNoFinal,dueNoFinalWindows,runImmediateNoFinalPass} from './no_final_priority.mjs';
+import {localNoPurchaseFailure,reconcileUnresolvedNoOrders} from './no_order_reconciliation.mjs';
 import {goalNoWindow} from './goal_no_windows.mjs';
 import {leadFirstProofValid,leadFirstProofReady,leadFinalProofValid} from './lead_verification_timer.mjs';
 import {pairedExternalMatch,configureIndependentFixtureCache} from './independent_match_score.mjs';
@@ -839,6 +840,11 @@ function resolvedManualOrder(order){
   if(!order||!['executed','canceled','cancelled'].includes(order.status))return null;
   const filled=Number(order.fill_count_fp??order.fill_count??NaN);
   return Number.isFinite(filled)&&filled>=0?{filled,status:filled>0?'complete':'unfilled'}:null;
+}
+async function reconcileNoAttemptBlocks(){
+ return reconcileUnresolvedNoOrders((...args)=>pool.query(...args),lookupSubmittedOrder,
+   resolvedManualOrder,{onError:(row,error)=>console.warn('NO order reconciliation deferred:',
+     row.market_ticker,error.message)});
 }
 async function manualSell(body){
   if(!/^[A-Z0-9-]{1,180}$/.test(body.ticker||'')||!Number.isFinite(body.price)||body.price<=0||body.price>=1||!/^[0-9a-f-]{36}$/.test(body.id||''))return json({error:'Invalid sale'},400);
@@ -3297,7 +3303,7 @@ async function scanThirdQuarterNos(games,events){
           [id,amount>0?'filled':'unfilled',result?.order_id||result?.order?.order_id||null,amount]);
         if(amount>0){filled++;spent+=estimatedCostCents(amount,price,fees);await invalidateBalance()}
       }catch(e){
-        const terminal=e.code==='LOCAL_EXTERNAL_VERIFICATION_REQUIRED'||/^Kalshi (400|401|403|404|409|422) /.test(String(e.message));
+        const terminal=localNoPurchaseFailure(e)||/^Kalshi (400|401|403|404|409|422) /.test(String(e.message));
         await pool.query('UPDATE trade_attempts SET status=$2,error=$3,updated_at=now() WHERE id=$1',
           [id,terminal?'unfilled':'check_order',String(e.message).slice(0,250)]);
         console.warn('NO order deferred:',refreshed.ticker,e.message);
@@ -3350,7 +3356,7 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null,phase='all
         final_verification_passed:candidate.finalCheck.ok===true,
         final_verification_checked_at:new Date(candidate.finalCheck.at||candidate.finalCheck.attemptedAt).toISOString()}:{}),
       ...(quote?{ask:quote.price.toFixed(4),ask_size:quote.size.toFixed(2)}:{})};
-    const prior=list.findIndex(row=>row.ticker===market.ticker);
+    const prior=list.findIndex(row=>row.ticker===market.ticker&&row.strategy==='no');
     if(prior>=0)list[prior]=item;else list.push(item);
     signalSink.set(state.id,list);
   };
@@ -3592,7 +3598,7 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null,phase='all
         if(amount>0){filled++;await invalidateBalance()}
         report(c,amount>0?'NO order filled':'NO order returned unfilled',ask);
       }catch(e){
-        const terminal=e.code==='LOCAL_EXTERNAL_VERIFICATION_REQUIRED'||/^Kalshi (400|401|403|404|409|422) /.test(String(e.message));
+        const terminal=localNoPurchaseFailure(e)||/^Kalshi (400|401|403|404|409|422) /.test(String(e.message));
         await pool.query('UPDATE trade_attempts SET status=$2,error=$3,updated_at=now() WHERE id=$1',
           [id,terminal?'unfilled':'check_order',String(e.message).slice(0,250)]);
         console.warn(`${label} total NO order deferred:`,current.ticker,e.message);
@@ -3633,7 +3639,7 @@ async function scanHockeyTotalNos(games,events,signalSink=null,phase='all'){
         final_verification_passed:c.finalCheck.ok===true,
         final_verification_checked_at:new Date(c.finalCheck.at||c.finalCheck.attemptedAt).toISOString()}:{}),
         ...(ask?{ask:ask.price.toFixed(4),ask_size:ask.size.toFixed(2)}:{})};
-    const i=list.findIndex(row=>row.ticker===item.ticker);
+    const i=list.findIndex(row=>row.ticker===item.ticker&&row.strategy==='no');
     if(i<0)list.push(item);else list[i]=item;
     signalSink.set(c.state.id,list);
   };
@@ -3884,7 +3890,7 @@ async function scanHockeyTotalNos(games,events,signalSink=null,phase='all'){
         if(amount>0){filled++;await invalidateBalance()}
         report(c,amount>0?'NHL total NO order filled':'NHL total NO returned unfilled',signal,ask);
       }catch(e){
-        const terminal=e.code==='LOCAL_EXTERNAL_VERIFICATION_REQUIRED'||
+        const terminal=localNoPurchaseFailure(e)||
           /^Kalshi (400|401|403|404|409|422) /.test(String(e.message));
         await pool.query('UPDATE trade_attempts SET status=$2,error=$3,updated_at=now() WHERE id=$1',
           [id,terminal?'unfilled':'check_order',String(e.message).slice(0,250)]);
@@ -3962,7 +3968,7 @@ async function scanEarlyPeriodNos(games,events,signalSink=null,sport='NHL',phase
         final_verification_passed:c.finalCheck.ok===true,
         final_verification_checked_at:new Date(c.finalCheck.at||c.finalCheck.attemptedAt).toISOString()}:{}),
         ...(ask?{ask:ask.price.toFixed(4),ask_size:ask.size.toFixed(2)}:{})};
-    const at=list.findIndex(row=>row.ticker===item.ticker);
+    const at=list.findIndex(row=>row.ticker===item.ticker&&row.strategy==='no');
     if(at<0)list.push(item);else list[at]=item;
     signalSink.set(c.state.id,list);
   };
@@ -4255,7 +4261,7 @@ async function scanEarlyPeriodNos(games,events,signalSink=null,sport='NHL',phase
         report(c,amount>0?policy.title+' order filled':
           policy.title+' order unfilled',signal,ask);
       }catch(e){
-        const terminal=e.code==='LOCAL_EXTERNAL_VERIFICATION_REQUIRED'||
+        const terminal=localNoPurchaseFailure(e)||
           /^Kalshi (400|401|403|404|409|422) /.test(String(e.message));
         await pool.query('UPDATE trade_attempts SET status=$2,error=$3,'+
           'updated_at=now() WHERE id=$1',
@@ -4301,7 +4307,7 @@ async function scanSoccerTotalNos(games,events,signalSink=null,phase='all'){
         final_verification_passed:candidate.finalCheck.ok===true,
         final_verification_checked_at:new Date(candidate.finalCheck.at||candidate.finalCheck.attemptedAt).toISOString()}:{}),
         ...(ask?{ask:ask.price.toFixed(4),ask_size:ask.size.toFixed(2)}:{})};
-    const i=list.findIndex(row=>row.ticker===item.ticker);
+    const i=list.findIndex(row=>row.ticker===item.ticker&&row.strategy==='no');
     if(i<0)list.push(item);else list[i]=item;
     signalSink.set(candidate.state.id,list);
   };
@@ -4406,7 +4412,11 @@ async function scanSoccerTotalNos(games,events,signalSink=null,phase='all'){
         const signal=sourceValid&&
           soccerTotalNo(game,c.market,{beforeWindow:true,external:marked});
         if(!signal){
-          report(c,sourceValid?'Independent score verified; contract lacks required goal cushion or entry clock':
+          const total=Number(marked?.home)+Number(marked?.away);
+          const line=Number(c.market.floor_strike);
+          report(c,sourceValid&&total>line?
+            'NO cannot win: '+total+' goals already scored, exceeding the over '+line+' line':
+            sourceValid?'Independent score verified; NO goal cushion or entry clock requirement not met':
             proof===false?(game.verificationIssue||
               'Independent matched fixture or source score is contradictory'):
             proof==null?(game.verificationIssue||
@@ -4570,7 +4580,7 @@ async function scanSoccerTotalNos(games,events,signalSink=null,phase='all'){
         if(amount>0){filled++;await invalidateBalance()}
         report(c,amount>0?'Soccer total NO order filled':'Soccer total NO returned unfilled',signal,ask);
       }catch(e){
-        const terminal=e.code==='LOCAL_EXTERNAL_VERIFICATION_REQUIRED'||
+        const terminal=localNoPurchaseFailure(e)||
           /^Kalshi (400|401|403|404|409|422) /.test(String(e.message));
         await pool.query('UPDATE trade_attempts SET status=$2,error=$3,updated_at=now() WHERE id=$1',
           [id,terminal?'unfilled':'check_order',String(e.message).slice(0,250)]);
@@ -5064,6 +5074,7 @@ async function scanNearPriorityGames(options={}){
 }
 async function scanFastPriorityGames(until){
   if(!live()||Date.now()>=until)return 0;
+  await reconcileNoAttemptBlocks();
   await ensureScanTiers();
   // Claim eligible rows atomically in the shared DB. Newly promoted entries
   // with no fast_checked_at go ahead of previously checked fixtures; the
@@ -5131,7 +5142,7 @@ async function scanFastPriorityGames(until){
     await pool.query(`UPDATE game_snapshots g SET signals=(
       SELECT COALESCE(jsonb_agg(s),'[]'::jsonb) FROM
         jsonb_array_elements(COALESCE(g.signals,'[]'::jsonb)) s
-      WHERE NOT (COALESCE(s->>'ticker','')=ANY($2::text[]))
+      WHERE NOT (COALESCE(s->>'ticker','')=ANY($2::text[]) AND COALESCE(s->>'strategy','')='no')
     ) || $3::jsonb,scanned_at=clock_timestamp() WHERE g.id=$1`,
       [id,tickers,JSON.stringify(signals)]);
   }
@@ -5174,6 +5185,7 @@ async function scan(cachedMilestones,discoveryCount){
   if(!lock.rows[0].acquired){await client.query('ROLLBACK');client.release();return {skipped:'scan in progress'}};
   let scanned=0,signals=0,submitted=0,ms,scanLockHeld=true;const executionErrors=[],scanStarted=new Date();let openPositions=null;
   try{
+    if(live())await reconcileNoAttemptBlocks();
     // Filter cached milestones before stale review or any live API request.
     ms=(cachedMilestones||await milestones()).filter(supportedScannerSport);discoveryCount??=ms.length;
     const {rows:recentLive}=await pool.query(`SELECT id,signals FROM game_snapshots

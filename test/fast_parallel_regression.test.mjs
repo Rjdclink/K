@@ -31,6 +31,17 @@ test('urgent scanner evaluates live eligible game families immediately and never
  assert.doesNotMatch(worker,/scanVariablePlayerOvers|playerPropEarlyWindow/);
 });
 
+test('10-second NO diagnostics preserve an existing YES signal on the same contract',()=>{
+ const src=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
+ const worker=src.slice(src.indexOf('async function scanFastPriorityGames('),src.indexOf('const scanMinuteEnd='));
+ assert.match(worker,/WHERE NOT \(COALESCE\(s->>'ticker',''\)=ANY\(\$2::text\[\]\) AND COALESCE\(s->>'strategy',''\)='no'\)/);
+ for(const name of ['scanCollegeTotalNos','scanHockeyTotalNos','scanEarlyPeriodNos','scanSoccerTotalNos']){
+  const start=src.indexOf('async function '+name+'('),end=src.indexOf('\nasync function ',start+1);
+  const scanner=src.slice(start,end);
+  assert.match(scanner,/list\.findIndex\(row=>row\.ticker===.*&&row\.strategy==='no'\)/,name);
+ }
+});
+
 test('10-second urgent worker independently starts while retry and safety watchers continue in parallel',()=>{
  const src=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
  const worker=src.slice(src.indexOf('async function runFastSportsTick(){'),src.indexOf('async function runNearSportsTick(){'));

@@ -34,7 +34,16 @@ const events=new Map([[market.event_ticker,{event_ticker:market.event_ticker,cat
 test('a valid external score with too little NO cushion is labelled as a cushion failure',async()=>{
  const h=harness({firstProofOverride:{home:4,away:0}});
  assert.equal(await h.scan(540,'initial'),0);
- assert.match(h.dashboard.get(milestone.id)?.[0]?.execution||'',/score verified; contract lacks required goal cushion/i);
+ assert.match(h.dashboard.get(milestone.id)?.[0]?.execution||'',/score verified; NO goal cushion or entry clock requirement not met/i);
+});
+
+test('a 1.5 NO line at two goals cannot be bought as a winning contract',()=>{
+ const line={...market,ticker:'KXEPLTOTAL-26NOV20AWAYHOME-2',
+  title:'Will over 1.5 goals be scored?',yes_sub_title:'Over 1.5 goals scored',
+  floor_strike:1.5,rules_primary:market.rules_primary.replaceAll('5.5','1.5')};
+ assert.equal(soccerTotalNo(state(360,1,1),line),null);
+ const source=readFileSync(new URL('../src/index.mjs',import.meta.url),'utf8');
+ assert.match(source,/NO cannot win:.*goals already scored, exceeding the over/);
 });
 
 test('dashboard shows saved NO preflight and the initial pass completes a newly due final check',async()=>{
