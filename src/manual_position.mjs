@@ -1,3 +1,4 @@
+import {MAX_TRADE_CENTS} from './automatic_entry_policy.mjs';
 import {bestYesAsk} from './orderbook.mjs';
 export function takerFeeSpec(market,event,series,now=Date.now()){
   if(Date.parse(market?.fee_waiver_expiration_time||'')>now)return {type:'quadratic',multiplier:0};
@@ -31,7 +32,7 @@ export function manualPositionQuote(market,book,position,account,amountCents,sha
   if(!ask)return {reason:'No YES seller is available'};
   const cash=Number(account?.balance),local=Number(shardBudget);
   if(!Number.isFinite(cash)||!Number.isFinite(local)||local<0)return {reason:'Available cash is unavailable'};
-  const budget=Math.floor(Math.min(cash,local,amountCents));
+  const budget=Math.floor(Math.min(MAX_TRADE_CENTS,cash,local,amountCents));
   if(!Number.isFinite(budget)||budget<1)return {reason:'No available cash in this market’s shard'};
   const step=market.fractional_trading_enabled===false?1:.01;
   // Reserve twice the published fee and a rounding cent within the chosen amount.

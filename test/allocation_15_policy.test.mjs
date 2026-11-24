@@ -18,8 +18,8 @@ test('ordinary NO, leads, OVER without cushion, weather and combinations are cap
  const cash=100000,bankroll=100000,price=.50;
  const count=orderSize(cash,String(price),'2000',.8,1,bankroll,Infinity,2);
  assert.equal(count,orderSize(cash,String(price),'2000',.15,1,bankroll,Infinity,2));
- assert.ok(estimatedCostCents(count,price,2)<=100000);
- assert.ok(estimatedCostCents(count+.01,price,2)>100000);
+ assert.ok(estimatedCostCents(count,price,2)<=20000);
+ assert.ok(estimatedCostCents(count+.01,price,2)>20000);
  assert.equal(overBudget(10000,0),10000);
 });
 
@@ -91,9 +91,9 @@ test('official mentions, zero-yardage NO, and uncushioned player preview use the
 
 test('dashboard allocation descriptions use 100% while retaining cushioned OVER proof and special profit tiers',()=>{
  const ui=readFileSync(new URL('../src/ui.mjs',import.meta.url),'utf8');
- assert.match(ui,/maximum 100% of bankroll/);
- assert.match(ui,/100% bankroll maximum/);
- assert.match(ui,/100% maximum bankroll allocation per trade/);
+ assert.match(ui,/maximum per trade including fees/);
+ assert.match(ui,/100% aggregate bankroll maximum/);
+ assert.match(ui,/maximum of \$200 per trade and 100% across positions/);
  for(const value of ['All player-prop entries are disabled','one-play, double-cushion and triple-cushion proof requirements','Previously held positions, exit controls and settled history remain available'])
   assert.ok(ui.includes(value),value);
 });

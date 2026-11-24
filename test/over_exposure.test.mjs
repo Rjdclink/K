@@ -1,3 +1,4 @@
+import {tradeBudgetCents,MAX_TRADE_CENTS} from '../src/automatic_entry_policy.mjs';
 import {rememberIndependentEntry} from '../src/entry_verification.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -172,7 +173,7 @@ test('the final serialized gate includes holdings and fees for initial buys, upg
   for(const held of [null,{ticker:'OVER',position_fp:'40',market_exposure_dollars:'39',fees_paid_dollars:'1'}]){
     const client={query:async sql=>({rows:sql.includes('pg_try_advisory_xact_lock')?[{acquired:true}]:[]}),release(){}};
     const context=vm.createContext({console,setTimeout,remainingVerifiedOverCents,estimatedCostCents,automaticEntryFraction,
-      ensureManualCombos:async()=>{},accountBalance:async()=>({balance:10000,portfolio_value:0}),pool:{connect:async()=>client},allOpenPositions:async()=>({market_positions:held?[held]:[]}),
+      ensureManualCombos:async()=>{},tradeBudgetCents,MAX_TRADE_CENTS,upgradeTables:async()=>{},accountBalance:async()=>({balance:10000,portfolio_value:0}),pool:{connect:async()=>client},allOpenPositions:async()=>({market_positions:held?[held]:[]}),
       filledOrderGateCount:()=>0,minimumProfitCents:()=>0,netSettlementProfitCents:()=>100});
     vm.runInContext(source.slice(source.indexOf('async function withEntryProfitFloor('),source.indexOf('async function milestones(')),context);
     let sent=0;

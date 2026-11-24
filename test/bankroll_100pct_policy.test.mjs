@@ -22,8 +22,8 @@ const strategiesLabel=(strategy,fraction)=>strategy+' signal tier '+fraction;
 test('order size is fee-inclusive, never exceeding available cash or 100% of bankroll',()=>{
  const count=orderSize(100000,.5,10000,.05,1,100000,Infinity,2,{strategy:'lead'});
  assert.ok(estimatedCostCents(count,.5,2)>15000);
- assert.ok(estimatedCostCents(count,.5,2)<=100000);
- assert.ok(estimatedCostCents(count+.01,.5,2)>100000);
+ assert.ok(estimatedCostCents(count,.5,2)<=20000);
+ assert.ok(estimatedCostCents(count+.01,.5,2)>20000);
  const limited=orderSize(10000,.5,10000,.25,1,100000,Infinity,2,{strategy:'over'});
  assert.ok(estimatedCostCents(limited,.5,2)<=10000);
  assert.equal(overBudget(10000,20000),30000);
@@ -67,7 +67,7 @@ test('sport and verification rules are preserved, with only bankroll pools chang
 
 test('dashboard exposes the new actual ceiling and retains profit requirements',()=>{
  const ui=readFileSync(new URL('../src/ui.mjs',import.meta.url),'utf8');
- for(const phrase of ['maximum 100% of bankroll','100% bankroll maximum','100% maximum bankroll allocation per trade','at least 1% net profit after fees'])
+ for(const phrase of ['maximum per trade including fees','100% aggregate bankroll maximum','maximum of $200 per trade and 100% across positions','at least 1% net profit after fees'])
   assert.ok(ui.includes(phrase),phrase);
  assert.ok(!ui.includes('15% maximum bankroll'));
 });

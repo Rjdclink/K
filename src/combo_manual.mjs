@@ -1,6 +1,6 @@
 import {bestYesAsk} from './orderbook.mjs';
 import {comboMeetsMinimum} from './combos.mjs';
-import {automaticEntryFraction} from './automatic_entry_policy.mjs';
+import {automaticEntryFraction,MAX_TRADE_CENTS} from './automatic_entry_policy.mjs';
 
 export function manualComboQuote(market,book,position,account,fraction=1,budgetCents=Infinity){
   if(!market||!['active','open'].includes(market.status))return {reason:'Combo market is closed'};
@@ -12,7 +12,7 @@ export function manualComboQuote(market,book,position,account,fraction=1,budgetC
   const exposure=Number(position?.market_exposure_dollars),fees=Number(position?.fees_paid_dollars);
   if(!Number.isFinite(bankroll)||!Number.isFinite(exposure)||!Number.isFinite(fees))return {reason:'Balance or position cost unavailable'};
   const cap=Math.floor(bankroll*fraction)-Math.ceil((exposure+fees)*100);
-  const available=Math.min(Number(account.balance),cap,budgetCents);
+  const available=Math.min(MAX_TRADE_CENTS,Number(account.balance),cap,budgetCents);
   if(available<=0)return {reason:'No available cash within this combo’s allocation limit'};
   const feeFactor=Math.max(2,2*Number(market.fee_multiplier_override||0))*7;
   const unit=100*price+feeFactor*price*(1-price);

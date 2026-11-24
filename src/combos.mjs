@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import {automaticEntryFraction,automaticEntryCapCents,ORDINARY_ENTRY_MAX_FRACTION} from './automatic_entry_policy.mjs';
+import {automaticEntryFraction,automaticEntryCapCents,ORDINARY_ENTRY_MAX_FRACTION,MAX_TRADE_CENTS} from './automatic_entry_policy.mjs';
 // Kalshi combinations are separate YES markets. Two confirmed, still-held
 // single fills qualify as legs; an RFQ alone is never a fill.
 // Creating markets and waiting for an RFQ maker can take longer than a scan.
@@ -29,7 +29,7 @@ export function remainingVerifiedComboCents(position,bankroll,fraction=1){
   if(!Number.isFinite(held)||held<=0||position?.market_exposure_dollars==null||
     position?.fees_paid_dollars==null||!Number.isFinite(exposure)||exposure<0||
     !Number.isFinite(fees)||fees<0||!Number.isFinite(bankroll)||bankroll<=0)return 0;
-  return Math.max(0,comboAllowedCents(fraction,bankroll)-Math.ceil(exposure*100)-Math.ceil(fees*100));
+  return Math.max(0,Math.min(MAX_TRADE_CENTS,Math.floor(bankroll*automaticEntryFraction({fraction}))-Math.ceil(exposure*100)-Math.ceil(fees*100)));
 }
 export function availableComboFills(fills){
   return fills.filter(r=>!/Restricted 20% cricket final innings/i.test(r.reason||''));
