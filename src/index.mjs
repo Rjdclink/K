@@ -18,7 +18,7 @@ import { historyPage } from './history_ui.mjs';
 import { completedTrade, completedNoTrade, manualSaleFill, reconcileManualSaleFills, settlementLookupCandidates } from './history.mjs';
 import {syncAccountHistory,ensureAccountHistoryTables} from './account_history_sync.mjs';
 import {syncAccountPositions} from './account_positions_sync.mjs';
-import {automaticEntryFraction} from './automatic_entry_policy.mjs';
+import {automaticEntryFraction,tradeBudgetCents,MAX_TRADE_CENTS} from './automatic_entry_policy.mjs';
 import {allowsNewEntry,entryExclusionReason} from './entry_exclusions.mjs';
 import {publishVerifiedPositions,ensureVerifiedPositionTables} from './account_position_profit.mjs';
 import {accountHistoryListSQL,accountHistorySummarySQL} from './account_history_query.mjs';
@@ -916,7 +916,7 @@ async function manualBuyCombo(body){
     await client.query("INSERT INTO manual_combo_buys(id,ticker,status) VALUES($1,$2,'pending')",[body.id,body.ticker]);
     await client.query('COMMIT');
     try{
-      const result=await withEntryProfitFloor({ticker:body.ticker,manual:true,count:quote.count,price:quote.price,
+      const result=await withEntryProfitFloor({ticker:body.ticker,reservationId:body.id,manual:true,count:quote.count,price:quote.price,
         maxCostCents:quote.max_cost_cents,
         fees:Math.max(2,2*Number(marketResponse.market.fee_multiplier_override||0)),strategy:attempt.strategy,
         bankroll:Number(account.balance)+Number(account.portfolio_value)},()=>kalshi('/portfolio/events/orders',{method:'POST',auth:true,entryVerifications,body:{ticker:body.ticker,
@@ -988,7 +988,7 @@ async function manualBuyPosition(body){
     q.count=Math.min(q.count,body.count);
     if(q.count<(current.market.fractional_trading_enabled===false?1:.01))return reject('Confirmed quantity is too small');
     try{
-      const result=await withEntryProfitFloor({ticker:body.ticker,manual:true,
+      const result=await withEntryProfitFloor({ticker:body.ticker,reservationId:body.id,manual:true,
         count:q.count,price:q.price,fees:Math.max(2,2*current.fees.multiplier),
         maxCostCents:estimatedCostCents(q.count,q.price,Math.max(2,2*current.fees.multiplier))+1},
         ()=>kalshi('/portfolio/events/orders',{method:'POST',auth:true,entryVerifications:current.entryVerifications,
@@ -1194,8 +1194,8 @@ async function allOpenPositions({strict=false}={}){
 // Serialize final buy decisions across the scan's parallel singles, weather and
 // combo jobs. Count the same filled, open positions shown on the dashboard;
 // recent in-flight attempts occupy a slot until Kalshi reports their fill.
-async function withEntryProfitFloor({ticker,count,price,fees,strategy,fraction,bankroll,game,market,manual=false,maxCostCents},send){
-  await ensureManualCombos();
+async function withEntryProfitFloor({ticker,reservationId=null,pendingQuoteId=null,count,price,fees,strategy,fraction,bankroll,game,market,manual=false,maxCostCents},send){
+  await Promise.all([ensureManualCombos(),upgradeTables()]);
   for(;;){
     const client=await pool.connect();let busy=false;
     try{
@@ -1204,13 +1204,40 @@ async function withEntryProfitFloor({ticker,count,price,fees,strategy,fraction,b
       if(!lock.acquired){busy=true;await client.query('ROLLBACK')}
       else{
         const noncushionedPlayer=game?.overVerification?.route==='noncushioned_player_two_proof';
-        const positions=await allOpenPositions({strict:manual||noncushionedPlayer||strategy==='over'&&fraction>=.45});
+        const positions=await allOpenPositions({strict:true});
         const latestAccount=await accountBalance({fresh:true});
         const latestCash=Number(latestAccount?.balance),latestBankroll=latestCash+Number(latestAccount?.portfolio_value);
         const estimated=estimatedCostCents(count,price,fees);
         const debit=manual?Math.max(estimated,Number(maxCostCents)):estimated;
         if(!Number.isFinite(latestCash)||latestCash<0||!Number.isFinite(latestBankroll)||latestBankroll<=0||
           !Number.isFinite(debit)||debit<=0||debit>Math.floor(latestCash)||debit>Math.floor(latestBankroll)){
+          await client.query('COMMIT');return null;
+        }
+        const stakeLimit=manual?MAX_TRADE_CENTS:tradeBudgetCents({strategy,game,market,price},latestBankroll);
+        if(debit>stakeLimit){await client.query('COMMIT');return null}
+        let openCost=0;
+        for(const position of positions.market_positions){
+          if(Number(position.position_fp??position.position)===0)continue;
+          const cost=Number(position.market_exposure_dollars),paid=Number(position.fees_paid_dollars);
+          if(position.market_exposure_dollars==null||position.fees_paid_dollars==null||
+            !Number.isFinite(cost)||!Number.isFinite(paid)||cost<0||paid<0){
+            await client.query('COMMIT');return null;
+          }
+          openCost+=Math.ceil(100*cost-1e-8)+Math.ceil(100*paid-1e-8);
+        }
+        // Uncertain fills and accepted RFQs can precede the positions feed.
+        // Reserve their potential debit until the existing reconciliation finishes.
+        const outstanding=await client.query(`SELECT count,limit_price FROM trade_attempts
+          WHERE id IS DISTINCT FROM $1::uuid AND status IN ('reserved','check_order','retrying','combo_pending')
+          UNION ALL SELECT NULL,NULL FROM manual_combo_buys WHERE id IS DISTINCT FROM $1::uuid AND status='pending'
+          UNION ALL SELECT NULL,NULL FROM combo_upgrades WHERE quote_id IS DISTINCT FROM $2 AND status IN ('pending','uncertain')
+          UNION ALL SELECT count,limit_price FROM position_upgrades WHERE id IS DISTINCT FROM $1::uuid AND status IN ('reserved','check_order')
+          UNION ALL SELECT count,limit_price FROM robust_over_upgrades WHERE id IS DISTINCT FROM $1::uuid AND status IN ('reserved','check_order')
+          UNION ALL SELECT count,limit_price FROM external_cushion_upgrades WHERE id IS DISTINCT FROM $1::uuid AND status IN ('reserved','check_order')
+          UNION ALL SELECT count,limit_price FROM double_cushion_upgrades WHERE id IS DISTINCT FROM $1::uuid AND status IN ('reserved','check_order')`,[reservationId,pendingQuoteId]);
+        const pendingCost=outstanding.rows.reduce((sum,row)=>sum+(row.count==null?MAX_TRADE_CENTS:
+          estimatedCostCents(Number(row.count),Number(row.limit_price),Math.max(2,fees))),0);
+        if(!Number.isFinite(pendingCost)||debit+pendingCost>latestCash||debit+pendingCost+openCost>latestBankroll){
           await client.query('COMMIT');return null;
         }
         if(manual){
@@ -1436,7 +1463,7 @@ async function recoverSummaryAsk(market){
   }catch(e){console.warn('Ask depth probe unavailable:',market.ticker,e.message);return market}
 }
 function contractCount(balance,market,fraction,bankroll,budget,fees,entry={}){
-  const count=orderSize(balance,market.yes_ask_dollars,market.yes_ask_size_fp,fraction,Number(process.env.MAX_YES_PRICE||1),bankroll,budget,fees,entry);
+  const count=orderSize(balance,market.yes_ask_dollars,market.yes_ask_size_fp,fraction,Number(process.env.MAX_YES_PRICE||1),bankroll,budget,fees,{...entry,market});
   return market.fractional_trading_enabled===false?Math.floor(count):count;
 }
 function executableCount(c,balance,bankroll){
@@ -1576,7 +1603,7 @@ async function submit(signal,game,event,market,balance,bankroll,budgetCents=Infi
   try{
     // A partial IOC fill can be below the minimum net profit. Require the
     // entire quantity at the limit price or no entry at all.
-    const result=await withEntryProfitFloor({ticker:market.ticker,count,price,fees:feeReserve(event,market),strategy:signal.strategy,fraction:signal.fraction,bankroll,game,market},
+    const result=await withEntryProfitFloor({ticker:market.ticker,reservationId:id,count,price,fees:feeReserve(event,market),strategy:signal.strategy,fraction:signal.fraction,bankroll,game,market},
       ()=>kalshi('/portfolio/events/orders',{method:'POST',auth:true,entryVerifications:[{game,market}],beforeDispatch:()=>{if(signal.strategy==='over')assertOverExposure(game,market,signal.fraction);if(signal.strategy==='lead')assertFreshLead(game,market)},body:{ticker:market.ticker,client_order_id:id,side:'bid',count:count.toFixed(2),price:price.toFixed(4),time_in_force:'fill_or_kill',self_trade_prevention_type:'taker_at_cross',post_only:false}}));
     if(!result){await pool.query(`UPDATE trade_attempts SET status='unfilled',error=$2,updated_at=now() WHERE id=$1`,[id,signal.fraction>=.45?'Entry exceeds current position allocation or profit limit':'Below filled-order net profit floor']);return false}
     const filled=Number(result.fill_count_fp??result.fill_count??result.order?.fill_count_fp??0);
@@ -1624,7 +1651,7 @@ async function recoverPending(signal,game,event,market,balance,bankroll,budgetCe
     await pool.query(`UPDATE trade_attempts SET status='unfilled',error='Final whistle window elapsed before retry',updated_at=now() WHERE id=$1`,[row.id]);
     return false;
   }
-  try{const result=await withEntryProfitFloor({ticker:row.market_ticker,count:Number(row.count),price:Number(row.limit_price),fees:feeReserve(event,market),strategy:signal.strategy,fraction:signal.fraction,bankroll,game,market},
+  try{const result=await withEntryProfitFloor({ticker:row.market_ticker,reservationId:row.id,count:Number(row.count),price:Number(row.limit_price),fees:feeReserve(event,market),strategy:signal.strategy,fraction:signal.fraction,bankroll,game,market},
     ()=>kalshi('/portfolio/events/orders',{method:'POST',auth:true,entryVerifications:[{game,market}],beforeDispatch:()=>{if(signal.strategy==='over')assertOverExposure(game,market,signal.fraction);if(signal.strategy==='lead')assertFreshLead(game,market)},body:{ticker:row.market_ticker,client_order_id:row.id,side:'bid',count:Number(row.count).toFixed(2),price:Number(row.limit_price).toFixed(4),time_in_force:'fill_or_kill',self_trade_prevention_type:'taker_at_cross',post_only:false}}));
     if(!result){await pool.query(`UPDATE trade_attempts SET status='check_order',retries=0,error=$2,updated_at=now() WHERE id=$1`,[row.id,signal.fraction>=.45?'Entry exceeds current position allocation or profit limit':'Below filled-order net profit floor']);return false}
     const filled=Number(result.fill_count_fp??result.fill_count??result.order?.fill_count_fp??result.order?.fill_count??0);await pool.query(`UPDATE trade_attempts SET status=$2,order_id=$3,fill_count=$4,updated_at=now() WHERE id=$1`,[row.id,filled>0?'filled':'unfilled',result.order_id||result.order?.order_id||null,filled]);if(filled>0)await confirmedSingleFill(row.id,row.market_ticker);return filled>0
@@ -1723,7 +1750,7 @@ async function upgradeHeldOver(c,preflight,original,scoreboardCache){
   await pool.query(`CREATE TABLE IF NOT EXISTS order_verifications(order_id uuid PRIMARY KEY,verification_id uuid NOT NULL,created_at timestamptz DEFAULT now())`);
   await pool.query('INSERT INTO order_verifications(order_id,verification_id) VALUES($1,$2) ON CONFLICT DO NOTHING',[id,state.verificationId]);
   try{
-    const result=await withEntryProfitFloor({ticker:quote.ticker,count,price,fees,strategy:'over',fraction:verifiedSignal.fraction,bankroll,game:state,market:quote},
+    const result=await withEntryProfitFloor({ticker:quote.ticker,reservationId:id,count,price,fees,strategy:'over',fraction:verifiedSignal.fraction,bankroll,game:state,market:quote},
       ()=>kalshi('/portfolio/events/orders',{method:'POST',auth:true,entryVerifications:[{game:state,market:quote}],beforeDispatch:()=>{assertOverExposure(state,quote,verifiedSignal.fraction)},body:{ticker:quote.ticker,client_order_id:id,side:'bid',count:count.toFixed(2),price:price.toFixed(4),time_in_force:'fill_or_kill',self_trade_prevention_type:'taker_at_cross',post_only:false}}));
     if(!result){await pool.query(`UPDATE ${upgradeTable} SET status='unfilled',error=$2,updated_at=now() WHERE id=$1`,[id,enhanced?'Entry exceeds current position allocation or profit limit':'Below filled-order net profit floor']);return {verified:true,filled:false}}
     const filled=Number(result.fill_count_fp??result.fill_count??result.order?.fill_count_fp??0);
@@ -1897,7 +1924,7 @@ async function upgradeVerifiedCombos(scanStarted){
             WHERE combo_upgrades.status='unfilled' AND combo_upgrades.updated_at<now()-interval '20 seconds'
             RETURNING market_ticker`,[combo.market_ticker,combo.id,JSON.stringify(proofs.map(p=>p.verification_id)),rfq,q.id]);
           if(!reserved.rowCount)break;
-          try{const accepted=await withEntryProfitFloor({ticker:combo.market_ticker,count:terms.count,price:terms.yesCost,fees,strategy:combo.strategy,bankroll:currentBankroll},
+          try{const accepted=await withEntryProfitFloor({ticker:combo.market_ticker,pendingQuoteId:q.id,count:terms.count,price:terms.yesCost,fees,strategy:combo.strategy,bankroll:currentBankroll},
             ()=>kalshi('/communications/rfqs/'+encodeURIComponent(rfq)+'/quotes/'+encodeURIComponent(q.id)+'/accept',
               {auth:true,method:'PUT',entryVerifications,body:{accepted_side:'no'}}));
             if(!accepted){await pool.query(`UPDATE combo_upgrades SET status='unfilled',error='Below filled-order net profit floor',updated_at=now() WHERE market_ticker=$1`,[combo.market_ticker]);break}
@@ -2079,7 +2106,7 @@ async function recordComboRejection(legs,collection,status,detail){
         }
         try{
           // Accepting the maker's NO bid buys YES (the complementary price).
-          const accepted=await withEntryProfitFloor({ticker,count:terms.count,price:terms.yesCost,fees,strategy,bankroll:Number(latest.balance)+Number(latest.portfolio_value)},
+          const accepted=await withEntryProfitFloor({ticker,reservationId:id,count:terms.count,price:terms.yesCost,fees,strategy,bankroll:Number(latest.balance)+Number(latest.portfolio_value)},
             ()=>kalshi('/communications/rfqs/'+encodeURIComponent(rfq)+'/quotes/'+encodeURIComponent(q.id)+'/accept',{auth:true,method:'PUT',entryVerifications,body:{accepted_side:'no'}}));
           if(!accepted){await pool.query(`UPDATE trade_attempts SET status='unfilled',error='Below filled-order net profit floor',updated_at=now() WHERE id=$1`,[id]);continue}
           await reconcileCombos();
@@ -3056,7 +3083,7 @@ async function executeVerifiedMention(item){
     [id,estimatedCostCents(count,ask.price,fee)]);
   rememberIndependentEntry(game,current,verificationId,Date.now(),undefined,undefined,side);
   try{
-    const result=await withEntryProfitFloor({ticker:current.ticker,count,price:ask.price,fees:fee,
+    const result=await withEntryProfitFloor({ticker:current.ticker,reservationId:id,count,price:ask.price,fees:fee,
       strategy:signal.strategy,fraction:.15,bankroll,game,market:current},async()=>{
       if(!pairedMentionProof(item.first,item.second)||item.second.eventDate!==mentionDay(Date.now(),item.transcript.timezone))return null;
       const fresh=await accountBalance({fresh:true}),total=Number(fresh.balance)+Number(fresh.portfolio_value);
@@ -3291,7 +3318,7 @@ async function scanThirdQuarterNos(games,events){
       const id=await reserve(signal,game,c.event,refreshed,quantity,price,account.balance);
       if(!id)continue;
       try{
-        const result=await withEntryProfitFloor({ticker:refreshed.ticker,count:quantity,price,fees,strategy:'no',fraction:.15,bankroll,game,market:refreshed},
+        const result=await withEntryProfitFloor({ticker:refreshed.ticker,reservationId:id,count:quantity,price,fees,strategy:'no',fraction:.15,bankroll,game,market:refreshed},
           ()=>kalshi('/portfolio/events/orders',{method:'POST',auth:true,entryVerifications:[{game,market:refreshed}],
             beforeDispatch:()=>{if(!thirdQuarterYardageNo(game,refreshed)||Date.now()-game.observedAt>10000)
               throw Object.assign(Error('NO zero or quarter proof expired'),{code:'LOCAL_EXTERNAL_VERIFICATION_REQUIRED'})},
@@ -3541,7 +3568,7 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null,phase='all
       const unreported=awaiting.reduce((sum,row)=>sum+estimatedCostCents(Number(row.fill_count),Number(row.limit_price)),0);
       const budget=Math.max(0,Math.floor(bankroll*allocation)-held-unreported),fees=feeReserve(c.event,current);
       const count=orderSize(Math.min(singleSpendableCash(account.balance),local),ask.price,ask.size,allocation,1,bankroll,budget,fees);
-      const quantity=current.fractional_trading_enabled===false?Math.floor(count):count;
+      let quantity=current.fractional_trading_enabled===false?Math.floor(count):count;
       if(quantity<minimumCount(current)||!profitableCount(quantity,ask.price,fees,'no',bankroll,fresh.type,fresh.remainingSeconds,{game:fresh,market:current})){
         report(c,'Entry blocked: 100% bankroll ceiling, fees or required net profit',ask);continue;
       }
@@ -3580,11 +3607,16 @@ async function scanCollegeTotalNos(games,events,sport,signalSink=null,phase='all
           firstExternal:window?.first_evidence??null,
           secondAt:new Date(verifiedAt),external:proof,ask:ask.price})]);
       fresh.verificationId=verificationId;rememberIndependentEntry(fresh,current,verificationId,verifiedAt,undefined,proof,'no');
+      const resized=orderSize(Math.min(singleSpendableCash(account.balance),local),ask.price,ask.size,
+        allocation,1,bankroll,budget,fees,{strategy:'no',game:fresh,market:current});
+      quantity=Math.min(quantity,current.fractional_trading_enabled===false?Math.floor(resized):resized);
+      if(quantity<minimumCount(current)||!profitableCount(quantity,ask.price,fees,'no',bankroll,
+        fresh.type,fresh.remainingSeconds,{game:fresh,market:current}))continue;
       const signal={strategy:'no',fraction:allocation,reason:qualifies(fresh,current,{external:proof}).reason};
       const id=await reserve(signal,fresh,c.event,current,quantity,ask.price,account.balance);
       if(!id){report(c,'Entry blocked: existing or in-flight order',ask);continue;}
       try{
-        const result=await withEntryProfitFloor({ticker:current.ticker,count:quantity,price:ask.price,fees,strategy:'no',fraction:allocation,bankroll,game:fresh,market:current},
+        const result=await withEntryProfitFloor({ticker:current.ticker,reservationId:id,count:quantity,price:ask.price,fees,strategy:'no',fraction:allocation,bankroll,game:fresh,market:current},
           ()=>kalshi('/portfolio/events/orders',{method:'POST',auth:true,entryVerifications:[{game:fresh,market:current}],
             beforeDispatch:()=>{if(!qualifies(fresh,current,{external:proof})||Date.now()-fresh.observedAt>10000||
               Date.now()-externalCheckedAt>10000)
@@ -3821,7 +3853,7 @@ async function scanHockeyTotalNos(games,events,signalSink=null,phase='all'){
       const fees=feeReserve(c.event,current);
       const count=orderSize(Math.min(singleSpendableCash(account.balance),local),
         ask.price,ask.size,allocation,1,bankroll,budget,fees);
-      const quantity=current.fractional_trading_enabled===false?Math.floor(count):count;
+      let quantity=current.fractional_trading_enabled===false?Math.floor(count):count;
       if(quantity<minimumCount(current)||!profitableCount(quantity,ask.price,fees,
         'no',bankroll,fresh.type,fresh.remainingSeconds,{game:fresh,market:current})){
         report(c,'Entry blocked: 100% shared NHL total-NO cap, fees or net profit',null,ask);continue;
@@ -3859,12 +3891,17 @@ async function scanHockeyTotalNos(games,events,signalSink=null,phase='all'){
         })]);
       fresh.verificationId=verificationId;
       rememberIndependentEntry(fresh,current,verificationId,externalCheckedAt,undefined,proof,'no');
+      const resized=orderSize(Math.min(singleSpendableCash(account.balance),local),ask.price,ask.size,
+        allocation,1,bankroll,budget,fees,{strategy:'no',game:fresh,market:current});
+      quantity=Math.min(quantity,current.fractional_trading_enabled===false?Math.floor(resized):resized);
+      if(quantity<minimumCount(current)||!profitableCount(quantity,ask.price,fees,'no',bankroll,
+        fresh.type,fresh.remainingSeconds,{game:fresh,market:current}))continue;
       const id=await reserve({strategy:'no',fraction:allocation,reason:signal.reason},
         fresh,c.event,current,quantity,ask.price,account.balance);
       if(!id){report(c,'Entry blocked: duplicate or pending order',signal,ask);continue;}
       try{
         const result=await withEntryProfitFloor({
-          ticker:current.ticker,count:quantity,price:ask.price,fees,
+          ticker:current.ticker,reservationId:id,count:quantity,price:ask.price,fees,
           strategy:'no',fraction:allocation,bankroll,game:fresh,market:current
         },()=>kalshi('/portfolio/events/orders',{method:'POST',auth:true,
           entryVerifications:[{game:fresh,market:current}],
@@ -4228,7 +4265,7 @@ async function scanEarlyPeriodNos(games,events,signalSink=null,sport='NHL',phase
       if(!id){report(c,'Entry blocked: duplicate or pending order',signal,ask);continue;}
       try{
         const result=await withEntryProfitFloor({
-          ticker:current.ticker,count:quantity,price:ask.price,fees,
+          ticker:current.ticker,reservationId:id,count:quantity,price:ask.price,fees,
           strategy:'no',fraction:allocation,bankroll,game:fresh,market:current
         },()=>kalshi('/portfolio/events/orders',{method:'POST',auth:true,
           entryVerifications:[{game:fresh,market:current}],
@@ -4507,7 +4544,7 @@ async function scanSoccerTotalNos(games,events,signalSink=null,phase='all'){
       const fees=feeReserve(c.event,current);
       const count=orderSize(Math.min(singleSpendableCash(account.balance),local),
         ask.price,ask.size,allocation,1,bankroll,budget,fees);
-      const quantity=current.fractional_trading_enabled===false?Math.floor(count):count;
+      let quantity=current.fractional_trading_enabled===false?Math.floor(count):count;
       if(quantity<minimumCount(current)||!profitableCount(quantity,ask.price,fees,
         'no',bankroll,fresh.type,fresh.matchRemainingSeconds,{game:fresh,market:current})){
         report(c,'Entry blocked: shared 100% soccer total-NO cap, fees or net profit',null,ask);continue;
@@ -4547,12 +4584,17 @@ async function scanSoccerTotalNos(games,events,signalSink=null,phase='all'){
         })]);
       fresh.verificationId=verificationId;
       rememberIndependentEntry(fresh,current,verificationId,externalCheckedAt,undefined,proof,'no');
+      const resized=orderSize(Math.min(singleSpendableCash(account.balance),local),ask.price,ask.size,
+        allocation,1,bankroll,budget,fees,{strategy:'no',game:fresh,market:current});
+      quantity=Math.min(quantity,current.fractional_trading_enabled===false?Math.floor(resized):resized);
+      if(quantity<minimumCount(current)||!profitableCount(quantity,ask.price,fees,'no',bankroll,
+        fresh.type,fresh.remainingSeconds,{game:fresh,market:current}))continue;
       const id=await reserve({strategy:'no',fraction:allocation,reason:signal.reason},
         fresh,c.event,current,quantity,ask.price,account.balance);
       if(!id){report(c,'Entry blocked: duplicate or pending order',signal,ask);continue;}
       try{
         const result=await withEntryProfitFloor({
-          ticker:current.ticker,count:quantity,price:ask.price,fees,
+          ticker:current.ticker,reservationId:id,count:quantity,price:ask.price,fees,
           strategy:'no',fraction:allocation,bankroll,game:fresh,market:current
         },()=>kalshi('/portfolio/events/orders',{method:'POST',auth:true,
           entryVerifications:[{game:fresh,market:current}],
@@ -4913,7 +4955,7 @@ async function scanVariablePlayerOvers(games,events,signalSink=null,{maxMarkets=
       if(!id){report(c,'Entry blocked: duplicate or pending order');continue;}
       try{
         const result=await withEntryProfitFloor({
-          ticker:seller.ticker,count,price,fees,strategy:'over',
+          ticker:seller.ticker,reservationId:id,count,price,fees,strategy:'over',
           fraction,bankroll,game:fresh,market:seller
         },()=>kalshi('/portfolio/events/orders',{method:'POST',auth:true,
           entryVerifications:[{game:fresh,market:seller}],

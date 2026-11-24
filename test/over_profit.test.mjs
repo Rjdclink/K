@@ -1,3 +1,4 @@
+import {tradeBudgetCents,MAX_TRADE_CENTS} from '../src/automatic_entry_policy.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -31,7 +32,7 @@ test('final exchange gate enforces the ratio for automatic and manual purchases'
   let sends=0,released=false;
   const positions={market_positions:manual?[{ticker:'T',position_fp:'1',market_exposure_dollars:'1',fees_paid_dollars:'0'}]:[]};
   const client={query:async sql=>({rows:sql.includes('pg_try_advisory_xact_lock')?[{acquired:true}]:[],rowCount:0}),release:()=>{released=true}};
-  const context=vm.createContext({ensureManualCombos:async()=>{},setTimeout,minimumProfitCents,netSettlementProfitCents,estimatedCostCents,automaticEntryFraction,filledOrderGateCount,
+  const context=vm.createContext({ensureManualCombos:async()=>{},tradeBudgetCents,MAX_TRADE_CENTS,upgradeTables:async()=>{},setTimeout,minimumProfitCents,netSettlementProfitCents,estimatedCostCents,automaticEntryFraction,filledOrderGateCount,
     pool:{connect:async()=>client},accountBalance:async()=>({balance:100000,portfolio_value:0}),
     allOpenPositions:async()=>positions});
   vm.runInContext(gate,context);

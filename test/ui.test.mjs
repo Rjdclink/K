@@ -283,7 +283,7 @@ test('filled order timer is bright red, advances each second and reanchors to li
   assert.match(page,/Over 2\.5 NO line is excluded once two goals have been scored/);
   assert.match(page,/Over 2\.5 NO at one goal enters under 5:00 remaining in NHL or under 8:00 remaining in soccer/);
   assert.match(page,/Other 1\.5-goal cushions enter strictly under 1:00 in hockey or in confirmed live soccer regulation stoppage/);
-  assert.match(page,/100% fee-inclusive bankroll maximum/);
+  assert.match(page,/Commanding leads receive larger allocations/);
   assert.match(page,/three goals ahead strictly under 15:30/);
   assert.match(page,/strictly under 9:30/);
   assert.doesNotMatch(page,/Tennis requires the selected player serving on match point in the final deciding set/);

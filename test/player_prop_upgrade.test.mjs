@@ -1,3 +1,4 @@
+import {tradeBudgetCents,MAX_TRADE_CENTS} from '../src/automatic_entry_policy.mjs';
 import {rememberIndependentEntry} from '../src/entry_verification.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -27,7 +28,7 @@ test('a held basketball count prop can top up to 100% only when the new purchase
     const original={id:'original',status:'filled',strategy:'over',market_ticker:market.ticker,event_ticker:market.event_ticker,game_id:'g'};
     const sent=[];let immediateChecks=0;
     const client={query:async sql=>({rows:sql.includes('pg_try_advisory_xact_lock')?[{acquired:true}]:[]}),release(){}};
-    const context=vm.createContext({ensureManualCombos:async()=>{},console,setTimeout,PLAYER_PROP_MAX_FRACTION,BASKETBALL_COUNT_PROP_MAX_FRACTION,overSignal,playerOverSpec,freshPlayerPropForEntry:async state=>{immediateChecks++;return state},timedOverEntryValid,assertTimedOverEntry,assertOverExposure,
+    const context=vm.createContext({ensureManualCombos:async()=>{},tradeBudgetCents,MAX_TRADE_CENTS,console,setTimeout,PLAYER_PROP_MAX_FRACTION,BASKETBALL_COUNT_PROP_MAX_FRACTION,overSignal,playerOverSpec,freshPlayerPropForEntry:async state=>{immediateChecks++;return state},timedOverEntryValid,assertTimedOverEntry,assertOverExposure,
       sameSportsContract,verifiedOverFraction,remainingVerifiedOverCents,upgradeEligible,estimatedCostCents,profitableCount,automaticEntryFraction,
       minimumProfitCents,netSettlementProfitCents,filledOrderGateCount,singleSpendableCash,randomUUID:()=> 'upgrade',
       upgradeTables:async()=>{},recoverSummaryAsk:async m=>m,hasAsk:()=>true,executableQuote:async m=>m,

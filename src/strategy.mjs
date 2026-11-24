@@ -1,5 +1,5 @@
 import { golfState, golfSignal } from './golf.mjs';
-import {automaticEntryFraction,hasIndependentCushionedOverProof} from './automatic_entry_policy.mjs';
+import {tradeBudgetCents,automaticEntryFraction,hasIndependentCushionedOverProof} from './automatic_entry_policy.mjs';
 import { VERIFY_DWELL_MS } from './combos.mjs';
 export const KALSHI_ONLY_FRACTION=.05;
 export const SOCCER_OVER_STABILITY_MS=10000;
@@ -1033,7 +1033,7 @@ export function orderSize(balanceCents, askDollars, askSize, fraction, cap=1, ba
   fraction=automaticEntryFraction({...entry,fraction});
   const price=N(askDollars),size=N(askSize),cash=N(balanceCents),bankroll=N(bankrollCents),limit=N(maxSpendCents);
   if (!Number.isFinite(price)||price<=0||!Number.isFinite(cap)||cap<=0||price>Math.min(1,cap)||!Number.isFinite(size)||size<0.01||!Number.isFinite(cash)||cash<=0||!Number.isFinite(bankroll)||bankroll<0||!Number.isFinite(fraction)||fraction<=0||fraction>1||!(Number.isFinite(limit)||limit===Infinity)||limit<0||!Number.isFinite(feeMultiplier)||feeMultiplier<1) return 0;
-  const budget=Math.min(Math.floor(cash),Math.floor(bankroll*fraction),Math.floor(limit));
+  const budget=Math.min(Math.floor(cash),Math.floor(bankroll*fraction),tradeBudgetCents(entry.strategy==='lead'&&!entry.game?.externalScore?{}:{...entry,price},bankroll),Math.floor(limit));
   let low=0,high=Math.floor(size*100+1e-7);
   while(low<high){const mid=Math.ceil((low+high)/2);if(estimatedCostCents(mid/100,price,feeMultiplier)<=budget)low=mid;else high=mid-1}
   return low/100;
